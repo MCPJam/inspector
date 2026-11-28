@@ -1,5 +1,6 @@
 import { LOCAL_EVAL_MODEL } from "../../../test/support/local-eval-model";
 import { logger } from "../../../utils/logger";
+import type { RunAssistantTurnResult } from "../../../utils/assistant-turn";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import creditRefusalCorpus from "../../../../../sdk/tests/fixtures/credit-refusal-fixtures.json";
 
@@ -414,6 +415,120 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         name === "testSuites:updateTestIteration" && args.errorDetails,
     );
     expect(persisted?.[1].errorDetails).toContain("Insufficient credits");
+  });
+
+  // A harness broker's spend cap: its sentence names no code, so only the
+  // engine's captured code says the cap is terminal.
+  it("stops a hosted run on the engine's spend-budget code", async () => {
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockImplementation(async (opts) => {
+        opts.onEngineError?.({
+          message:
+            "An owner or admin needs to raise this organization's budget to continue.",
+          code: "spend_budget_reached",
+          httpStatus: 402,
+          rawText:
+            '{"error":"An owner or admin needs to raise this organization\'s budget to continue."}',
+          promptIndex: 0,
+          stepIndex: 0,
+        });
+        const turn: RunAssistantTurnResult = {
+          messages: [{ role: "user", content: "Hello" }],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+        };
+        return turn;
+      });
+    try {
+      const config = buildQuickRunConfig();
+      config.config.tests[0].model = "claude-haiku-4.5";
+      config.config.tests[0].provider = "anthropic";
+      config.config.tests[0].runs = 3;
+      let nextId = 0;
+      convexClient.action.mockImplementation(async (name) =>
+        name === "testSuites:startQuickRunIteration"
+          ? { iterationId: `iteration-${++nextId}` }
+          : { iterationId: "iteration" },
+      );
+      const result = await runEvalSuiteWithAiSdk({
+        ...config,
+        modelApiKeys: {},
+      });
+
+      expect(result?.quickRunIterationOutcomes).toHaveLength(1);
+      expect(result?.quickRunIterationOutcomes?.[0]).toMatchObject({
+        creditsExhausted: true,
+        creditRecovery: { action: "raise_budget", actor: "owner_or_admin" },
+      });
+      const skipped = convexClient.action.mock.calls.filter(
+        ([name, args]) =>
+          name === "testSuites:updateTestIteration" &&
+          args.status === "skipped",
+      );
+      expect(skipped.map(([, args]) => args.iterationId)).toEqual([
+        "iteration-2",
+        "iteration-3",
+      ]);
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
+  });
+
+  // The same captured code path, for a gateway throttle: retryable, so the
+  // remaining trials still run.
+  it("runs every hosted trial past a gateway throttle's rate-limit code", async () => {
+    const assistantTurnModule = await import("../../../utils/assistant-turn");
+    const runAssistantTurnSpy = vi
+      .spyOn(assistantTurnModule, "runAssistantTurn")
+      .mockImplementation(async (opts) => {
+        opts.onEngineError?.({
+          message: "The model gateway is busy. Retry shortly.",
+          code: "mcpjam_rate_limit",
+          httpStatus: 429,
+          rawText: '{"error":"The model gateway is busy. Retry shortly."}',
+          promptIndex: 0,
+          stepIndex: 0,
+        });
+        const turn: RunAssistantTurnResult = {
+          messages: [{ role: "user", content: "Hello" }],
+          assistantMessages: [],
+          toolCalls: [],
+          toolResults: [],
+        };
+        return turn;
+      });
+    try {
+      const config = buildQuickRunConfig();
+      config.config.tests[0].model = "claude-haiku-4.5";
+      config.config.tests[0].provider = "anthropic";
+      config.config.tests[0].runs = 3;
+      let nextId = 0;
+      convexClient.action.mockImplementation(async (name) =>
+        name === "testSuites:startQuickRunIteration"
+          ? { iterationId: `iteration-${++nextId}` }
+          : { iterationId: "iteration" },
+      );
+      const result = await runEvalSuiteWithAiSdk({
+        ...config,
+        modelApiKeys: {},
+      });
+
+      expect(result?.quickRunIterationOutcomes).toHaveLength(3);
+      expect(
+        result?.quickRunIterationOutcomes?.some((o) => o.creditsExhausted),
+      ).toBe(false);
+      const skipped = convexClient.action.mock.calls.filter(
+        ([name, args]) =>
+          name === "testSuites:updateTestIteration" &&
+          args.status === "skipped",
+      );
+      expect(skipped).toEqual([]);
+    } finally {
+      runAssistantTurnSpy.mockRestore();
+    }
   });
 
   it("redacts a key the provider's error message echoes before storing it", async () => {

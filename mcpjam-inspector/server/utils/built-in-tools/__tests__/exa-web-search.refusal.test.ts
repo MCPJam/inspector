@@ -132,14 +132,144 @@ describe("exa web search — organization AI key policy refusals", () => {
     expect(await runSearch()).toEqual({ results });
   });
 
-  it("leaves the out-of-credits answer alone", async () => {
+  it("uses plain-neutral copy for a 402 without a recovery (no 'top up', wrong for Free)", async () => {
     global.fetch = vi
       .fn()
       .mockResolvedValue(
         json(402, { ok: false, code: "insufficient_credits" }),
       );
-    expect(await runSearch()).toEqual({
-      error: "Out of MCPJam credits. Top up to use web search.",
+    const result = await runSearch();
+    expect(result).toEqual({
+      error:
+        "Out of MCPJam credits for web search. Add credits or upgrade your plan in MCPJam to keep using it.",
     });
+    // A Free account cannot buy credits, so the old "Top up" line is gone.
+    expect(result.error).not.toMatch(/top up/i);
+    expect(result.error).not.toMatch(/BYOK|try again|wait/i);
+  });
+
+  it("sends a locked wallet to support rather than to buying credits", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      json(402, {
+        error: "Web search unavailable: wallet locked.",
+        code: "WALLET_LOCKED",
+      }),
+    );
+    const result = await runSearch();
+    expect(result.error).toBe(
+      "Web search is unavailable because this organization's MCPJam wallet is locked. Contact MCPJam support to resolve it.",
+    );
+    expect(result.error).not.toMatch(/add credits|buy credits|upgrade/i);
+  });
+
+  it("renders the refusal's recovery step and link when the 402 carries one", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      json(402, {
+        ok: false,
+        code: "user_rate_limit",
+        error: "Out of MCPJam credits.",
+        recovery: {
+          version: 1,
+          reason: "out_of_credits",
+          action: "buy_credits",
+          actor: "caller",
+          url: "https://app.mcpjam.com/billing",
+        },
+      }),
+    );
+    const result = await runSearch();
+    expect(result.error).toBe(
+      "Out of MCPJam credits. Buy credits to keep going: https://app.mcpjam.com/billing",
+    );
+    expect(result.error).not.toMatch(/BYOK|try again|wait/i);
+  });
+
+  it.each([
+    [
+      "Free",
+      {
+        reason: "out_of_credits",
+        action: "upgrade_plan",
+        actor: "caller",
+        plan: "pro",
+        url: "https://app.mcpjam.com/billing",
+      },
+      "Upgrade to Pro to keep going: https://app.mcpjam.com/billing",
+    ],
+    [
+      "paid",
+      {
+        reason: "out_of_credits",
+        action: "buy_credits",
+        actor: "caller",
+        url: "https://app.mcpjam.com/billing",
+      },
+      "Buy credits to keep going: https://app.mcpjam.com/billing",
+    ],
+    [
+      "budget",
+      {
+        reason: "budget_reached",
+        action: "raise_budget",
+        actor: "owner_or_admin",
+        url: "https://app.mcpjam.com/budget",
+      },
+      "Only an organization owner or admin can raise the spend budget. Send them this link: https://app.mcpjam.com/budget",
+    ],
+    [
+      "hold",
+      { reason: "holds_committed", action: "wait", actor: "caller" },
+      "Retry once the MCPJam allowance resets.",
+    ],
+    [
+      "locked-wallet",
+      { reason: "wallet_locked", action: "contact_support", actor: "support" },
+      "Contact MCPJam support to arrange more credits.",
+    ],
+  ])(
+    "renders a %s admission refusal's recovery on HTTP 429",
+    async (_name, recovery, step) => {
+      global.fetch = vi.fn().mockResolvedValue(
+        json(429, {
+          ok: false,
+          code: "user_rate_limit",
+          error: "Refused.",
+          recovery: { version: 1, ...recovery },
+        }),
+      );
+      expect((await runSearch()).error).toBe(
+        `MCPJam refused this web search. ${step}`,
+      );
+    },
+  );
+
+  it("keeps the generic failure for a 429 without a recovery", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(json(429, { error: "Too many requests" }))
+      .mockResolvedValueOnce(new Response("slow down", { status: 429 }));
+    expect(await runSearch()).toEqual({ error: "Web search failed (429)." });
+    expect(await runSearch()).toEqual({ error: "Web search failed (429)." });
+  });
+
+  it("upgrades a Free refusal rather than telling it to buy credits", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      json(402, {
+        ok: false,
+        code: "user_rate_limit",
+        error: "Out of MCPJam credits.",
+        recovery: {
+          version: 1,
+          reason: "out_of_credits",
+          action: "upgrade_plan",
+          actor: "caller",
+          plan: "pro",
+          url: "https://app.mcpjam.com/billing",
+        },
+      }),
+    );
+    expect((await runSearch()).error).toBe(
+      "Out of MCPJam credits. Upgrade to Pro to keep going: https://app.mcpjam.com/billing",
+    );
   });
 });

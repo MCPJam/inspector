@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { CreditRecovery } from "@mcpjam/sdk/contract";
 import type {
   MCPJamCreditShortfall,
   MCPJamLimitKind,
@@ -23,6 +24,8 @@ export interface MCPJamLimitNotifyInput {
   surface?: MCPJamLimitSurface;
   period?: MCPJamLimitPeriod;
   shortfall?: MCPJamCreditShortfall;
+  /** The refusal's structured next step, when the backend sent one. */
+  recovery?: CreditRecovery;
   /** The user asked to see the dialog (a button), so a dismissal never hides
    * it; see {@link MCPJamLimitDialogState.outOfCreditsDismissed}. */
   userInitiated?: boolean;
@@ -82,6 +85,7 @@ interface MCPJamLimitDialogState {
   surface: MCPJamLimitSurface | null;
   period: MCPJamLimitPeriod | null;
   shortfall: MCPJamCreditShortfall | null;
+  recovery: CreditRecovery | null;
   /** Stash the full notify input rather than just a boolean: future fields
    * on the limit signal should be forwarded to setAuthStatus's deferred
    * resolve without each addition needing a store change. */
@@ -277,6 +281,7 @@ const CLOSED = {
   surface: null,
   period: null,
   shortfall: null,
+  recovery: null,
   pendingInput: null,
 } satisfies Partial<MCPJamLimitDialogState>;
 
@@ -302,7 +307,11 @@ const refreshOpenDialog = (
   return {
     organizationId: state.organizationId ?? input.organizationId ?? null,
     ...(withEvidence
-      ? { period: input.period ?? null, shortfall: input.shortfall ?? null }
+      ? {
+          period: input.period ?? null,
+          shortfall: input.shortfall ?? null,
+          recovery: input.recovery ?? null,
+        }
       : {}),
   };
 };
@@ -364,6 +373,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
     surface: null,
     period: null,
     shortfall: null,
+    recovery: null,
     pendingInput: null,
     notifyLimitHit: (input = {}) =>
       set((state) => {
@@ -501,6 +511,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           surface: input.surface ?? null,
           period: input.period ?? null,
           shortfall: input.shortfall ?? null,
+          recovery: input.recovery ?? null,
           pendingInput: null,
         };
       }),
@@ -524,6 +535,7 @@ export const useMCPJamLimitDialogStore = create<MCPJamLimitDialogState>(
           surface: input.surface ?? null,
           period: input.period ?? null,
           shortfall: input.shortfall ?? null,
+          recovery: input.recovery ?? null,
           pendingInput: null,
         };
       }),

@@ -8,6 +8,7 @@ import {
   describeSwarmAttemptFailure,
   providerLabelForModelId,
 } from "../session-rate-limit";
+import { humanizeSwarmAttemptError } from "@/shared/swarm-attempt-error";
 
 describe("providerLabelForModelId", () => {
   it("names a provider the model id actually declares", () => {
@@ -135,6 +136,208 @@ it.each([
     );
   },
 );
+
+describe("describeSwarmAttemptFailure credit recovery", () => {
+  const BILLING_URL = "https://app.mcpjam.com/billing";
+  const refusal = (action: string, extra: Record<string, unknown> = {}) =>
+    `swarm-agent https://x.convex.site/turn failed (429): ${JSON.stringify({
+      ok: false,
+      code: "user_rate_limit",
+      error: "Out of MCPJam credits.",
+      retryAfter: 0,
+      recovery: {
+        version: 1,
+        reason: "out_of_credits",
+        action,
+        actor: "caller",
+        url: BILLING_URL,
+        ...extra,
+      },
+    })}`;
+
+  it("makes the recovery step the only next step, link included, no wait/BYOK", () => {
+    const result = describeSwarmAttemptFailure(
+      refusal("upgrade_plan", { plan: "pro" }),
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.nextSteps).toEqual([
+      `Upgrade to Pro to keep going: ${BILLING_URL}`,
+    ]);
+    const steps = result.nextSteps.join(" ");
+    expect(steps).not.toMatch(/Wait|BYOK|own key|try again/i);
+  });
+
+  it("cards a spend budget with the owner's raise-budget step", () => {
+    const budgetUrl = "https://app.mcpjam.com/organizations/org_paid/budget";
+    const step = `Only an organization owner or admin can raise the spend budget. Send them this link: ${budgetUrl}`;
+    const envelope = `swarm-agent https://x.convex.site/turn failed (429): ${JSON.stringify(
+      {
+        ok: false,
+        code: "spend_budget_reached",
+        limitKind: "total",
+        error: `This organization's spend budget is reached. ${step}`,
+        isRetryable: false,
+        retryAfter: 0,
+        details: "Runs using your own API keys are unaffected.",
+        canTopUp: true,
+        walletLocked: false,
+        budgetReached: true,
+        refusalReason: "budget_reached",
+        recovery: {
+          version: 1,
+          reason: "budget_reached",
+          action: "raise_budget",
+          actor: "owner_or_admin",
+          url: budgetUrl,
+        },
+      },
+    )}`;
+    const result = describeSwarmAttemptFailure(
+      envelope,
+      "spend_budget_reached",
+      "Anthropic",
+    );
+    expect(result.title).toBe("Spend budget reached");
+    expect(result.nextSteps).toEqual([step]);
+    expect(result.nextSteps.join(" ")).not.toMatch(/issue|buy credits/i);
+  });
+
+  it("cards a locked wallet with the support step", () => {
+    const envelope = `swarm-agent https://x.convex.site/turn failed (402): ${JSON.stringify(
+      {
+        ok: false,
+        code: "wallet_locked",
+        error: "This organization's MCPJam wallet is locked.",
+        walletLocked: true,
+        refusalReason: "wallet_locked",
+        recovery: {
+          version: 1,
+          reason: "wallet_locked",
+          action: "contact_support",
+          actor: "support",
+        },
+      },
+    )}`;
+    const result = describeSwarmAttemptFailure(
+      envelope,
+      "wallet_locked",
+      "Anthropic",
+    );
+    expect(result.title).toBe("MCPJam wallet locked");
+    expect(result.nextSteps).toEqual([
+      "Contact MCPJam support to arrange more credits.",
+    ]);
+  });
+
+  it("tells a paid account to buy credits, link included", () => {
+    expect(
+      describeSwarmAttemptFailure(
+        refusal("buy_credits"),
+        "user_rate_limit",
+        "Anthropic",
+      ).nextSteps,
+    ).toEqual([`Buy credits to keep going: ${BILLING_URL}`]);
+  });
+});
+
+// The runner stores only the humanized message and code, so a stored hold or
+// declined-card row must still read as one after a live refusal carried a
+// recovery.
+describe("describeSwarmAttemptFailure stored rows from a refusal with a recovery", () => {
+  const stored = (body: Record<string, unknown>) =>
+    humanizeSwarmAttemptError(
+      `swarm-agent https://x.convex.site/turn failed (429): ${JSON.stringify({
+        ok: false,
+        code: "user_rate_limit",
+        retryAfter: 0,
+        ...body,
+      })}`,
+    ).message;
+
+  it.each([
+    [
+      "hold",
+      {
+        refusalReason: "holds_committed",
+        error:
+          "MCPJam model limit reached for the moment: 3 in-flight request(s) hold the remaining credits and release them as they finish.",
+        recovery: {
+          version: 1,
+          reason: "holds_committed",
+          action: "wait",
+          actor: "caller",
+        },
+      },
+      "Credits temporarily held",
+    ],
+    [
+      "declined card",
+      {
+        refusalReason: "auto_topup_declined",
+        error:
+          "Your card was declined, so auto-reload is paused. Update your payment method to keep going.",
+        recovery: {
+          version: 1,
+          reason: "auto_topup_declined",
+          action: "buy_credits",
+          actor: "caller",
+          url: "https://app.mcpjam.com/billing",
+        },
+      },
+      "Update your declined card",
+    ],
+  ])("recognizes a stored %s row", (_label, body, title) => {
+    expect(
+      describeSwarmAttemptFailure(stored(body), "user_rate_limit", "Anthropic")
+        .title,
+    ).toBe(title);
+  });
+
+  it.each([
+    [
+      "spend budget",
+      "spend_budget_reached",
+      {
+        refusalReason: "budget_reached",
+        error: "This organization's spend budget is reached.",
+        recovery: {
+          version: 1,
+          reason: "budget_reached",
+          action: "raise_budget",
+          actor: "owner_or_admin",
+          url: "https://app.mcpjam.com/organizations/org_paid/budget",
+        },
+      },
+      "Spend budget reached",
+      "Only an organization owner or admin can raise the spend budget. Ask one of them.",
+    ],
+    [
+      "locked wallet",
+      "wallet_locked",
+      {
+        refusalReason: "wallet_locked",
+        error: "This organization's MCPJam wallet is locked.",
+        recovery: {
+          version: 1,
+          reason: "wallet_locked",
+          action: "contact_support",
+          actor: "support",
+        },
+      },
+      "MCPJam wallet locked",
+      "Contact MCPJam support to arrange more credits.",
+    ],
+  ])("cards a stored %s row by its code", (_label, code, body, title, step) => {
+    const result = describeSwarmAttemptFailure(
+      stored({ ...body, code }),
+      code,
+      "Anthropic",
+    );
+    expect(result.title).toBe(title);
+    expect(result.nextSteps).toEqual([step]);
+  });
+});
 
 describe("describeSwarmAttemptFailure held credits", () => {
   // What the runner stores for a `holds_committed` refusal: the backend's

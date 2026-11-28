@@ -1,4 +1,8 @@
 import {
+  creditRecoveryOfRefusal,
+  type CreditRecovery,
+} from "@mcpjam/sdk/contract";
+import {
   EXHAUSTION_PHRASES,
   isDeclinedCardRefusal,
   isHeldCreditsRefusal,
@@ -197,4 +201,129 @@ export function isCreditExhaustion(value: unknown): boolean {
   };
   visit(value);
   return exhausted && !excluded;
+}
+
+/**
+ * The two spend limits that stop a run without being an empty wallet: an
+ * owner's spend budget, and a wallet MCPJam locked. Each has exactly one way
+ * out, and neither is a purchase: buying credits raises no budget and unlocks
+ * no wallet.
+ */
+type SpendLimit = "budget" | "wallet";
+
+const SPEND_LIMIT_BY_REASON: Readonly<Record<string, SpendLimit>> = {
+  budget_reached: "budget",
+  wallet_locked: "wallet",
+};
+
+const SPEND_LIMIT_BY_CODE: Readonly<Record<string, SpendLimit>> = {
+  spend_budget_reached: "budget",
+  organization_spend_budget_reached: "budget",
+  wallet_locked: "wallet",
+};
+
+const SPEND_LIMIT_CODE =
+  /\b(?:spend_budget_reached|organization_spend_budget_reached|wallet_locked)\b/i;
+
+const SPEND_LIMIT_RECOVERY: Readonly<
+  Record<SpendLimit, Pick<CreditRecovery, "reason" | "action" | "actor">>
+> = {
+  budget: {
+    reason: "budget_reached",
+    action: "raise_budget",
+    actor: "owner_or_admin",
+  },
+  wallet: {
+    reason: "wallet_locked",
+    action: "contact_support",
+    actor: "support",
+  },
+};
+
+/**
+ * Does this code name a spend budget or a locked wallet? Both are terminal for
+ * a run; a rate-limit code such as `mcpjam_rate_limit` can be a gateway's
+ * transient throttle and is not.
+ */
+export const isSpendLimitCode = (code: string): boolean =>
+  SPEND_LIMIT_CODE.test(code);
+
+/**
+ * Which spend limit a refusal names, if any. A structured `refusalReason`
+ * decides alone; without one, MCPJam's code anywhere in the refusal does. A
+ * provider's own error (a `provider_` code) is never MCPJam's limit.
+ */
+const spendLimitOf = (value: unknown): SpendLimit | undefined => {
+  if (isHoldRefusal(value)) return undefined;
+  const fromProvider = someNested(
+    value,
+    (item) =>
+      !!item &&
+      typeof item === "object" &&
+      typeof (item as Record<string, unknown>).code === "string" &&
+      /^provider_/.test((item as Record<string, unknown>).code as string),
+  );
+  if (fromProvider) return undefined;
+  const reason = findRefusalReason(value);
+  if (reason) {
+    return Object.hasOwn(SPEND_LIMIT_BY_REASON, reason)
+      ? SPEND_LIMIT_BY_REASON[reason]
+      : undefined;
+  }
+  let limit: SpendLimit | undefined;
+  someNested(value, (item) => {
+    const code = typeof item === "string" ? SPEND_LIMIT_CODE.exec(item) : null;
+    if (!code) return false;
+    limit = SPEND_LIMIT_BY_CODE[code[0].toLowerCase()];
+    return true;
+  });
+  return limit;
+};
+
+/**
+ * The limit's one step: the refusal's own recovery when it names that step
+ * (its link and actor are the backend's), otherwise the step without a link.
+ * A purchase step on a spend limit is the backend misreading it, never shown.
+ */
+const spendLimitRecovery = (
+  limit: SpendLimit,
+  carried: CreditRecovery | undefined,
+): CreditRecovery => {
+  const step = SPEND_LIMIT_RECOVERY[limit];
+  return carried?.action === step.action ? carried : { version: 1, ...step };
+};
+
+/**
+ * A refusal that stops a run: credit exhaustion, a spend budget, or a locked
+ * wallet, with the step to recover. `undefined` for anything else, a hold
+ * included. The step is read only off a refusal already known to be MCPJam's.
+ */
+export function runStopRefusal(
+  value: unknown,
+): { recovery?: CreditRecovery } | undefined {
+  if (isCreditExhaustion(value)) {
+    const recovery = creditRecoveryOfRefusal(value);
+    return recovery ? { recovery } : {};
+  }
+  const limit = spendLimitOf(value);
+  return limit
+    ? { recovery: spendLimitRecovery(limit, creditRecoveryOfRefusal(value)) }
+    : undefined;
+}
+
+/**
+ * A recovery stored beside a refusal's code, when that code may carry it: a
+ * credit exhaustion code carries what was recorded, a spend limit only its own
+ * step. Any other code carries none.
+ */
+export function recoveryForStopCode(
+  code: string,
+  recorded: CreditRecovery | undefined,
+): CreditRecovery | undefined {
+  if (!recorded) return undefined;
+  if (isCreditExhaustion(code)) return recorded;
+  const limit = spendLimitOf(code);
+  return limit && SPEND_LIMIT_RECOVERY[limit].action === recorded.action
+    ? recorded
+    : undefined;
 }

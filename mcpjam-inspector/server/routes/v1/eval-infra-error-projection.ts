@@ -1,5 +1,5 @@
 import { parseCreditRecovery, type CreditRecovery } from "@mcpjam/sdk/contract";
-import { isCreditExhaustion } from "../../../shared/credit-exhaustion.js";
+import { recoveryForStopCode } from "../../../shared/credit-exhaustion.js";
 
 /**
  * The public projection of `testIteration.infraError`: MCPJam's own
@@ -34,15 +34,17 @@ export function toInfraErrorProjection(
   if (!raw || typeof raw !== "object") return {};
   const row = raw as Record<string, unknown>;
   if (typeof row.class !== "string" || typeof row.layer !== "string") return {};
-  // Only beside MCPJam's own credit code: the step is shown as MCPJam's.
+  // Only beside MCPJam's own stop code: the step is shown as MCPJam's.
   const recovery =
     row.class === "account_limit" &&
     typeof row.code === "string" &&
-    isCreditExhaustion(row.code) &&
     metadata &&
     typeof metadata === "object"
-      ? parseCreditRecovery(
-          (metadata as Record<string, unknown>).creditRecovery,
+      ? recoveryForStopCode(
+          row.code,
+          parseCreditRecovery(
+            (metadata as Record<string, unknown>).creditRecovery,
+          ),
         )
       : undefined;
   return {

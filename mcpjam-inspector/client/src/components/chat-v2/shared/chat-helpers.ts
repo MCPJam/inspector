@@ -11,6 +11,12 @@ import {
   parseJsonEnvelope,
 } from "@/shared/swarm-attempt-error";
 import {
+  formatMCPJamModelLimit,
+  MCPJAM_RATE_LIMIT_CODE,
+  RATE_LIMIT_CODES,
+  USER_RATE_LIMIT_CODE,
+} from "./credit-refusal-error";
+import {
   formatOrgKeysRefusalEnvelope,
   formatPrefixedOrgKeysRefusal,
 } from "./org-keys-error";
@@ -117,13 +123,6 @@ export interface FormattedError {
    */
   retryAfterMs?: number;
 }
-
-const USER_RATE_LIMIT_CODE = "user_rate_limit";
-const MCPJAM_RATE_LIMIT_CODE = "mcpjam_rate_limit";
-const RATE_LIMIT_CODES = new Set<string>([
-  USER_RATE_LIMIT_CODE,
-  MCPJAM_RATE_LIMIT_CODE,
-]);
 
 const MCPJAM_PLATFORM_CODES = [
   USER_RATE_LIMIT_CODE,
@@ -397,28 +396,6 @@ const isMCPJamModelLimit = (
   return false;
 };
 
-const formatMCPJamModelLimit = (
-  retryPhrase: string | null,
-  extras?: {
-    code?: string;
-    canTopUp?: boolean;
-    limitKind?: "total" | "concurrency";
-    retryAfterMs?: number;
-  },
-): FormattedError => ({
-  code: extras?.code ?? MCPJAM_RATE_LIMIT_CODE,
-  message: retryPhrase
-    ? `Add your own API key in Settings > LLM Providers to keep chatting now, or ${retryPhrase}.`
-    : "Add your own API key in Settings > LLM Providers to keep chatting now, or add credits from Billing.",
-  isRetryable: false,
-  isMCPJamPlatformError: true,
-  ...(extras?.canTopUp !== undefined ? { canTopUp: extras.canTopUp } : {}),
-  ...(extras?.limitKind !== undefined ? { limitKind: extras.limitKind } : {}),
-  ...(extras?.retryAfterMs !== undefined
-    ? { retryAfterMs: extras.retryAfterMs }
-    : {}),
-});
-
 function summarizeEmptyModelResponse(message: unknown): FormattedError | null {
   const sentinel =
     "Backend step returned no content (stream error or empty response)";
@@ -521,6 +498,7 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
             canTopUp,
             limitKind,
             retryAfterMs,
+            refusal: parsed,
           },
         );
       }
@@ -602,7 +580,9 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     return DECLINED_CARD_ERROR;
 
   if (isMCPJamModelLimit(undefined, errorString)) {
-    return formatMCPJamModelLimit(extractRetryPhrase(errorString));
+    return formatMCPJamModelLimit(extractRetryPhrase(errorString), {
+      refusal: envelope ?? errorString,
+    });
   }
 
   const prefixedOrgKeysRefusal = formatPrefixedOrgKeysRefusal(errorString);

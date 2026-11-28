@@ -2,6 +2,7 @@ import {
   creditUpgradeBenefit,
   SWARM_INSUFFICIENT_CREDITS_COPY,
 } from "@/lib/credit-limit-copy";
+import { formatCreditRecovery } from "@mcpjam/sdk/contract";
 import { FrontierSignInDialogView } from "./billing/FrontierSignInDialogView";
 import { useFrontierSignInDialogStore } from "@/stores/frontier-sign-in-dialog-store";
 import { GuestCreditWallView } from "@/components/billing/GuestCreditWallView";
@@ -202,6 +203,7 @@ export function MCPJamLimitDialog() {
   const limitSurface = useMCPJamLimitDialogStore((s) => s.surface);
   const limitPeriod = useMCPJamLimitDialogStore((s) => s.period);
   const limitShortfall = useMCPJamLimitDialogStore((s) => s.shortfall);
+  const limitRecovery = useMCPJamLimitDialogStore((s) => s.recovery);
   const close = useMCPJamLimitDialogStore((s) => s.close);
   const dismiss = useMCPJamLimitDialogStore((s) => s.dismiss);
   const setAuthStatus = useMCPJamLimitDialogStore((s) => s.setAuthStatus);
@@ -500,7 +502,16 @@ export function MCPJamLimitDialog() {
                 ? "Not enough MCPJam credits"
                 : undefined
           }
-          description={isSwarmWall ? swarmDescription : creditDescription}
+          // The backend's recovery already names the plan, the actor and the
+          // link, so it replaces the copy guessed from billing here. Chat's
+          // inline error stays empty for a limit, so this is where it shows.
+          description={
+            limitRecovery
+              ? formatCreditRecovery(limitRecovery)
+              : isSwarmWall
+                ? swarmDescription
+                : creditDescription
+          }
           isSwarm={isSwarmWall}
           isKnownNonManager={isKnownNonManager}
           showRequestUpgrade={showCreditsUpgradeRequest}

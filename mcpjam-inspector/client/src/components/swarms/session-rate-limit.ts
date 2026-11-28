@@ -24,7 +24,12 @@ import {
   describeAsSlug,
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
+import {
+  formatCreditRecovery,
+  type CreditRecovery,
+} from "@mcpjam/sdk/contract";
 import { classifyModelIdProvider } from "@/shared/model-provider";
+import { isSpendLimitCode, runStopRefusal } from "@/shared/credit-exhaustion";
 import { isXaaConnectFailureReason } from "@/shared/xaa-connect-failure";
 import {
   describeProviderNotAllowlisted,
@@ -159,6 +164,49 @@ export function describeDeclinedCard(message: string): NormalizedError {
   };
 }
 
+/** The two spend limits the catalog has no entry for, by recovery reason. */
+const SPEND_LIMIT_CARDS: Readonly<
+  Record<string, { title: string; cause: string }>
+> = {
+  budget_reached: {
+    title: "Spend budget reached",
+    cause:
+      "This organization reached its spend budget. An owner or admin can raise it.",
+  },
+  wallet_locked: {
+    title: "MCPJam wallet locked",
+    cause:
+      "This organization's MCPJam wallet is locked. Contact MCPJam support to arrange more credits.",
+  },
+};
+
+/**
+ * The card for a session stopped by a spend budget or a locked wallet, or
+ * `undefined` for any other refusal. Not "Out of MCPJam credits": buying
+ * credits raises no budget and unlocks no wallet, so the refusal's recovery is
+ * the one step. The slug and severity stay the MCPJam limit's so the card
+ * renders amber like the others; the docs link is the page root, since the
+ * limit's anchor is the buy-credits section.
+ */
+function describeSpendLimit(
+  recovery: CreditRecovery | undefined,
+): NormalizedError | undefined {
+  if (!recovery || !Object.hasOwn(SPEND_LIMIT_CARDS, recovery.reason)) {
+    return undefined;
+  }
+  const card = SPEND_LIMIT_CARDS[recovery.reason];
+  const step = formatCreditRecovery(recovery);
+  return {
+    ...describeAsSlug("provider/mcpjam_limit"),
+    docsAnchor: "/troubleshooting/error-codes",
+    title: card.title,
+    oneLine: step,
+    likelyCauses: [card.cause],
+    nextSteps: [step],
+    rawMessage: step,
+  };
+}
+
 /**
  * The card for a session the organization's AI key policy (or its own
  * provider) refused, or `undefined`. A stored code is the answer; the message
@@ -262,6 +310,22 @@ export function describeSwarmAttemptFailure(
       rawCode: code,
     };
   }
+  // Classified by its structured recovery: the stored sentence is that
+  // recovery's step, which names no limit the checks below recognize. A stored
+  // row keeps only the message and code, so its code stands in for the reason.
+  const spendLimit = describeSpendLimit(
+    info.recovery ??
+      (code && isSpendLimitCode(code)
+        ? runStopRefusal(code)?.recovery
+        : undefined),
+  );
+  if (spendLimit) {
+    return {
+      ...spendLimit,
+      rawMessage: rawMessage ?? info.message,
+      rawCode: code,
+    };
+  }
   const limitSlug = mcpjamLimitSlugForMessage(info.message);
   if (
     isAccountLimit(info.message, code) &&
@@ -273,6 +337,14 @@ export function describeSwarmAttemptFailure(
     return {
       ...describeAsSlug(limitSlug ?? "provider/mcpjam_limit"),
       oneLine: info.message,
+      // The refusal's own recovery is the one action for this account (upgrade
+      // on Free, buy credits on paid), link included. It replaces the catalog's
+      // generic steps so this card never steers to waiting or BYOK — the same
+      // rule `describeError` applies, done here because `describeAsSlug` has no
+      // error to read the recovery from.
+      ...(info.recovery
+        ? { nextSteps: [formatCreditRecovery(info.recovery)] }
+        : {}),
       rawMessage: rawMessage ?? info.message,
       rawCode: code,
     };

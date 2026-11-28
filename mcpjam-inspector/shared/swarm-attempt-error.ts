@@ -34,6 +34,11 @@ import {
   isOrgKeyPolicyRefusalCode,
 } from "./ai-execution-refusal.js";
 import { describeAiRefusal } from "./ai-refusal-copy.js";
+import {
+  formatCreditRecovery,
+  parseCreditRecovery,
+  type CreditRecovery,
+} from "@mcpjam/sdk/contract";
 
 /** Matches the `SwarmAgentError` message envelope the runner throws. */
 const AGENT_ERROR_ENVELOPE =
@@ -322,6 +327,12 @@ export type SwarmAttemptErrorInfo = {
   outstandingHolds?: number;
   /** HTTP status from the failing call, when the envelope carried one. */
   httpStatus?: number;
+  /**
+   * MCPJam's structured credit recovery, when the refusal carried one. The
+   * prose scrubber strips the link from {@link message}, so this is where the
+   * link survives for a surface that renders the step as an action.
+   */
+  recovery?: CreditRecovery;
 };
 
 /**
@@ -599,16 +610,27 @@ export function humanizeSwarmAttemptError(
     code === "provider_not_allowlisted" ? undefined : str(parsed.details);
   const retryAfterMs = num(parsed.retryAfter);
   const canTopUp = parsed.canTopUp === true;
+  // MCPJam's credit refusal carries its next step as a structured `recovery`.
+  // Its sentence is the one action to show — link and all — and the scrubber
+  // takes the link out of the stored message, so the structured field below is
+  // where the link survives. A refusal without one keeps the backend's prose,
+  // and so do a hold and a declined card: a stored row keeps only the message
+  // and code, and their sentences are how the card recognizes them.
+  const recovery = parseCreditRecovery(parsed.recovery);
+  const prose = scrub(compose(headline, details));
+  const refusalReason = str(parsed.refusalReason);
+  const keepsProse =
+    isHeldCreditsRefusal(code, refusalReason, prose) ||
+    isDeclinedCardRefusal(refusalReason, prose);
 
   return {
-    message: scrub(compose(headline, details)).slice(
-      0,
-      MAX_ATTEMPT_ERROR_CHARS,
-    ),
+    message: (recovery && !keepsProse
+      ? scrub(formatCreditRecovery(recovery))
+      : prose
+    ).slice(0, MAX_ATTEMPT_ERROR_CHARS),
+    ...(recovery ? { recovery } : {}),
     ...(code ? { code } : {}),
-    ...(str(parsed.refusalReason)
-      ? { refusalReason: str(parsed.refusalReason) }
-      : {}),
+    ...(refusalReason ? { refusalReason } : {}),
     ...(typeof parsed.isRetryable === "boolean"
       ? { isRetryable: parsed.isRetryable }
       : {}),

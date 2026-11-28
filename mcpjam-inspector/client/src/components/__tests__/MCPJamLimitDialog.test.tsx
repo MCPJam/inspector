@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MCPJamLimitDialog } from "../mcpjam-limit-dialog";
+import { notifyMCPJamLimitErrorFromResponse } from "@/lib/mcpjam-limit";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
@@ -159,6 +160,7 @@ beforeEach(() => {
     surface: null,
     period: null,
     shortfall: null,
+    recovery: null,
     pendingInput: null,
   });
   useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
@@ -571,6 +573,44 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.getByRole("button", { name: /^Compare plans$/i }),
     ).toBeInTheDocument();
+  });
+
+  it("shows a chat refusal's recovery step and link in the dialog it opens", async () => {
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org_free", myRole: "owner" });
+    // An earlier test's dismissal would keep the dialog shut.
+    useMCPJamLimitDialogStore.setState({
+      authStatus: "signedIn",
+      outOfCreditsDismissed: false,
+      outOfCreditsDismissedOrganizationId: null,
+    });
+    const url = "https://app.mcpjam.com/organizations/org_free/plans";
+    const response = new Response(
+      JSON.stringify({
+        code: "user_rate_limit",
+        limitKind: "total",
+        error: `Daily MCPJam model limit reached. Upgrade to Pro to keep going: ${url}`,
+        recovery: {
+          version: 1,
+          reason: "allowance_exhausted",
+          action: "upgrade_plan",
+          actor: "caller",
+          plan: "pro",
+          url,
+        },
+        organizationId: "org_free",
+      }),
+      { status: 429 },
+    );
+
+    await expect(
+      notifyMCPJamLimitErrorFromResponse(response, "chat"),
+    ).resolves.toBe(true);
+    render(<MCPJamLimitDialog />);
+
+    expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
+      `Upgrade to Pro to keep going: ${url}`,
+    );
   });
 
   it("keeps the out-of-credits copy when the refusal carries no numbers", () => {
