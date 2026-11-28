@@ -95,9 +95,14 @@ export function useWatchStore(options: {
   const [views, setViews] = useState<Record<string, EventsSubscriptionView>>(
     {},
   );
-  const loadedAt = useRef(new Map<string, number>());
-  if (rows !== undefined && conversationId && !loadedAt.current.has(conversationId))
-    loadedAt.current.set(conversationId, Date.now());
+  // When the open conversation's connections loaded: reset on every open,
+  // not once per page, so events that arrived while it was closed count as
+  // having waited each time it's reopened.
+  const opened = useRef<{ conversationId?: string; at?: number }>({});
+  if (opened.current.conversationId !== conversationId)
+    opened.current = { conversationId };
+  if (rows !== undefined && conversationId && opened.current.at === undefined)
+    opened.current.at = Date.now();
 
   // Drop writes the query has caught up to.
   useEffect(() => {
@@ -198,10 +203,10 @@ export function useWatchStore(options: {
     loaded: !saving || rows !== undefined,
     bindings,
     isSaved: (id: string) => savedIds.has(id),
-    /** When the binding's conversation opened in this page. */
+    /** When the binding's conversation was last opened in this page. */
     loadedAt: (binding: PlaygroundEventBinding) =>
-      binding.saved && conversationId
-        ? loadedAt.current.get(conversationId)
+      binding.saved && opened.current.conversationId === conversationId
+        ? opened.current.at
         : undefined,
     patchLive(id: string, patch: (fields: LiveFields) => LiveFields) {
       setLive((previous) => ({

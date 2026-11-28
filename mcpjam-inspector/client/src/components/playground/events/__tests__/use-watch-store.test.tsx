@@ -183,6 +183,19 @@ describe("saved event connections", () => {
     ).toBeUndefined();
   });
 
+  it("counts the time again each time the conversation is reopened", async () => {
+    mocks.rows = [row()];
+    const { result, rerender } = renderHook((props) => useWatchStore(props), {
+      initialProps: options,
+    });
+    const first = result.current.loadedAt(result.current.bindings[0]);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    rerender({ ...options, conversationId: "chat-2" });
+    rerender(options);
+    const second = result.current.loadedAt(result.current.bindings[0]);
+    expect(second).toBeGreaterThan(first!);
+  });
+
   it("keeps a page's runtime fields on a saved connection", () => {
     mocks.rows = [row()];
     const { result } = renderHook(() => useWatchStore(options));
