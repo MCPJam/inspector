@@ -277,3 +277,47 @@ describe("XAA mint refusal tags", () => {
     ).toEqual({ xaa_failure: "authorization_server_unknown" });
   });
 });
+
+describe("Convex query function tag", () => {
+  // The client tags a failed Convex query with the function it called, parsed
+  // from the client's own `[CONVEX Q(module:function)]` prefix. Under the
+  // strict boundary every such failure is a bare `Error` with the same stack,
+  // so the function name is the only thing that tells two of them apart.
+  const queryFailure = (convexFunction: unknown) =>
+    rebuildSentryEvent({
+      exception: { values: [{ type: "Error" }] },
+      tags: { convex_function: convexFunction },
+    });
+
+  it("keeps the function name and groups each function separately", () => {
+    const event = queryFailure("legalAcceptance:getStatus");
+
+    expect(event.tags).toEqual({
+      convex_function: "legalAcceptance:getStatus",
+    });
+    expect(event.fingerprint).toEqual([
+      "{{ default }}",
+      "Error",
+      "legalAcceptance:getStatus",
+    ]);
+    expect(queryFailure("projects/members:list").fingerprint).toEqual([
+      "{{ default }}",
+      "Error",
+      "projects/members:list",
+    ]);
+  });
+
+  it("drops a value that is not a module:function path", () => {
+    for (const value of [
+      "user@example.com",
+      "getStatus",
+      "legalAcceptance:get Status",
+      `legalAcceptance:${"x".repeat(129)}`,
+      42,
+    ]) {
+      const event = queryFailure(value);
+      expect(event.tags).toEqual({});
+      expect(event.fingerprint).toEqual(["{{ default }}", "Error"]);
+    }
+  });
+});
