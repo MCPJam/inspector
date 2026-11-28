@@ -113,6 +113,17 @@ describe("GET /api/web/flags", () => {
     expect(response.headers.get("vary")).toContain("Authorization");
   });
 
+  it("returns the mock servers flag the Servers card's marker reads", async () => {
+    mocks.getAllFlags.mockResolvedValueOnce({ "mock-servers-enabled": true });
+
+    const { body } = await getFlags(`?distinct_id=${ANONYMOUS_ID}`);
+
+    expect(body).toEqual({
+      flags: { ...LOCAL_HARNESS_FLAGS_OFF, "mock-servers-enabled": true },
+    });
+    expect(mocks.getAllFlags.mock.calls[0][1].flagKeys).toContain("mock-servers-enabled");
+  });
+
   it("answers each local harness flag server-side, never from PostHog alone", async () => {
     // Without a verified member this machine runs no runtime locally,
     // whatever PostHog evaluates for the distinct id.
