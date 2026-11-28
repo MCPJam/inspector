@@ -15,6 +15,10 @@ export default defineConfig({
     "src/browser.ts",
     "src/worker.ts",
     "src/operations.ts",
+    // Node-only, and kept out of index.ts and browser.ts so neither bundle carries it.
+    "src/mocks/index.ts",
+    // The definition's types and validator alone: browser-safe, for a check before a save.
+    "src/mocks/definition.ts",
     "src/skill-reference.ts",
     "src/model-factory.ts",
     "src/model-native-ids.ts",

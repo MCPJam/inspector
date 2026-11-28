@@ -1,0 +1,5 @@
+---
+"@mcpjam/sdk": minor
+---
+
+New entries `@mcpjam/sdk/mocks` and `@mcpjam/sdk/mocks/definition` for mock MCP servers. `@mcpjam/sdk/mocks/definition` exports the definition's types and `validateMockDefinition` (with the size, depth, node, pattern and `$ref` caps). `@mcpjam/sdk/mocks` adds the mock error codes, `checkSavedOutputs`, and `checkStructuredOutput`, which checks a filled result when a tool is called. `checkSavedOutputs` refuses a saved result that breaks the output schema the definition writes for its tool, and an output schema that does not compile. Three cases are not checked there: a result holding a `{{...}}` placeholder is checked when a call fills it, an error result is exempt, and a schema in a dialect the validator does not know, or with a root `$async`, is not validated (its results still need `structuredContent`); `validateMockDefinition` refuses a root `$async`. A definition that asks for a generated answer, or for prompts, resources, steps or tasks, is refused with a message that says it is not supported yet. `@modelcontextprotocol/server` is now a dependency of the SDK rather than a dev dependency.
