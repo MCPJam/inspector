@@ -13,11 +13,16 @@ import {
   type CollectedGradingFiles,
 } from "./grading-files.js";
 import {
+  GRADING_ARCHIVE_UPLOAD_TIMEOUT_MS,
+  uploadGradingArchive,
+} from "./grading-archive-upload.js";
+import {
   describeSetupFailure,
   gradeIteration,
   PHASE_LIMITS_MS,
   runIterationCleanup,
   runIterationSetup,
+  type IterationGrading,
   type IterationPhaseContext,
   type IterationScriptResult,
 } from "./iteration-phases.js";
@@ -161,9 +166,32 @@ export function iterationSetupFailed(
 }
 
 /**
+ * Store what a graded iteration's box was given, when grading ran in one.
+ * Bounded by the iteration's clock too: the terminal write waits for it.
+ */
+function storeGradingArchive(
+  ctx: IterationPhaseContext,
+  grading: IterationGrading | undefined,
+): Promise<string | undefined> {
+  if (!grading?.boxInput) return Promise.resolve(undefined);
+  return uploadGradingArchive({
+    runId: ctx.runId,
+    iterationId: ctx.iterationId,
+    bearer: ctx.bearer,
+    input: grading.boxInput,
+    timeoutMs: Math.min(
+      GRADING_ARCHIVE_UPLOAD_TIMEOUT_MS,
+      ctx.deadlineAt - Date.now(),
+    ),
+    ...(ctx.signal ? { signal: ctx.signal } : {}),
+  });
+}
+
+/**
  * After the agent's box is gone: grade when the agent finished, then clean
- * up. The result declares every frozen evaluator, graded or not, so each
- * iteration of a case carries the same score definitions.
+ * up while the grading archive uploads. The result declares every frozen
+ * evaluator, graded or not, so each iteration of a case carries the same
+ * score definitions.
  */
 export async function finishIterationPhases(
   ctx: IterationPhaseContext | undefined,
@@ -179,12 +207,18 @@ export async function finishIterationPhases(
 ): Promise<CodeGradingResult | undefined> {
   if (!ctx) return undefined;
   const evaluators = ctx.config.codeEvaluators;
-  const result: CodeGradingResult | undefined =
+  const grading: IterationGrading | undefined =
     evaluators.length === 0
       ? undefined
       : args.notRun || !args.input
         ? { evaluators, outcomes: {}, notRun: args.notRun ?? "Not run." }
         : await gradeIteration(ctx, args.input(), args.files);
+  const stored = storeGradingArchive(ctx, grading);
   await runIterationCleanupInto(ctx, metadata);
-  return result;
+  const gradingFilesStorageId = await stored;
+  if (!grading) return undefined;
+  // The box's input is dropped here: the files can be megabytes, and nothing
+  // past this point reads them.
+  const { boxInput: _boxInput, ...result } = grading;
+  return gradingFilesStorageId ? { ...result, gradingFilesStorageId } : result;
 }

@@ -40,7 +40,17 @@ export type CollectedGradingFiles =
   | { ok: true; entries: GradingFileEntry[]; bytes: number }
   | { ok: false; problem: string };
 
-const OVER_CAP = `The files declared for grading are over ${MAX_GRADING_FILES_BYTES / (1024 * 1024)} MB together.`;
+/** How much one archive may hold: file content bytes, and files and folders. */
+export type GradingArchiveLimits = { bytes: number; entries: number };
+
+const DECLARED_FILE_LIMITS: GradingArchiveLimits = {
+  bytes: MAX_GRADING_FILES_BYTES,
+  entries: MAX_GRADING_FILE_ENTRIES,
+};
+
+const overCap = (limits: GradingArchiveLimits) =>
+  `The files declared for grading are over ${limits.bytes / (1024 * 1024)} MB together.`;
+const OVER_CAP = overCap(DECLARED_FILE_LIMITS);
 const COMPRESSED =
   "The declared files couldn't be read: the agent's box returned a compressed archive, and only a plain tar is accepted.";
 /** gzip and zstd: the formats the parser would recognize and inflate. */
@@ -50,7 +60,7 @@ const COMPRESSED_MAGIC: ReadonlyArray<readonly number[]> = [
 ];
 
 /** `/home/user/app/` → `home/user/app`: the archive's own spelling. */
-function relative(declared: string): string {
+export function archiveRoot(declared: string): string {
   return declared.replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
@@ -74,7 +84,7 @@ export function admittedPath(
 }
 
 /** Read at most `limit` bytes of a stream; `undefined` when it is longer. */
-async function readCapped(
+export async function readCappedBytes(
   stream: ReadableStream<Uint8Array>,
   limit: number,
 ): Promise<Uint8Array | undefined> {
@@ -100,10 +110,14 @@ async function readCapped(
   return out;
 }
 
-/** Rebuild the archive's admissible entries. Exported for tests. */
+/**
+ * Rebuild the archive's admissible entries. `limits` defaults to the declared
+ * files' own caps; a stored grading archive passes its larger ones.
+ */
 export async function parseGradingArchive(
   archive: Uint8Array,
   roots: readonly string[],
+  limits: GradingArchiveLimits = DECLARED_FILE_LIMITS,
 ): Promise<CollectedGradingFiles> {
   // None of the declared paths existed: GNU tar writes only zero blocks,
   // which the parser calls an unrecognized archive.
@@ -145,9 +159,9 @@ export async function parseGradingArchive(
       entry.resume();
       return;
     }
-    if (entries.length >= MAX_GRADING_FILE_ENTRIES) {
+    if (entries.length >= limits.entries) {
       stop(
-        `More than ${MAX_GRADING_FILE_ENTRIES.toLocaleString("en-US")} files and folders were declared for grading.`,
+        `More than ${limits.entries.toLocaleString("en-US")} files and folders were declared for grading.`,
       );
       return;
     }
@@ -160,7 +174,7 @@ export async function parseGradingArchive(
     entry.on("data", (chunk: Buffer) => {
       if (problem) return;
       bytes += chunk.byteLength;
-      if (bytes > MAX_GRADING_FILES_BYTES) stop(OVER_CAP);
+      if (bytes > limits.bytes) stop(overCap(limits));
       else chunks.push(chunk);
     });
     entry.on("end", () => {
@@ -197,7 +211,7 @@ export async function collectGradingFiles(
   declared: readonly string[],
   opts: { timeoutMs: number; signal?: AbortSignal },
 ): Promise<CollectedGradingFiles> {
-  const roots = declared.map(relative).filter(Boolean);
+  const roots = declared.map(archiveRoot).filter(Boolean);
   if (roots.length === 0) return { ok: true, entries: [], bytes: 0 };
   // A directory with an unguessable name that `mkdir` (no `-p`) creates
   // fresh, so the agent can't have planted the archive path as a link (to
@@ -227,7 +241,7 @@ export async function collectGradingFiles(
       format: "stream",
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
-    const archive = await readCapped(stream, MAX_ARCHIVE_BYTES);
+    const archive = await readCappedBytes(stream, MAX_ARCHIVE_BYTES);
     if (!archive) return { ok: false, problem: OVER_CAP };
     return await parseGradingArchive(archive, roots);
   } catch (error) {
