@@ -27,6 +27,7 @@ vi.mock("framer-motion", async (importOriginal) => {
 
 const mockMultiModelPlaygroundCard = vi.fn();
 const mockLaneDispose = vi.fn();
+const cardReadiness = vi.hoisted(() => ({ ready: true }));
 const extensionFormFixture = vi.hoisted(() => ({ enabled: false, ownerAvailable: true, actor: "actor" }));
 
 vi.mock("lucide-react", async (importOriginal) => ({
@@ -404,9 +405,14 @@ vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
     useEffect(() => {
       props.onSendReadinessChange?.(
         `${props.compareKind}:${props.compareId}`,
-        true,
+        cardReadiness.ready,
       );
-    }, [props.onSendReadinessChange, props.compareKind, props.compareId]);
+    }, [
+      props.onSendReadinessChange,
+      props.compareKind,
+      props.compareId,
+      cardReadiness.ready,
+    ]);
     mockMultiModelPlaygroundCard(props);
     return (
       <div
@@ -705,6 +711,18 @@ function makeHost(
     } as HostConfigDtoV2,
   };
 }
+
+const claimLatestBroadcast = () => {
+  const props = mockMultiModelPlaygroundCard.mock.calls
+    .map(([cardProps]) => cardProps)
+    .filter((cardProps) => cardProps.broadcastRequest)
+    .slice(-2);
+  act(() => {
+    for (const cardProps of props) {
+      cardProps.claimBroadcastDelivery(cardProps.broadcastRequest);
+    }
+  });
+};
 
 describe("PlaygroundMain — multi-host render path", () => {
   const defaultProps = {
@@ -2140,6 +2158,117 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(broadcastsAfter.length).toBeGreaterThan(0);
     const latestBroadcast = broadcastsAfter.at(-1)!;
     expect(latestBroadcast.text).toBe("hello hosts");
+  });
+
+  it("auto-runs its prompt as one broadcast to the compare cards", async () => {
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+    const onAutoRunSent = vi.fn();
+
+    render(
+      <PlaygroundMain
+        {...defaultProps}
+        autoRunInput="What can this server do?"
+        onAutoRunSent={onAutoRunSent}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        mockMultiModelPlaygroundCard.mock.calls.some(
+          ([props]) => props.broadcastRequest,
+        ),
+      ).toBe(true),
+    );
+    expect(onAutoRunSent).not.toHaveBeenCalled();
+    claimLatestBroadcast();
+    expect(onAutoRunSent).toHaveBeenCalledTimes(1);
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    const broadcasts = new Set(
+      mockMultiModelPlaygroundCard.mock.calls
+        .map(([props]) => props.broadcastRequest)
+        .filter(Boolean),
+    );
+    expect([...broadcasts].map((request) => request.text)).toEqual([
+      "What can this server do?",
+    ]);
+  });
+
+  it("holds the auto-run until every compare card finishes setup", async () => {
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+    const onAutoRunSent = vi.fn();
+    const props = {
+      ...defaultProps,
+      autoRunInput: "What can this server do?",
+      onAutoRunSent,
+    };
+    cardReadiness.ready = false;
+    try {
+      const view = render(<PlaygroundMain {...props} />);
+      await act(async () => {});
+      expect(onAutoRunSent).not.toHaveBeenCalled();
+
+      cardReadiness.ready = true;
+      view.rerender(<PlaygroundMain {...props} />);
+      await waitFor(() =>
+        expect(
+          mockMultiModelPlaygroundCard.mock.calls.some(
+            ([cardProps]) => cardProps.broadcastRequest,
+          ),
+        ).toBe(true),
+      );
+      claimLatestBroadcast();
+      expect(onAutoRunSent).toHaveBeenCalledTimes(1);
+    } finally {
+      cardReadiness.ready = true;
+    }
+  });
+
+  it("holds the auto-run while sending is blocked, e.g. model settings loading", async () => {
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+    const props = { ...defaultProps, autoRunInput: "What can this server do?" };
+    mockUseChatSession.submitBlocked = true;
+    try {
+      const view = render(<PlaygroundMain {...props} />);
+      await act(async () => {});
+      const queued = () =>
+        mockMultiModelPlaygroundCard.mock.calls.some(
+          ([cardProps]) => cardProps.broadcastRequest,
+        );
+      expect(queued()).toBe(false);
+
+      mockUseChatSession.submitBlocked = false;
+      view.rerender(<PlaygroundMain {...props} />);
+      await waitFor(() => expect(queued()).toBe(true));
+    } finally {
+      mockUseChatSession.submitBlocked = false;
+    }
   });
 
   it("gives each pane its own servers and its picked model", () => {

@@ -32,7 +32,6 @@ export const PROTOCOL_CHECK_FEATURES = {
   "localhost-host-rebinding-rejected": ["transport-behavior.origin-validation"],
   "localhost-host-valid-accepted": ["transport-behavior.origin-validation"],
   "server-sse-polling-session": ["transport-behavior.session-id"],
-  "server-accepts-multiple-post-streams": ["transport.streamable-http"],
   "server-sse-streams-functional": ["transport.streamable-http"],
   "notification-post-accepted": ["transport.streamable-http"],
   // A 405 passes too, so a pass shows a compliant endpoint, not a GET stream.

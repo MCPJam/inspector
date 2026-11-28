@@ -360,7 +360,9 @@ describe("the evaluator-vocabulary scanner", () => {
     // The shape that sank a real run: an untracked skill symlink whose target
     // was never checked out. It names no source, so there is nothing in it to
     // rename — and failing on it made the tool unrunnable on a normal laptop.
-    symlinkSync(join(root, "gone"), join(root, "sdk/src/b.ts"));
+    // A skill is a directory, so a junction is the faithful link on Windows,
+    // where it needs no admin rights; elsewhere the type is ignored.
+    symlinkSync(join(root, "gone"), join(root, "sdk/src/b.ts"), "junction");
     const { status, json } = await scan(root);
 
     expect(status).toBe(0);

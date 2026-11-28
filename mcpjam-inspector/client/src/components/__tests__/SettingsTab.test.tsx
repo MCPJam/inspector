@@ -15,16 +15,20 @@ vi.mock("convex/react", () => ({
   useAction: () => vi.fn(),
 }));
 
-const { mockSetThemeMode, mockUpdateThemeMode } = vi.hoisted(() => ({
-  mockSetThemeMode: vi.fn(),
-  mockUpdateThemeMode: vi.fn(),
-}));
+const { mockSetThemeMode, mockUpdateThemeMode, mockSetAutoCollapse } =
+  vi.hoisted(() => ({
+    mockSetThemeMode: vi.fn(),
+    mockUpdateThemeMode: vi.fn(),
+    mockSetAutoCollapse: vi.fn(),
+  }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: any) =>
     selector({
       themePreference: "light",
       setThemePreference: mockSetThemeMode,
+      autoCollapseSidebarEnabled: false,
+      setAutoCollapseSidebarEnabled: mockSetAutoCollapse,
     }),
 }));
 
@@ -122,5 +126,15 @@ describe("SettingsTab", () => {
     expect(screen.getByRole("radio", { name: "Light" })).toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: "System" }));
     expect(mockSetThemeMode).toHaveBeenCalledWith("system");
+  });
+
+  it("leaves sidebar auto-collapse off by default and lets users opt in", () => {
+    render(<SettingsTab />);
+    const toggle = screen.getByRole("switch", {
+      name: "Auto-collapse sidebar",
+    });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    expect(mockSetAutoCollapse).toHaveBeenCalledWith(true);
   });
 });

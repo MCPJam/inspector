@@ -118,7 +118,7 @@ beforeEach(() => {
     if (fn === "testSuites:getTestSuite") {
       return { _id: SUITE_ID, projectId: PROJECT_ID, name: "Smoke" };
     }
-    return {};
+    return null;
   });
   loadSuiteHostConfigMock.mockResolvedValue(PINNED_HOST);
   createAuthorizedManagerMock.mockResolvedValue({

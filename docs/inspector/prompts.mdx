@@ -1,0 +1,15 @@
+---
+title: "Prompts"
+description: "Fetch MCP prompt messages with test arguments and try them in Playground."
+icon: "message-square-code"
+---
+
+An MCP prompt is a reusable template your server exposes to clients. Use the **Prompts** tab to inspect the messages your server produces for specific arguments.
+
+1. [Connect your server](/inspector/connecting-servers) and open **Inspect** → **Prompts**. Select the server you want to test.
+2. Select a prompt to see its description and arguments. Fill in any required arguments and click **Run**.
+3. Review the messages the server returns, including their roles and content. Open the [traffic log](/inspector/debugging#json-rpc-logging) to see the `prompts/get` exchange.
+
+If a fetch returns `input_required` on MCP 2026-07-28, answer the [input dialog](/inspector/tools#multi-round-input-mcp-2026-07-28-input_required). Inspector retries the fetch with your answers.
+
+To use a prompt in a conversation, type `/` in [Playground](/inspector/playground) and select it.

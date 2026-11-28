@@ -138,10 +138,6 @@ vi.mock("@/shared/http-tool-calls", () => ({
   executeToolCallsFromMessages: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock("../mcpjam-tool-helpers", () => ({
-  serializeToolsForConvex: vi.fn(() => []),
-}));
-
 // The MCP-apps scrubbers walk the manager's real server list; the stub manager
 // below has no such list, and this matrix is not about scrubbing.
 vi.mock("../chat-helpers", async () => {
@@ -210,6 +206,7 @@ async function mcpjamVerdict(args: {
     ...(args.approvalMode ? { approvalMode: args.approvalMode } : {}),
   });
   await lastExecution;
+  expect(writtenChunks.some((chunk) => chunk?.type === "tool-input-error")).toBe(false);
   return writtenChunks.some(
     (chunk: any) => chunk?.type === "tool-approval-request",
   )

@@ -74,6 +74,7 @@ import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
 import { PlanChangeConfirmDialog } from "@/components/organization/PlanChangeConfirmDialog";
+import { SidebarProConfirmDialog } from "@/components/sidebar/sidebar-pro-upgrade-prompt";
 import { BillingIntervalToggle } from "@/components/organization/BillingIntervalToggle";
 import { CreditBalanceCard } from "@/components/billing/CreditBalanceCard";
 import { PaymentsHistorySection } from "@/components/billing/PaymentsHistorySection";
@@ -1255,6 +1256,7 @@ export function OrganizationBillingSection({
 
       {showPlanComparison ? (
         <>
+          <SidebarProConfirmDialog organizationId={organizationId} />
           {checkoutIntent ? (
             <div
               className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground"

@@ -110,6 +110,25 @@ export interface MultiPageFixtureOptions {
    */
   requireParamHeaders?: boolean;
   /**
+   * Under `requireParamHeaders`, refuse every `tools/call` for a declaring
+   * tool with `-32020`, whatever headers it carries: a server that keeps
+   * refusing, so a client's one resend is refused too.
+   */
+  refuseEveryParamHeader?: boolean;
+  /**
+   * Leave the `x-mcp-header` marks off the first N `tools/list` walks, then
+   * declare them. A client that listed before the change holds stale marks:
+   * it sends no `Mcp-Param-*` header and, under `requireParamHeaders`, is
+   * refused with `-32020` until it lists again. A walk is counted at its
+   * first page (the request with no cursor).
+   *
+   * Pair it with `toolsListTtlMs`: with no cache time the client lists again
+   * before every call, so it never holds the stale copy.
+   */
+  listingsWithoutTheMark?: number;
+  /** Let the client cache each `tools/list` page for this long (`ttlMs`). */
+  toolsListTtlMs?: number;
+  /**
    * Omit these tool names from `tools/list` while still SERVING them on
    * `tools/call` (and still enforcing their mirrored header under
    * `requireParamHeaders`).
@@ -128,6 +147,13 @@ export interface MultiPageFixtureOptions {
    * tools — `getToolsForAiSdk`, for one, builds its set from `tools/list`.
    */
   listSlowTool?: boolean;
+  /**
+   * Never answer `tools/list`: each one stays open until the client gives up
+   * on it, so the client's own timeout is what ends it.
+   */
+  holdToolsList?: boolean;
+  /** Answer every `tools/list` with a JSON-RPC error carrying this code. */
+  toolsListErrorCode?: number;
 }
 
 /** The SEP-2243 `HeaderMismatch` JSON-RPC error code (2026-07-28). */
@@ -157,6 +183,17 @@ function paginatedPage<T>(
 function parsePageCursor(cursor: string): number {
   const match = /^page-(\d+)$/.exec(cursor);
   return match ? Number(match[1]) : 0;
+}
+
+/**
+ * Settles only when the client gives up on the request. No timer, so a hold
+ * whose abort never arrives cannot keep the test process alive.
+ */
+function untilAborted(signal: AbortSignal): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    if (signal.aborted) reject(signal.reason);
+    signal.addEventListener("abort", () => reject(signal.reason));
+  });
 }
 
 /** Build the fixture's fresh item lists (called once per server build). */
@@ -203,9 +240,12 @@ function buildItems() {
 /**
  * Build a fresh low-level `Server` instance for the fixture.
  * `createMcpHandler` calls this per request — keep it side-effect-free.
+ * `listings` is the one piece of state shared across those builds (see
+ * {@link createMultiPageFixtureHandler}).
  */
 export function buildMultiPageFixtureServer(
-  options: MultiPageFixtureOptions = {}
+  options: MultiPageFixtureOptions = {},
+  listings: { walks: number } = { walks: 0 }
 ): Server {
   const caps = {
     tools: options.capabilities?.tools ?? true,
@@ -219,6 +259,16 @@ export function buildMultiPageFixtureServer(
       ...(caps.resources ? { resources: {} } : {}),
       ...(caps.prompts ? { prompts: {} } : {}),
     },
+    ...(options.toolsListTtlMs !== undefined
+      ? {
+          cacheHints: {
+            "tools/list": {
+              ttlMs: options.toolsListTtlMs,
+              cacheScope: "public" as const,
+            },
+          },
+        }
+      : {}),
   });
 
   const { tools, prompts, resources, resourceTemplates } = buildItems();
@@ -243,10 +293,33 @@ export function buildMultiPageFixtureServer(
       options.hideFromList && options.hideFromList.length > 0
         ? baseTools.filter((tool) => !options.hideFromList!.includes(tool.name))
         : baseTools;
-    server.setRequestHandler("tools/list", (request: any) => {
+    // What the server listed before it marked any argument: the same tools
+    // with every `x-mcp-header` removed.
+    const unmarkedTools = listedTools.map((tool: any) => ({
+      ...tool,
+      inputSchema: {
+        ...tool.inputSchema,
+        properties: Object.fromEntries(
+          Object.entries(tool.inputSchema.properties).map(
+            ([key, property]: [string, any]) => {
+              const { "x-mcp-header": _mark, ...rest } = property;
+              return [key, rest];
+            }
+          )
+        ),
+      },
+    }));
+    server.setRequestHandler("tools/list", async (request: any, ctx) => {
+      if (options.toolsListErrorCode !== undefined) {
+        throw new ProtocolError(options.toolsListErrorCode, "Server error");
+      }
+      if (options.holdToolsList) await untilAborted(ctx.mcpReq.signal);
+      const cursor = request?.params?.cursor;
+      if (cursor === undefined) listings.walks += 1;
+      const marked = listings.walks > (options.listingsWithoutTheMark ?? 0);
       const { items, nextCursor } = paginatedPage(
-        listedTools,
-        request?.params?.cursor,
+        marked ? listedTools : unmarkedTools,
+        cursor,
         options
       );
       return { tools: items, nextCursor };
@@ -345,7 +418,10 @@ export function buildMultiPageFixtureServer(
 
 /** A `createMcpHandler` bound to the fixture. Drive it with `handler.fetch(request)`. */
 export function createMultiPageFixtureHandler(options: MultiPageFixtureOptions = {}) {
-  return createMcpHandler(() => buildMultiPageFixtureServer(options));
+  // Kept here, not in the server build: `createMcpHandler` builds a fresh
+  // server for every request, so a count kept there would restart each time.
+  const listings = { walks: 0 };
+  return createMcpHandler(() => buildMultiPageFixtureServer(options, listings));
 }
 
 export interface ServedMultiPageFixture {
@@ -386,7 +462,8 @@ const REQUIRED_PARAM_HEADER_BY_TOOL: Record<string, string> = {
  */
 async function headerMismatchRejection(
   input: any,
-  init: any
+  init: any,
+  refuseEvery = false
 ): Promise<Response | undefined> {
   const isRequest = typeof Request !== "undefined" && input instanceof Request;
   const headers = new Headers(isRequest ? (input as Request).headers : undefined);
@@ -416,14 +493,15 @@ async function headerMismatchRejection(
     if (frame?.method !== "tools/call") continue;
     const required = REQUIRED_PARAM_HEADER_BY_TOOL[frame?.params?.name];
     if (required === undefined) continue;
-    if (headers.get(required) !== null) continue;
+    const present = headers.get(required) !== null;
+    if (present && !refuseEvery) continue;
     return new Response(
       JSON.stringify({
         jsonrpc: "2.0",
         id: frame.id ?? null,
         error: {
           code: HEADER_MISMATCH_ERROR_CODE,
-          message: `Mcp-Param-Message header is absent for tool ${frame.params.name}`,
+          message: `Mcp-Param-Message header is ${present ? "not accepted" : "absent"} for tool ${frame.params.name}`,
         },
       }),
       { status: 200, headers: { "content-type": "application/json" } }
@@ -471,7 +549,11 @@ export async function serveMultiPageFixtureOnPort(
   // `exchanges` — the test's evidence is precisely which headers arrived.
   const serve = async (input: any, init: any): Promise<Response> => {
     const rejection = options.requireParamHeaders
-      ? await headerMismatchRejection(input, init)
+      ? await headerMismatchRejection(
+          input,
+          init,
+          options.refuseEveryParamHeader
+        )
       : undefined;
     return rejection ?? ((handler.fetch as any)(input, init) as Promise<Response>);
   };

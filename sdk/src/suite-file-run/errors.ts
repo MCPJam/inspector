@@ -61,6 +61,9 @@ export const SUITE_FILE_RUN_ERROR_CODES = [
   "CASE_INVALID",
   "CASE_UNSUPPORTED",
   "JUDGE_UNSUPPORTED",
+  // Code evaluators, scripts or grading settings: they need MCPJam's cloud
+  // sandboxes, which a local run doesn't have (EFTW-90).
+  "CODE_GRADING_UNSUPPORTED",
   "IMPORT_INELIGIBLE",
   "TARGET_UNSUPPORTED",
   "SERVER_BINDING_INVALID",

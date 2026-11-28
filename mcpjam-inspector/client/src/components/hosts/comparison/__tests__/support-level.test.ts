@@ -321,4 +321,14 @@ describe("getCapabilityCaveats", () => {
       ),
     ).toEqual([]);
   });
+
+  it.each([
+    [{ form: {} }, "Advertises form elicitation."],
+    [{ form: {}, url: {} }, "Advertises form and URL elicitation."],
+  ])("describes the advertised elicitation modes", (elicitation, message) => {
+    expect(getCapabilityCaveats(
+      hostConfigField("capabilities.elicitation"),
+      makeConfig({ clientCapabilities: { elicitation } }),
+    )).toEqual([message]);
+  });
 });

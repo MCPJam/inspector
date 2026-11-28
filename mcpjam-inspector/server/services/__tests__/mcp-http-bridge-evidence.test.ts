@@ -411,3 +411,50 @@ describe("the recorded error is the wire error", () => {
     expect(order).toEqual([]);
   });
 });
+
+describe("for a 2026-07-28 client", () => {
+  const modernCall = {
+    ...callBody,
+    params: {
+      ...callBody.params,
+      _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+    },
+  };
+
+  async function recordedAndSent(executeTool: ReturnType<typeof vi.fn>) {
+    const recorded: unknown[] = [];
+    const { hook } = recordingHook({
+      afterExecute: async (context) => {
+        if (context.outcome.kind === "result") {
+          recorded.push(context.outcome.result);
+        }
+      },
+    });
+    const response = (await handleJsonRpc(
+      "srv-1",
+      modernCall,
+      managerWith(executeTool),
+      "manager",
+      { toolCallEvidence: hook },
+    )) as { result?: unknown };
+    return { recorded, sent: response.result };
+  }
+
+  it("records the result the client receives, resultType included", async () => {
+    const { recorded, sent } = await recordedAndSent(
+      vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] })),
+    );
+    expect(sent).toMatchObject({ resultType: "complete" });
+    expect(recorded).toEqual([sent]);
+  });
+
+  it("records the isError result a failed call answers with, resultType included", async () => {
+    const { recorded, sent } = await recordedAndSent(
+      vi.fn(async () => {
+        throw new Error("upstream down");
+      }),
+    );
+    expect(sent).toMatchObject({ isError: true, resultType: "complete" });
+    expect(recorded).toEqual([sent]);
+  });
+});

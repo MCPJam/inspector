@@ -1,4 +1,5 @@
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { isAbortError } from "../../../shared/abort-errors.js";
 import { sandboxSourceReceipt } from "../../services/sandbox-view-source.js";
 import {
   settingsOperationIntent,
@@ -149,6 +150,10 @@ async function route(c: Context, run: () => Promise<Response>) {
       .catch(() => undefined);
     return await run();
   } catch (error) {
+    // Only the client's own cancellation is quiet; an abort MCPJam raises
+    // itself (a server disconnected mid-connect) still reports below.
+    if (c.req.raw.signal.aborted && isAbortError(error))
+      return c.json(failure("PLUGIN_INSTANCE_CANCELLED"), 408);
     if (error instanceof z.ZodError)
       return c.json(failure("SETTINGS_REQUEST_INVALID"), 400);
     if (error instanceof PluginWorkspaceAdmissionError)

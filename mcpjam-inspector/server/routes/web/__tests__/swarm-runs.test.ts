@@ -18,6 +18,7 @@ const createJourneyRunMock = vi.fn();
 const startJourneyRunMock = vi.fn();
 const createAuthorizedManagerMock = vi.fn();
 const backgroundBearerMock = vi.fn();
+const resolvePluginServerIdsMock = vi.fn();
 
 vi.mock("../../../utils/v1-convex-token.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../../utils/v1-convex-token.js")>(),
@@ -57,6 +58,17 @@ vi.mock("../auth.js", async () => {
     ...actual,
     createAuthorizedManager: (...args: unknown[]) =>
       createAuthorizedManagerMock(...args),
+  };
+});
+
+vi.mock("../../../services/journeys/plugin-servers.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../services/journeys/plugin-servers.js")
+  >("../../../services/journeys/plugin-servers.js");
+  return {
+    ...actual,
+    resolveTargetPluginServerIds: (...args: unknown[]) =>
+      resolvePluginServerIdsMock(...args),
   };
 });
 
@@ -103,6 +115,7 @@ describe("web routes — swarm single-host launch", () => {
     createJourneyRunMock.mockReset();
     backgroundBearerMock.mockReset().mockResolvedValue(async () => token);
     startJourneyRunMock.mockReset().mockResolvedValue(undefined);
+    resolvePluginServerIdsMock.mockReset().mockResolvedValue([]);
     createAuthorizedManagerMock.mockReset().mockResolvedValue({
       // `listTools` is the readiness barrier the journey launcher awaits
       // before handing the manager to a session, so the stub has to answer it
@@ -440,6 +453,53 @@ describe("web routes — swarm single-host launch", () => {
 
     const options = createAuthorizedManagerMock.mock.calls[0]![7] as any;
     expect(options.xaaIssuer).toBe("https://issuer.test/api/web/xaa");
+  });
+
+  it("tells the caller it is waiting on the target only after MCPJam's own lookups succeed", async () => {
+    createJourneyRunMock.mockResolvedValue({
+      runId: "run-1",
+      projectId: "proj-1",
+      journeyRefId: "journey-1",
+      snapshot: snapshot(1),
+    });
+    const response = await postJson(
+      app,
+      "/api/web/swarm/journeys/journey-1/runs",
+      { projectId: "proj-1", launchKey: "lk-1" },
+      token
+    );
+    expect((await expectJson(response)).status).toBe(202);
+    await flushMacrotasks();
+    const startArgs = startJourneyRunMock.mock.calls[0]![0] as any;
+    const onConnecting = vi.fn();
+    const refused = Object.assign(new Error("connect ECONNREFUSED"), {
+      code: "ECONNREFUSED",
+    });
+
+    // The plugin re-gate and the authorize batch are Convex calls.
+    resolvePluginServerIdsMock.mockRejectedValueOnce(refused);
+    await expect(
+      startArgs.managerFactory(startArgs.hosts[0], { onConnecting })
+    ).rejects.toBe(refused);
+    createAuthorizedManagerMock.mockRejectedValueOnce(refused);
+    await expect(
+      startArgs.managerFactory(startArgs.hosts[0], { onConnecting })
+    ).rejects.toBe(refused);
+    expect(onConnecting).not.toHaveBeenCalled();
+
+    // The readiness barrier is the first call to the target's own server.
+    createAuthorizedManagerMock.mockResolvedValueOnce({
+      manager: {
+        listTools: async () => {
+          throw refused;
+        },
+        disconnectAllServers: async () => {},
+      },
+    });
+    await expect(
+      startArgs.managerFactory(startArgs.hosts[0], { onConnecting })
+    ).rejects.toBe(refused);
+    expect(onConnecting).toHaveBeenCalledOnce();
   });
 
   // Project-Environments Phase 4 guard. The environment→host resolution lives

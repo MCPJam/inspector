@@ -88,6 +88,28 @@ describe("POST /v1/projects/:projectId/servers/:serverId/tools/call", () => {
     }
   });
 
+  it("sends an operation key as the call's _meta so a retried write to a mock applies once", async () => {
+    const executeTool = vi.fn().mockResolvedValue({ content: [] });
+    stubConnection(executeTool, {
+      serverId: "s1",
+      toolName: "close_ticket",
+      parameters: { id: "123" },
+      operationKey: "retry-1",
+    });
+    await postToolsCall();
+    expect(executeTool).toHaveBeenCalledWith("s1", "close_ticket", { id: "123" }, {
+      metadata: { "mcpjam.com/operationKey": "retry-1" },
+    });
+  });
+
+  it("accepts a key of 1 to 256 characters and refuses any other", async () => {
+    const { toolsExecuteSchema } = await import("../../web/auth.js");
+    const base = { projectId: "p1", serverId: "s1", toolName: "echo" };
+    expect(toolsExecuteSchema.safeParse({ ...base, operationKey: "x".repeat(256) }).success).toBe(true);
+    expect(toolsExecuteSchema.safeParse({ ...base, operationKey: "" }).success).toBe(false);
+    expect(toolsExecuteSchema.safeParse({ ...base, operationKey: "x".repeat(257) }).success).toBe(false);
+  });
+
   it("clamps durationMs to zero when the clock moves backward", async () => {
     const executeTool = vi.fn().mockResolvedValue({
       content: [{ type: "text", text: "ok" }],

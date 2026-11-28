@@ -193,6 +193,13 @@ interface TextPattern {
   reserved: readonly string[];
 }
 
+/**
+ * What a `rootOnly` route may follow in text: the start of the text, a
+ * delimiter, or a URL's host (`https://host:port`, `//host`, raw or
+ * percent-encoded). Never a path segment.
+ */
+const ROOT_LEAD = `(?:^|[\\s"'<>()[\\]\`|,;=]|(?://|%2[Ff]%2[Ff])(?:[^/?#\\s"'<>()[\\]\`%]|%(?!2[Ff]|3[Ff]|23)[0-9A-Fa-f]{2})*)`;
+
 function textPatternFor(compiled: CompiledRoute): TextPattern {
   const segments = compiled.route.pattern.split("/").filter(Boolean);
   const source = segments
@@ -202,9 +209,11 @@ function textPatternFor(compiled: CompiledRoute): TextPattern {
     .join(SLASH);
   // No boundary before the leading slash: in prose the route follows a host
   // (`app.mcpjam.com/results/…`) as often as a space, and the slash itself is
-  // what keeps `/foo-results/…` out.
+  // what keeps `/foo-results/…` out. A `rootOnly` route's prefix also ends
+  // longer paths, so it needs the lead.
+  const lead = compiled.route.rootOnly ? ROOT_LEAD : "";
   return {
-    regex: new RegExp(`${SLASH}${source}`, "gi"),
+    regex: new RegExp(`${lead}${SLASH}${source}`, "gi"),
     reserved: compiled.route.reserved ?? [],
   };
 }

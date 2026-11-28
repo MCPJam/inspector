@@ -37,176 +37,14 @@ import { z } from "zod";
 import { buildWebhookHeaders } from "../../src/events/standard-webhooks.js";
 import { decodeWebhookSecret } from "../../src/mcp-client-manager/events-ext.js";
 import { canonicalJson } from "../../src/contract/canonical.js";
+import { createCatalogFixture } from "./events-catalog-fixture.js";
 
-export const EVENTS_FIXTURE_INFO = {
-  name: "mcpjam-events-fixture",
-  version: "1.0.0",
-} as const;
-
-/** The draft's error codes, as the fixture answers them. */
-export const FIXTURE_ERRORS = {
-  InvalidParams: -32602,
-  NotFound: -32011,
-  Forbidden: -32012,
-  ResourceExhausted: -32013,
-  Unsupported: -32014,
-  CallbackEndpointError: -32015,
-} as const;
-
-export const FIXTURE_EVENT_TYPES = [
-  {
-    name: "comment.created",
-    description: "A new review comment was added to the specified document.",
-    delivery: ["webhook", "poll", "push"],
-    inputSchema: {
-      type: "object",
-      properties: {
-        document_id: {
-          type: "string",
-          description: "ID of the document to monitor for new comments.",
-        },
-      },
-      required: ["document_id"],
-      additionalProperties: false,
-    },
-    payloadSchema: {
-      type: "object",
-      properties: {
-        document_id: { type: "string" },
-        comment_id: { type: "string" },
-        text: { type: "string" },
-      },
-      required: ["document_id", "comment_id", "text"],
-    },
-  },
-  {
-    name: "build.failed",
-    description: "A CI build failed.",
-    delivery: ["poll"],
-    inputSchema: {
-      type: "object",
-      properties: { branch: { type: "string" } },
-    },
-    payloadSchema: {
-      type: "object",
-      properties: { branch: { type: "string" }, buildId: { type: "string" } },
-    },
-  },
-] as const;
-
-export interface EventsFixtureMisbehavior {
-  /** Activate delivery without the verification handshake. */
-  skipConsent?: boolean;
-  /** Sign deliveries with a secret the receiver never saw. */
-  badSignature?: boolean;
-  /** Return a subscription id that does not match the derived one. */
-  wrongId?: boolean;
-  /** Return a DIFFERENT id on every subscribe (a server that re-keys). */
-  conflictingId?: boolean;
-  /**
-   * Create/refresh the subscription, then fail the response — the client
-   * cannot tell whether it landed ("response lost"). Counts down per call.
-   */
-  dropSubscribeResponses?: number;
-  /** POST one event to the callback BEFORE answering subscribe. */
-  eventBeforeResponse?: boolean;
-  /** Put a stale `webhook-timestamp` on deliveries. */
-  staleTimestamp?: boolean;
-  /** Echo the secret back in an error message (redaction test). */
-  echoSecretInError?: boolean;
-  /** Answer `events/unsubscribe` NotFound even for live subscriptions. */
-  unsubscribeNotFound?: boolean;
-}
-
-export interface EventsFixtureOptions {
-  /** Labelled non-conformant: accept `http://` callback URLs. */
-  allowInsecureCallbacks?: boolean;
-  /**
-   * Private destinations explicitly configured as allowed (the draft's
-   * "unless explicitly configured"). Default: loopback only, which is where
-   * every test receiver lives. Any other private address is refused.
-   */
-  allowPrivateHosts?: string[];
-  /** `fetch` used for webhook deliveries (e.g. one trusting a test CA). */
-  deliveryFetch?: typeof fetch;
-  /** Bearer tokens accepted as principals. Absent ⇒ "anonymous" principal. */
-  acceptedTokens?: string[];
-  /** Server-side minimum grant (clamp-up floor). Default 60 s. */
-  minTtlMs?: number;
-  /** Server-side maximum grant. Default 1 h. */
-  maxTtlMs?: number;
-  /** Grant `refreshBefore: null` when `ttlMs: null` is requested. */
-  allowNoExpiry?: boolean;
-  /** Events kept per type for poll/replay. Default 100. */
-  retainEvents?: number;
-  /** `nextPollMs` answered on poll. Default 1000. */
-  nextPollMs?: number;
-  /** Heartbeat interval on `events/stream`, ms. Default 30 s. */
-  heartbeatMs?: number;
-  now?: () => number;
-  misbehavior?: EventsFixtureMisbehavior;
-}
-
-export interface FixtureSubscription {
-  id: string;
-  principal: string;
-  url: string;
-  name: string;
-  arguments: Record<string, unknown>;
-  secrets: string[];
-  refreshBefore: number | null;
-  verified: boolean;
-  active: boolean;
-}
-
-export interface DeliveryRecord {
-  subscriptionId: string;
-  url: string;
-  webhookId: string;
-  kind: "event" | "verification" | "gap" | "terminated";
-  status: number | "network_error";
-  body: string;
-}
-
-interface StoredEvent {
-  position: number;
-  eventId: string;
-  name: string;
-  timestamp: string;
-  data: Record<string, unknown>;
-}
-
-export interface EventsFixtureHandle {
-  url: string;
-  /** Every JSON-RPC request the fixture received (params included). */
-  received: Array<{ method: string; params?: unknown; principal: string }>;
-  subscriptions: () => FixtureSubscription[];
-  deliveries: DeliveryRecord[];
-  misbehave: (patch: EventsFixtureMisbehavior) => void;
-  /**
-   * Emit an event: appended to the poll log, POSTed to every matching live
-   * webhook subscription, and notified on every matching push stream.
-   */
-  emit: (
-    name: string,
-    data: Record<string, unknown>,
-    options?: { eventId?: string }
-  ) => Promise<StoredEvent>;
-  /** POST a control envelope to a subscription's callback. */
-  sendControl: (
-    subscriptionId: string,
-    body:
-      | { type: "gap"; cursor: string | null }
-      | { type: "terminated"; error: { code: number; message: string; data?: unknown } }
-  ) => Promise<DeliveryRecord>;
-  /** Drop the oldest events so older cursors become stale (truncated). */
-  truncateLog: (keepLast: number) => void;
-  /** Open push streams, by request id. */
-  openStreams: () => number;
-  /** Destroy every open HTTP response — a server dropping its streams. */
-  dropStreams: () => void;
-  close: () => Promise<void>;
-}
+export * from "./events-fixture-contract.js";
+import {
+  BETA_ERRORS, EVENTS_FIXTURE_INFO, FIXTURE_ERRORS, FIXTURE_EVENT_TYPES, betaEventTypes,
+  type EventsFixtureOptions, type EventsFixtureHandle, type EventsFixtureMisbehavior,
+  type DeliveryRecord, type FixtureSubscription, type StoredEvent,
+} from "./events-fixture-contract.js";
 
 class JsonRpcFailure extends Error {
   constructor(
@@ -257,8 +95,10 @@ const looseParams = z.looseObject({});
 export async function startEventsFixture(
   options: EventsFixtureOptions = {}
 ): Promise<EventsFixtureHandle> {
+  const errors = options.beta ? BETA_ERRORS : FIXTURE_ERRORS;
   const now = options.now ?? (() => Date.now());
   const misbehavior: EventsFixtureMisbehavior = { ...options.misbehavior };
+  const catalog = createCatalogFixture(() => !misbehavior.omitCatalogAcknowledgement);
   const deliveryFetch = options.deliveryFetch ?? fetch;
   const received: EventsFixtureHandle["received"] = [];
   const deliveries: DeliveryRecord[] = [];
@@ -283,7 +123,7 @@ export async function startEventsFixture(
   const parseCursor = (cursor: unknown): number | null => {
     if (cursor === null || cursor === undefined) return null;
     if (typeof cursor !== "string" || !/^c\d+$/.test(cursor)) {
-      throw new JsonRpcFailure(FIXTURE_ERRORS.InvalidParams, "Malformed cursor");
+      throw new JsonRpcFailure(errors.InvalidParams, "Malformed cursor");
     }
     return Number(cursor.slice(1));
   };
@@ -299,7 +139,7 @@ export async function startEventsFixture(
   const eventType = (name: unknown) => {
     const type = FIXTURE_EVENT_TYPES.find((entry) => entry.name === name);
     if (!type) {
-      throw new JsonRpcFailure(FIXTURE_ERRORS.NotFound, "NotFound", {
+      throw new JsonRpcFailure(errors.NotFound, "NotFound", {
         kind: "event",
       });
     }
@@ -311,7 +151,7 @@ export async function startEventsFixture(
     args: unknown
   ): Record<string, unknown> => {
     if (typeof args !== "object" || args === null || Array.isArray(args)) {
-      throw new JsonRpcFailure(FIXTURE_ERRORS.InvalidParams, "arguments must be an object");
+      throw new JsonRpcFailure(errors.InvalidParams, "arguments must be an object");
     }
     const schema = type.inputSchema as {
       required?: readonly string[];
@@ -321,7 +161,7 @@ export async function startEventsFixture(
     for (const required of schema.required ?? []) {
       if (typeof (args as Record<string, unknown>)[required] !== "string") {
         throw new JsonRpcFailure(
-          FIXTURE_ERRORS.InvalidParams,
+          errors.InvalidParams,
           `arguments.${required} is required`
         );
       }
@@ -330,7 +170,7 @@ export async function startEventsFixture(
       for (const key of Object.keys(args)) {
         if (!(key in schema.properties)) {
           throw new JsonRpcFailure(
-            FIXTURE_ERRORS.InvalidParams,
+            errors.InvalidParams,
             `arguments.${key} is not allowed`
           );
         }
@@ -344,7 +184,7 @@ export async function startEventsFixture(
     kind: DeliveryRecord["kind"],
     webhookId: string,
     body: string
-  ): Promise<{ record: DeliveryRecord; response?: Response }> => {
+  ): Promise<{ record: DeliveryRecord; response?: Response; networkReason?: "tls_error" | "timeout" }> => {
     const timestampSeconds = Math.floor(now() / 1000) - (misbehavior.staleTimestamp ? 3600 : 0);
     const secrets = misbehavior.badSignature
       ? [`whsec_${randomBytes(32).toString("base64")}`]
@@ -357,6 +197,7 @@ export async function startEventsFixture(
       subscriptionId: subscription.id,
     });
     let response: Response | undefined;
+    let networkReason: "tls_error" | "timeout" | undefined;
     let status: DeliveryRecord["status"];
     try {
       response = await deliveryFetch(subscription.url, {
@@ -368,8 +209,15 @@ export async function startEventsFixture(
         signal: AbortSignal.timeout(5_000),
       });
       status = response.status;
-    } catch {
+    } catch (error) {
       status = "network_error";
+      const cause = error instanceof Error ? error.cause : undefined;
+      const code = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+      if (typeof code === "string" && /CERT|TLS|SELF_SIGNED|VERIFY_LEAF/.test(code)) {
+        networkReason = "tls_error";
+      } else if (error instanceof Error && error.name === "TimeoutError") {
+        networkReason = "timeout";
+      }
     }
     const record: DeliveryRecord = {
       subscriptionId: subscription.id,
@@ -380,20 +228,20 @@ export async function startEventsFixture(
       body,
     };
     deliveries.push(record);
-    return { record, response };
+    return { record, response, networkReason };
   };
 
   const verify = async (subscription: FixtureSubscription): Promise<void> => {
     const challenge = randomBytes(16).toString("hex");
-    const { record, response } = await post(
+    const { record, response, networkReason } = await post(
       subscription,
       "verification",
       `msg_verification_${randomBytes(6).toString("hex")}`,
       JSON.stringify({ type: "verification", challenge })
     );
     if (record.status === "network_error") {
-      throw new JsonRpcFailure(FIXTURE_ERRORS.CallbackEndpointError, "CallbackEndpointError", {
-        reason: "connection_refused",
+      throw new JsonRpcFailure(errors.CallbackEndpointError, "CallbackEndpointError", {
+        reason: networkReason ?? "connection_refused",
       });
     }
     let echoed: unknown;
@@ -403,7 +251,7 @@ export async function startEventsFixture(
       echoed = undefined;
     }
     if (record.status < 200 || record.status >= 300 || echoed !== challenge) {
-      throw new JsonRpcFailure(FIXTURE_ERRORS.CallbackEndpointError, "CallbackEndpointError", {
+      throw new JsonRpcFailure(errors.CallbackEndpointError, "CallbackEndpointError", {
         reason: "challenge_failed",
       });
     }
@@ -417,22 +265,33 @@ export async function startEventsFixture(
       data: event.data,
       cursor: cursorFor(event.position),
     });
-    return post(subscription, "event", event.eventId, body);
+    return post(subscription, "event", options.beta && !misbehavior.reuseEventIdAsWebhookId ? randomBytes(24).toString("hex") : event.eventId, body);
   };
 
   const buildServer = (ctx: { requestInfo?: Request }) => {
     const server = new Server(EVENTS_FIXTURE_INFO, {
       // `events` is not in the server SDK's capability type; it must still
       // reach the wire, which is the whole point of the capture seam.
-      capabilities: { tools: {}, events: { listChanged: true } } as never,
+      capabilities: options.beta
+        ? { tools: {}, extensions: { "io.modelcontextprotocol/events": { listChanged: true } } }
+        : { tools: {}, events: { listChanged: true } } as never,
     });
     const principal = principalOf(ctx.requestInfo);
     const record = (method: string, params: unknown) => {
+      if (options.beta && method.startsWith("events/") && method !== "events/list") {
+        const headers = ctx.requestInfo?.headers;
+        const body = z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()) }).parse(params);
+        if (headers?.get("mcp-name") !== body.name || (body.arguments.document_id !== undefined &&
+            headers.get("mcp-param-document") !== body.arguments.document_id)) {
+          throw new JsonRpcFailure(-32020, "HeaderMismatch");
+        }
+      }
       received.push({ method, params, principal });
     };
     const guard = <T>(fn: () => Promise<T> | T) => async () => {
       try {
-        return await fn();
+        const result = await fn();
+        return options.beta ? { ...result, resultType: "complete" } : result;
       } catch (error) {
         if (error instanceof JsonRpcFailure) {
           const failure = new Error(error.message) as Error & {
@@ -465,6 +324,7 @@ export async function startEventsFixture(
     }));
     server.setRequestHandler("tools/call", async (request: any) => {
       record("tools/call", request.params);
+      await options.onToolCall?.();
       return {
         content: [
           {
@@ -478,7 +338,10 @@ export async function startEventsFixture(
     server.setRequestHandler("events/list", { params: looseParams }, (params) =>
       guard(() => {
         record("events/list", params);
-        return { events: FIXTURE_EVENT_TYPES.map((type) => ({ ...type })) };
+        if (catalog.replacement) {
+          return { resultType: "complete", events: [{ name: catalog.replacement, delivery: ["poll"] }] };
+        }
+        return { resultType: "complete", events: options.beta ? betaEventTypes() : FIXTURE_EVENT_TYPES };
       })()
     );
 
@@ -487,7 +350,7 @@ export async function startEventsFixture(
         record("events/poll", params);
         const type = eventType(params.name);
         if (!(type.delivery as readonly string[]).includes("poll")) {
-          throw new JsonRpcFailure(FIXTURE_ERRORS.Unsupported, "Unsupported", {
+          throw new JsonRpcFailure(errors.Unsupported, "Unsupported", {
             feature: "deliveryMode",
             value: "poll",
           });
@@ -537,11 +400,11 @@ export async function startEventsFixture(
       guard(async () => {
         record("events/subscribe", params);
         if (!principal) {
-          throw new JsonRpcFailure(FIXTURE_ERRORS.Forbidden, "Forbidden");
+          throw new JsonRpcFailure(errors.Forbidden, "Forbidden");
         }
         const type = eventType(params.name);
         if (!(type.delivery as readonly string[]).includes("webhook")) {
-          throw new JsonRpcFailure(FIXTURE_ERRORS.Unsupported, "Unsupported", {
+          throw new JsonRpcFailure(errors.Unsupported, "Unsupported", {
             feature: "deliveryMode",
             value: "webhook",
           });
@@ -551,7 +414,7 @@ export async function startEventsFixture(
         const secret = delivery.secret;
         if (typeof secret !== "string" || !decodeWebhookSecret(secret)) {
           throw new JsonRpcFailure(
-            FIXTURE_ERRORS.InvalidParams,
+            errors.InvalidParams,
             misbehavior.echoSecretInError
               ? `delivery.secret ${String(secret)} is not a valid whsec_ value`
               : "delivery.secret must be whsec_ + base64 of 24–64 bytes"
@@ -559,7 +422,7 @@ export async function startEventsFixture(
         }
         if (misbehavior.echoSecretInError) {
           throw new JsonRpcFailure(
-            FIXTURE_ERRORS.InvalidParams,
+            errors.InvalidParams,
             `refusing delivery.secret ${secret}`
           );
         }
@@ -567,18 +430,18 @@ export async function startEventsFixture(
         try {
           url = new URL(String(delivery.url));
         } catch {
-          throw new JsonRpcFailure(FIXTURE_ERRORS.InvalidParams, "delivery.url is malformed");
+          throw new JsonRpcFailure(errors.InvalidParams, "delivery.url is malformed");
         }
         if (url.protocol !== "https:" && !options.allowInsecureCallbacks) {
           throw new JsonRpcFailure(
-            FIXTURE_ERRORS.InvalidParams,
+            errors.InvalidParams,
             "delivery.url must be https"
           );
         }
         const allowedPrivate = options.allowPrivateHosts ?? ["127.0.0.1", "localhost"];
         if (isPrivateHost(url.hostname) && !allowedPrivate.includes(url.hostname)) {
           throw new JsonRpcFailure(
-            FIXTURE_ERRORS.InvalidParams,
+            errors.InvalidParams,
             "delivery.url resolves to a non-public address"
           );
         }
@@ -661,7 +524,7 @@ export async function startEventsFixture(
       guard(() => {
         record("events/unsubscribe", params);
         if (!principal) {
-          throw new JsonRpcFailure(FIXTURE_ERRORS.Forbidden, "Forbidden");
+          throw new JsonRpcFailure(errors.Forbidden, "Forbidden");
         }
         const key = derivedId(
           principal,
@@ -670,7 +533,7 @@ export async function startEventsFixture(
           params.arguments ?? {}
         );
         if (misbehavior.unsubscribeNotFound || !subscriptions.has(key)) {
-          throw new JsonRpcFailure(FIXTURE_ERRORS.NotFound, "NotFound", {
+          throw new JsonRpcFailure(errors.NotFound, "NotFound", {
             kind: "subscription",
           });
         }
@@ -697,7 +560,7 @@ export async function startEventsFixture(
         const streamKey = `${principal}:${String(requestId)}`;
         await notify({
           method: "notifications/events/active",
-          params: { cursor: cursorFor(position), truncated: false },
+          params: { cursor: cursorFor(position), truncated: false, ...(options.beta ? { heartbeatMs: options.heartbeatMs ?? 30_000 } : {}) },
         });
         // Replay from a supplied cursor (reconnect-with-cursor).
         const from = parseCursor(params.cursor);
@@ -734,7 +597,7 @@ export async function startEventsFixture(
           clearInterval(heartbeat);
           streams.delete(streamKey);
         }
-        return { _meta: {} };
+        return { _meta: options.beta ? meta : {} };
       })()
     );
 
@@ -763,7 +626,16 @@ export async function startEventsFixture(
   };
 
   const handler = createMcpHandler((ctx) => buildServer(ctx as never));
-  const nodeHandler = toNodeHandler(handler as never) as (
+  const nodeHandler = toNodeHandler({
+    fetch(request, requestOptions) {
+      if (options.beta && request.headers.get("mcp-method") === "subscriptions/listen") {
+        return catalog.listen(request, (params) => received.push({
+          method: "subscriptions/listen", params, principal: principalOf(request),
+        }));
+      }
+      return handler.fetch(request, requestOptions);
+    },
+  }) as (
     req: http.IncomingMessage,
     res: http.ServerResponse
   ) => void;
@@ -781,6 +653,8 @@ export async function startEventsFixture(
   return {
     url: `http://127.0.0.1:${address.port}/mcp`,
     received,
+    replaceCatalog: catalog.change,
+    openCatalogStreams: catalog.openStreams,
     subscriptions: () => [...subscriptions.values()].map((entry) => ({ ...entry })),
     deliveries,
     misbehave: (patch) => Object.assign(misbehavior, patch),

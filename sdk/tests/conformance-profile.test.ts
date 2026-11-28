@@ -32,13 +32,21 @@ describe("conformance profile manifest", () => {
     expect(unknown).toEqual([]);
   });
 
-  it("scores exactly the 44 checks of v2026-11-02.1", () => {
-    // The pre-gap-program pool of 36 plus the eight gap-program checks the
-    // revision states as requirements. Adding a check without a profile bump
+  it("scores exactly the 43 checks of v2026-11-25.1", () => {
+    // The pre-gap-program pool of 36, less Multiple POST Streams, plus the
+    // eight gap-program checks the revision states as requirements. Adding a check without a profile bump
     // keeps this green (the check lands pending, which is the intent);
     // silently PROMOTING one moves the count and fails.
-    expect(PROFILE.version).toBe("2026-11-02.1");
-    expect(PROFILE.scored).toHaveLength(44);
+    expect(PROFILE.version).toBe("2026-11-25.1");
+    expect(PROFILE.scored).toHaveLength(43);
+  });
+
+  it("no longer scores the check that graded a client rule", () => {
+    // v2026-11-02.1 scored Multiple POST Streams. The check is gone from the
+    // suite, so it must be gone from the manifest too: an entry for a deleted
+    // check shrinks nothing visibly and still changes the digest.
+    expect(PROFILE.scored).not.toContain("server-accepts-multiple-post-streams");
+    expect(MCP_CHECK_IDS).not.toContain("server-accepts-multiple-post-streams");
   });
 
   it("states exactly which shipped checks it leaves unscored", () => {
@@ -119,10 +127,14 @@ describe("the mcp-tasks profile", () => {
     expect([...TASKS.scored].sort()).toEqual([...MCP_TASKS_CHECK_IDS].sort());
   });
 
-  it("bumps to v2026-11-02.1 for the two stricter -32021 checks", () => {
-    // Same checks; a refusal that is not -32021 now fails, and so does a
-    // -32021 that does not name the tasks extension.
-    expect(TASKS.version).toBe("2026-11-02.1");
+  it("bumps to v2026-11-26.1 and scores 12 checks without the two client checks", () => {
+    // v2026-11-02.1 scored tasks-wire-resolvable and tasks-declaration-hygiene.
+    // Both graded MCPJam's own client and are gone from the suite, so they are
+    // gone from the manifest too; their rules are client tests in CI.
+    expect(TASKS.version).toBe("2026-11-26.1");
+    expect(TASKS.scored).toHaveLength(12);
+    expect(TASKS.scored).not.toContain("tasks-wire-resolvable");
+    expect(TASKS.scored).not.toContain("tasks-declaration-hygiene");
   });
 });
 

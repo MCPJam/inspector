@@ -42,6 +42,49 @@ describe("createRemoteBrowserAuthorizationController", () => {
     await expect(authorizePromise).rejects.toThrow(/state mismatch/i);
   });
 
+  it("rejects authorize when state is missing but one was expected", async () => {
+    const controller = createRemoteBrowserAuthorizationController({
+      redirectUrl: "https://inspector.example/oauth/callback",
+    });
+    const session = await controller.createSession();
+
+    const authorizePromise = session.authorize({
+      authorizationUrl: "https://auth.example/authorize",
+      expectedState: "expected",
+      timeoutMs: 5_000,
+    });
+
+    controller.deliverCode({ code: "c" });
+
+    await expect(authorizePromise).rejects.toThrow(
+      /state mismatch.*received missing/i,
+    );
+  });
+
+  it("passes the callback's iss on to the runner", async () => {
+    const controller = createRemoteBrowserAuthorizationController({
+      redirectUrl: "https://inspector.example/oauth/callback",
+    });
+    const session = await controller.createSession();
+
+    const authorizePromise = session.authorize({
+      authorizationUrl: "https://auth.example/authorize",
+      expectedState: "abc",
+      timeoutMs: 5_000,
+    });
+
+    controller.deliverCode({
+      code: "c",
+      state: "abc",
+      iss: "https://auth.example",
+    });
+
+    await expect(authorizePromise).resolves.toEqual({
+      code: "c",
+      iss: "https://auth.example",
+    });
+  });
+
   it("propagates fail() to a pending authorize", async () => {
     const controller = createRemoteBrowserAuthorizationController({
       redirectUrl: "https://inspector.example/oauth/callback",

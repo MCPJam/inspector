@@ -5,6 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { getFunctionName, type FunctionReference } from "convex/server";
 
 const {
   drainState,
@@ -126,16 +127,20 @@ beforeEach(() => {
   process.env.CONVEX_URL = "https://convex.example.com";
   process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
   validateGuestTokenMock.mockResolvedValue({ valid: false });
-  convexQueryMock.mockImplementation(async (fn: string) =>
-    fn === "testSuites:getTestSuiteRun"
-      ? {
-          _id: RUN_ID,
-          suiteId: SUITE_ID,
-          projectId: PROJECT_ID,
-          status: "running",
-        }
-      : { _id: SUITE_ID, projectId: PROJECT_ID, name: "Smoke" },
-  );
+  convexQueryMock.mockImplementation(async (ref: string | FunctionReference<"query">) => {
+    const name = typeof ref === "string" ? ref : getFunctionName(ref);
+    if (name === "testSuiteAccountSelections:getEvalRunAccountPlan") return null;
+    if (name === "testSuiteAccountSelections:getPersonalSuiteAccountChoices") return [];
+    if (name === "testSuites:getTestSuiteRun") {
+      return {
+        _id: RUN_ID,
+        suiteId: SUITE_ID,
+        projectId: PROJECT_ID,
+        status: "running",
+      };
+    }
+    return { _id: SUITE_ID, projectId: PROJECT_ID, name: "Smoke" };
+  });
   loadSuiteHostConfigMock.mockResolvedValue({});
   createAuthorizedManagerMock.mockResolvedValue({
     manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },

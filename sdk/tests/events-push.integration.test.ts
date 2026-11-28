@@ -125,7 +125,7 @@ describe("events/stream push runtime", () => {
     await waitFor(() => fixture.openStreams() === 1);
     await fixture.emit("comment.created", { document_id: "other", comment_id: "9", text: "not ours" });
     await new Promise((resolve) => setTimeout(resolve, 400));
-    // No reconnect: heartbeats (every 40 ms) beat the 120 ms liveness window.
+    // No reconnect: heartbeats (every 40 ms) beat the 180 ms liveness window.
     expect(opens).toEqual(["start"]);
     expect(cursors.at(-1)).toBe("c1");
   });

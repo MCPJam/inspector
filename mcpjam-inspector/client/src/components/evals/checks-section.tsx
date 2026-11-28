@@ -1,4 +1,5 @@
 import { PAPER_FIELD_STYLES } from "./paper-field-styles";
+import { DeclaredSchemaFields } from "./declared-schema-fields";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 /**
  * Authoring UI for the deterministic predicate gate ("Checks" in user-facing
@@ -58,6 +59,7 @@ import type {
   CasePredicates,
 } from "@/shared/eval-matching";
 import {
+  DECLARED_OUTPUT_SCHEMA,
   MATCH_PATTERN_FLAGS,
   matchBoundsError,
   matchPathError,
@@ -68,6 +70,7 @@ import {
   MAX_MATCH_PATTERNS,
   parseMatchPath,
   predicateSchema,
+  type AuthoredResultSchema,
   type MatchPatternFlags,
   type MatchUnit,
 } from "@mcpjam/sdk/predicates";
@@ -132,6 +135,7 @@ export interface ChecksSectionProps {
    * than gate (swarm rubrics) pass their own sentence.
    */
   emptyStateText?: string;
+  addPlaceholder?: string;
   /** Hide the Add-check button (used by the inherited read-only summary). */
   readOnly?: boolean;
   /**
@@ -281,6 +285,7 @@ export function ChecksSection({
   title = "Default checks",
   description,
   emptyStateText,
+  addPlaceholder,
   readOnly = false,
   hideAddButton = false,
   hideEmptyState = false,
@@ -413,6 +418,7 @@ export function ChecksSection({
         {!readOnly && !hideAddButton ? (
           <AddCheckMenu
             onAdd={addOfKind}
+            placeholder={addPlaceholder}
             allowedKinds={
               globalGatesMenu ? GLOBAL_POLICY_MENU_KINDS : allowedKinds
             }
@@ -430,6 +436,7 @@ export function AddCheckMenu({
   allowedKinds,
   globalGatesMenu = false,
   noun = "check",
+  placeholder = `Add ${noun}…`,
 }: {
   onAdd: (kind: Predicate["type"]) => void;
   /** When set, restrict the menu to these kinds. */
@@ -437,6 +444,7 @@ export function AddCheckMenu({
   globalGatesMenu?: boolean;
   /** @see ChecksSectionProps.noun */
   noun?: string;
+  placeholder?: string;
 }) {
   if (globalGatesMenu) {
     return <AddGlobalGateMenu onAdd={onAdd} />;
@@ -463,7 +471,7 @@ export function AddCheckMenu({
       >
         <SelectTrigger className="h-8 w-auto gap-2 text-xs">
           <Plus className="h-3.5 w-3.5" />
-          <SelectValue placeholder={`Add ${noun}…`} />
+          <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
           {kinds.map((kind) => (
@@ -1118,7 +1126,13 @@ function CheckFields({
         />
       );
     case "toolResultMatchesSchema":
-      return (
+      return predicate.schema === DECLARED_OUTPUT_SCHEMA ? (
+        <DeclaredSchemaFields
+          onChange={onChange}
+          predicate={predicate}
+          readOnly={readOnly}
+        />
+      ) : (
         <ToolResultSchemaFields
           predicate={predicate}
           onChange={onChange}
@@ -3561,19 +3575,35 @@ function schemaKeyOf(schema: unknown): string {
   return schema === undefined ? "\u0000undefined" : JSON.stringify(schema);
 }
 
+function isAuthoredResultSchema(value: unknown): value is AuthoredResultSchema {
+  return (
+    typeof value === "boolean" ||
+    (typeof value === "object" && value !== null && !Array.isArray(value))
+  );
+}
+
 function parseSchemaDraft(
   text: string,
 ):
-  | { ok: true; parsed: unknown; error: null }
+  | { ok: true; parsed: AuthoredResultSchema; error: null }
   | { ok: false; parsed: null; error: string } {
   try {
-    return { ok: true, parsed: JSON.parse(text), error: null };
+    const parsed: unknown = JSON.parse(text);
+    if (isAuthoredResultSchema(parsed)) {
+      return { ok: true, parsed, error: null };
+    }
+    return {
+      ok: false,
+      parsed: null,
+      error: "Use a JSON object, true, or false.",
+    };
   } catch (parseError) {
     return {
       ok: false,
       parsed: null,
-      error:
-        parseError instanceof Error ? parseError.message : String(parseError),
+      error: parseError instanceof SyntaxError
+        ? "Not valid JSON. Check the syntax."
+        : "Couldn't read the schema. Enter a JSON object, true, or false.",
     };
   }
 }
@@ -3593,10 +3623,7 @@ function ToolResultSchemaFields({
   const paper = useContext(PaperFieldsContext);
   // Same draft model as `RawArgsJsonEditor`: the text knows which schema it is
   // for, and is re-derived in render when the schema arrives from outside.
-  // The identity comes from ONE function in all three places (initial state,
-  // the render-phase check, the write-through). Any JSON root is legal here,
-  // null included, so the key must not fold null into {} while the value
-  // written is null — that made the box snap back to {} over a stored null.
+  // Keep older stored schemas visible so authors can correct them in place.
   const schemaKey = schemaKeyOf(predicate.schema);
   // The undefined branch is required, not defensive: JSON.stringify(undefined)
   // is not a string. Everything else, null included, renders as itself.
@@ -3660,14 +3687,11 @@ function ToolResultSchemaFields({
         />
         {error ? (
           <p className="text-[11px] text-destructive">
-            Not valid JSON: {error}. Saving now keeps the last schema that
-            parsed, not what is in the box.
+            {error}
           </p>
         ) : !paper ? (
           <p className="text-[11px] text-muted-foreground">
-            Validated against the tool's structured content, then its JSON
-            output, then text that parses as JSON. Any JSON root — an array is
-            legal under protocol 2026-07-28.
+            Write the schema as a JSON object or boolean.
           </p>
         ) : null}
       </div>

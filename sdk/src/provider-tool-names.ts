@@ -104,65 +104,77 @@ export function renameToolNamesInMessages<
 
 const aliasesByCall = new WeakMap<CallOptions, ToolNameAliases>();
 
-const providerSafeToolNamesMiddleware: LanguageModelMiddleware = {
-  transformParams: async ({ params }) => {
-    const aliases = createToolNameAliases(
-      (params.tools ?? []).map((tool) => tool.name)
-    );
-    const tools = params.tools?.map((tool) =>
-      tool.type === "function" && !isProviderSafeToolName(tool.name)
-        ? { ...tool, name: aliases.toWire(tool.name) }
-        : tool
-    );
-    const toolChoice = renameToolNamePart(params.toolChoice, aliases.toWire);
-    const prompt = renameToolNamesInMessages(params.prompt, aliases.toWire);
-    if (
-      prompt === params.prompt &&
-      toolChoice === params.toolChoice &&
-      tools?.every((tool, i) => tool === params.tools?.[i]) !== false
-    ) {
-      return params;
-    }
-    const next = { ...params, tools, toolChoice, prompt };
-    aliasesByCall.set(next, aliases);
-    return next;
-  },
-  wrapGenerate: async ({ doGenerate, params }) => {
-    const result = await doGenerate();
-    const aliases = aliasesByCall.get(params);
-    if (!aliases) return result;
-    return {
-      ...result,
-      content: result.content.map((part) =>
-        renameToolNamePart(part, aliases.fromWire)
-      ),
-    };
-  },
-  wrapStream: async ({ doStream, params }) => {
-    const result = await doStream();
-    const aliases = aliasesByCall.get(params);
-    if (!aliases) return result;
-    return {
-      ...result,
-      stream: result.stream.pipeThrough(
-        new TransformStream({
-          transform(part, controller) {
-            controller.enqueue(renameToolNamePart(part, aliases.fromWire));
-          },
-        })
-      ),
-    };
-  },
-};
+function providerSafeToolNamesMiddleware(
+  getShown?: () => readonly string[] | undefined
+): LanguageModelMiddleware {
+  return {
+    transformParams: async ({ params }) => {
+      const aliases = createToolNameAliases(
+        (params.tools ?? []).map((tool) => tool.name)
+      );
+      const selected = getShown?.();
+      const shown = selected && new Set(selected);
+      const tools = params.tools
+        ?.filter((tool) => !shown || shown.has(tool.name))
+        .map((tool) =>
+          tool.type === "function" && !isProviderSafeToolName(tool.name)
+            ? { ...tool, name: aliases.toWire(tool.name) }
+            : tool
+        );
+      const toolChoice = renameToolNamePart(params.toolChoice, aliases.toWire);
+      const prompt = renameToolNamesInMessages(params.prompt, aliases.toWire);
+      if (
+        prompt === params.prompt &&
+        toolChoice === params.toolChoice &&
+        params.tools?.length === tools?.length &&
+        tools?.every((tool, i) => tool === params.tools?.[i]) !== false
+      ) {
+        return params;
+      }
+      const next = { ...params, tools, toolChoice, prompt };
+      aliasesByCall.set(next, aliases);
+      return next;
+    },
+    wrapGenerate: async ({ doGenerate, params }) => {
+      const result = await doGenerate();
+      const aliases = aliasesByCall.get(params);
+      if (!aliases) return result;
+      return {
+        ...result,
+        content: result.content.map((part) =>
+          renameToolNamePart(part, aliases.fromWire)
+        ),
+      };
+    },
+    wrapStream: async ({ doStream, params }) => {
+      const result = await doStream();
+      const aliases = aliasesByCall.get(params);
+      if (!aliases) return result;
+      return {
+        ...result,
+        stream: result.stream.pipeThrough(
+          new TransformStream({
+            transform(part, controller) {
+              controller.enqueue(renameToolNamePart(part, aliases.fromWire));
+            },
+          })
+        ),
+      };
+    },
+  };
+}
 
 /**
  * Wrap `model` so tool names a provider would reject are aliased on the way
  * out and restored on the way back. A no-op for calls whose names are all
  * already safe.
  */
-export function withProviderSafeToolNames(model: WrappableModel) {
+export function withProviderSafeToolNames(
+  model: WrappableModel,
+  getShown?: () => readonly string[] | undefined
+) {
   return wrapLanguageModel({
     model,
-    middleware: providerSafeToolNamesMiddleware,
+    middleware: providerSafeToolNamesMiddleware(getShown),
   });
 }

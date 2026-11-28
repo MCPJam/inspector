@@ -63,6 +63,8 @@ export type AppRouteEntry =
 
 export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "redeem", kind: "special", scope: "public", standalone: true, note: "Conference card confirmation outside onboarding and project chrome." },
+  { path: "access-requests/:requestId", kind: "special", scope: "global", note: "Where an approver answers a project access request from the bell or the email." },
+  { path: "web-accounts/:webAccountId/reconnect", kind: "special", scope: "global", note: "Where an admin signs a web account in again; its project rides in the query, as the backend's email links it." },
   {
     path: "settings/appearance",
     kind: "screen",
@@ -198,6 +200,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     note: "Chrome-less vanity surface (caniuse.dev): no sidebar, no NUX.",
     scope: "public",
   },
+  { path: "compare", kind: "special", scope: "public", note: "Public comparison matrix." },
   {
     path: "embed/score",
     kind: "special",

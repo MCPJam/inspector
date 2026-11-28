@@ -222,6 +222,8 @@ const runSuiteBody = {
   convexAuthToken: "token-123",
 };
 
+const runAccounts = [{ serverId: "srv_linear", connectionId: "acct_b" }];
+
 describe("local eval runs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -250,7 +252,9 @@ describe("local eval runs", () => {
     mocks.convexQuery.mockImplementation(
       async (ref: Parameters<typeof getFunctionName>[0], args: any) => {
         switch (getFunctionName(ref)) {
-          case "testSuiteAccountSelections:getMySuiteAccountChoices":
+          case "testSuiteAccountSelections:getEvalRunAccountPlan":
+            return null;
+          case "testSuiteAccountSelections:getPersonalSuiteAccountChoices":
             return choices[args.suiteId] ?? [];
           case "testSuites:getTestCase":
             return { testSuiteId: "suite-1", projectId: "project-1" };
@@ -474,6 +478,37 @@ describe("local eval runs", () => {
     expect(untouched(uiManager)).toBe(true);
   });
 
+  it("uses the shared case plan for a local Quick Run with a server name", async () => {
+    mocks.runEvalTestCase.mockResolvedValueOnce({ success: true });
+    const query = mocks.convexQuery.getMockImplementation()!;
+    mocks.convexQuery.mockImplementation(async (ref, args) =>
+      getFunctionName(ref) === "testSuiteAccountSelections:getEvalRunAccountPlan"
+        ? [{ testCaseId: "case-1", serverId: "srv_linear", connectionId: "acct_b", source: "case" }]
+        : query(ref, args),
+    );
+
+    const response = await post(createApp(createMockMcpClientManager()), "run-test-case", {
+      testCaseId: "case-1",
+      model: "openai/gpt-5-mini",
+      provider: "openai",
+      serverIds: ["Linear"],
+      convexAuthToken: "token-123",
+    });
+
+    expect(response.status).toBe(200);
+    expect(authorizeRequests).toEqual([
+      expect.objectContaining({ connectionIdSets: { srv_linear: ["acct_b"] } }),
+    ]);
+    const [manager] = mocks.managers;
+    expect(authorization(manager.configs.srv_linear)).toBe("Bearer token-b");
+    expect(mocks.runEvalTestCase).toHaveBeenCalledWith(manager, expect.objectContaining({
+      quickRunAccounts: expect.objectContaining({
+        serverIds: ["srv_linear"],
+        plan: [expect.objectContaining({ source: "case", connectionId: "acct_b" })],
+      }),
+    }));
+  });
+
   it("closes a streamed quick run's manager when the stream completes", async () => {
     mocks.streamEvalTestCase.mockImplementationOnce(
       async (_manager, _request, options: { onStreamComplete?: () => void }) =>
@@ -583,6 +618,19 @@ describe("local eval runs", () => {
       expect(untouched(uiManager)).toBe(true);
     });
 
+    it("refuses a one-off MCP account when the environment uses only local servers", async () => {
+      mocks.resolveEnvironment.mockResolvedValueOnce(localEnvironment(["Desktop tools"]));
+
+      const response = await post(createApp(createMockMcpClientManager()), "run", {
+        ...envRun,
+        runAccounts,
+      });
+
+      expect(response.status).toBe(400);
+      expect(authorizeRequests).toEqual([]);
+      expect(mocks.prepareEvalRun).not.toHaveBeenCalled();
+    });
+
     it("keeps the app's connections when every server is one only this app has", async () => {
       const environment = localEnvironment(["Desktop tools"]);
       mocks.resolveEnvironment.mockResolvedValueOnce(environment);
@@ -612,18 +660,17 @@ describe("local eval runs", () => {
       expect(mocks.managers).toHaveLength(0);
     });
 
-    it("refuses accounts chosen for it, which those connections would not honor", async () => {
+    it.each(["a saved choice", "a one-off choice"])("refuses %s without a project", async (choice) => {
       suiteProjects["suite-1"] = undefined;
-      choices["suite-1"] = [
-        { serverId: "srv_linear", connectionIds: ["acct_b"] },
-      ];
+      if (choice === "a saved choice") {
+        choices["suite-1"] = [{ serverId: "srv_linear", connectionIds: ["acct_b"] }];
+      }
       const { projectId: _projectId, ...noProject } = runSuiteBody;
 
-      const response = await post(
-        createApp(createMockMcpClientManager()),
-        "run",
-        noProject,
-      );
+      const response = await post(createApp(createMockMcpClientManager()), "run", {
+        ...noProject,
+        ...(choice === "a one-off choice" ? { runAccounts } : {}),
+      });
 
       expect(response.status).toBe(409);
       expect(mocks.prepareEvalRun).not.toHaveBeenCalled();

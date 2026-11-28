@@ -115,7 +115,9 @@ export type McpOperationFamily =
   | "prompts"
   | "tasks"
   | "events"
-  | "apps/plugin-instances";
+  | "apps/plugin-instances"
+  // A mock server's HTTP door: one bucket per caller and mock.
+  | "mock-mcp";
 
 /** `burst` is the bucket's capacity: BURST, or CALL_BURST for tool calls. */
 type Bucket = { tokens: number; updatedAt: number; burst: number };

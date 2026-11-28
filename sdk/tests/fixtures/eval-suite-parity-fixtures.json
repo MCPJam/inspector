@@ -688,6 +688,129 @@
           }
         }
       ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "dialect 2 — code evaluators, setup and cleanup scripts, and grading settings",
+      "__why": "Every code-grading field at once: a Required and an Advisory evaluator (the second added from the evaluator library, with its tag), all four scripts, and a grading box with declared files and web access. A trailing slash on a declared folder is accepted.",
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "codeEvaluators": [
+          {
+            "id": "totals",
+            "name": "Refund issued",
+            "fileName": "check_refund.py",
+            "script": "import json, os\n\nwith open(os.environ[\"MCPJAM_ITERATION\"]) as f:\n    iteration = json.load(f)\ncalls = iteration[\"transcript\"][\"toolCalls\"]\nok = any(call[\"toolName\"] == \"refund\" for call in calls)\nwith open(os.environ[\"MCPJAM_RESULT\"], \"w\") as f:\n    json.dump({\"score\": 1 if ok else 0, \"reason\": \"refund issued\" if ok else \"no refund call\"}, f)\n",
+            "role": "required",
+            "threshold": 1
+          },
+          {
+            "id": "report-file",
+            "fileName": "report.sh",
+            "script": "if test -s /home/user/out/report.json; then\n  echo '{\"score\": 1}' > \"$MCPJAM_RESULT\"\nelse\n  echo '{\"score\": 0, \"reason\": \"no report\"}' > \"$MCPJAM_RESULT\"\nfi\n",
+            "role": "advisory",
+            "threshold": 0.5,
+            "evaluator": {
+              "id": "lib-report-file",
+              "version": 2
+            }
+          }
+        ],
+        "scripts": {
+          "runSetup": "curl -fsS -X POST \"$SEED_URL/reset\"",
+          "iterationSetup": "mkdir -p /home/user/out",
+          "iterationCleanup": "rm -rf /home/user/out",
+          "runCleanup": "curl -fsS -X POST \"$SEED_URL/teardown\""
+        },
+        "grading": {
+          "files": [
+            "/home/user/out/",
+            "/home/user/notes.txt"
+          ],
+          "network": "web"
+        }
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "code-grading fields in dialect 1, with a blank script and the default network",
+      "__why": "The three fields are common to both dialects. A blank setup or cleanup script is accepted and means none (the platform stores none), and `network: \"none\"` is the default spelled out.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "codeEvaluators": [
+          {
+            "id": "refund",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          }
+        ],
+        "scripts": {
+          "iterationSetup": "   "
+        },
+        "grading": {
+          "network": "none"
+        }
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
     }
   ],
   "reject": [
@@ -2335,6 +2458,648 @@
           ]
         }
       ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "eleven code evaluators",
+      "__why": "A suite takes at most ten code evaluators.",
+      "__structural": true,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "codeEvaluators": [
+          {
+            "id": "check-1",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          },
+          {
+            "id": "check-2",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          },
+          {
+            "id": "check-3",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          },
+          {
+            "id": "check-4",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          },
+          {
+            "id": "check-5",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          },
+          {
+            "id": "check-6",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          },
+          {
+            "id": "check-7",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          },
+          {
+            "id": "check-8",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          },
+          {
+            "id": "check-9",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          },
+          {
+            "id": "check-10",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          },
+          {
+            "id": "check-11",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "a code evaluator file name without a supported extension",
+      "__why": "The extension picks the interpreter: .sh, .py, .ts or .js.",
+      "__structural": true,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "codeEvaluators": [
+          {
+            "id": "refund",
+            "fileName": "check.rb",
+            "script": "console.log('graded');"
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "a code evaluator id with a space",
+      "__why": "The id names the score row (`code:<id>`): letters, digits, - and _ only.",
+      "__structural": true,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "codeEvaluators": [
+          {
+            "id": "refund check",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "two code evaluators with the same id",
+      "__why": "Each id names one score row. Uniqueness across items is a rule JSON Schema can't express.",
+      "__structural": false,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "codeEvaluators": [
+          {
+            "id": "refund",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          },
+          {
+            "id": "refund",
+            "fileName": "refund_again.sh",
+            "script": "exit 0"
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "a code evaluator with a blank script",
+      "__why": "An evaluator with nothing to run can't score. Unlike a blank setup or cleanup script, which means none, a blank evaluator script is refused.",
+      "__structural": false,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "codeEvaluators": [
+          {
+            "id": "refund",
+            "fileName": "refund.ts",
+            "script": "  \n"
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "a code evaluator name that is only spaces",
+      "__why": "Names are trimmed before the length check, so a blank name is no name.",
+      "__structural": false,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "codeEvaluators": [
+          {
+            "id": "refund",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');",
+            "name": "   "
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "a code evaluator passing score of 0",
+      "__why": "The passing score is above 0 and at most 1: 0 would pass every iteration.",
+      "__structural": true,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "codeEvaluators": [
+          {
+            "id": "refund",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');",
+            "threshold": 0
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "a code evaluator with an unknown field",
+      "__why": "Closed object: an unknown key is refused, not ignored.",
+      "__structural": true,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "codeEvaluators": [
+          {
+            "id": "refund",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');",
+            "timeoutSeconds": 30
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "an unknown script name",
+      "__why": "The four scripts are runSetup, iterationSetup, iterationCleanup and runCleanup. A fifth name would never run.",
+      "__structural": true,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "scripts": {
+          "beforeAll": "echo hi"
+        }
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "a declared grading path outside /home/user",
+      "__why": "Declared files come from the box user's home only.",
+      "__structural": false,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "grading": {
+          "files": [
+            "/etc/passwd"
+          ]
+        }
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "a declared grading path in a hidden folder",
+      "__why": "Hidden folders are refused, so a copied file can't be code Python or Node loads on start.",
+      "__structural": false,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "grading": {
+          "files": [
+            "/home/user/.config/token"
+          ]
+        }
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "grading network \"full\"",
+      "__why": "The grading box is either cut off (none, the default) or on the web. There is no third level.",
+      "__structural": true,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "grading": {
+          "network": "full"
+        }
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "a declared grading path longer than 512 characters",
+      "__why": "Each declared path is at most 512 characters. Counted as the platform counts them, which JSON Schema's maxLength doesn't, so the rule lives beside the other path rules.",
+      "__structural": false,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "grading": {
+          "files": [
+            "/home/user/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        }
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
     }
   ],
   "roundTrip": [
@@ -2688,6 +3453,59 @@
             }
           ],
           "scenario": "checkout"
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "round trip — code evaluators, scripts and grading settings",
+      "__why": "Nothing in the three fields is materialized: role, threshold, name and network stay omitted when the file omits them, so a file written back reads the same.",
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_code_grading",
+        "name": "Billing with code evaluators"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "codeEvaluators": [
+          {
+            "id": "refund",
+            "fileName": "refund.ts",
+            "script": "console.log('graded');"
+          }
+        ],
+        "scripts": {
+          "runCleanup": "echo done"
+        },
+        "grading": {
+          "files": [
+            "/home/user/out/report.json"
+          ]
+        }
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
         }
       ]
     }

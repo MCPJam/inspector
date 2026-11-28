@@ -124,7 +124,7 @@ export const getReviewerAttemptOperation: Op<ReviewerAttemptScopedInput, Reviewe
 export const resumeReviewerAttemptOperation: Op<ReviewerAttemptScopedInput, ReviewerAttemptStartResult> = {
   name: "resume_reviewer_attempt",
   title: "Resume a reviewer sign-in attempt",
-  description: `Continue a reviewer sign-in attempt that is waiting for a person, once the person did what its \`waitingFor.action\` says: starts a new run that carries on the same attempt, and returns both. Refused unless the attempt is waiting-for-person and has not expired. ${GATED_BETA}`,
+  description: `Continue a reviewer sign-in attempt that is waiting for a person, once the person did what its \`waitingFor.action\` says: starts a new run that carries on the same attempt, and returns both. After a browser handoff, the member who completed sign-in resumes verification using their own Inspector identity. ${GATED_BETA}`,
   readOnly: false,
   risk: "none",
   permalink: SUBMISSION_PERMALINK,
@@ -155,7 +155,7 @@ export const cancelReviewerAttemptOperation: Op<ReviewerAttemptScopedInput, Revi
 export const createReviewerHandoffOperation: Op<ReviewerAttemptScopedInput, Scoped & { handoffUrl: string; expiresAt: number }> = {
   name: "create_reviewer_handoff",
   title: "Finish reviewer sign-in in a browser",
-  description: "Create a single-use sign-in link for a paused reviewer attempt. Only the person who started its latest run can open the link. They complete sign-in in their browser, then any authorized agent can resume the same attempt. A new link invalidates the previous one.",
+  description: "Create a single-use sign-in link for a paused reviewer attempt. A project member can take over from the submission. The link opens under that member’s Inspector identity. The member completes reviewer sign-in and resumes verification on the same attempt. A new link invalidates the previous one.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("external-resource", "The response carries a requester-only single-use authorization link, which is not a shareable resource permalink."),

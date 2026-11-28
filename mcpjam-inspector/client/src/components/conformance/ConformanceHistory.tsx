@@ -751,6 +751,7 @@ export function ConformanceSharedPage({ token }: { token: string }) {
           suiteKinds.map((kind) => ({
             suiteKind: kind,
             advisories: reports[kind]!.advisories,
+            passedAdvisories: reports[kind]!.passedAdvisories,
           })),
         )}
       />

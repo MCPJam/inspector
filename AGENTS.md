@@ -26,6 +26,9 @@ and install dependencies with `npm install --legacy-peer-deps`.
 - Search for existing code before adding helpers: `sdk/` for shared runtime
   code, `mcpjam-inspector/shared/` for client/server utilities,
   `design-system/` for primitives, and `chat-ui/` for chat components.
+- Read a client's protocol behavior from its host config's `mcpProfile`
+  through that feature's resolver; `hostStyle` selects only the MCP Apps
+  rendering (see `mcpjam-inspector/docs/host-template-update-guide.md`).
 - Eval and public API names follow `docs/evals-vocabulary-consolidation.md` and
   `docs/public-api-vocabulary-consolidation.md`. Use their canonical terms in
   new code, and never rename the frozen or protected identifiers they list.

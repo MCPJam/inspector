@@ -1,5 +1,6 @@
 import { readUiResources } from "./resource-reads.js";
 import { withAbortSignalFetch } from "../abort-signal.js";
+import { http1Fetch } from "../http1-fetch.js";
 import { captureConformanceRun } from "../telemetry.js";
 import { isAuthorizationRefusal } from "../conformance-authorization.js";
 import { credentialsFromServerConfig } from "../conformance-login.js";
@@ -155,7 +156,7 @@ export class MCPAppsConformanceTest {
         ? {
             ...serverConfig,
             baseFetch: withAbortSignalFetch(
-              serverConfig.baseFetch ?? fetch,
+              serverConfig.baseFetch ?? http1Fetch,
               signal
             ),
           }
@@ -215,7 +216,7 @@ export class MCPAppsConformanceTest {
           }
 
           signal?.throwIfAborted();
-          const { checks, readiness, discovery } = gradeMCPApps({
+          const { checks, readiness, passedAdvice, discovery } = gradeMCPApps({
             tools,
             toolsError,
             resources,
@@ -248,6 +249,7 @@ export class MCPAppsConformanceTest {
               : {}),
             checks,
             ...(readiness.length > 0 ? { readiness } : {}),
+            ...(passedAdvice.length > 0 ? { passedAdvice } : {}),
             summary: buildSummary(checks),
             durationMs: Date.now() - startedAt,
             categorySummary: summarizeChecks(checks),

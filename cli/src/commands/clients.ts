@@ -152,6 +152,7 @@ const SETTABLE_FIELDS: Readonly<
   // Optional-clearable: --unset clears to absent.
   respectToolVisibility: { kind: "boolean", unsettable: true },
   progressiveToolDiscovery: { kind: "boolean", unsettable: true },
+  runUnloadedToolCalls: { kind: "boolean", unsettable: true },
   harness: { kind: "string", unsettable: true },
   computer: { kind: "json", unsettable: true },
   builtInToolIds: { kind: "json", unsettable: true },

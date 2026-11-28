@@ -445,3 +445,69 @@ describe("what the planner must not know", () => {
     expect(source("harness-mcp-plan.ts")).not.toContain("process.env");
   });
 });
+
+describe("a web client's own route (E4)", () => {
+  /** Every exclusion the planner checks, each on its own and all at once. */
+  const EXCLUSIONS: Array<[string, Partial<Facts>]> = [
+    ["forwarding off", { forwardingEnabled: false }],
+    ["organization not enrolled", { forwardingOrganization: false }],
+    ["no runtime contract", { forwardingRuntime: undefined }],
+    ["local loopback plane", { plane: "local-loopback" }],
+    ["scenario turn", { scenarioId: "scenario-1" }],
+    ["eval iteration", { evalIterationId: "iteration-1" }],
+    ["journey run", { journeyRunId: "journey-run-1" }],
+    ["local execution", { localExecution: true }],
+    ["no host id", { hostId: undefined }],
+    ["account routing", { dispatch: { mcpClient: "mcpjam" }, accountRouting: true }],
+    [
+      "all of them",
+      {
+        forwardingEnabled: false,
+        forwardingOrganization: false,
+        forwardingRuntime: undefined,
+        plane: undefined,
+        scenarioId: "s",
+        evalIterationId: "e",
+        journeyRunId: "j",
+        localExecution: true,
+        hostId: undefined,
+        accountRouting: true,
+      },
+    ],
+  ];
+
+  it.each(EXCLUSIONS)("forwards past %s without asking admission", (_name, overrides) => {
+    const admit = vi.fn(RETAINED);
+    const plan = resolveHarnessMcpPlan(
+      facts({ ...overrides, webConnector: true, admit }),
+    );
+    expect(plan).toEqual({
+      upstream: "harness",
+      delivery: "mcp-endpoint",
+      forwardingKind: "pass-through",
+      surface: true,
+      candidate: true,
+      gaps: [],
+      reasons: [],
+    });
+    expect(admit).not.toHaveBeenCalled();
+    expect(toDiscoveryDeliveryLabel(plan)).toBe("forwarded-native");
+  });
+
+  it("leaves every other runtime on the exclusion list", () => {
+    const plan = resolveHarnessMcpPlan(
+      facts({ evalIterationId: "iteration-1", webConnector: false }),
+    );
+    expect(plan.forwardingKind).toBeUndefined();
+    expect(plan.reasons).toContain("eval iteration");
+  });
+
+  it("hands each turn its own plan, so a caller cannot edit the next one's", () => {
+    const first = resolveHarnessMcpPlan(facts({ webConnector: true }));
+    first.reasons.push("eval iteration");
+    first.gaps.push("client-tools");
+    const second = resolveHarnessMcpPlan(facts({ webConnector: true }));
+    expect(second.reasons).toEqual([]);
+    expect(second.gaps).toEqual([]);
+  });
+});

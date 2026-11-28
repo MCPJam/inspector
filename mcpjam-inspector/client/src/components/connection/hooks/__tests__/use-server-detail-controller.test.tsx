@@ -221,6 +221,21 @@ describe("useServerDetailController", () => {
     expect(options.onSubmit).not.toHaveBeenCalled();
   });
 
+  it("saves a URL moved to another host without blocking Save", async () => {
+    const { options, controller } = renderController({});
+    act(() =>
+      controller().form.state.setUrl("https://example.com:8443/mcp"),
+    );
+    expect(controller().form.saveBlocked).toBe(false);
+
+    fireEvent.submit(screen.getByTestId("config-form"));
+    await waitFor(() => expect(options.onSubmit).toHaveBeenCalledTimes(1));
+    expect(options.onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "https://example.com:8443/mcp" }),
+      "linear",
+    );
+  });
+
   it("offers Reconnect for a connected server with no edits", () => {
     const { controller } = renderController({});
     expect(controller().form.offersReconnect).toBe(true);

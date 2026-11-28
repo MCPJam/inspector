@@ -476,7 +476,24 @@ describe("the wire headline says what was established", () => {
     const summary = composeWireFindingsSummary(wire, model(wire), {
       terminal: true,
     });
-    expect(summary.lines[0]).toBe("Reply cut off in 2 of 4 sessions read.");
+    expect(summary.lines[0]).toBe("Reply cut off in 2 sessions.");
+  });
+
+  it("can show a recorded fact when no session reports were generated", () => {
+    const original = truncatedWire({ mechanismRows: false });
+    const wire = swarmJourneyFindingsSchema.parse({
+      ...original,
+      population: {
+        ...original.population,
+        read: 0,
+        unread: original.population.started,
+      },
+      findings: original.findings.filter((row) => row.signal).slice(0, 1),
+    });
+    const summary = composeWireFindingsSummary(wire, model(wire), {
+      terminal: true,
+    });
+    expect(summary.lines[0]).toBe("Reply cut off in 1 session.");
   });
 
   it("reports rejected and unverified causes as different footnotes", () => {

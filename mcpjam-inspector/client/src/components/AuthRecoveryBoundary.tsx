@@ -2,14 +2,14 @@ import { useSyncExternalStore, type ReactNode } from "react";
 import { useConvexAuth } from "convex/react";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import { shouldSkipGuestSession } from "@/lib/vanity-landing-hosts";
-import LoadingScreen from "./LoadingScreen";
+import { useStartupStatus, useStartupStore } from "@/lib/startup-status";
+import { StartupRecoveryCard, StartupScreen } from "./startup/StartupScreen";
 import { SessionRefreshBanner } from "./session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./guest-session-refused-banner";
 import {
   getGuestSessionRefusal,
   subscribeGuestSessionChanges,
 } from "@/lib/guest-session";
-import { guestSessionRefusalCopy } from "@/lib/guest-session-refusal-copy";
 
 /** Keep the auth providers mounted, but cancel every app subscriber during recovery. */
 export function AuthRecoveryBoundary({
@@ -22,6 +22,8 @@ export function AuthRecoveryBoundary({
   const { isLoading, isAuthenticated } = useConvexAuth();
   const paused = useSessionRefreshStore((s) => s.queriesPaused);
   const confirmed = useSessionRefreshStore((s) => s.authConfirmed);
+  const escalated = useStartupStore((s) => s.escalated);
+  const status = useStartupStatus();
   const refusal = useSyncExternalStore(
     subscribeGuestSessionChanges,
     getGuestSessionRefusal,
@@ -34,42 +36,23 @@ export function AuthRecoveryBoundary({
   ) {
     // The app stays unmounted without auth so no protected subscription runs.
     // A refused guest never authenticates, though, so a spinner would never
-    // end: say why instead, under the banner's Sign in button.
+    // end: the recovery card says why and offers Sign in.
     const settledRefusal = !isLoading && !paused && refusal;
+    if (settledRefusal) return <StartupRecoveryCard status={status} />;
     return (
       <>
-        {settledRefusal ? (
-          <SignedOutScreen
-            message={guestSessionRefusalCopy(settledRefusal.reason).summary}
-          />
-        ) : (
-          <LoadingScreen
-            message={paused ? "Reconnecting your session…" : undefined}
-          />
+        <StartupScreen
+          message={paused ? "Reconnecting your session…" : undefined}
+        />
+        {/* Once escalated, the recovery card carries the same actions. */}
+        {!escalated && (
+          <>
+            <SessionRefreshBanner dismissible={false} />
+            <GuestSessionRefusedBanner />
+          </>
         )}
-        <SessionRefreshBanner dismissible={false} />
-        <GuestSessionRefusedBanner />
       </>
     );
   }
   return children;
-}
-
-function SignedOutScreen({ message }: { message: string }) {
-  return (
-    <div
-      data-testid="guest-refused-signed-out"
-      className="flex min-h-screen items-center justify-center bg-background"
-    >
-      <div className="flex flex-col items-center gap-4 text-center">
-        <img
-          src="/mcp_jam.svg"
-          alt="MCPJam"
-          draggable={false}
-          className="h-16 w-16"
-        />
-        <p className="text-sm text-muted-foreground">{message}</p>
-      </div>
-    </div>
-  );
 }

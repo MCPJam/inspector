@@ -328,7 +328,7 @@ describe("handoverOf", () => {
     expect(handoverOf(WAITING)).toEqual({
       asked: ASKED,
       frame: { recordingId: "res_1", seconds: 11.2 },
-      finisher: "The person who started this sign-in.",
+      finisher: "A project member with access to the reviewer account. Open this submission in your own Inspector session.",
       action:
         "Open Finish reviewer sign-in, complete the verification, then resume this attempt.",
       since: NOV_13,
@@ -344,7 +344,7 @@ describe("handoverOf", () => {
         'The sign-in page asked for a verification step MCPJam cannot complete: "Confirm you\'re not a robot".',
       ),
     ).toMatchObject({
-      finisher: "The person who started this sign-in.",
+      finisher: "A project member with access to the reviewer account. Open this submission in your own Inspector session.",
       action:
         "Open Finish reviewer sign-in, complete the browser check, then resume this attempt.",
     });
@@ -358,7 +358,7 @@ describe("handoverOf", () => {
     expect(handover).toMatchObject({
       asked:
         "MCPJam could not tell which control on the consent page approves access, so it clicked none.",
-      finisher: "The person who started this sign-in.",
+      finisher: "A project member with access to the reviewer account. Open this submission in your own Inspector session.",
       action:
         "Open Finish reviewer sign-in, approve access, then resume this attempt.",
     });
@@ -371,7 +371,7 @@ describe("handoverOf", () => {
         "MCPJam did not recognize a page in the sign-in, so it stopped.",
       ),
     ).toMatchObject({
-      finisher: "The person who started this sign-in.",
+      finisher: "A project member with access to the reviewer account. Open this submission in your own Inspector session.",
       action:
         "Open Finish reviewer sign-in, sign in as the reviewer, then resume this attempt.",
     });

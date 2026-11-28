@@ -3749,6 +3749,26 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
+  it.each(["/embed/host-compare", "/embed/score"])(
+    "keeps a first-run hosted guest on the public embed %s",
+    async (pathname) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      mockUnseenOnboardingState();
+      window.history.replaceState({}, "", pathname);
+      mockHandleOAuthCallback.mockReset();
+      mockConvexAuthState.isAuthenticated = true;
+      mockWorkOsAuthState.user = null;
+      mockHostedShellGateState.value = "ready";
+      mockFreshGuestUser();
+
+      render(<App />);
+
+      expect(window.location.pathname).toBe(pathname);
+      expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    },
+  );
+
   it("leaves an IdP-initiated visitor on /login instead of auto-routing to Playground", async () => {
     // Same first-run-eligible guest as the test above, at the WorkOS Initiate
     // Login URL. `/login` is not a known tab segment, so the shell resolves it
@@ -3781,6 +3801,37 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(window.location.pathname).toBe("/login");
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  it("leaves an owner opening a request email on the request instead of Home", async () => {
+    // Same first-run-eligible guest, as a signed-out owner opening the
+    // approve link from a request email in a fresh browser. Without the
+    // guard, onboarding sends them to Home and the request is gone.
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState(
+      {},
+      "",
+      "/access-requests/req_1?decision=approve",
+    );
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mcp-sidebar")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/access-requests/req_1");
+    expect(window.location.search).toBe("?decision=approve");
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows first-run onboarding on Home from the default route", async () => {

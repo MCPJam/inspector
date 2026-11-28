@@ -27,3 +27,11 @@ export function looksLikeErrorPage(trimmed: string): boolean {
   if (/<\/html>\s*$/i.test(trimmed)) return true;
   return MARKUP_OPENER.test(trimmed.replace(HTML_PREAMBLE, ""));
 }
+
+/**
+ * An error page's `<title>` text as written: not trimmed, not decoded. Both
+ * runs are bounded, so a body of repeated `<title` costs a linear scan.
+ */
+export function errorPageTitle(html: string): string | undefined {
+  return html.match(/<title[^>]{0,200}>([\s\S]{0,200}?)<\/title>/i)?.[1];
+}

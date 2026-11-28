@@ -24,7 +24,7 @@ test(
       await symlink(
         dirname(dirname(require.resolve("ws/package.json"))),
         join(dir, "node_modules"),
-        "dir",
+        "junction",
       );
       const result = await build({
         stdin: {

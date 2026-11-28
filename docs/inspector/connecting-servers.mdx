@@ -5,7 +5,7 @@ description: "Connect to multiple MCP servers with different transport methods"
 icon: "plug"
 ---
 
-You can connect to MCP servers over **STDIO** or **Streamable HTTP**, with OAuth 2 and Dynamic Client Registration (DCR) support. Multiple servers can be connected at once within a project.
+You can connect to MCP servers over **STDIO** or **Streamable HTTP**, with OAuth 2 and Dynamic Client Registration (DCR) support. For an HTTP URL, MCPJam falls back to the older **SSE** transport if Streamable HTTP fails, and tries SSE first when the URL ends in `/sse`. Multiple servers can be connected at once within a project.
 
 ## Manage connections
 
@@ -21,8 +21,8 @@ You can connect to multiple MCP servers simultaneously. To manage connections, g
 </Frame>
 
 - Toggle MCP servers to enable or temporarily deactivate a server.
-- Hit the 3 dots. You can reconnect, edit, or disconnect to a server.
-- Click "View server info" to open a detailed modal showing server metadata, protocol version, capabilities, and instructions.
+- Hit the 3 dots to reconnect, configure or disconnect a server.
+- Choose **Configure** to open the server's details, with tabs such as **Config**, **Overview**, **Tools**, **Settings**, **Auth**, **Clients** and **History**.
 
 ### Server info modal
 
@@ -56,7 +56,7 @@ Each row shows the account's email address (or name) on the first line, and a ca
 Open the row menu (⋯) to act on an account:
 
 - **Rename**: opens an inline field to give the account a name. The name appears in chat when the model picks an account.
-- **Use in chat**: promotes the row to the default. The default account is used by non-chat consumers and as the fallback when no account is specified. This option is hidden on the row that is already the default.
+- **Set as default**: promotes the row to the default. The default account is used by non-chat consumers and as the fallback when no account is specified. This option is hidden on the row that is already the default.
 - **Reconnect**: re-runs the OAuth flow for that row, replacing only that credential.
 - **Remove**: deletes the credential. If the removed row was the default, the next available account becomes the default.
 
@@ -83,10 +83,10 @@ Click "Show details" to expand additional server information:
 
 ### OpenAI app metadata
 
-Servers that provide OpenAI-compatible tool metadata display an OpenAI logo indicator. Expanding these servers shows two tabs:
+Servers that provide OpenAI-compatible tool metadata display an OpenAI logo indicator. In their details, two tabs cover it:
 
-- **Info tab**: Standard server information and capabilities
-- **OpenAI Tool Metadata tab**: Detailed metadata for each tool including read/write permissions and widget configuration
+- **Overview** tab: standard server information and capabilities
+- **Tools** tab: metadata for each tool, including read/write permissions and widget configuration
 
 <Note>
   Using the [hosted app](https://app.mcpjam.com)? Only HTTPS connections are available. STDIO and plain HTTP connections require the [local inspector](/installation). See [Hosted App](/hosted/overview) for details.
@@ -116,7 +116,7 @@ node /path/to/your/server.js
 
 ### Environment variables
 
-You can configure environment variables with STDIO. Click "Add Variable" in the Environment Variables section. This is often used to pass dynamic values like API tokens to a STDIO server.
+You can configure environment variables with STDIO. Click **Add variable** in the environment variables section. This is often used to pass dynamic values like API tokens to a STDIO server.
 
 ## HTTP servers
 
@@ -145,7 +145,7 @@ MCPJam is compliant with the MCP authorization spec and supports Dynamic Client 
 
 ### Request timeout
 
-Expand **Additional Configuration** to override the request timeout (default `10000` ms). Increase this when talking to slow or cold-start servers.
+Expand **Connection overrides** to override the request timeout (default `10000` ms). Increase this when talking to slow or cold-start servers.
 
 ## Tunneling
 
@@ -156,7 +156,7 @@ Each tunnel is scoped to a single server and secured at the network edge: the tu
 ### Create a tunnel
 
 1. Go to the **MCP Servers** tab.
-2. Click **Create Tunnel** on the server card you want to expose.
+2. Click **Create tunnel** on the server card you want to expose.
 3. Copy the tunnel URL from the server card and paste it into your MCP client (for example, ChatGPT's custom connector settings).
 
 The tunnel URL is stable. The base domain stays the same across sessions. If you close and recreate a tunnel for the same server, you get the same domain with a new secret key.

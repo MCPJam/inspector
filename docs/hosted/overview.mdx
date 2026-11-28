@@ -113,7 +113,7 @@ Tunneling exposes a local MCP server over HTTPS for remote access. Since the hos
 
 The **Tracing** tab is not available in the hosted app. It is a live log of the JSON-RPC traffic between the Inspector and a server you are connected to. Use the [local inspector](/installation) for the full log. In the hosted app, the JSON-RPC frames for a chat turn are captured and shown with that turn in the Playground instead.
 
-Getting eval traces OUT of the hosted app is a different thing, and it does work: open a completed run and use **Export traces** for an OTLP JSON file (see [Evals](/inspector/evals#exporting-traces)), or fetch the same projection from `GET /api/v1/trace-exports/otlp` in the [public API](/reference/public-api). Both use OpenInference semantic conventions and land in Arize Phoenix, Datadog, or any other OTLP-compatible backend.
+Getting eval traces OUT of the hosted app is a different thing, and it does work: fetch an OTLP JSON projection of a run from `GET /api/v1/trace-exports/otlp` in the [public API](/reference/public-api). It uses OpenInference semantic conventions and lands in Arize Phoenix, Datadog, or any other OTLP-compatible backend.
 
 ## Billing
 

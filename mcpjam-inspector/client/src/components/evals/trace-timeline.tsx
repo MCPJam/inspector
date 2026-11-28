@@ -35,6 +35,7 @@ import type {
   EvalTraceSpanCategory,
 } from "@/shared/eval-trace";
 import { mcpErrorCodeLabel } from "@/shared/eval-trace";
+import { mockAnswerOf } from "@/shared/mock-answer-span";
 import {
   BrowserStepDetail,
   browserStepLabel,
@@ -63,6 +64,8 @@ import {
   type TimelineFilter,
 } from "./recorded-trace-toolbar";
 import { selectRowCost, type RowCost } from "./trace-cost/cost-view";
+import { TraceEventSection, TraceEventTestBadge } from "./trace-event-section";
+import { eventPromptLabel, type LiveChatTraceTurnEvent } from "./trace-turn-event";
 import type { IterationCostContext } from "./trace-cost/iteration-model-calls";
 import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import {
@@ -1534,6 +1537,7 @@ function TimelineDetailPane({
   transcriptMessages,
   onRevealInTranscript,
   turnRuntimeByPromptIndex,
+  turnEvent,
 }: {
   row: TimelineRow | undefined;
   recordedSpans?: EvalTraceSpan[] | null;
@@ -1541,6 +1545,8 @@ function TimelineDetailPane({
   transcriptMessages: TranscriptMessage[];
   onRevealInTranscript?: (selection: TraceRevealSelection) => void;
   turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
+  /** The event that started the selected prompt row's turn, if one did. */
+  turnEvent?: LiveChatTraceTurnEvent;
 }) {
   const spanAccount = useSpanAccountName();
   const costEnabled = useTraceCostEnabled();
@@ -1769,6 +1775,16 @@ function TimelineDetailPane({
                       ? spanThroughputPerSec(span.outputTokens, durationMs)
                       : null;
                   const items: Array<{ label: string; value: string }> = [];
+                  // Who answered a call a mock handled; the model never sees this.
+                  const mockAnswer =
+                    span.category === "tool"
+                      ? mockAnswerOf(span, recordedSpans)
+                      : undefined;
+                  if (mockAnswer)
+                    items.push({
+                      label: "Answered by",
+                      value: `the mock: ${mockAnswer}`,
+                    });
                   if (span.provider)
                     items.push({ label: "Provider", value: span.provider });
                   if (span.finishReason)
@@ -1833,6 +1849,8 @@ function TimelineDetailPane({
           </div>
         ) : null}
       </div>
+
+      {row.kind === "prompt" && turnEvent ? <TraceEventSection turnEvent={turnEvent} /> : null}
 
       {row.kind === "prompt" && promptUserMessage ? (
         <div className="min-h-0 max-h-[min(60vh,28rem)] flex-1 overflow-auto rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs leading-relaxed text-foreground">
@@ -1915,6 +1933,8 @@ export interface TraceTimelineProps {
   viewportMaxMs?: number;
   /** Runtime used for each live chat turn, keyed by promptIndex. */
   turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
+  /** The MCP event that started each turn an event started, keyed by promptIndex. */
+  turnEventByPromptIndex?: Map<number, LiveChatTraceTurnEvent>;
   /** When true, timeline fills a flex parent (e.g. run detail) instead of using viewport-based max height alone. */
   fillContent?: boolean;
   /** "auto" puts the span detail beside the waterfall when there is room. */
@@ -1942,6 +1962,7 @@ export function TraceTimeline({
   onExpandedStepIdsChange,
   viewportMaxMs: viewportMaxMsProp,
   turnRuntimeByPromptIndex,
+  turnEventByPromptIndex,
   fillContent = false,
   detailPlacement = "below",
   iterationCost,
@@ -2264,13 +2285,17 @@ export function TraceTimeline({
       );
 
       const aggTokens = aggregateLlmTokenTotals(group.spans);
+      const turnEvent = turnEventByPromptIndex?.get(group.promptIndex);
 
       nextRows.push({
         kind: "prompt",
         key: group.key,
         promptIndex: group.promptIndex,
         label: group.label,
-        conversationLabel: userPreview ? `User: "${userPreview}"` : undefined,
+        // A turn an event started reads as that event, not as its stored prompt text.
+        conversationLabel: turnEvent
+          ? eventPromptLabel(turnEvent.event)
+          : userPreview ? `User: "${userPreview}"` : undefined,
         startMs: group.startMs,
         endMs: group.endMs,
         messageStartIndex: group.messageStartIndex,
@@ -2299,6 +2324,7 @@ export function TraceTimeline({
     transcriptMessages,
     projectedMessages,
     costedSpanIds,
+    turnEventByPromptIndex,
   ]);
 
   const fullyExpandedStepIds = useMemo(
@@ -2923,6 +2949,7 @@ export function TraceTimeline({
                               <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                                 {label}
                               </span>
+                              {row.kind === "prompt" ? <TraceEventTestBadge event={turnEventByPromptIndex?.get(row.promptIndex)?.event} /> : null}
                               {/* The tool's name truncates first: the account stays readable. */}
                               <ToolCallAccountTag name={row.kind === "span" ? spanAccount(row.span) : undefined} />
                               {row.kind === "prompt" && row.hasAnyFailure ? (
@@ -3011,6 +3038,7 @@ export function TraceTimeline({
                 transcriptMessages={transcriptMessages}
                 onRevealInTranscript={onRevealInTranscript}
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
+                turnEvent={selectedRow?.kind === "prompt" ? turnEventByPromptIndex?.get(selectedRow.promptIndex) : undefined}
               />
             </div>
           </ResizablePanel>

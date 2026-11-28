@@ -16,7 +16,7 @@ const MEASURED_ELICITATION = new Set(["claude-code"]);
 describe.each(CASES)("$id MCP delivery and input", ({ id, adapter }) => {
   it("hands its native client a config only when the harness client calls the server", () => {
     if (adapter.mcpDelivery === "harness") {
-      expect(["sandbox-files", "session-config"]).toContain(
+      expect(["sandbox-files", "session-config", "web-connector"]).toContain(
         adapter.mcpNativeDelivery,
       );
     } else {

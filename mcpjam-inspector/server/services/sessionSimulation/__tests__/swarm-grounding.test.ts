@@ -25,6 +25,7 @@ import {
 } from "../target-discovery";
 import type { SetupRecord } from "../../../../shared/swarm-grounding";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { UnauthorizedError } from "@modelcontextprotocol/client";
 const tool = (name: string, annotations?: Record<string, unknown>) => ({
   serverId: "s",
   name,
@@ -544,5 +545,86 @@ describe("sponsored setup turn", () => {
 
     expect(error).toBeInstanceOf(SwarmSetupError);
     expect(error.platformFailure).toBeUndefined();
+  });
+});
+
+describe("which setup step failed", () => {
+  const refused = () =>
+    new TypeError("fetch failed", {
+      cause: Object.assign(new Error("connect ECONNREFUSED 10.0.0.1:443"), {
+        code: "ECONNREFUSED",
+      }),
+    });
+  const run = (
+    managerFactory: Parameters<typeof runSwarmSetupTurn>[0]["managerFactory"],
+  ) =>
+    runSwarmSetupTurn({
+      runId: "r",
+      projectId: "p",
+      target: { hostId: "h", targetId: "t" } as never,
+      persona: { name: "Tester" } as never,
+      modelDefinition: { id: "model" } as never,
+      authHeader: "Bearer test",
+      managerFactory,
+    }).catch((e) => e);
+  const connected =
+    (
+      listTools = vi.fn(async () => ({
+        tools: [tool("create_project", write)],
+      })),
+    ) =>
+    async () => ({
+      manager: { listTools } as never,
+      connectedServerIds: ["s"],
+      dispose: async () => {},
+    });
+
+  it("does not blame the target for a Convex lookup the factory made before connecting", async () => {
+    const error = await run(async () => {
+      throw refused();
+    });
+
+    expect(error).toBeInstanceOf(SwarmSetupError);
+    expect(error.fromTargetServer).toBe(false);
+  });
+
+  it("blames the target once the factory is waiting on its servers", async () => {
+    const error = await run(async (_host, hooks) => {
+      hooks?.onConnecting?.();
+      throw refused();
+    });
+
+    expect(error.fromTargetServer).toBe(true);
+  });
+
+  it("blames the target for a tools/list or chat preparation failure", async () => {
+    const listFailure = await run(
+      connected(
+        vi.fn(async () => {
+          throw new UnauthorizedError();
+        }),
+      ),
+    );
+    expect(listFailure.fromTargetServer).toBe(true);
+
+    vi.mocked(prepareChatV2).mockRejectedValueOnce(new UnauthorizedError());
+    const prepareFailure = await run(connected());
+    expect(prepareFailure.fromTargetServer).toBe(true);
+  });
+
+  it("does not blame the target for the model call", async () => {
+    vi.mocked(prepareChatV2).mockResolvedValue({
+      allTools: {},
+      enhancedSystemPrompt: "sys",
+      resolvedTemperature: undefined,
+    } as never);
+    vi.mocked(drainAssistantTurn).mockRejectedValueOnce(
+      new UnauthorizedError(),
+    );
+
+    const error = await run(connected());
+
+    expect(error.cause).toBeInstanceOf(UnauthorizedError);
+    expect(error.fromTargetServer).toBe(false);
   });
 });

@@ -30,11 +30,22 @@ const DRAFT_07_OUTPUT_SCHEMA = {
   required: ["city"],
 } as const;
 
+/** A dialect the validator does not support: neither 2020-12 nor draft-07. */
+const DRAFT_2019_09 = "https://json-schema.org/draft/2019-09/schema";
+const DRAFT_2019_09_OUTPUT_SCHEMA = {
+  $schema: DRAFT_2019_09,
+  type: "object",
+  properties: { region: { type: "string" } },
+  required: ["region"],
+} as const;
+
 interface FixtureServerOptions {
   /** What `tools/call` returns for `weather`. */
   weatherResult?: Record<string, unknown>;
   /** What `tools/call` returns for `city` (draft-07 output schema). */
   cityResult?: Record<string, unknown>;
+  /** What `tools/call` returns for `region` (2019-09 output schema). */
+  regionResult?: Record<string, unknown>;
   /** Record every method the server was asked for. */
   calls?: string[];
   /** List only `plain`, so no tool declares an `outputSchema`. */
@@ -91,6 +102,11 @@ async function serveFixtureServer(options: FixtureServerOptions) {
                       inputSchema: { type: "object", properties: {} },
                       outputSchema: DRAFT_07_OUTPUT_SCHEMA,
                     },
+                    {
+                      name: "region",
+                      inputSchema: { type: "object", properties: {} },
+                      outputSchema: DRAFT_2019_09_OUTPUT_SCHEMA,
+                    },
                   ]),
               { name: "plain", inputSchema: { type: "object", properties: {} } },
             ],
@@ -119,6 +135,14 @@ async function serveFixtureServer(options: FixtureServerOptions) {
               options.cityResult ?? {
                 content: [{ type: "text", text: "Lisbon" }],
                 structuredContent: { city: "Lisbon" },
+              },
+            );
+          }
+          if (name === "region") {
+            return ok(
+              options.regionResult ?? {
+                content: [{ type: "text", text: "us-west1" }],
+                structuredContent: { region: "us-west1" },
               },
             );
           }
@@ -278,6 +302,82 @@ describe("modern-tool-output-schema-conformant", () => {
       ID,
     );
     expect([check.status, check.error?.message]).toEqual(["passed", undefined]);
+  });
+
+  it("does not pass a result whose output schema it cannot read", async () => {
+    // The validator accepts everything under a dialect it does not support.
+    // This result breaks its schema (a number where a string is required), so
+    // a pass here would be a broken server reported as fine.
+    const check = byId(
+      (
+        await run(
+          {
+            regionResult: {
+              content: [{ type: "text", text: "7" }],
+              structuredContent: { region: 7 },
+            },
+          },
+          { toolCalls: [{ toolName: "region" }] },
+          [ID],
+        )
+      ).checks,
+      ID,
+    );
+    // Not a failure either: the spec lets a schema declare another dialect, and
+    // nothing here showed the result is wrong. It is setup to change.
+    expect([check.status, check.skipReason]).toEqual([
+      "skipped",
+      "could-not-run",
+    ]);
+    expect(check.error?.message).toContain(`"region" (${DRAFT_2019_09})`);
+    expect(check.details).toMatchObject({
+      missingInput: "toolCallProbe",
+      unsupportedDialects: [{ tool: "region", dialect: DRAFT_2019_09 }],
+    });
+  });
+
+  it("does not pass on a checked tool while another went unchecked", async () => {
+    const check = byId(
+      (
+        await run(
+          {},
+          { toolCalls: [{ toolName: "weather" }, { toolName: "region" }] },
+          [ID],
+        )
+      ).checks,
+      ID,
+    );
+    expect([check.status, check.skipReason]).toEqual([
+      "skipped",
+      "could-not-run",
+    ]);
+    // The tool that was checked still shows as checked.
+    expect(check.details).toMatchObject({
+      graded: [
+        { tool: "weather", schemaBound: true },
+        { tool: "region", schemaBound: false },
+      ],
+    });
+  });
+
+  it("still fails a broken result when another tool went unchecked", async () => {
+    const check = byId(
+      (
+        await run(
+          {
+            weatherResult: {
+              content: [{ type: "text", text: "hot" }],
+              structuredContent: { temperature: "hot" },
+            },
+          },
+          { toolCalls: [{ toolName: "region" }, { toolName: "weather" }] },
+          [ID],
+        )
+      ).checks,
+      ID,
+    );
+    expect(check.status).toBe("failed");
+    expect(check.error?.message).toContain("does not conform");
   });
 
   it("does not bind the schema to an isError result", async () => {

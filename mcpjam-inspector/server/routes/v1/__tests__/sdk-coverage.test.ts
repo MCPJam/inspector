@@ -134,6 +134,17 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/server-groups": "listServerGroups",
   "post /projects/{projectId}/server-groups": "createServerGroup",
   "get /projects/{projectId}/servers/{serverId}": "getProjectServer",
+  "post /projects/{projectId}/mock-servers": "createMockServer",
+  "post /projects/{projectId}/mock-servers/{mockId}/versions": "saveMockServerVersion",
+  "get /projects/{projectId}/mock-servers/{mockId}": "getMockServer",
+  "patch /projects/{projectId}/mock-servers/{mockId}": "patchMockServer",
+  "post /projects/{projectId}/mock-servers/{mockId}/refresh": "refreshMockServer",
+  "post /projects/{projectId}/mock-servers/{mockId}/runs": "openMockRun",
+  "post /projects/{projectId}/mock-servers/{mockId}/runs/{runId}/reset": "resetMockRun",
+  "post /projects/{projectId}/mock-servers/{mockId}/runs/{runId}/close": "closeMockRun",
+  "get /projects/{projectId}/mock-servers/{mockId}/forwarding-policy": "getMockForwardingPolicy",
+  "get /projects/{projectId}/mock-forwarding-policy": "getMockForwardingPolicy",
+  "put /projects/{projectId}/mock-forwarding-policy": "setMockForwardingPolicy",
   "get /projects/{projectId}/servers/{serverId}/revisions":
     "listServerRevisions",
   "get /projects/{projectId}/servers/{serverId}/revisions/{revisionNumber}":
@@ -677,6 +688,22 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Share member upsert stays REST-only for now.",
   "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}":
     "Share member removal stays REST-only for now.",
+  "post /projects/{projectId}/otlp/v1/traces":
+    "OTLP/HTTP trace receiver for an MCP server's OpenTelemetry exporter, authenticated by a producer credential rather than a user; exporters speak OTLP, not this client.",
+  "get /projects/{projectId}/production/counts":
+    "Production traffic review counts for the PT-1 pilot behind production-traffic-enabled; a client method follows the dashboard decision.",
+  "get /projects/{projectId}/production/calls":
+    "Production traffic call list with review reasons for the PT-1 pilot; its client method is designed with the dashboard and case creation.",
+  "get /projects/{projectId}/production/credentials":
+    "Lists a project's producer credentials for its admins during the PT-1 pilot; credential management stays REST-only until the settings UI.",
+  "post /projects/{projectId}/production/credentials":
+    "Issues a producer credential whose token is shown once; an admin action kept off the agent surfaces so no tool output ever carries the token.",
+  "post /projects/{projectId}/production/credentials/{credentialId}/rotate":
+    "Rotates a producer credential with an overlap window; like issuing, it returns a token once and stays an admin REST action.",
+  "delete /projects/{projectId}/production/credentials/{credentialId}":
+    "Revokes a producer credential so the next OTLP batch is refused; an exposure-reducing admin action with no SDK caller yet.",
+  "put /projects/{projectId}/production/ingest":
+    "Turns a project's production traffic ingest on or off for the PT-1 pilot; the project setting moves into the dashboard's settings later.",
 };
 
 describe("/api/v1 -> SDK coverage", () => {

@@ -21,7 +21,10 @@ import {
 import type { BrowserdLeaseState, BrowserdStatus } from "../browserd-client";
 import { HandoffLease } from "../daemon/lease";
 import { BROWSERD_PROTOCOL_VERSION } from "../protocol";
-import { BrowserProtocolMismatchError } from "../browser-session";
+import {
+  BrowserProtocolMismatchError,
+  FreshProfileRefusedError,
+} from "../browser-session";
 import { logger } from "../../../utils/logger.js";
 import type {
   BrowserSessionLookup,
@@ -347,6 +350,13 @@ describe("ensureBrowserSession — relaunch triggers", () => {
   it("relaunches when no session row exists", async () => {
     const f = makeFakes();
     await expectRelaunch(f);
+  });
+
+  it("never empties a computer's profile, even when a fresh one is asked for", async () => {
+    // A computer's profile is its owner's sign-ins; only a sandbox box boots fresh.
+    const f = makeFakes();
+    await ensureBrowserSession(f.deps, { ...ARGS, freshProfile: true });
+    expect(f.boot.mock.lastCall?.[1]).not.toHaveProperty("freshProfile");
   });
 
   it("relaunches on a bootId mismatch (the row describes a previous boot)", async () => {
@@ -1240,6 +1250,15 @@ describe("ensureBrowserSession — sandbox target", () => {
     },
   };
 
+  it("boots a sandbox from an empty profile when a fresh one is asked for", async () => {
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    await ensureBrowserSession(f.deps, { ...SANDBOX_ARGS, freshProfile: true });
+    expect(f.boot).toHaveBeenCalledWith(
+      f.sandbox.browserd,
+      expect.objectContaining({ freshProfile: true }),
+    );
+  });
+
   it("boots on the run's OWN box: no reserve, no lease, no stream", async () => {
     // Everything this path skips is a decision, not an omission. The box is
     // already provisioned (so nothing reserves or bills), one run owns it (so
@@ -1469,6 +1488,89 @@ describe("ensureBrowserSession — sandbox target", () => {
       false,
     );
     expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("refuses another session's running browser when a fresh profile is asked for", async () => {
+    // That browser holds whatever profile it booted with: handing it over
+    // would give a web account someone else's sign-ins.
+    const status = async () => ({
+      kind: "ok" as const,
+      bootId: SANDBOX_SESSION.bootId,
+      protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    });
+    const f = makeFakes({ lookups: [liveSandboxLookup()], status });
+    await expect(
+      ensureBrowserSession(f.deps, { ...SANDBOX_ARGS, freshProfile: true }),
+    ).rejects.toBeInstanceOf(FreshProfileRefusedError);
+    expect(f.boot).not.toHaveBeenCalled();
+    // One that appears while connecting is refused too, and left running.
+    const raced = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        liveSandboxLookup({ bootId: "boot-winner" }),
+      ],
+      status: async () => ({
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
+    });
+    await expect(
+      ensureBrowserSession(raced.deps, { ...SANDBOX_ARGS, freshProfile: true }),
+    ).rejects.toBeInstanceOf(FreshProfileRefusedError);
+    expect(raced.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(raced.boot).not.toHaveBeenCalled();
+    // So is one whose record wins after our own fresh boot: ours is stopped,
+    // and theirs is not adopted.
+    const lost = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        { reachable: true, session: null },
+        liveSandboxLookup({ bootId: "boot-winner" }),
+      ],
+      recordResult: { status: "conflict" },
+      status: async () => ({
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
+    });
+    await expect(
+      ensureBrowserSession(lost.deps, { ...SANDBOX_ARGS, freshProfile: true }),
+    ).rejects.toBeInstanceOf(FreshProfileRefusedError);
+    expect(lost.bootHandle.stop).toHaveBeenCalled();
+  });
+
+  it("refuses a winner recorded behind the relaunch fence when a fresh profile is asked for", async () => {
+    // A watched box takes the relaunch claim and fence before it kills. A
+    // daemon another replica recorded meanwhile holds its own profile: it is
+    // refused and left running, and the fence and the claim are handed back.
+    const lease = new HandoffLease();
+    const f = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        { reachable: true, session: null },
+        liveSandboxLookup({ bootId: "boot-winner", contextMode: "persistent" }),
+      ],
+      status: async () => ({
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
+      leaseAction: leaseBackedBy(lease),
+    });
+    await expect(
+      ensureBrowserSession(f.deps, {
+        ...SANDBOX_ARGS,
+        contextMode: "persistent",
+        target: { ...SANDBOX_ARGS.target, watched: true },
+        freshProfile: true,
+      }),
+    ).rejects.toBeInstanceOf(FreshProfileRefusedError);
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(lease.state()).toEqual({ state: "free" });
+    expect(f.releaseRelaunch).toHaveBeenCalledTimes(1);
   });
 
   it("adopts a winner that appeared while we were connecting, WITHOUT killing it", async () => {
@@ -2223,6 +2325,12 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
       new Uint8Array([7, 8, 9]),
     );
     expect(exportProfile).toHaveBeenCalledTimes(1);
+    // The origins to leave out travel too: dropped here, the archive would
+    // keep the very session the caller asked to clear.
+    await handle.client.exportProfile!({ excludeOrigins: ["https://signin.example"] });
+    expect(exportProfile).toHaveBeenLastCalledWith({
+      excludeOrigins: ["https://signin.example"],
+    });
   });
 
   it("does not invent a capability the client lacks", async () => {

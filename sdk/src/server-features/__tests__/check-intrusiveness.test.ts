@@ -73,7 +73,7 @@ describe("check intrusiveness", () => {
       "completion-complete",
       "logging-set-level",
       "localhost-host-rebinding-rejected",
-      // Both send their own initialize, which opens a session never closed.
+      // Both send their own initialize, which opens a session.
       "localhost-host-valid-accepted",
       "protocol-invalid-method-error",
       "modern-protocol-version-header-mismatch",

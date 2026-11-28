@@ -22,7 +22,6 @@ import {
   MCP_PROTOCOL_VERSIONS,
   MCP_SKILLS_EXTENSION_ID,
   protocolVersionLabel,
-  readEventsHostSetting,
   readTasksPolicy,
   readXaaEnterprisePolicy,
   setTasksPolicy,
@@ -53,7 +52,6 @@ import {
   ProtocolAuthChallengeSection,
   type AuthChallengeKnob,
 } from "./ProtocolAuthChallengeSection";
-import { EventsHostSupportSection } from "./EventsHostSupportSection";
 
 /**
  * "auto" is a stored selection policy, NOT a wire literal. The SDK negotiates
@@ -1050,11 +1048,6 @@ export function ProtocolTab({
   // is stranded with tasks disabled and no UI left to re-enable them.
   const tasksFlagEnabled = useFeatureFlagEnabled("mcp-tasks");
   const showTasksPolicy = tasksFlagEnabled === true || tasksPolicy !== "unset";
-  // Shown with Events, and always once a setting is saved, so a client is
-  // never left with a delivery setting nobody can see or change.
-  const eventsFlagEnabled = useFeatureFlagEnabled("mcp-events-enabled");
-  const showEventsDelivery =
-    eventsFlagEnabled === true || readEventsHostSetting(draft).kind !== "unset";
   const fTasksPolicy = hostConfigField("tasksPolicy");
   const setTasksPolicyChoice = (next: TasksPolicyChoice) => {
     onDraftChange((prev) =>
@@ -1456,13 +1449,6 @@ export function ProtocolTab({
               </SelectContent>
             </Select>
           </div>
-        )}
-        {showEventsDelivery && (
-          <EventsHostSupportSection
-            draft={draft}
-            onDraftChange={onDraftChange}
-            readOnly={readOnly}
-          />
         )}
         <div className="mt-2.5 border-t border-border/50 pt-2.5">
           <div className="flex items-center justify-between gap-3">

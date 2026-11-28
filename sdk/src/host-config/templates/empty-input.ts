@@ -46,6 +46,7 @@ export type SeededHostConfigInput = {
   requireNativeToolDiscovery?: boolean;
   respectToolVisibility: boolean;
   progressiveToolDiscovery?: boolean;
+  runUnloadedToolCalls?: boolean;
   serverIds: string[];
   optionalServerIds: string[];
   builtInToolIds: string[];

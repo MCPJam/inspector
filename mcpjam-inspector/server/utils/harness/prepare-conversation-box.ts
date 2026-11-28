@@ -105,6 +105,8 @@ export function hostedBootstrapRuntimes(
   modelId: string,
 ): HarnessAgentAdapter[] {
   const adapter = getHarnessAdapter(harnessId);
+  // A web client drives the vendor's website: nothing is installed in a box.
+  if (adapter.webAccount) return [];
   const auth =
     adapter.modelAccess === "external-account"
       ? Object.fromEntries(

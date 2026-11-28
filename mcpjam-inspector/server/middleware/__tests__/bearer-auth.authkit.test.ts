@@ -66,6 +66,8 @@ function createApp(): Hono {
   app.use("*", bearerAuthMiddleware);
   const echo = (c: any) => {
     next();
+    const analyticsUserId = c.get("analyticsUserId");
+    if (analyticsUserId) c.header("x-test-analytics-user-id", analyticsUserId);
     return c.json({
       authMethod: c.get("authMethod") ?? null,
       workosUserId: c.get("workosUserId") ?? null,
@@ -174,7 +176,10 @@ describe("bearerAuthMiddleware — AuthKit JWTs", () => {
     );
   });
 
-  it.each([[{ kind: "foreign_audience" }], [{ kind: "not_authkit" }]])(
+  it.each([
+    [{ kind: "foreign_audience", sub: "user_from_worker" }],
+    [{ kind: "not_authkit" }],
+  ])(
     "lets %o through unverified for downstream to judge",
     async (verdict) => {
       classifyAuthKitBearerMock.mockResolvedValue(verdict);
@@ -190,6 +195,30 @@ describe("bearerAuthMiddleware — AuthKit JWTs", () => {
       });
     },
   );
+
+  it("records a foreign-audience sub for analytics without trusting it", async () => {
+    classifyAuthKitBearerMock.mockResolvedValue({
+      kind: "foreign_audience",
+      sub: "user_from_worker",
+    });
+
+    const res = await request("eyJ.worker.token");
+
+    // Still a passthrough with no user: only usage analytics may read this.
+    expect(await res.json()).toMatchObject({
+      authMethod: "unverified_passthrough",
+      workosUserId: null,
+    });
+    expect(res.headers.get("x-test-analytics-user-id")).toBe("user_from_worker");
+  });
+
+  it("records no analytics user for a token it could not attribute", async () => {
+    classifyAuthKitBearerMock.mockResolvedValue({ kind: "not_authkit" });
+
+    const res = await request("eyJ.other.token");
+
+    expect(res.headers.get("x-test-analytics-user-id")).toBeNull();
+  });
 });
 
 describe("bearerAuthMiddleware — revoked sessions (MJ-011)", () => {

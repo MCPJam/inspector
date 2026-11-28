@@ -1,8 +1,12 @@
 export type ConnectionIntent =
-  | { kind: "add" }
-  | { kind: "replace"; credentialId: string };
+  { kind: "add" } | { kind: "replace"; credentialId: string };
 export interface OAuthConnection {
   connectionId: string;
+  /**
+   * The N in "Account N", stored when the account was connected, so a default
+   * switch or a removal never renames the others. Absent from older backends.
+   */
+  accountNumber?: number;
   label?: string;
   profile?: {
     id: string;
@@ -53,13 +57,15 @@ export function connectionLabel(
   options?: ConnectionLabelOptions,
 ): string {
   const usable = (value?: string) =>
-    value && !(options?.withoutEmail && value.includes("@")) ? value : undefined;
+    value && !(options?.withoutEmail && value.includes("@"))
+      ? value
+      : undefined;
   return (
     usable(c.label) ||
     (options?.withoutEmail ? undefined : c.profile?.email) ||
     usable(c.profile?.name) ||
     usable(c.profile?.nickname) ||
-    `Account ${index + 1}`
+    `Account ${c.accountNumber ?? index + 1}`
   );
 }
 

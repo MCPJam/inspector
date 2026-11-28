@@ -37,6 +37,13 @@ describe("settings destinations", () => {
       );
     }
   });
+  it("finds the sidebar setting under Appearance", () => {
+    for (const query of ["sidebar", "collapse", "Auto-collapse sidebar"]) {
+      expect(searchSettings(query, context)[0].destination.id).toBe(
+        "personal-appearance",
+      );
+    }
+  });
   it("opens Profile by default and keeps Appearance separately reachable", () => {
     expect(resolveSettingsDestination("/settings")?.id).toBe(
       "personal-profile",

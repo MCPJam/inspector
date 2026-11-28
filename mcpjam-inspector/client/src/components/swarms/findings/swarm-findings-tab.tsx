@@ -62,6 +62,8 @@ import { SectionLabel } from "@/components/shared/section-label";
 import { FindingsSummaryCard } from "./findings-summary-card";
 import { FindingsPersonaTabs } from "./findings-persona-tabs";
 import { FindingsPersonaCard } from "./findings-persona-card";
+import { SentimentPill } from "./findings-sentiment-pill";
+import { PersonaPixelAvatar } from "../persona-pixel-avatar";
 
 export function SwarmFindingsTab({
   wave,
@@ -72,6 +74,7 @@ export function SwarmFindingsTab({
   generatedSummary,
   journeyFindings,
   journeyFindingsJob,
+  overview = false,
 }: {
   wave: SwarmWave;
   waveSignals: SwarmWaveSignals | null | undefined;
@@ -83,6 +86,7 @@ export function SwarmFindingsTab({
   journeyFindings?: SwarmJourneyFindings | null;
   journeyFindingsJob?: SwarmJourneyFindingsJob | null;
   narration?: SwarmNarration;
+  overview?: boolean;
 }) {
   const [funnels, setFunnels] = useState<
     Record<string, ChatSessionStageFunnel | null>
@@ -296,38 +300,62 @@ export function SwarmFindingsTab({
           journeyFindings ? wireFindingsFootnotes(journeyFindings) : []
         }
       />
-      <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
-      <div className="mb-3">
-        <FindingsPersonaTabs
-          personas={model.personas}
-          selectedIndex={personaIndex}
-          onSelect={(index) => {
-            const next = model.personas[index];
-            if (!next) return;
-            setPersonaChoice(next.name);
-            setExpandedChoice(null);
-          }}
-        />
-      </div>
-      <FindingsPersonaCard
-        persona={persona}
-        selectedTabId={`findings-persona-tab-${personaIndex}`}
-        expandedGoalRunId={expandedGoalRunId}
-        onToggleGoal={(runId) =>
-          setExpandedChoice({
-            personaName: persona.name,
-            runId: expandedGoalRunId === runId ? null : runId,
-          })
-        }
-        selectedStage={selectedStage}
-        onSelectStage={(stage) =>
-          expandedGoal
-            ? setStageChoice({ runId: expandedGoal.runId, stage })
-            : undefined
-        }
-        onOpenSession={onOpenSession}
-        sessionScope={sessionScope}
-      />
+      {overview ? (
+        <ul aria-label="Persona sentiment" className="mt-3 grid gap-2 @lg:grid-cols-2 @3xl:grid-cols-3">
+          {model.personas.map((persona) => (
+            <li
+              key={persona.name}
+              className="flex min-w-0 items-center gap-2 rounded-lg border bg-card p-3 text-card-foreground"
+            >
+              <PersonaPixelAvatar
+                seed={persona.avatarSeed}
+                shapeIndex={persona.avatarShape}
+                paletteIndex={persona.avatarPalette}
+                size="sm"
+              />
+              <div className="min-w-0 space-y-1">
+                <p className="break-words text-sm font-medium">{persona.name}</p>
+                <SentimentPill sentiment={persona.sentiment} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <>
+          <SectionLabel className="mb-2.5 mt-7">Choose a persona</SectionLabel>
+          <div className="mb-3">
+            <FindingsPersonaTabs
+              personas={model.personas}
+              selectedIndex={personaIndex}
+              onSelect={(index) => {
+                const next = model.personas[index];
+                if (!next) return;
+                setPersonaChoice(next.name);
+                setExpandedChoice(null);
+              }}
+            />
+          </div>
+          <FindingsPersonaCard
+            persona={persona}
+            selectedTabId={`findings-persona-tab-${personaIndex}`}
+            expandedGoalRunId={expandedGoalRunId}
+            onToggleGoal={(runId) =>
+              setExpandedChoice({
+                personaName: persona.name,
+                runId: expandedGoalRunId === runId ? null : runId,
+              })
+            }
+            selectedStage={selectedStage}
+            onSelectStage={(stage) =>
+              expandedGoal
+                ? setStageChoice({ runId: expandedGoal.runId, stage })
+                : undefined
+            }
+            onOpenSession={onOpenSession}
+            sessionScope={sessionScope}
+          />
+        </>
+      )}
     </div>
   );
 }

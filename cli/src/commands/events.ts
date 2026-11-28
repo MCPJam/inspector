@@ -7,7 +7,7 @@ import {
 } from "@mcpjam/sdk/events";
 import {
   assertEventsDeclaredOrForced,
-  checkCallbackUrl,
+  requireCallbackUrl,
   insecureModeWarning,
   listAllServerEvents,
   parseEventArguments,
@@ -47,7 +47,7 @@ export type { EventsCommandOptions, EventsTargetOptions } from "./events-context
 export type { EventsWatchOptions } from "./events-watch.js";
 
 /**
- * `mcpjam events` — MCP Events (triggers), draft@28ec35e.
+ * `mcpjam events` — MCP Events Beta and legacy profiles.
  *
  * Every verb connects directly to the server you name, like `tools call`.
  * The lifecycle rules live in `@mcpjam/sdk/events` (coordinator, push runtime,
@@ -71,12 +71,13 @@ function registerList(events: Command): void {
     events
       .command("list")
       .description(
-        "Report the server's events capability and every event type it offers (events/list, all pages). Exits 2 when the server did not declare capabilities.events, unless --force.",
+        "Report the selected Events capability and all event types. Exits 2 when the capability is absent, unless --force.",
       ),
   ).action(async (options: EventsCommandOptions, command: Command) => {
     const ctx = buildContext(options, command);
     const result = await withEventsConnection(options, ctx, async (manager, serverId) => {
       const support = assertEventsDeclaredOrForced(manager, serverId, {
+        profile: ctx.profile,
         force: options.force,
         serverLabel: ctx.target,
         warn: ctx.warn,
@@ -126,6 +127,7 @@ function registerPoll(events: Command): void {
     }
     const result = await withEventsConnection(options, ctx, async (manager, serverId) => {
       assertEventsDeclaredOrForced(manager, serverId, {
+        profile: ctx.profile,
         force: options.force,
         serverLabel: ctx.target,
         warn: ctx.warn,
@@ -243,7 +245,7 @@ function registerSubscribe(events: Command): void {
     const ctx = buildContext(options, command);
     const eventArguments = parseEventArguments(options.eventArgs);
     if (!options.callbackUrl) throw usageError("--callback-url is required.");
-    const callback = checkCallbackUrl(options.callbackUrl, {
+    const callback = requireCallbackUrl(options.callbackUrl, {
       flag: "--callback-url",
       insecureFlag: "--insecure-callback",
       allowInsecure: options.insecureCallback === true,
@@ -259,6 +261,7 @@ function registerSubscribe(events: Command): void {
 
     const result = await withEventsConnection(options, ctx, async (manager, serverId) => {
       assertEventsDeclaredOrForced(manager, serverId, {
+        profile: ctx.profile,
         force: options.force,
         serverLabel: ctx.target,
         warn: ctx.warn,
@@ -310,6 +313,7 @@ function registerUnsubscribe(events: Command): void {
     }
     const outcome = await withEventsConnection(options, ctx, async (manager, serverId) => {
       assertEventsDeclaredOrForced(manager, serverId, {
+        profile: ctx.profile,
         force: options.force,
         serverLabel: ctx.target,
         warn: ctx.warn,
@@ -360,8 +364,7 @@ function registerConformance(events: Command): void {
           )
           .option(
             "--profile <profile>",
-            'Profile to judge by: "draft" (draft@28ec35e) or "chatgpt" (chatgpt@2026-11-05)',
-            "draft",
+            'Profile to judge by: "beta", "draft" or "chatgpt" (default: negotiated Events version)',
           )
           .option(
             "--protocol-version <version>",
@@ -482,7 +485,7 @@ export function registerEventsCommands(program: Command): void {
   const events = program
     .command("events")
     .description(
-      "List, poll, watch, subscribe to and conformance-check MCP Events (triggers, draft@28ec35e)",
+      "List, poll, watch, subscribe to and conformance-check MCP Events (poll, push and webhook)",
     );
   registerList(events);
   registerPoll(events);

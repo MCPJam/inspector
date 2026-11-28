@@ -19,6 +19,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { FILE_BUDGET, GROWTH_ALLOWANCE, checkNewPath } from "./hook.mjs";
+import { stagedBase } from "./ratchet.mjs";
 import { isMeasuredFile } from "./rules.mjs";
 
 function git(args) {
@@ -75,15 +76,15 @@ export function checkChange(entries, linesBefore, linesAfter) {
 
 // Compared as URLs: on Windows argv[1] is a `C:\` path, not a `file:` URL.
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  // --staged checks what is staged against HEAD (git pre-commit); otherwise
-  // HEAD against --base or the merge-base with origin/main.
+  // --staged checks what is staged against stagedBase() (git pre-commit);
+  // otherwise HEAD against --base or the merge-base with origin/main.
   const staged = process.argv.includes("--staged");
   const index = process.argv.indexOf("--base");
   const base =
     index !== -1
       ? process.argv[index + 1]
       : staged
-        ? "HEAD"
+        ? stagedBase()
         : git(["merge-base", "HEAD", "origin/main"]).trim();
   const range = staged ? ["--cached", base] : [base, "HEAD"];
   const entries = parseNameStatus(

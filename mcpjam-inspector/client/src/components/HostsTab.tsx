@@ -460,6 +460,7 @@ export function HostsTab({
                 modelId: cfg.modelId,
                 temperature: cfg.temperature,
                 requireToolApproval: cfg.requireToolApproval,
+                runUnloadedToolCalls: cfg.runUnloadedToolCalls,
                 respectToolVisibility: cfg.respectToolVisibility ?? true,
                 progressiveToolDiscovery:
                   cfg.progressiveToolDiscovery ?? null,

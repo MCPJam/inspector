@@ -6,7 +6,7 @@
 
 import { Command } from "commander";
 import type { MCPClientManager } from "@mcpjam/sdk";
-import type { EventsProfile } from "@mcpjam/sdk/events";
+import { BETA_PROFILE_ID, type EventsProfile } from "@mcpjam/sdk/events";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import {
   applyEventsProtocolVersion,
@@ -90,8 +90,11 @@ export async function withEventsConnection<T>(
     options,
   );
   return withEphemeralManager(
-    config,
+    options.profile
+      ? { ...config, eventsWireProfile: ctx.profile.id === BETA_PROFILE_ID ? "beta" : "legacy" }
+      : config,
     async (manager, serverId) => {
+      if (!options.profile && manager.getEventsSupport(serverId).beta) ctx.profile = parseEventsProfile("beta");
       notePeerProtocol(manager, serverId, ctx);
       return fn(manager, serverId);
     },
@@ -110,7 +113,7 @@ function notePeerProtocol(
   serverId: string,
   ctx: EventsContext,
 ): void {
-  const negotiated = manager.getCapturedEventsCapability(serverId)?.protocolVersion;
+  const negotiated = manager.getNegotiatedProtocolVersion(serverId);
   const documented = ctx.profile.protocolVersions.value;
   if (negotiated && !documented.includes(negotiated)) {
     ctx.status(
@@ -135,8 +138,7 @@ export function addEventsTargetOptions(command: Command): Command {
         command
           .option(
             "--profile <profile>",
-            'Events profile the run is judged by: "draft" (draft@28ec35e) or "chatgpt" (chatgpt@2026-11-05)',
-            "draft",
+            'Events wire profile: "beta", "draft" or "chatgpt" (default: negotiated Events profile)',
           )
           .option(
             "--protocol-version <version>",
@@ -144,7 +146,7 @@ export function addEventsTargetOptions(command: Command): Command {
           )
           .option(
             "--force",
-            "Send events/* even when the server did not declare capabilities.events (conformance probing)",
+            "Send events/* without the selected capability declaration to probe conformance",
           ),
       ),
     ),
@@ -154,7 +156,7 @@ export function addEventsTargetOptions(command: Command): Command {
 export function addEventArgsOption(command: Command): Command {
   return command.option(
     "--event-args <json>",
-    "Event arguments as a JSON object, @path, or - for stdin (default {})",
+    "Subscription arguments as a JSON object, @path, or - for stdin (default {})",
   );
 }
 

@@ -516,7 +516,7 @@ export function humanizeSwarmAttemptError(
     const toolName = scrub(unavailableTool) || "a tool";
     return {
       message:
-        `The model called \`${toolName}\`, but your server has no tool by that name.`.slice(
+        `The model called \`${toolName}\`, which was unavailable in this step.`.slice(
           0,
           MAX_ATTEMPT_ERROR_CHARS,
         ),

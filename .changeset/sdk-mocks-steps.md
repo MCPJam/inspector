@@ -1,0 +1,5 @@
+---
+"@mcpjam/sdk": minor
+---
+
+A saved case on a mock can now do what a real tool does while it runs: send progress, log messages, list-changed notifications and resource updates, ask the client a question (a form or a page) or a request to its model, and shape its result from the replies (`{{steps.<id>.action}}`, `{{steps.<id>.content.<field>}}`, `{{steps.<id>.text}}`). Questions ride 2026-07-28's multi round trip; a 2025-era caller, which a mock keeps no session for, gets a tool error that names 2026-07-28. A mock declares only the capabilities the caller's revision defines (`tasks` on 2025-11-25, `extensions` on 2026-07-28, so its own skills extension is declared on 2026-07-28 only), answers a method the revision lacks with method not found, sends list changes on 2026-07-28 through a `subscriptions/listen` bus (`BuildMockOptions.bus`), passes `resources/subscribe` to the real server after `authorizeForward` allows it, and relays a real server's `input_required` question to the caller. `validateMockDefinition` no longer refuses `steps`.

@@ -233,6 +233,87 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
           },
           additionalProperties: false,
         },
+        codeEvaluators: {
+          maxItems: 10,
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: {
+                type: "string",
+                pattern: "^[A-Za-z0-9_-]{1,64}$",
+                description: "Stable id; the score row is code:<id>.",
+              },
+              name: { type: "string", minLength: 1, maxLength: 100 },
+              fileName: {
+                type: "string",
+                pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\\.(sh|py|ts|js)$",
+                description: "The extension picks the interpreter.",
+              },
+              script: {
+                type: "string",
+                description:
+                  'Reads the iteration from $MCPJAM_ITERATION and writes {"score": 0 to 1, "reason": "..."} to $MCPJAM_RESULT.',
+              },
+              role: {
+                description:
+                  "Required gates the iteration; advisory only reports. Default advisory.",
+                type: "string",
+                enum: ["required", "advisory"],
+              },
+              threshold: {
+                description: "The score an iteration needs to pass. Default 1.",
+                type: "number",
+                exclusiveMinimum: 0,
+                maximum: 1,
+              },
+              evaluator: {
+                type: "object",
+                properties: {
+                  id: { type: "string", minLength: 1, maxLength: 64 },
+                  version: {
+                    type: "integer",
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                },
+                required: ["id", "version"],
+                additionalProperties: false,
+              },
+            },
+            required: ["id", "fileName", "script"],
+            additionalProperties: false,
+          },
+        },
+        scripts: {
+          type: "object",
+          properties: {
+            runSetup: { type: "string" },
+            iterationSetup: { type: "string" },
+            iterationCleanup: { type: "string" },
+            runCleanup: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+        grading: {
+          type: "object",
+          properties: {
+            files: {
+              description:
+                "Files or folders from the agent's box to copy into the grading box.",
+              maxItems: 20,
+              type: "array",
+              items: { type: "string" },
+            },
+            network: {
+              description:
+                "none (default): evaluators can't reach the network.",
+              type: "string",
+              enum: ["none", "web"],
+            },
+          },
+          additionalProperties: false,
+        },
         passThreshold: { type: "number", minimum: 0, maximum: 1 },
         validity: {
           type: "object",
@@ -680,6 +761,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -704,6 +802,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -720,6 +835,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -736,6 +868,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -752,6 +901,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -768,6 +934,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -805,6 +988,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "toolName", "args"],
                             },
@@ -822,6 +1022,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "toolName"],
                             },
@@ -839,6 +1056,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "toolName"],
                             },
@@ -859,6 +1093,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "toolNames"],
                             },
@@ -873,6 +1124,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "toolName"],
                             },
@@ -901,6 +1169,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "reference", "maxDistance"],
                             },
@@ -919,6 +1204,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "needle"],
                             },
@@ -936,6 +1238,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "pattern"],
                             },
@@ -949,6 +1268,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -965,6 +1301,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -986,6 +1339,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "tokens"],
                             },
@@ -1003,6 +1373,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -1025,6 +1412,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "ms"],
                             },
@@ -1042,6 +1446,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -1063,6 +1484,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "turns"],
                             },
@@ -1079,6 +1517,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -1101,6 +1556,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "ms"],
                             },
@@ -1124,6 +1596,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "needle"],
                             },
@@ -1135,13 +1624,40 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   type: "string",
                                   const: "toolResultMatchesSchema",
                                 },
-                                schema: {},
+                                schema: {
+                                  anyOf: [
+                                    { type: "string", const: "declared" },
+                                    {
+                                      type: "object",
+                                      propertyNames: { type: "string" },
+                                      additionalProperties: {},
+                                    },
+                                    { type: "boolean" },
+                                  ],
+                                },
                                 toolName: { type: "string", minLength: 1 },
                                 role: {
                                   type: "string",
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "schema"],
                             },
@@ -1164,6 +1680,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "maxBytes"],
                             },
@@ -1181,6 +1714,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -1236,6 +1786,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "toolName", "patterns"],
                             },
@@ -1291,6 +1858,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "patterns"],
                             },
@@ -1308,6 +1892,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -1330,6 +1931,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "count"],
                             },
@@ -1351,6 +1969,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type", "toolName", "beforeToolName"],
                             },
@@ -1367,6 +2002,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -1383,6 +2035,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -1400,6 +2069,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -1417,6 +2103,23 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   enum: ["gating", "advisory", "required"],
                                 },
                                 severity: { type: "string", const: "warn" },
+                                evaluator: {
+                                  type: "object",
+                                  properties: {
+                                    id: {
+                                      type: "string",
+                                      minLength: 1,
+                                      maxLength: 64,
+                                    },
+                                    version: {
+                                      type: "integer",
+                                      exclusiveMinimum: 0,
+                                      maximum: 9007199254740991,
+                                    },
+                                  },
+                                  required: ["id", "version"],
+                                  additionalProperties: false,
+                                },
                               },
                               required: ["type"],
                             },
@@ -1450,6 +2153,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1470,6 +2186,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1482,6 +2211,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1494,6 +2236,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1509,6 +2264,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1521,6 +2289,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1554,6 +2335,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName", "args"],
                 },
@@ -1567,6 +2361,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName"],
                 },
@@ -1580,6 +2387,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName"],
                 },
@@ -1596,6 +2416,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolNames"],
                 },
@@ -1609,6 +2442,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName"],
                 },
@@ -1629,6 +2475,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "reference", "maxDistance"],
                 },
@@ -1643,6 +2502,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "needle"],
                 },
@@ -1656,6 +2528,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "pattern"],
                 },
@@ -1668,6 +2553,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1683,6 +2581,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1700,6 +2611,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "tokens"],
                 },
@@ -1713,6 +2637,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1731,6 +2668,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "ms"],
                 },
@@ -1744,6 +2694,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1761,6 +2724,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "turns"],
                 },
@@ -1773,6 +2749,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1791,6 +2780,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "ms"],
                 },
@@ -1806,6 +2808,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "needle"],
                 },
@@ -1813,13 +2828,36 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "toolResultMatchesSchema" },
-                    schema: {},
+                    schema: {
+                      anyOf: [
+                        { type: "string", const: "declared" },
+                        {
+                          type: "object",
+                          propertyNames: { type: "string" },
+                          additionalProperties: {},
+                        },
+                        { type: "boolean" },
+                      ],
+                    },
                     toolName: { type: "string", minLength: 1 },
                     role: {
                       type: "string",
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "schema"],
                 },
@@ -1838,6 +2876,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "maxBytes"],
                 },
@@ -1851,6 +2902,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1890,6 +2954,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName", "patterns"],
                 },
@@ -1929,6 +3006,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "patterns"],
                 },
@@ -1942,6 +3032,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1960,6 +3063,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "count"],
                 },
@@ -1974,6 +3090,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName", "beforeToolName"],
                 },
@@ -1986,6 +3115,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -1998,6 +3140,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2011,6 +3166,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2024,6 +3192,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2073,6 +3254,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2093,6 +3287,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2105,6 +3312,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2117,6 +3337,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2132,6 +3365,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2144,6 +3390,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2177,6 +3436,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName", "args"],
                 },
@@ -2190,6 +3462,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName"],
                 },
@@ -2203,6 +3488,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName"],
                 },
@@ -2219,6 +3517,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolNames"],
                 },
@@ -2232,6 +3543,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName"],
                 },
@@ -2252,6 +3576,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "reference", "maxDistance"],
                 },
@@ -2266,6 +3603,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "needle"],
                 },
@@ -2279,6 +3629,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "pattern"],
                 },
@@ -2291,6 +3654,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2306,6 +3682,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2323,6 +3712,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "tokens"],
                 },
@@ -2336,6 +3738,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2354,6 +3769,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "ms"],
                 },
@@ -2367,6 +3795,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2384,6 +3825,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "turns"],
                 },
@@ -2396,6 +3850,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2414,6 +3881,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "ms"],
                 },
@@ -2429,6 +3909,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "needle"],
                 },
@@ -2436,13 +3929,36 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                   type: "object",
                   properties: {
                     type: { type: "string", const: "toolResultMatchesSchema" },
-                    schema: {},
+                    schema: {
+                      anyOf: [
+                        { type: "string", const: "declared" },
+                        {
+                          type: "object",
+                          propertyNames: { type: "string" },
+                          additionalProperties: {},
+                        },
+                        { type: "boolean" },
+                      ],
+                    },
                     toolName: { type: "string", minLength: 1 },
                     role: {
                       type: "string",
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "schema"],
                 },
@@ -2461,6 +3977,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "maxBytes"],
                 },
@@ -2474,6 +4003,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2513,6 +4055,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName", "patterns"],
                 },
@@ -2552,6 +4107,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "patterns"],
                 },
@@ -2565,6 +4133,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2583,6 +4164,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "count"],
                 },
@@ -2597,6 +4191,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type", "toolName", "beforeToolName"],
                 },
@@ -2609,6 +4216,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2621,6 +4241,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2634,6 +4267,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },
@@ -2647,6 +4293,19 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       enum: ["gating", "advisory", "required"],
                     },
                     severity: { type: "string", const: "warn" },
+                    evaluator: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", minLength: 1, maxLength: 64 },
+                        version: {
+                          type: "integer",
+                          exclusiveMinimum: 0,
+                          maximum: 9007199254740991,
+                        },
+                      },
+                      required: ["id", "version"],
+                      additionalProperties: false,
+                    },
                   },
                   required: ["type"],
                 },

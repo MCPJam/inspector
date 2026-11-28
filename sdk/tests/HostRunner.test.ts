@@ -1890,6 +1890,36 @@ describe("HostRunner", () => {
         value: [{ type: "file", mediaType: "image/png", data: { type: "data", data: "aGVsbG8=" } }],
       });
     });
+
+    it("applies the host's tool-result rule for raw Tool[] conversion (KES-1007)", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const tools: Tool[] = [createMockTool("probeTool")];
+      const host = new Host({
+        style: "claude-desktop",
+        model: "openai/gpt-4o",
+        modelVisibleMcpToolResults: { structuredContent: "fallback" },
+      });
+      const agent = new HostRunner({ host, tools, apiKey: "test-key" });
+
+      await agent.run("Test");
+
+      const converted = (mockGenerateText.mock.calls[0][0] as any).tools
+        .probeTool;
+      await expect(
+        converted.toModelOutput({
+          output: {
+            content: [{ type: "text", text: "VIS-CONTENT" }],
+            structuredContent: { token: "VIS-STRUCTURED" },
+            _meta: { token: "VIS-META" },
+          },
+        })
+      ).resolves.toEqual({ type: "text", value: "VIS-CONTENT" });
+    });
   });
 
   describe("tool description overrides", () => {

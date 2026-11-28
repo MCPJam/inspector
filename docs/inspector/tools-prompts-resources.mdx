@@ -1,148 +1,59 @@
 ---
-title: "MCP Inspector"
-description: "Manually test your MCP server's tools, resources, and prompts"
-icon: "hammer"
+title: "Overview"
+description: "Find the Inspector tab for the MCP server behavior you want to test."
+icon: "search"
 ---
 
-The MCP Inspector provides a complete testing environment for your MCP server. Manually invoke tools, read resources, fetch prompts, and view all JSON-RPC messages between MCPJam and your server.
+[Connect your server](/inspector/connecting-servers) to inspect the operations it offers. Tools, Resources, and Prompts load data for the selected server while it is connected. If it disconnects, reconnect before refreshing or running an operation.
 
-<Note>
-  The Tools, Resources, and Prompts tabs only load data when the selected server
-  is connected. If the server is disconnected, the tabs clear any previously
-  loaded primitives and display a prompt to reconnect. Refresh, run, and read
-  actions are disabled until the server is connected again.
-</Note>
-
-<Frame>
-  <img
-    className="block"
-    src="/images/mcp-tools.png"
-    alt="MCPJam MCP Inspector"
-    width="1000"
-  />
-</Frame>
+| What do you want to test? | Guide |
+| --- | --- |
+| Call a tool and verify its output | [Tools](/inspector/tools) |
+| Read data by URI or watch for updates | [Resources](/inspector/resources) |
+| Fetch messages from a reusable prompt template | [Prompts](/inspector/prompts) |
+| Follow a background operation and inspect its result | [Tasks](/inspector/tasks) |
+| Load skills and try them in Playground | [Skills](/inspector/skills) |
+| Inspect JSON-RPC exchanges and debug widgets | [Tracing and debugging](/inspector/debugging) |
 
 ## Tools
 
-Test your MCP tools by manually invoking them with custom parameters:
-
-- **View all tools** - Browse tool names, descriptions, and parameters
-- **Search tools** - Quickly find specific tools by name
-- **Invoke tools** - Trigger tools with custom input parameters
-- **View results** - See tool outputs, including widget responses for ChatGPT apps and MCP apps
-- **Elicitation support** - Handle elicitation requests from tools with a spec-complete form dialog
-- **Multi-round input** - Tools that return `input_required` (MCP 2026-07-28) collect the needed input through the same dialog and retry automatically
-- **Save requests** - Save frequently used tool invocations for quick testing
-
-Saved requests are stored in your browser's local storage and accessible from the Saved Requests tab.
+[Tools](/inspector/tools) shows input schemas, lets you run a tool with test arguments, and displays the response.
 
 ### Elicitation requests
 
-When a tool triggers an MCP elicitation request, a dialog appears asking you to provide additional input. The dialog renders a form built from the server's schema and supports the full MCP elicitation subset:
-
-- **Field labels and defaults**: Fields show the schema `title` when provided (the raw property key stays visible alongside it). Schema `default` values are pre-filled automatically.
-- **Field types**: Strings, numbers, integers, booleans (checkbox), single-select dropdowns, and multi-select checkbox lists are all rendered natively. Fields with `format: email`, `uri`, `date`, or `date-time` use the matching browser input type.
-- **Inline validation**: Clicking **Accept** validates all fields before submitting. Required fields, numeric `minimum`/`maximum`, string `minLength`/`maxLength`, `pattern`, and format constraints are all checked. Errors appear under the relevant field and block submission until resolved.
-- **Server identity**: The dialog header identifies which server is requesting information. When the server supplies both a name and an ID, both are shown. The ID is the trusted anchor and is always visible.
-- **Unsupported shapes**: Nested objects and other schema shapes outside the MCP elicitation spec fall back to a plain JSON textarea so you can still answer by hand.
-
-**Decline** and **Cancel** are always available and bypass validation. They send the corresponding action to the server without any parameters.
+[Answer an elicitation request](/inspector/tools#elicitation-requests) when a tool needs more information.
 
 ### Multi-round input (MCP 2026-07-28 `input_required`)
 
-When a tool call returns an `input_required` result (MCP 2026-07-28 §12), the inspector collects the embedded elicitation input through the same dialog and automatically retries the original call with your answers. This is distinct from the legacy `elicitation/create` flow:
-
-- **Dialog title**: shows "Operation Needs Input" (vs "Elicitation Request" for legacy requests).
-- **Dialog header**: reads "[server] needs input to continue" (vs "[server] is requesting information").
-- **Multiple keys per round**: if the server embeds more than one input request in a single round, the dialog walks through them one at a time and submits all answers together.
-- **Automatic retry**: after you respond, the inspector retries the original `tools/call` with your answers attached. You do not need to re-invoke the tool manually.
-- **Decline and Cancel**: send the corresponding action back to the server; the server decides whether to abort or continue.
-
-This behavior applies to local connections. The inspector must be connected to the server before the tool is invoked; the `elicitation` capability is advertised at connect time.
+[Respond to multi-round input](/inspector/tools#multi-round-input-mcp-2026-07-28-input_required) when a tool, resource, or prompt asks for more information before it can finish.
 
 ### OAuth scope step-up on tool calls
 
-When a tool call returns a `403 insufficient_scope` error, the Tools tab automatically triggers a re-authorization flow. Inspector unions the scopes from your original OAuth grant with the scopes the server challenged, then redirects you to the authorization server to approve the expanded set.
-
-A challenge that names no scope at all (a bare `Bearer error="insufficient_scope"`) also triggers it. Inspector then requests the scopes from your original grant plus the `scopes_supported` your server's protected resource metadata advertises (or, failing that, the authorization server's).
-
-When you come back from the consent screen, the call runs again on its own, whether or not the tool is marked `readOnlyHint: true`. You already asked for it, and the tool-approval policy in **Clients** still applies. Only the sign-in that started from the call can re-run it.
-
-The step-up is bounded per browser session: if re-authorization does not resolve the scope error after the allowed number of attempts, Inspector surfaces the error instead of redirecting again. The counter resets when a tool call succeeds, so a future legitimate scope challenge starts fresh. Opening a new browser session also resets the counter.
-
-<Note>
-In a hosted project, a step-up reauthorizes your own connection in place. If the call used a connection someone else shared with the project, you sign in with your own account instead, and the earlier call is not re-run: run it again yourself.
-</Note>
+[Approve additional OAuth scopes](/inspector/tools#oauth-scope-step-up-on-tool-calls) when a tool needs more access.
 
 ### Sign-in requested by a tool call
 
-Some servers let you connect and call public tools without signing in, and ask for sign-in only when a protected tool runs. They signal it with an HTTP `401` and a `WWW-Authenticate` header, or, ChatGPT style, with an `isError` result carrying `_meta["mcp/www_authenticate"]`.
-
-What the Tools tab does depends on the client you are emulating:
-
-- **Prompt to sign in**: a **Connect** card replaces the error. Nothing happens until you click **Connect**. After you sign in, the call runs again on its own, for read and write tools alike, under the tool-approval policy in **Clients**.
-- **Notify**: the call fails with a sign-in message. You can sign in from the card, then run the tool yourself.
-- **Pass through**: the challenge shows as an ordinary error, with a note on how the emulated host handles it.
-
-See [Mid-session sign-in](/inspector/lazy-authentication) for the per-host settings, the Connect card, and how to test your server with the CLI.
+[Handle mid-session sign-in](/inspector/tools#sign-in-requested-by-a-tool-call) when a tool requires authentication.
 
 ## Resources
 
-Inspect your MCP server's resources:
-
-- **Browse resources** - View all available resources with names, URIs, and MIME types
-- **Read resources** - Fetch and view resource content
-- **Resource templates** - Test templated resources with dynamic parameters
-- **Multi-round input** - Resources that return `input_required` (MCP 2026-07-28) collect the needed input through the elicitation dialog and retry the read automatically
+[Resources](/inspector/resources) lets you read data by URI, try templates, and observe resource updates.
 
 ### Subscription stream panel
 
-When connected to a local server, the Resources tab shows a **Subscriptions** panel at the bottom. The panel lets you observe and control the subscription lifecycle the local manager owns.
-
-<Note>
-The subscription panel is only available in local (non-hosted) mode and only when a server is connected.
-</Note>
-
-The panel branches on the negotiated protocol era:
-
-**Modern era (`subscriptions/listen`, MCP 2026-07-28)**
-
-The server supports a single `subscriptions/listen` stream. Because a listen filter is immutable for the life of a subscription, changing the desired filter closes the current stream and opens a new one automatically. The panel shows:
-
-- **Desired filter**: checkboxes for `tools/list_changed`, `prompts/list_changed`, and `resources/list_changed`, plus per-URI watch toggles for each resource. Toggling any checkbox posts the new desired interests; the coordinator performs the close and reopen.
-- **Stream details**: status (`Opening`, `Active`, `Closed by server (graceful)`, `Connection lost (remote close)`, `Cancelled locally`, `Error`), the MCP subscription id and whether it was `reported` or `observed`, the requested filter next to the acknowledged filter, any interests the server did not honor, the close reason, and the re-listen attempt count.
-- **Cancel stream**: ends the current stream as a local abort.
-
-**Legacy era (`resources/subscribe`)**
-
-The server uses per-URI subscribe RPCs. The panel shows the same stream details but replaces the desired-filter checkboxes with per-URI **Subscribe** / **Unsubscribe** buttons backed by `resources/subscribe` and `resources/unsubscribe`.
-
-**History**
-
-Both eras append a History log below the stream list. Each entry records the kind of transition:
-
-| Entry kind | Meaning |
-|---|---|
-| `opened` | A new stream was requested |
-| `acknowledged` | The server confirmed the filter |
-| `reconnected` | A re-listen attempt was made |
-| `closed-graceful` | The server closed the stream gracefully |
-| `closed-remote` | The connection was lost (remote close) |
-| `cancelled` | The stream was cancelled locally |
-| `error` | The stream ended with an error |
-| `notification` | A subscription notification arrived |
-| `rejected` | A notification arrived for an interest the server did not agree to send |
-
-Graceful and remote closes are always distinct entries. They are never flattened into a single "disconnected" event. Rejected notifications are shown rather than silently dropped, so you can see the absence the server chose.
+[Watch resource subscriptions](/inspector/resources#subscription-stream-panel) in the local Inspector.
 
 ## Prompts
 
-Test your MCP prompts:
+[Prompts](/inspector/prompts) lets you fetch a server's prompt messages and use them in Playground.
 
-- **View prompts** - Browse prompt names, descriptions, and parameters
-- **Fetch prompts** - Retrieve prompt content with custom arguments
-- **Use in Playground** - Type `/` in the Playground to insert prompts directly into the conversation
-- **Multi-round input** - Prompts that return `input_required` (MCP 2026-07-28) collect the needed input through the elicitation dialog and retry the fetch automatically
+## Tasks
+
+[Tasks](/inspector/tasks) shows background operations, their status, and their results.
+
+## Skills
+
+[Skills](/inspector/skills) explains how to load skills and use them with your agent in Playground.
 
 ## JSON-RPC Logging
 

@@ -24,6 +24,8 @@ import {
   type StyleVariableByTheme,
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
+import { CompactMatrixRows, CompactClientName, CompactVerifiedDate, revealFocusedCell, type MatrixSummaryColumn } from "./compact-matrix-rows";
+import { StackedMatrixResults } from "./stacked-matrix-results";
 import { SupportChip } from "./support-chip";
 import { PRESET_HOST_ID_PREFIX } from "./host-compare-presets";
 import { buildHostVerifySearch } from "../host-verify-deep-link";
@@ -44,6 +46,7 @@ import {
 
 interface HostConfigComparisonMatrixProps {
   subjects: ReadonlyArray<HostComparisonSubject>;
+  summaryColumn?: MatrixSummaryColumn;
   fields?: ReadonlyArray<HostConfigFieldDef>;
   /** When true, hide rows whose value is identical across every host. */
   divergingOnly?: boolean;
@@ -61,6 +64,7 @@ interface HostConfigComparisonMatrixProps {
   onRemoveHost?: (hostId: string) => void;
   themeMode?: HostThemeMode;
   mobileOptimized?: boolean;
+  stacked?: boolean;
   /**
    * When set, each column header gets a "Verify against your server" action
    * deep-linking to `<verifyBaseUrl>/hosts?template=<templateId>` — the hosted
@@ -82,6 +86,7 @@ interface HostConfigComparisonMatrixProps {
  */
 export function HostConfigComparisonMatrix({
   subjects,
+  summaryColumn,
   fields = HOST_CONFIG_FIELDS,
   divergingOnly = false,
   supportFilter = "all",
@@ -90,13 +95,12 @@ export function HostConfigComparisonMatrix({
   onRemoveHost,
   themeMode = "light",
   mobileOptimized = false,
+  stacked = false,
   verifyBaseUrl,
   disabledVerifyTemplateIds,
 }: HostConfigComparisonMatrixProps) {
   const groups = useMemo(() => groupHostConfigFields(fields), [fields]);
   const configs = useMemo(() => subjects.map((s) => s.config), [subjects]);
-  const showVerifiedAtRow = verifyBaseUrl !== undefined;
-
   const divergingIds = useMemo(() => {
     const set = new Set<string>();
     for (const field of fields) {
@@ -165,6 +169,23 @@ export function HostConfigComparisonMatrix({
     );
   }
 
+  if (stacked && summaryColumn) {
+    return (
+      <StackedMatrixResults
+        groups={groups}
+        visibleFieldIds={visibleFieldIds}
+        subjects={displaySubjects}
+        summaryColumn={summaryColumn}
+        showDescriptions={showDescriptions}
+        themeMode={themeMode}
+        renderCell={FieldCell}
+        verifyHref={(hostId) =>
+          buildVerifyHref(verifyBaseUrl, hostId, disabledVerifyTemplateIds)
+        }
+      />
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -199,23 +220,31 @@ export function HostConfigComparisonMatrix({
     >
       <div
         data-testid="compare-matrix-scroll"
+        onFocus={mobileOptimized && summaryColumn ? revealFocusedCell : undefined}
         className={cn(
           // No `flex-1` here either — this box shrinks to fit inside the
           // card's (possibly content-hugged) height, which is what lets
           // `overflow-auto` show a scrollbar only once the table actually
           // exceeds that height, not unconditionally.
           "min-h-0 overflow-auto",
-          mobileOptimized && "max-w-full [-webkit-overflow-scrolling:touch]",
+          mobileOptimized &&
+            "max-w-full [--matrix-field-width:140px] [-webkit-overflow-scrolling:touch] sm:[--matrix-field-width:300px]",
+          // Keep absolutely positioned screen-reader text inside the public matrix scroller.
+          mobileOptimized && summaryColumn && "relative",
         )}
       >
         <table
+          data-caniuse-matrix={summaryColumn ? "" : undefined}
           className={cn(
             "border-collapse text-center text-[13px]",
             mobileOptimized ? "table-fixed min-w-full" : "w-full",
           )}
           style={
             mobileOptimized
-              ? { width: 140 + displaySubjects.length * 132 }
+              ? {
+                  width:
+                    140 + (summaryColumn ? 224 : 0) + displaySubjects.length * 132,
+                }
               : undefined
           }
         >
@@ -223,10 +252,11 @@ export function HostConfigComparisonMatrix({
             <col
               className={
                 mobileOptimized
-                  ? "w-[140px] sm:w-[300px]"
+                  ? "w-[var(--matrix-field-width)]"
                   : "w-[168px] sm:w-[300px]"
               }
             />
+            {summaryColumn && <col className="w-56" />}
             {displaySubjects.map((s) => (
               <col
                 key={s.hostId}
@@ -242,10 +272,18 @@ export function HostConfigComparisonMatrix({
           <thead>
             <tr>
               <th className="sticky left-0 top-0 z-30 bg-card border-b border-border px-3 py-3 text-left after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5 sm:py-4">
-                <span className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                <span className={cn("text-[11px] text-muted-foreground", !summaryColumn && "uppercase tracking-[0.16em]")}>
                   Field
                 </span>
               </th>
+              {summaryColumn && (
+                <th
+                  scope="col"
+                  className="sticky top-0 z-20 border-b border-l border-border bg-card px-2 py-3 text-[11px] text-muted-foreground"
+                >
+                  {summaryColumn.label}
+                </th>
+              )}
               {displaySubjects.map((s) => (
                 <HostColumnHeader
                   key={s.hostId}
@@ -254,19 +292,30 @@ export function HostConfigComparisonMatrix({
                   themeMode={themeMode}
                   verifyBaseUrl={verifyBaseUrl}
                   disabledVerifyTemplateIds={disabledVerifyTemplateIds}
+                  linkName={Boolean(summaryColumn)}
                 />
               ))}
             </tr>
           </thead>
 
           <tbody>
-            {showVerifiedAtRow ? (
+            {verifyBaseUrl !== undefined && !summaryColumn ? (
               <VerifiedAtRow
                 subjects={displaySubjects}
                 mobileOptimized={mobileOptimized}
               />
             ) : null}
-            {groups.map((group, groupIndex) => {
+            {summaryColumn ? (
+              <CompactMatrixRows
+                groups={groups}
+                renderCell={FieldCell}
+                visibleFieldIds={visibleFieldIds}
+                subjects={displaySubjects}
+                summaryColumn={summaryColumn}
+                showDescriptions={showDescriptions}
+                mobileOptimized={mobileOptimized}
+              />
+            ) : groups.map((group, groupIndex) => {
               const visibleFieldsInGroup = group.subsections
                 .flatMap((sub) => sub.fields)
                 .filter((f) => visibleFieldIds.has(f.id));
@@ -594,10 +643,14 @@ function FieldCell({
   field,
   subject,
   mobileOptimized,
+  compact = false,
+  stacked = false,
 }: {
   field: HostConfigFieldDef;
   subject: HostComparisonSubject;
   mobileOptimized: boolean;
+  compact?: boolean;
+  stacked?: boolean;
 }) {
   const value = field.read(subject.config);
   const kind = field.kind;
@@ -616,15 +669,26 @@ function FieldCell({
     kind.kind !== "tri-state" &&
     kind.kind !== "capability"
   ) {
-    return <span className="text-[12px] text-muted-foreground/60">—</span>;
+    if (stacked) return <SupportChip level="unknown" label="No result" />;
+    return (
+      <span className="text-xs text-muted-foreground">
+        {compact && <span className="sr-only">No result</span>}
+        <span aria-hidden={compact || undefined}>—</span>
+      </span>
+    );
   }
 
   switch (kind.kind) {
     case "boolean": {
+      if (compact) {
+        return value === true ? (
+          <SupportChip level="supported" label="Supported" />
+        ) : (
+          <SupportChip level="unsupported" label="Not supported" />
+        );
+      }
       const level: SupportLevel = value === true ? "supported" : "neutral";
-      return (
-        <SupportChip level={level} label={value === true ? "Yes" : "No"} />
-      );
+      return <SupportChip level={level} label={value === true ? "Yes" : "No"} />;
     }
 
     case "tri-state": {
@@ -637,7 +701,7 @@ function FieldCell({
     case "capability": {
       const level = getSupportLevel(field, subject.config) ?? "neutral";
       if (value === undefined || value === null) {
-        return <SupportChip level={level} label="Not supported" />;
+        return <SupportChip level={compact ? "unsupported" : level} label="Not supported" />;
       }
       const caveats = getCapabilityCaveats(field, subject.config);
       const keys =
@@ -646,10 +710,10 @@ function FieldCell({
           : [];
       return (
         <span className="inline-flex items-center justify-center gap-2">
-          <SupportChip level={level} label="Supported" />
+          <SupportChip level={level} label={compact && level === "partial" ? "Partial" : "Supported"} />
           <CapabilityInfoTooltip
             caveats={caveats}
-            value={keys.length > 0 ? value : undefined}
+            value={!compact && keys.length > 0 ? value : undefined}
           />
         </span>
       );
@@ -908,12 +972,14 @@ function HostColumnHeader({
   themeMode,
   verifyBaseUrl,
   disabledVerifyTemplateIds,
+  linkName,
 }: {
   subject: HostComparisonSubject;
   onRemove?: (hostId: string) => void;
   themeMode: HostThemeMode;
   verifyBaseUrl?: string;
   disabledVerifyTemplateIds?: ReadonlySet<string>;
+  linkName: boolean;
 }) {
   const logoSrc = getScenarioHostLogo(
     subject.hostStyle,
@@ -926,6 +992,7 @@ function HostColumnHeader({
     subject.hostId,
     disabledVerifyTemplateIds,
   );
+  const nameClassName = "min-w-0 max-w-[160px] text-center text-[14px] font-medium leading-tight";
 
   return (
     <th className="sticky top-0 z-20 border-b border-l border-border bg-card px-3 py-3 text-center align-top sm:px-4 sm:py-4">
@@ -958,13 +1025,14 @@ function HostColumnHeader({
           alt=""
           className="mt-0.5 size-4 shrink-0 object-contain"
         />
-        <div
-          className="min-w-0 max-w-[160px] truncate text-center text-[14px] font-medium leading-tight"
-          title={subject.hostName}
-        >
-          {subject.hostName}
-        </div>
-        {verifyHref ? (
+        {linkName ? (
+          <CompactClientName subject={subject} href={verifyHref} className={nameClassName} />
+        ) : (
+          <div className={cn(nameClassName, "truncate")} title={subject.hostName}>
+            {subject.hostName}
+          </div>
+        )}
+        {!linkName && verifyHref ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <a
@@ -982,6 +1050,7 @@ function HostColumnHeader({
           </Tooltip>
         ) : null}
       </motion.div>
+      {linkName && <CompactVerifiedDate subject={subject} />}
     </th>
   );
 }

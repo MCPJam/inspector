@@ -40,6 +40,8 @@ import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
 import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
+import { suiteOnMcpjamUrl } from "@/lib/eval-launch-reason";
+import { HOSTED_MODE } from "@/lib/config";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -570,13 +572,9 @@ export function SuiteIterationsView({
   aggregate: SuiteAggregate | null;
   onRerun: (
     suite: EvalSuite,
-    opts?: {
+    opts?: CaseRunLaunchOptions & {
       matchOptionsOverride?: EvalMatchOptions;
-      iterationOverride?: number;
       caseIds?: string[];
-      skipJudge?: boolean;
-      ephemeralEnvironment?: boolean;
-      throwOnFailure?: boolean;
     },
   ) => void | Promise<unknown>;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRunListItem) => void;
@@ -2164,16 +2162,13 @@ export function SuiteIterationsView({
         <div className="shrink-0">
           <SuiteHeader
             settingsTabStrip={settingsTabs.strip}
+            onBackToSuite={
+              settingsTabs.enabled
+                ? undefined
+                : () => navigation.toSuiteOverview(suite._id)
+            }
             settingsActions={
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                <Button
-                  hidden={settingsTabs.enabled}
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => navigation.toSuiteOverview(suite._id)}
-                >
-                  Back to suite
-                </Button>
                 {editingDisabled ? null : draftChanges.length > 0 ? (
                   <SuiteSettingsCommitBar
                     layout="inline"
@@ -3259,18 +3254,28 @@ export function SuiteIterationsView({
                       <CloudUnreachableNotice
                         data-testid="suite-eval-cloud-unreachable"
                         message={EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE}
-                        detail="Runs started here would fail their computer setup — Run all is disabled until cloud sandboxes are reachable."
+                        detail={HOSTED_MODE
+                          ? "Run all stays off until cloud sandboxes are reachable."
+                          : "Open the suite on MCPJam to run it. Run all is off here because local runs would fail their setup."}
+                        {...(HOSTED_MODE ? {} : {
+                          action: { label: "Open on MCPJam", href: suiteOnMcpjamUrl(suite._id) },
+                        })}
                       />
                     </div>
                   ) : null}
                 </SuiteSettingsRow>
               ) : null}
             </fieldset>
-            {/* Each person's own choice, not suite configuration, so the CI
-                lock stops here: a CI-owned suite keeps its Run controls, and a
-                run started from it uses the starter's accounts. */}
             <div hidden={settingsTabs.hiddenUnless("settings")}>
-              <SuiteAccountsRow suite={suite} projectId={projectId} />
+              <SuiteAccountsRow
+                suite={suite}
+                projectId={projectId}
+                sharedDefaults={{
+                  value: draft.current.accounts,
+                  onChange: (accounts) => dispatchDraft({ type: "edit", key: "accounts", value: accounts }),
+                  disabled: editingDisabled,
+                }}
+              />
             </div>
             <fieldset
               hidden={settingsTabs.hiddenUnless("settings")}

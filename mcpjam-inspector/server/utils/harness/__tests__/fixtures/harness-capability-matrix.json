@@ -1,4 +1,81 @@
 {
+  "chatgpt-web": {
+    "adapter": {
+      "approvalPermissionMode": "allow-all",
+      "conversationState": null,
+      "defaultPermissionMode": "allow-all",
+      "displayName": "ChatGPT web",
+      "id": "chatgpt-web",
+      "mcpDelivery": "harness",
+      "mcpNativeDelivery": "web-connector",
+      "modelAccess": "external-account",
+      "pinnedRuntimeVersion": "page-2026-11-20",
+      "promptImageInput": false,
+      "requiresComputer": false,
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": true
+        },
+        "headlessLoading": "native",
+        "readFolders": [],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ""
+      },
+      "supportedReasoningEfforts": [],
+      "supportsHostExecutedToolApproval": false,
+      "supportsMcpToolApproval": true,
+      "supportsNativeToolApproval": false,
+      "supportsPluginBundles": false,
+      "supportsSkills": false,
+      "webAccount": {
+        "vendor": "chatgpt"
+      }
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": false,
+          "note": "ChatGPT web uses the model the account picks on chatgpt.com."
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "ChatGPT web does its own tool discovery."
+        },
+        "requireToolApproval": {
+          "enforced": false,
+          "note": "ChatGPT web runs its own tools on chatgpt.com, where MCPJam can't pause them."
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "ChatGPT web runs chatgpt.com's own loop and ignores temperature."
+        }
+      },
+      "credential": {
+        "kind": "web-account",
+        "label": "ChatGPT account",
+        "sites": [
+          "https://chatgpt.com",
+          "https://auth.openai.com"
+        ]
+      },
+      "displayName": "ChatGPT web",
+      "mcpClient": "harness",
+      "modelAccess": "external-account",
+      "orgKeys": false,
+      "protocol": null,
+      "reasoningEfforts": [],
+      "runtimeName": "chatgpt.com",
+      "runtimeVersion": "page-2026-11-20",
+      "unavailableOn": {
+        "guests": "ChatGPT web runs on the project's own ChatGPT account, so guests can't use it.",
+        "local": "ChatGPT web runs in a browser, not on your computer's runtime. Choose This machine in the browser settings instead.",
+        "user-testing": "ChatGPT web runs on a project web account, so studies cannot use it. Choose a different client for this study."
+      }
+    },
+    "qualifiedDiscovery": []
+  },
   "claude-code": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
@@ -99,6 +176,82 @@
       "runtimeName": "Claude Agent SDK",
       "runtimeVersion": "2.1.290",
       "unavailableOn": {}
+    },
+    "qualifiedDiscovery": []
+  },
+  "claude-web": {
+    "adapter": {
+      "approvalPermissionMode": "allow-all",
+      "conversationState": null,
+      "defaultPermissionMode": "allow-all",
+      "displayName": "Claude web",
+      "id": "claude-web",
+      "mcpDelivery": "harness",
+      "mcpNativeDelivery": "web-connector",
+      "modelAccess": "external-account",
+      "pinnedRuntimeVersion": "page-2026-11-20",
+      "promptImageInput": false,
+      "requiresComputer": false,
+      "skills": {
+        "frontmatter": {
+          "descriptionMaxLength": 1024,
+          "strictYaml": true
+        },
+        "headlessLoading": "native",
+        "readFolders": [],
+        "serverSkills": "box-files",
+        "trailingNewline": false,
+        "writeFolder": ""
+      },
+      "supportedReasoningEfforts": [],
+      "supportsHostExecutedToolApproval": false,
+      "supportsMcpToolApproval": true,
+      "supportsNativeToolApproval": false,
+      "supportsPluginBundles": false,
+      "supportsSkills": false,
+      "webAccount": {
+        "vendor": "claude"
+      }
+    },
+    "descriptor": {
+      "controls": {
+        "modelId": {
+          "enforced": false,
+          "note": "Claude web uses the model the account picks on claude.ai."
+        },
+        "progressiveToolDiscovery": {
+          "enforced": false,
+          "note": "Claude web does its own tool discovery."
+        },
+        "requireToolApproval": {
+          "enforced": false,
+          "note": "Claude web runs its own tools on claude.ai, where MCPJam can't pause them."
+        },
+        "temperature": {
+          "enforced": false,
+          "note": "Claude web runs claude.ai's own loop and ignores temperature."
+        }
+      },
+      "credential": {
+        "kind": "web-account",
+        "label": "Claude account",
+        "sites": [
+          "https://claude.ai"
+        ]
+      },
+      "displayName": "Claude web",
+      "mcpClient": "harness",
+      "modelAccess": "external-account",
+      "orgKeys": false,
+      "protocol": null,
+      "reasoningEfforts": [],
+      "runtimeName": "claude.ai",
+      "runtimeVersion": "page-2026-11-20",
+      "unavailableOn": {
+        "guests": "Claude web runs on the project's own Claude account, so guests can't use it.",
+        "local": "Claude web runs in a browser, not on your computer's runtime. Choose This machine in the browser settings instead.",
+        "user-testing": "Claude web runs on a project web account, so studies cannot use it. Choose a different client for this study."
+      }
     },
     "qualifiedDiscovery": []
   },

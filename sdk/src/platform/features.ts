@@ -53,6 +53,7 @@ export const PLATFORM_FEATURE_KEYS = [
   "unified-share-evals",
   "github-checks",
   "scheduled-evals",
+  "web-clients",
 ] as const;
 
 export type PlatformFeatureKey = (typeof PLATFORM_FEATURE_KEYS)[number];
@@ -84,6 +85,7 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "unified-share-evals": "Eval run sharing",
   "github-checks": "GitHub checks",
   "scheduled-evals": "Scheduled evals",
+  "web-clients": "Claude web and ChatGPT web",
 };
 
 /**
@@ -333,6 +335,18 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_server_revisions: null,
   get_server_revision: null,
   diff_server_revisions: null,
+  // Mock servers answer to the `mock-servers-enabled` flag, which the backend
+  // checks on every call; it is not an organization feature key.
+  create_mock_server: null,
+  update_mock_server: null,
+  get_mock_server: null,
+  patch_mock_server: null,
+  refresh_mock_server: null,
+  open_mock_run: null,
+  reset_mock_run: null,
+  close_mock_run: null,
+  get_mock_forwarding_policy: null,
+  set_mock_forwarding_policy: null,
   // Not hidden by `multi-account-connections`: a first account needs no
   // feature, and the backend refuses a second one where the feature is off.
   list_server_accounts: null,

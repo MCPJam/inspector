@@ -70,6 +70,8 @@ vi.mock("@mcpjam/sdk", async () => {
       return {
         disconnectAllServers: vi.fn(),
         hasServer: (id: string) => id === "server-1",
+        setPerRequestLogLevel: vi.fn(),
+        onLogMessage: vi.fn(),
         listTools: vi.fn().mockResolvedValue({ tools: [] }),
         readResource: vi.fn().mockResolvedValue({ contents: [] }),
         getAllToolsMetadata: vi.fn().mockReturnValue({}),
@@ -164,7 +166,10 @@ type V1Call = { method: string; path: string };
 /** What the model says, one entry per `/stream` request, in order. */
 let modelSteps: StreamEvent[][] = [];
 /** The `/stream` request bodies the engine sent. */
-let modelRequests: Array<{ tools?: Array<{ name?: string }> }> = [];
+let modelRequests: Array<{
+  tools?: Array<{ name?: string }>;
+  hiddenTools?: Array<{ name?: string }>;
+}> = [];
 /** Every `/api/v1` request a workspace tool made. */
 let v1Calls: V1Call[] = [];
 let chatCounter = 0;
@@ -543,7 +548,12 @@ describe.each([true])(
             builtInToolIds: [toolName],
             requireToolApproval: false,
           });
-          modelSteps = [callsTool(toolName, "call-write")];
+          const input = toolName === "backtest_eval_run" ? {
+            project: PROJECT_ID,
+            runId: "run-for-backtest",
+            draft: { assertions: { mode: "inherit", list: [] } },
+          } : {};
+          modelSteps = [callsTool(toolName, "call-write", input)];
 
           const chunks = await send(
             turn(newChatId(), {
@@ -552,6 +562,8 @@ describe.each([true])(
             }),
           );
 
+          const hiddenNames = modelRequests[0]?.hiddenTools?.map((tool) => tool.name) ?? [];
+          expect([...offeredTools(), ...hiddenNames]).toContain(toolName);
           expect(approvalRequestFor(chunks, "call-write")).toBeDefined();
           expect(outputFor(chunks, "call-write")).toBeUndefined();
           expect(v1Calls).toEqual([]);
@@ -664,6 +676,35 @@ describe.each([true])(
         const chunks = await searchDocs(true);
         expect(approvalRequestFor(chunks, "call-search")).toBeDefined();
         expect(mcpToolExecuteMock).not.toHaveBeenCalled();
+      });
+
+      it("requires approval before dispatching a valid unloaded tool", async () => {
+        savedProjectConfig({ builtInToolIds: [] });
+        const chatId = newChatId();
+        const config = {
+          selectedServerIds: ["server-1"],
+          builtInToolIds: [],
+          requireToolApproval: true,
+          progressiveToolDiscovery: true,
+          runUnloadedToolCalls: true,
+        };
+        const toolName = "search_docs";
+        const toolCallId = "call-unloaded-search";
+        const input = { q: "install" };
+        modelSteps = [callsTool(toolName, toolCallId, input)];
+        const chunks = await send(turn(chatId, config));
+        expect(offeredTools()).not.toContain(toolName);
+        expect(modelRequests[0]?.hiddenTools).toContainEqual(expect.objectContaining({ name: toolName }));
+        const approval = approvalRequestFor(chunks, toolCallId);
+        expect(approval?.approvalId).toEqual(expect.any(String));
+        expect(mcpToolExecuteMock).not.toHaveBeenCalled();
+
+        modelSteps = [REPLY];
+        const resumed = await send(resumeTurn(chatId, {
+          toolName, toolCallId, input, approvalId: String(approval?.approvalId),
+        }, config));
+        expect(outputFor(resumed, toolCallId)?.type).toBe("tool-output-available");
+        expect(mcpToolExecuteMock).toHaveBeenCalledTimes(1);
       });
     });
 

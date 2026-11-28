@@ -150,6 +150,42 @@ describe("full catalog evaluation", () => {
     });
   });
 
+  it("credits cancellation only where a server may send one", () => {
+    const cancelled = {
+      featureId: "request-control.cancellation",
+      count: 1,
+      firstSeenAt: 1,
+      lastSeenAt: 2,
+      lastSource: "rpc" as const,
+    };
+    const legacy = makeSurface({ protocolVersion: "2025-11-25" });
+    const seen = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
+      connected: true,
+      context: { transport: "stdio", protocolVersion: "2025-11-25" },
+      declared: { surface: legacy, capturedAt: 1 },
+      observations: [cancelled],
+    });
+    expect(seen.assessments["request-control.cancellation"]).toMatchObject({
+      state: "supported",
+      sources: ["observed"],
+    });
+
+    // On 2026-07-28 traffic cannot show it, so no Playground step.
+    const modern = makeSurface({ protocolVersion: "2026-07-28" });
+    const result = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
+      connected: true,
+      context: { transport: "stdio", protocolVersion: "2026-07-28" },
+      declared: { surface: modern, capturedAt: 1 },
+    });
+    expect(result.assessments["request-control.cancellation"]).toMatchObject({
+      state: "not-checked",
+      reason: "MCPJam cannot check this yet.",
+    });
+    expect(
+      result.assessments["request-control.cancellation"].nextAction
+    ).toBeUndefined();
+  });
+
   it("reads a stored 2026 snapshot with an MCP Apps tool end to end", () => {
     const surface = toDeclaredSurface({
       envelopeVersion: 3,

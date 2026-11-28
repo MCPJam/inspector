@@ -414,7 +414,10 @@ export function registerHostBridgeHandlers(
       if (scheme !== "http:" && scheme !== "https:") {
         return { isError: true };
       }
-      callbacks.onOpenLink?.(url);
+      // A host that advertises `openLinks` but has nothing to open the link
+      // with (the eval run page) must not tell the app it opened.
+      if (!callbacks.onOpenLink) return { isError: true };
+      callbacks.onOpenLink(url);
       return {};
     };
   }
@@ -620,8 +623,10 @@ export function registerHostBridgeHandlers(
 
   if (effectiveHostCapabilities.downloadFile) {
     bridge.ondownloadfile = async (params) => {
+      // Nothing to save the file with (the eval run page): say the download
+      // did not happen rather than report a save that never ran.
       if (!callbacks.onDownloadFile) {
-        return {} as DownloadFileReturn;
+        return { isError: true } as DownloadFileReturn;
       }
       return callbacks.onDownloadFile(params);
     };

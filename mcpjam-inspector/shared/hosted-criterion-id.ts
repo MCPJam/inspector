@@ -78,3 +78,9 @@ export const HOSTED_RUBRIC_CHECKS_SCORER_PREFIX = "judge:rubricChecks:";
 export function hostedRubricCheckScorerId(key: string): string {
   return `${HOSTED_RUBRIC_CHECKS_SCORER_PREFIX}${key}`;
 }
+
+/**
+ * Scorer-id prefix of custom-judge rows (`lib/customJudges/`): one advisory
+ * row per judge, keyed by the judge's id after the prefix.
+ */
+export const HOSTED_CUSTOM_JUDGE_SCORER_PREFIX = "judge:custom:";

@@ -81,6 +81,44 @@ describe("ui/open-link scheme gate", () => {
   });
 });
 
+describe("a host with nothing to act with", () => {
+  // The eval run page advertises what the client profile does but passes no
+  // open-link or download callback. Telling the app it worked would make an
+  // app that depends on a link or a download look healthy in runs.
+  it("answers ui/open-link with { isError: true } without onOpenLink", async () => {
+    const bridge = makeBridge({});
+
+    await expect(
+      bridge.onopenlink!({ url: "https://example.com/x" }, {} as never)
+    ).resolves.toEqual({ isError: true });
+  });
+
+  it("answers ui/download-file with { isError: true } without onDownloadFile", async () => {
+    const bridge = createHostAppBridge({
+      hostInfo: { name: "test-host", version: "0.0.0" },
+      hostCapabilities: { downloadFile: {} },
+    });
+    registerHostBridgeHandlers(bridge, {
+      effectiveHostCapabilities: { downloadFile: {} },
+      callbacks: {},
+    });
+
+    await expect(
+      bridge.ondownloadfile!(
+        {
+          contents: [
+            {
+              type: "resource",
+              resource: { uri: "file:///a.txt", text: "a" },
+            },
+          ],
+        } as never,
+        {} as never
+      )
+    ).resolves.toEqual({ isError: true });
+  });
+});
+
 describe("owned App navigation", () => {
   it.each([
     "codex://plugins/p/app",

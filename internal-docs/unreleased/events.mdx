@@ -11,7 +11,7 @@ MCP Events let a server tell a client that something happened, so an agent can r
 Select a server and open **Events**:
 
 - **Capability.** Shows whether the server declares top-level `capabilities.events`, which handshake said so, and the raw capabilities it sent.
-- **Client.** The client you subscribe as. Its saved **Event delivery** setting (in the client's Protocol settings) decides which delivery modes it receives: unsaved, ChatGPT receives webhooks, MCPJam receives every mode, and other clients receive none. In the hosted app you pick the client, defaulting to the active one or **MCPJam (built-in)**; in the local app it's the active client.
+- **Client.** The client you subscribe as. Its saved **Event delivery** setting, on the client's **Events** tab, decides which delivery modes it receives; a client with nothing saved, or run by a vendor harness, receives none. New MCPJam clients receive every mode, ChatGPT Work receives webhooks, and personal ChatGPT receives none. In the hosted app the Events tab subscribes as **MCPJam (built-in)**, and the Playground as the chat's client; in the local app both use the active client.
 - **Event types.** Every type the server declares, with its input and payload schemas. Delivery modes the client or this app can't use are struck through, with the reason on hover. Hosted subscriptions can't use push yet.
 - **Subscribe.** A form built from the event's `inputSchema`, and a delivery mode the client, the event and the app all support. When there is none, Subscribe is disabled and the form says why.
   - In the hosted app, webhooks deliver to MCPJam's public inbox at `hooks.mcpjam.com`. Every subscription gets its own callback URL and signing secret, and the secret is never shown or logged.

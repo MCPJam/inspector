@@ -14,7 +14,7 @@ import {
 } from "@mcpjam/design-system/alert-dialog";
 import { describeConvexFailure } from "@/lib/convex-error";
 
-const COPY = {
+const SERVER_COPY = {
   allow: {
     title: "Allow local runs for this server?",
     body: "Members' local apps will receive the project accounts' access tokens. A token already sent keeps working until it expires, even after you stop local runs.",
@@ -29,6 +29,27 @@ const COPY = {
     done: "Local runs stopped.",
     failed: "Could not stop local runs. Try again.",
   },
+  allowedNote:
+    "Members' local apps can receive these accounts' access tokens unless your organization's export policy blocks it.",
+};
+
+/** A web client's accounts are saved sign-ins, so nothing here says token. */
+const CLIENT_COPY: typeof SERVER_COPY = {
+  allow: {
+    title: "Allow local runs for this client?",
+    body: "Members' local apps will receive the project accounts' saved sign-ins. A sign-in already sent stays signed in until the site signs it out, even after you stop local runs.",
+    action: "Allow local runs",
+    done: "Local runs allowed.",
+    failed: "Couldn't allow local runs. Try again.",
+  },
+  stop: {
+    title: "Stop local runs for this client?",
+    body: "Members' local apps stop receiving these accounts' sign-ins from their next run. A sign-in already sent stays signed in until the site signs it out.",
+    action: "Stop local runs",
+    done: "Local runs stopped.",
+    failed: "Couldn't stop local runs. Try again.",
+  },
+  allowedNote: "Members' local apps can use these accounts' saved sign-ins.",
 };
 
 /**
@@ -40,14 +61,21 @@ const COPY = {
  */
 export function LocalRunsControl({
   allowed,
+  allowedNote,
   listVersion,
   onChange,
+  noun = "server",
 }: {
   allowed: boolean;
+  /** Replaces the note while allowed, for a caller where only some of the accounts allow it. */
+  allowedNote?: string;
   /** Changes each time the account list reloads, so the switch knows its save was reconciled. */
   listVersion?: number;
   onChange: (allowed: boolean) => Promise<void>;
+  /** What the accounts belong to: an MCP server's, or a web client's sign-ins. */
+  noun?: "server" | "client";
 }) {
+  const words = noun === "client" ? CLIENT_COPY : SERVER_COPY;
   const switchId = useId();
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -68,7 +96,7 @@ export function LocalRunsControl({
   useLayoutEffect(() => {
     listVersionRef.current = listVersion;
   }, [listVersion]);
-  const copy = allowed ? COPY.stop : COPY.allow;
+  const copy = allowed ? words.stop : words.allow;
   const apply = async () => {
     setSaving(true);
     try {
@@ -91,7 +119,7 @@ export function LocalRunsControl({
         </Label>
         <p className="text-xs text-muted-foreground">
           {allowed
-            ? "Members' local apps can receive these accounts' access tokens unless your organization's export policy blocks it."
+            ? (allowedNote ?? words.allowedNote)
             : "Members' hosted runs use these accounts. Turn this on so their local apps can too."}
         </p>
       </div>

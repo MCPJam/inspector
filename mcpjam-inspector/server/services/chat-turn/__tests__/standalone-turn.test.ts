@@ -53,6 +53,16 @@ describe("bounded standalone adapter", () => {
       "environmentId",
     );
   });
+  it("carries a multi-model column to the saved chat", async () => {
+    const multiModel = {
+      groupId: "g1",
+      position: 2,
+      columnKind: "model" as const,
+      compareId: "openai/gpt-5",
+    };
+    await run({ multiModel });
+    expect(m.stream.mock.calls[0][0].persist.multiModel).toEqual(multiModel);
+  });
   it("preserves custom provider settings", async () => {
     const customProviders = [
       {

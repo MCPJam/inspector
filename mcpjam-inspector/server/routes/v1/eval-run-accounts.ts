@@ -16,6 +16,27 @@
  * without someone deciding it should.
  */
 
+import { z } from "zod";
+
+export const runAccountsSchema = z.array(z.object({
+  serverId: z.string().min(1),
+  accountId: z.string().min(1),
+}).strict()).min(1).max(32);
+
+type PublicEvalAccountSelections = z.infer<typeof runAccountsSchema>;
+export function accountSelectionsForStorage(accounts: PublicEvalAccountSelections | null) {
+  return accounts?.map(({ serverId, accountId }) => ({
+    serverId, connectionId: accountId,
+  })) ?? null;
+}
+
+export function accountSelectionsForRead(accounts: unknown) {
+  return runAccountsSchema.safeParse(Array.isArray(accounts) ? accounts.map((row: unknown) => {
+    if (!row || typeof row !== "object" || !("serverId" in row) || !("connectionId" in row)) return row;
+    return { serverId: row.serverId, accountId: row.connectionId };
+  }) : accounts).data;
+}
+
 type IdentitySource = "profile" | "token";
 
 export interface RunAccountIdentityDto {
@@ -28,6 +49,10 @@ export interface RunAccountIdentityDto {
 }
 
 export interface RunAccountDto {
+  cases?: Array<{
+    testCaseId: string;
+    source: "case" | "run" | "suite" | "default";
+  }>;
   serverId: string;
   /** The account's id in the server accounts API. */
   accountId?: string;
@@ -102,6 +127,19 @@ function toAccountDto(raw: unknown): RunAccountDto | undefined {
   const tokenStoredAt = time(raw.tokenStoredAt);
   const tokenExpiresAt = time(raw.tokenExpiresAt);
   const identity = toIdentityDto(raw.identity);
+  const cases: NonNullable<RunAccountDto["cases"]> = [];
+  if (Array.isArray(raw.cases)) {
+    for (const entry of raw.cases) {
+      if (!isFields(entry)) return undefined;
+      const testCaseId = text(entry.testCaseId);
+      const source = entry.source;
+      if (
+        !testCaseId ||
+        (source !== "case" && source !== "run" && source !== "suite" && source !== "default")
+      ) return undefined;
+      cases.push({ testCaseId, source });
+    }
+  }
   return {
     serverId,
     ...(accountId ? { accountId } : {}),
@@ -113,6 +151,7 @@ function toAccountDto(raw: unknown): RunAccountDto | undefined {
     ...(tokenStoredAt !== undefined ? { tokenStoredAt } : {}),
     ...(tokenExpiresAt !== undefined ? { tokenExpiresAt } : {}),
     ...(identity ? { identity } : {}),
+    ...(cases.length ? { cases } : {}),
   };
 }
 

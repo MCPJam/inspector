@@ -1,3 +1,4 @@
+import { rejectedToolCallIds } from "@mcpjam/evaluators/internal/eval-tool-execution";
 import { redactForTelemetry } from "@mcpjam/sdk/browser";
 import { extractToolErrors } from "@/shared/eval-matching";
 import type { ModelMessage } from "ai";
@@ -49,6 +50,7 @@ export function buildIterationErrorMetadata(input: {
       messages: input.messages ?? [],
     }),
   ];
+  const rejected = rejectedToolCallIds(input.messages ?? []);
   for (const error of toolErrors) {
     if (!error || typeof error !== "object") continue;
     const record = error as Record<string, unknown>;
@@ -56,7 +58,7 @@ export function buildIterationErrorMetadata(input: {
     if (
       toolAuthChallengeOf(error) ||
       (typeof record.toolCallId === "string" &&
-        challengedCallIds.has(record.toolCallId))
+        (challengedCallIds.has(record.toolCallId) || rejected.has(record.toolCallId)))
     )
       continue;
     add(

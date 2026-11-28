@@ -1,7 +1,10 @@
 import { app, ipcMain, type BrowserWindow } from "electron";
 import * as Sentry from "@sentry/electron/main";
 import { sentryUserId } from "../shared/sentry-identity.js";
-import { createDesktopDiagnostics } from "./desktop-diagnostics.js";
+import {
+  createDesktopDiagnostics,
+  withSentryDepth,
+} from "./desktop-diagnostics.js";
 import { DESKTOP_DIAGNOSTICS_CHANNEL } from "../shared/desktop-diagnostics.js";
 
 export function installDesktopDiagnostics() {
@@ -22,11 +25,11 @@ export function installDesktopDiagnostics() {
           extra: undefined,
           breadcrumbs: [],
           contexts: {
-            desktop_diagnostics: {
+            desktop_diagnostics: withSentryDepth({
               ...summary,
               main_version: app.getVersion(),
               electron_version: process.versions.electron,
-            },
+            }),
           },
           tags: {
             component: "desktop-proxy-diagnostics",
@@ -80,6 +83,8 @@ export function installDesktopDiagnostics() {
     }
   });
   return {
+    /** The allowlisted snapshot, for Help > Copy Diagnostics. */
+    snapshot: () => collector.snapshot(),
     bind(window: BrowserWindow, url: string) {
       trusted = window;
       origin = new URL(url).origin;

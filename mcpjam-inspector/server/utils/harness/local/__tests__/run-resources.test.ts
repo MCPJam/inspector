@@ -38,4 +38,10 @@ describe("shared local scheduler", () => {
     }
     expect(() => assertLocalHarnessCapabilities({})).not.toThrow();
   });
+  it("rejects code grading that needs the agent's cloud sandbox", () => {
+    expect(() => assertLocalHarnessCapabilities({ codeGradingFeatures: ["iteration setup and cleanup scripts", "Required code evaluators"], harnessId: "claude-code" })).toThrow(
+      "This suite's iteration setup and cleanup scripts and Required code evaluators need a cloud sandbox for the agent. Local Claude Code runs on your machine, so run this suite with a cloud client.",
+    );
+    expect(() => assertLocalHarnessCapabilities({ codeGradingFeatures: [] })).not.toThrow();
+  });
 });

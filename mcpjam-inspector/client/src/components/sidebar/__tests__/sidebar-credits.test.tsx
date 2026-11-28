@@ -17,6 +17,7 @@ let balanceState:
       rolloverCreditsRemaining?: number;
       monthlyAllowanceRemaining?: number;
       monthlyResetAt?: number | null;
+      topUpEligible?: boolean;
     }
   | undefined;
 let isLoadingState = false;
@@ -29,11 +30,11 @@ let evalQuotaState:
       windowKind: "day" | "month";
     }
   | undefined;
-let allowanceState: { remaining: number; granted: number } | null = null;
 let billingStatusState:
   | {
       effectivePlan: "free" | "team" | "enterprise";
       pricingVersion?: "v1" | "v2";
+      canManageBilling?: boolean;
     }
   | undefined;
 
@@ -51,24 +52,6 @@ vi.mock("@/hooks/use-eval-iteration-quota", () => ({
     isLoading: false,
     isAtLimit: false,
   }),
-}));
-
-vi.mock("@/hooks/use-swarm-sponsorship-allowance", () => ({
-  useSwarmSponsorshipAllowance: () => allowanceState,
-}));
-
-let nativeTrialState: { remaining: number; granted: number } | null = null;
-let nativeHarnessEnabled = true;
-const nativeTrialMock = vi.fn((organizationId: string | null) =>
-  organizationId ? nativeTrialState : null,
-);
-vi.mock("@/hooks/use-native-harness-trial", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/hooks/use-native-harness-trial")>()),
-  useNativeHarnessTrial: (organizationId: string | null) =>
-    nativeTrialMock(organizationId),
-}));
-vi.mock("@/hooks/useNativeHarnessEnabled", () => ({
-  useNativeHarnessEnabled: () => nativeHarnessEnabled,
 }));
 
 vi.mock("@/hooks/useOrganizationBilling", () => ({
@@ -116,6 +99,7 @@ function renderCredits(
       organizationId="org_a"
       onOpenBilling={vi.fn()}
       onExplorePlans={vi.fn()}
+      onBuyCredits={vi.fn()}
       {...overrides}
     />,
   );
@@ -136,15 +120,12 @@ describe("SidebarCredits", () => {
     };
     isLoadingState = false;
     evalQuotaState = undefined;
-    allowanceState = null;
-    nativeTrialState = null;
-    nativeHarnessEnabled = true;
-    nativeTrialMock.mockClear();
     billingStatusState = { effectivePlan: "free" };
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    localStorage.clear();
   });
 
   it("uses the same rollover capacity as Billing for low credits", () => {
@@ -156,8 +137,10 @@ describe("SidebarCredits", () => {
       rolloverCreditsRemaining: 550,
     };
     renderCredits();
-    expect(screen.getByText("Low credits")).toBeInTheDocument();
-    expect(screen.getByText("550 / 5,550")).toBeInTheDocument();
+    expect(screen.getByTestId("sidebar-credits-upsell")).toBeInTheDocument();
+    expect(screen.getByTestId("sidebar-usage-monthly")).toHaveTextContent(
+      "550 / 5,550",
+    );
   });
 
   it("does not label a monthly balance with an unknown allowance as low", () => {
@@ -168,11 +151,13 @@ describe("SidebarCredits", () => {
       monthlyAllowanceRemaining: 500,
     };
     renderCredits();
-    expect(screen.queryByText("Low credits")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("sidebar-credits-upsell"),
+    ).not.toBeInTheDocument();
   });
 
   it.each([75, 100, 5])(
-    "shows credit balance at %s percent with a text warning only when low",
+    "shows credit balance at %s percent and the upsell only when low",
     (percent) => {
       balanceState = {
         ...balanceState!,
@@ -182,79 +167,111 @@ describe("SidebarCredits", () => {
       const meter = screen.getByRole("progressbar", {
         name: "Free daily credits",
       });
-      expect(meter).toHaveAttribute("aria-valuetext", `${percent * 3} / 300`);
-      expect(meter).not.toHaveClass(
-        "[&_[data-slot=progress-indicator]]:bg-foreground/60",
+      expect(meter).toHaveAttribute(
+        "aria-valuetext",
+        `${percent * 3} / 300 left`,
       );
-      expect(Boolean(screen.queryByText("Low credits"))).toBe(percent <= 10);
+      expect(screen.queryByText("Low credits")).not.toBeInTheDocument();
+      expect(Boolean(screen.queryByTestId("sidebar-credits-upsell"))).toBe(
+        percent <= 10,
+      );
     },
   );
 
-  it("shows the remaining sponsored swarm conversations when the user has an allowance", () => {
-    allowanceState = { remaining: 412, granted: 500 };
-    renderCredits();
+  it("leads with Explore plans and offers Buy credits on a low free plan", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    billingStatusState = { effectivePlan: "free", canManageBilling: true };
+    balanceState = { ...balanceState!, freeDailyCreditsRemaining: 12 };
+    const onBuyCredits = vi.fn();
+    renderCredits({ onBuyCredits });
 
-    const row = screen.getByTestId("sidebar-usage-swarm-sponsored");
-    expect(row).toHaveTextContent("Sponsored swarm conversations");
-    expect(row).toHaveTextContent("412 / 500 remaining");
-    expect(row).not.toHaveTextContent(/free|guarantee/i);
+    const upsell = screen.getByTestId("sidebar-credits-upsell");
+    const [explore, buy] = upsell.querySelectorAll("button");
+    expect(explore).toHaveTextContent("Explore plans");
+    expect(buy).toHaveTextContent("Buy credits");
+    expect(
+      screen.getAllByRole("button", { name: "Explore plans" }),
+    ).toHaveLength(1);
+
+    vi.useRealTimers();
+    await userEvent.setup().click(buy);
+    expect(onBuyCredits).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the native harness turns left beside the sponsored row", () => {
-    allowanceState = { remaining: 412, granted: 500 };
-    nativeTrialState = { remaining: 12, granted: 20 };
+  it("offers only Explore plans to a low free member who cannot buy", () => {
+    billingStatusState = { effectivePlan: "free", canManageBilling: false };
+    balanceState = { ...balanceState!, freeDailyCreditsRemaining: 12 };
     renderCredits();
 
-    const row = screen.getByTestId("sidebar-usage-native-harness-turns");
-    expect(row).toHaveTextContent("Native harness turns");
-    expect(row).toHaveTextContent("12 / 20 remaining");
+    expect(screen.getByTestId("sidebar-credits-upsell")).toHaveTextContent(
+      "Explore plans",
+    );
     expect(
-      screen.getByRole("button", { name: "About Native harness turns" }),
+      screen.queryByRole("button", { name: "Buy credits" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers no top-up when the org is not eligible for one", () => {
+    billingStatusState = { effectivePlan: "free", canManageBilling: true };
+    balanceState = {
+      ...balanceState!,
+      freeDailyCreditsRemaining: 12,
+      topUpEligible: false,
+    };
+    renderCredits();
+
+    expect(
+      screen.queryByRole("button", { name: "Buy credits" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers Buy credits alone on a low paid plan, and nothing to a member", () => {
+    billingStatusState = { effectivePlan: "team", canManageBilling: true };
+    balanceState = { ...balanceState!, freeDailyCreditsRemaining: 12 };
+    const { unmount } = renderCredits();
+    expect(screen.getByTestId("sidebar-credits-upsell")).toHaveTextContent(
+      /^Buy credits$/,
+    );
+    expect(
+      screen.getByRole("button", { name: "Explore plans" }),
     ).toBeInTheDocument();
-    expect(nativeTrialMock).toHaveBeenCalledWith("org_a");
-    // After the sponsored row, as the two allowances read together.
-    expect(
-      screen
-        .getByTestId("sidebar-usage-swarm-sponsored")
-        .compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
+    unmount();
 
-  it("shows no native harness row for a paid plan", () => {
+    billingStatusState = { effectivePlan: "team", canManageBilling: false };
     renderCredits();
     expect(
-      screen.queryByTestId("sidebar-usage-native-harness-turns"),
+      screen.queryByTestId("sidebar-credits-upsell"),
     ).not.toBeInTheDocument();
   });
 
-  it("neither reads nor shows the trial for someone who can run no native harness", () => {
-    nativeHarnessEnabled = false;
-    nativeTrialState = { remaining: 12, granted: 20 };
-    renderCredits();
-
-    expect(nativeTrialMock).toHaveBeenCalledWith(null);
-    expect(
-      screen.queryByTestId("sidebar-usage-native-harness-turns"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows no sponsored row when sponsorship does not apply here", () => {
+  it("shows no free grant rows, even while a grant remains", () => {
+    evalQuotaState = {
+      starterRemaining: 420,
+      used: 0,
+      allowed: null,
+      resetsAt: 0,
+      windowKind: "day",
+    };
     renderCredits();
     expect(
-      screen.queryByTestId("sidebar-usage-swarm-sponsored"),
+      screen.queryByTestId("sidebar-usage-eval-free"),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Free Swarm/)).not.toBeInTheDocument();
   });
 
-  it("keeps the current plan visible in the collapsed hover trigger", () => {
+  it("names the plan in the card, not the sidebar row", () => {
     renderCredits();
-    expect(screen.getByTestId("sidebar-see-credits")).toHaveTextContent("Free");
+    expect(screen.getByTestId("sidebar-see-credits")).toHaveTextContent(
+      /^Credits$/,
+    );
+    expect(screen.getByText("Free")).toBeInTheDocument();
   });
 
   it("renders the footer row and the daily credit bar with reset timing", () => {
     renderCredits();
 
     expect(screen.getByTestId("sidebar-see-credits")).toHaveTextContent(
-      "See credits",
+      "Credits",
     );
     const dailyRow = screen.getByTestId("sidebar-usage-daily");
     expect(dailyRow).toHaveTextContent("Free daily credits");
@@ -267,14 +284,14 @@ describe("SidebarCredits", () => {
 
     // The rail keeps the icon; the hover card is the only surface that can
     // show the numbers, which is why the row carries no Tooltip of its own.
-    expect(screen.getByText("See credits")).toHaveClass(
+    expect(screen.getByText("Credits")).toHaveClass(
       "group-data-[collapsible=icon]:hidden",
     );
     // With the label hidden and the coin decorative, the aria-label is the
     // only accessible name left on the collapsed rail.
     expect(screen.getByTestId("sidebar-see-credits")).toHaveAttribute(
       "aria-label",
-      "See credits",
+      "Credits",
     );
   });
 
@@ -302,10 +319,10 @@ describe("SidebarCredits", () => {
     const daily = screen.getByRole("progressbar", {
       name: "Free daily credits",
     });
-    expect(daily).toHaveAttribute("aria-valuetext", "264 / 300");
+    expect(daily).toHaveAttribute("aria-valuetext", "264 / 300 left");
     expect(
       screen.getByRole("progressbar", { name: "Daily eval iterations" }),
-    ).toHaveAttribute("aria-valuetext", "38 / 50 remaining");
+    ).toHaveAttribute("aria-valuetext", "38 / 50 left");
   });
 
   it("shows the monthly team allowance without the absolute reset date", () => {
@@ -333,42 +350,17 @@ describe("SidebarCredits", () => {
     expect(screen.queryByTestId("sidebar-usage-daily")).not.toBeInTheDocument();
   });
 
-  it("lists shared paid credits under the plan allowance without merging them", () => {
-    balanceState = {
-      paidCreditsRemaining: 988,
-      hasPurchaseHistory: true,
-      freeDailyPercentUsed: 0,
-      freeDailyResetAt: 0,
-      freeDailyCreditsRemaining: 0,
-      freeDailyCreditsTotal: 0,
-      walletLocked: false,
-      billingModel: "monthly_per_seat",
-      monthlyAllowanceTotal: 24_000,
-      monthlyAllowanceRemaining: 18_000,
-      monthlyResetAt: Date.now() + 16 * 24 * 60 * 60 * 1000,
-    };
+  it("shows top-up credits while any remain, and hides them at zero", () => {
+    balanceState = { ...balanceState!, paidCreditsRemaining: 988 };
+    const { unmount } = renderCredits();
+    const topUps = screen.getByTestId("sidebar-usage-topup");
+    expect(topUps).toHaveTextContent("Top-up credits");
+    expect(topUps).toHaveTextContent("988 left");
+    unmount();
 
+    balanceState = { ...balanceState!, paidCreditsRemaining: 0 };
     renderCredits();
-
-    const paidRow = screen.getByTestId("sidebar-usage-paid");
-    expect(paidRow).toHaveTextContent("Shared paid credits");
-    expect(paidRow).toHaveTextContent("988 credits");
-    // Absolute count, no denominator: no bar to draw.
-    expect(
-      screen.queryByRole("progressbar", { name: "Shared paid credits" }),
-    ).not.toBeInTheDocument();
-    // The monthly row is exactly what it was; the two pools stay apart.
-    const monthlyRow = screen.getByTestId("sidebar-usage-monthly");
-    expect(monthlyRow).toHaveTextContent("18,000 / 24,000");
-    expect(monthlyRow).not.toHaveTextContent("988");
-  });
-
-  it("renders no paid credits row at all when the pool is empty", () => {
-    // Default state has paidCreditsRemaining: 0.
-    renderCredits();
-
-    expect(screen.queryByTestId("sidebar-usage-paid")).not.toBeInTheDocument();
-    expect(screen.queryByText("Shared paid credits")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("sidebar-usage-topup")).not.toBeInTheDocument();
   });
 
   it("hides the eval iteration bar for an organization with no cap", () => {
@@ -398,10 +390,10 @@ describe("SidebarCredits", () => {
 
     const evalRow = screen.getByTestId("sidebar-usage-eval-iterations");
     expect(evalRow).toHaveTextContent("Daily eval iterations");
-    expect(evalRow).toHaveTextContent("38 / 50 remaining");
+    expect(evalRow).toHaveTextContent("38 / 50");
   });
 
-  it("keeps the V2 starter allowance while hiding recurring eval allowances", () => {
+  it("hides eval allowances on v2 plans", () => {
     billingStatusState = { effectivePlan: "team", pricingVersion: "v2" };
     balanceState = {
       ...balanceState!,
@@ -424,29 +416,29 @@ describe("SidebarCredits", () => {
     expect(screen.getByTestId("sidebar-usage-monthly")).toHaveTextContent(
       "30,000 / 50,000",
     );
-    expect(screen.getByText(/Free starter eval iterations:/)).toHaveTextContent(
-      "420 remaining · one-time allowance of 500",
-    );
+    expect(
+      screen.queryByTestId("sidebar-usage-eval-free"),
+    ).not.toBeInTheDocument();
   });
 
   it("offers Explore plans on the free plan", () => {
     renderCredits();
 
-    expect(screen.getByText("Free plan")).toBeInTheDocument();
+    expect(screen.getByText("Free")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Explore plans" }),
     ).toBeInTheDocument();
   });
 
-  it("names a paid plan without pitching an upgrade", () => {
+  it("offers Explore plans on a paid plan too", () => {
     billingStatusState = { effectivePlan: "team" };
 
     renderCredits();
 
-    expect(screen.getByText("Team plan")).toBeInTheDocument();
+    expect(screen.getByText("Team")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Explore plans" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Explore plans" }),
+    ).toBeInTheDocument();
   });
 
   it("opens billing from the row and plans from Explore plans", async () => {

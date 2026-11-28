@@ -708,6 +708,111 @@ describe("TraceViewer", () => {
     expect(screen.getAllByText("read_me").length).toBeGreaterThan(0);
   });
 
+  describe("refused calls in the Tools tab", () => {
+    const reason = "Invalid input for tool get_order: expected number";
+    const mark = { providerOptions: { mcpjam: { rejectedToolCall: true } } };
+    const refusalThenRetry = (marked: boolean) => ({
+      messages: [
+        { role: "user", content: "Look up order 12345" },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "refused",
+              toolName: "get_order",
+              input: { order_id: "12345" },
+              ...(marked ? mark : {}),
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "refused",
+              toolName: "get_order",
+              output: { type: "error-text", value: reason },
+              ...(marked ? mark : {}),
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "retry",
+              toolName: "get_order",
+              input: { order_id: 12345 },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "retry",
+              toolName: "get_order",
+              output: { type: "json", value: { status: "shipped" } },
+            },
+          ],
+        },
+      ],
+    });
+    const getOrder = { toolName: "get_order", arguments: { order_id: 12345 } };
+
+    it("shows the refusal and its reason beside a matched retry", () => {
+      render(
+        <TraceViewer
+          trace={refusalThenRetry(true)}
+          estimatedDurationMs={100}
+          expectedToolCalls={[getOrder]}
+          actualToolCalls={[{ ...getOrder, toolCallId: "retry" }]}
+          forcedViewMode="tools"
+        />,
+      );
+
+      expect(
+        screen.getByText("All 1 expected tool call matched."),
+      ).toBeInTheDocument();
+      expect(screen.getAllByText("match")).toHaveLength(1);
+      const refused = screen.getByTestId("refused-tool-call");
+      expect(
+        within(refused).getByText("Refused by client"),
+      ).toBeInTheDocument();
+      fireEvent.click(within(refused).getByRole("button"));
+      expect(within(refused).getByText(reason)).toBeInTheDocument();
+
+      // The JSON layout keeps the graded lists as they were and lists the
+      // refusal beneath them.
+      fireEvent.click(screen.getByTestId("trace-viewer-tools-layout-json"));
+      expect(screen.getAllByTestId("json-editor")).toHaveLength(2);
+      expect(screen.getByTestId("refused-tool-calls")).toBeInTheDocument();
+    });
+
+    it("renders a legacy trace without the mark as before", () => {
+      render(
+        <TraceViewer
+          trace={refusalThenRetry(false)}
+          estimatedDurationMs={100}
+          expectedToolCalls={[getOrder]}
+          actualToolCalls={[{ ...getOrder, toolCallId: "retry" }]}
+          forcedViewMode="tools"
+        />,
+      );
+
+      expect(
+        screen.getByText("All 1 expected tool call matched."),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("refused-tool-calls"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("hides Tools tab when there are no expected or actual tool calls", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
     openTraceTab();
@@ -826,6 +931,70 @@ describe("TraceViewer", () => {
     expect(
       await screen.findByTestId("trace-turn-runtime-badge"),
     ).toHaveTextContent("Engine: Claude Code");
+  });
+
+  it("labels the prompt row of a turn an event started and opens its Event section", async () => {
+    const event = {
+      name: "comment.created",
+      eventId: "evt_1",
+      timestamp: "2026-11-27T10:00:00.000Z",
+      receivedAt: Date.parse("2026-11-27T10:02:00.000Z"),
+      delivery: "webhook" as const,
+      origin: "simulation" as const,
+      subscriptionId: "esub_1",
+    };
+    render(
+      <TraceViewer
+        trace={{
+          ...waterfallTrace,
+          turnEvents: [
+            {
+              promptIndex: 1,
+              turnStartedAtMs: Date.parse("2026-11-27T10:02:40.000Z"),
+              event,
+            },
+          ],
+        }}
+      />,
+    );
+    openTraceTab();
+
+    const rows = await screen.findAllByTestId("trace-row");
+    const eventRow = rows.find((row) =>
+      row.textContent?.includes("Event: comment.created"),
+    );
+    expect(eventRow).toBeDefined();
+    expect(
+      within(eventRow!).getByTestId("trace-event-test-badge"),
+    ).toHaveTextContent("Test");
+    // The other turn keeps its typed prompt as its label, and has no badge.
+    const typedRow = rows.find((row) =>
+      row.textContent?.includes('User: "Need docs"'),
+    );
+    expect(typedRow).toBeDefined();
+    expect(
+      within(typedRow!).queryByTestId("trace-event-test-badge"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(within(eventRow!).getByTestId("trace-row-label-button"));
+    const section = within(screen.getByTestId("trace-detail-pane")).getByTestId(
+      "trace-event-section",
+    );
+    expect(section).toHaveTextContent("comment.created");
+    expect(within(section).getByTestId("trace-event-wait-received")).toHaveTextContent("+2m");
+    expect(within(section).getByTestId("trace-event-wait-turn-started")).toHaveTextContent("+40.0s");
+    expect(within(section).getByTestId("trace-event-total-wait")).toHaveTextContent("2m 40s");
+    expect(
+      within(section).getByRole("button", { name: "Copy event ID" }),
+    ).toBeInTheDocument();
+    expect(
+      within(section).getByRole("button", { name: "Copy subscription ID" }),
+    ).toBeInTheDocument();
+    expect(section).toHaveTextContent("Webhook");
+
+    // The typed turn's detail pane has no Event section.
+    fireEvent.click(within(typedRow!).getByTestId("trace-row-label-button"));
+    expect(screen.queryByTestId("trace-event-section")).not.toBeInTheDocument();
   });
 
   it("filters the waterfall to tool rows while preserving step context", async () => {

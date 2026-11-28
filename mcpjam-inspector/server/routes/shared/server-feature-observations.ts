@@ -17,6 +17,8 @@
  * user the backend authorized for this request; another member's context is
  * never used. Without a context the batch is dropped and nothing is recorded.
  */
+import { refuseMockServer } from "../../utils/mock-servers.js";
+
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { APPS_BRIDGE_FEATURE_IDS } from "@mcpjam/sdk";
@@ -101,7 +103,7 @@ async function authorizeHostedActor(
   body: BridgeObservationsBody,
 ): Promise<string | undefined> {
   let actorId: string | undefined;
-  await authorizeServerAs(
+  const authorized = await authorizeServerAs(
     {
       caller: callerContextFromHono(c),
       onLogContext: (log) => {
@@ -112,6 +114,10 @@ async function authorizeHostedActor(
     bearer,
     body.projectId,
     body.serverId,
+  );
+  refuseMockServer(
+    authorized,
+    "Feature observations do not take mock servers. A mock has no features of its own to record. Open the server the mock is based on to record them.",
   );
   return actorId;
 }

@@ -152,6 +152,16 @@ import {
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  createMockServerOperation,
+  updateMockServerOperation,
+  getMockServerOperation,
+  patchMockServerOperation,
+  refreshMockServerOperation,
+  openMockRunOperation,
+  resetMockRunOperation,
+  closeMockRunOperation,
+  getMockForwardingPolicyOperation,
+  setMockForwardingPolicyOperation,
   listServerAccountsOperation,
   getServerAccountOperation,
   readServerResourceOperation,
@@ -1765,6 +1775,32 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: listServerRevisionsOperation, tier: "direct" },
   { operation: getServerRevisionOperation, tier: "direct" },
   { operation: diffServerRevisionsOperation, tier: "direct" },
+  // A mock server and its versions: saved, free, and undone by saving the
+  // version before. The backend holds the tier and the flag.
+  { operation: createMockServerOperation, tier: "direct" },
+  { operation: updateMockServerOperation, tier: "direct" },
+  { operation: getMockServerOperation, tier: "direct" },
+  { operation: patchMockServerOperation, tier: "direct" },
+  { operation: refreshMockServerOperation, tier: "direct" },
+  { operation: openMockRunOperation, tier: "direct" },
+  { operation: resetMockRunOperation, tier: "direct" },
+  { operation: closeMockRunOperation, tier: "direct" },
+  { operation: getMockForwardingPolicyOperation, tier: "direct" },
+  {
+    // Decides whether every mock in a workspace may call its real server: who
+    // can reach those servers through a mock, so a person approves it.
+    operation: setMockForwardingPolicyOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `${input.forwarding === "block" ? "Block" : "Allow"} mock servers calling their real servers${
+          named(input, "project") ? ` in project ${named(input, "project")}` : ""
+        }`,
+      buttonLabel: "Change the policy",
+      kind: "external",
+      confirmSeverity: "external",
+    },
+  },
   // Account metadata only, structurally without a token, like the secrets
   // reads; the three writes are in EXCLUDED_FROM_AGENT.
   { operation: listServerAccountsOperation, tier: "direct" },

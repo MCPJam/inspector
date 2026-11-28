@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import {
   ciOwnedSuite,
   openSettingsRow,
@@ -179,7 +179,11 @@ describe("suite settings page", () => {
       screen.getByRole("button", { name: "Save settings" }),
     ).toBeDisabled();
     expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Back to suite" }));
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "breadcrumb" })).getByRole(
+        "button",
+      ),
+    );
     expect(noopNav.toSuiteOverview).toHaveBeenCalledWith("suite-1");
   });
 
@@ -236,7 +240,11 @@ describe("suite settings page", () => {
   it("keeps CI-owned settings readable with Back and no Save", () => {
     renderSettingsSheet({ suite: ciOwnedSuite });
     expect(screen.getByTestId("suite-settings-locked")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Back to suite" })).toBeEnabled();
+    expect(
+      within(screen.getByRole("navigation", { name: "breadcrumb" })).getByRole(
+        "button",
+      ),
+    ).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Save settings" })).toBeNull();
   });
 });
@@ -265,7 +273,7 @@ describe("suite settings page with the tabs flag", () => {
       "aria-current",
       "page",
     );
-    expect(screen.queryByRole("button", { name: "Back to suite" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "breadcrumb" })).toBeNull();
     expect(sectionHidden(container, "policy")).toBe(false);
     expect(sectionHidden(container, "passOrFail")).toBe(true);
     expect(

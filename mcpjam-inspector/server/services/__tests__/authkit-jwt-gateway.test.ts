@@ -161,6 +161,7 @@ describe("classifyAuthKitBearer", () => {
     });
     await expect(classifyAuthKitBearer(token, deps())).resolves.toEqual({
       kind: "foreign_audience",
+      sub: SUB,
     });
     // Same issuer, our client id: verified like any other.
     const own = await sign(trustedPrivate, { iss: OAUTH_ISSUER });

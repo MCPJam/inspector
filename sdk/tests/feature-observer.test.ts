@@ -122,10 +122,8 @@ describe("createFeatureFrameTap", () => {
       "receive",
       frame({ method: "notifications/cancelled", params: { requestId: 9 } })
     );
-    expect(events[0].featureIds).toEqual([
-      "request-control.cancellation",
-      "subscriptions.stream-end",
-    ]);
+    // On 2026-07-28 this is the stream ending, not a request cancellation.
+    expect(events[0].featureIds).toEqual(["subscriptions.stream-end"]);
   });
 
   it("resolves a server's cancellation to its own request before the client's", () => {
@@ -159,9 +157,10 @@ describe("createFeatureFrameTap", () => {
       "receive",
       frame({ method: "notifications/cancelled", params: { requestId: 3 } })
     );
+    // Resolved to the server's own elicitation, so no stream end; and
+    // 2026-07-28 forbids that cancellation, so nothing else counts either.
     expect(events.map((event) => event.featureIds)).toEqual([
       ["client.elicitation-form"],
-      ["request-control.cancellation"],
     ]);
   });
 

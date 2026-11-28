@@ -18,7 +18,7 @@ vi.mock("../availability.js", () => ({
   }),
 }));
 vi.mock("../readiness.js", () => ({ ensureLocalHarnessTarget: vi.fn(), localHarnessAccountEnabled: state.rollout }));
-import { shouldUseLocalHarness } from "../run-resources.js";
+import { decideLocalHarnessVenue, shouldUseLocalHarness } from "../run-resources.js";
 beforeEach(() => {
   state.enabled = true; state.hosted = false; state.pack = true; state.conformance = "tested";
   state.codexConformance = ""; state.codexTargets = ["darwin-arm64"]; state.codexSandboxTargets = [];
@@ -62,4 +62,28 @@ it("selects local Codex for evals and swarms only where its command sandbox was 
   expect(await shouldUseLocalHarness("codex", "bearer", "project", { scope: "unattended" })).toBe(true);
   // Claude Code declares no such dependency; its unattended venue is unchanged.
   expect(await shouldUseLocalHarness("claude-code", "bearer", "project", { scope: "unattended" })).toBe(true);
+});
+it("names the first rule that keeps a harness off this machine, for the refusal to explain", async () => {
+  const refusal = async (...args: Parameters<typeof decideLocalHarnessVenue>) => {
+    const decision = await decideLocalHarnessVenue(...args);
+    return decision.venue === "local" ? "local" : decision.refusal;
+  };
+  expect(await decideLocalHarnessVenue("cursor")).toEqual({ venue: "hosted", refusal: "unsupported-harness", harnessId: null });
+  state.hosted = true; expect(await refusal("claude-code")).toBe("hosted-server"); state.hosted = false;
+  state.enabled = false; expect(await refusal("claude-code")).toBe("turned-off"); state.enabled = true;
+  state.pack = false; expect(await refusal("claude-code")).toBe("unsupported-platform"); state.pack = true;
+  state.conformance = ""; expect(await refusal("claude-code")).toBe("not-released"); state.conformance = "tested";
+  // Machine rules never reach the account.
+  expect(state.rollout).not.toHaveBeenCalled();
+  state.codexConformance = "tested";
+  state.codexTargets = ["linux-x64"];
+  expect(await refusal("codex", "bearer", "project")).toBe("unsupported-platform");
+  state.codexTargets = ["darwin-arm64"];
+  expect(await refusal("codex", "bearer", "project", { scope: "unattended" })).toBe("unattended-unverified");
+  state.rollout.mockResolvedValue(false);
+  expect(await decideLocalHarnessVenue("claude-code", "bearer", "project", { scope: "unattended" }))
+    .toEqual({ venue: "hosted", refusal: "member", harnessId: "claude-code" });
+  state.rollout.mockResolvedValue(true);
+  expect(await decideLocalHarnessVenue("claude-code", "bearer", "project", { scope: "unattended" }))
+    .toEqual({ venue: "local", harnessId: "claude-code" });
 });

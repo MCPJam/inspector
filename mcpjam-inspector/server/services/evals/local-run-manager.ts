@@ -42,7 +42,16 @@ import {
   createConvexClient,
   type ReplayConfig,
 } from "./route-helpers.js";
-import { loadSuiteConnectionIdSets } from "./suite-account-choices.js";
+import type { ExecuteSuiteReplayFromRunParams } from "./replay-suite-run.js";
+import {
+  loadEvalRunAccountPlan,
+  loadSuiteConnectionIdSets,
+  openEvalAccountGroups,
+  type QuickRunAccounts,
+  type EvalAccountPlan,
+  type EvalAccountSelection,
+} from "./suite-account-choices.js";
+import type { ConnectionIdSets } from "../../utils/oauth-account-sets.js";
 
 type ProjectServer = { _id: string; name: string; url?: string };
 
@@ -59,7 +68,7 @@ const getTestSuite = makeFunctionReference<
 const getTestCase = makeFunctionReference<
   "query",
   { testCaseId: string },
-  { projectId?: string } | null
+  { projectId?: string; testSuiteId?: string } | null
 >("testSuites:getTestCase");
 
 export type LocalEvalRun = {
@@ -70,6 +79,12 @@ export type LocalEvalRun = {
     serverNames?: string[];
     storageServerIds?: string[];
     resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+    quickRunAccounts?: QuickRunAccounts;
+    evalAccounts?: {
+      plan: EvalAccountPlan;
+      requested?: EvalAccountSelection[];
+      managerForCase: (caseId: string | undefined) => MCPClientManager;
+    };
   };
   /** Ends the run's own connections; never throws. */
   close: () => Promise<void>;
@@ -255,6 +270,8 @@ export async function openLocalEvalRun(
     suiteId?: string;
     /** A quick run names only its case. */
     testCaseId?: string;
+    caseIds?: string[];
+    runAccounts?: EvalAccountSelection[];
     serverIds?: string[];
     storageServerIds?: string[];
     environmentId?: string;
@@ -264,8 +281,12 @@ export async function openLocalEvalRun(
   },
 ): Promise<LocalEvalRun> {
   const convex = createConvexClient(target.convexAuthToken);
-  // First: a run whose accounts cannot be read does not start.
-  const connectionIdSets = await loadSuiteConnectionIdSets(convex, target);
+  // Local server references can be names. Read choices by suite or case,
+  // then check the plan after resolving canonical server IDs.
+  const connectionIdSets = await loadSuiteConnectionIdSets(convex, {
+    suiteId: target.suiteId,
+    testCaseId: target.testCaseId,
+  });
   const projectId = await runProjectId(convex, target);
   let resolved: ResolvedEnvironmentForLaunch | undefined;
   if (target.environmentId && projectId) {
@@ -284,11 +305,11 @@ export async function openLocalEvalRun(
   }
   if (!projectId) {
     // Saved choices name project servers, so none here could honor one.
-    if (connectionIdSets) {
+    if (connectionIdSets || target.runAccounts) {
       throw new WebRouteError(
         409,
         ErrorCode.CONFLICT,
-        "This run can't use the accounts chosen for this suite, because the suite isn't in a project. Clear the account choices in the suite's settings, then run again.",
+        "This suite has no project for the selected MCP accounts. Clear the account choices, then run again.",
       );
     }
     return appConnections(c, resolved);
@@ -300,7 +321,7 @@ export async function openLocalEvalRun(
         localNames: [],
         resolved: undefined,
       };
-  if (!servers.serverIds.length && servers.localNames.length) {
+  if (!servers.serverIds.length && servers.localNames.length && !target.runAccounts) {
     return appConnections(c, servers.resolved);
   }
   const hostId = resolved?.hostId ?? target.namedHostId;
@@ -315,7 +336,7 @@ export async function openLocalEvalRun(
         clientCapabilities: undefined,
         options: {},
       };
-  const { manager } = await createAuthorizedManager(
+  const openHosted = (connectionIdSets?: ConnectionIdSets) => createAuthorizedManager(
     callerContextFromHono(c),
     target.convexAuthToken,
     projectId,
@@ -333,18 +354,52 @@ export async function openLocalEvalRun(
       ...connection.options,
     },
   );
-  await connectLocalServers(c.mcpClientManager, manager, servers.localNames);
+  const open = async (sets?: ConnectionIdSets) => {
+    const { manager } = await openHosted(sets);
+    try {
+      await connectLocalServers(c.mcpClientManager, manager, servers.localNames);
+    } catch (error) {
+      await manager.disconnectAllServers();
+      throw error;
+    }
+    return manager;
+  };
+  const suiteId = target.suiteId ?? (target.testCaseId
+    ? (await convex.query(getTestCase, { testCaseId: target.testCaseId }))?.testSuiteId
+    : undefined);
+  const caseIds = target.testCaseId ? [target.testCaseId] : target.caseIds;
+  const plan = suiteId && servers.serverIds.length ? await loadEvalRunAccountPlan(convex, {
+    suiteId,
+    serverIds: servers.serverIds,
+    ...(caseIds?.length ? { caseIds } : {}),
+    ...(target.runAccounts ? { runAccounts: target.runAccounts } : {}),
+  }) : null;
+  if (target.runAccounts && !plan) {
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Run account choices require a saved suite and connected MCP servers.");
+  }
+  const scopedChoices = connectionIdSets && Object.fromEntries(
+    Object.entries(connectionIdSets).filter(([serverId]) => servers.serverIds.includes(serverId)),
+  );
+  const groups = plan ? await openEvalAccountGroups(plan, open, scopedChoices) : undefined;
+  const manager = groups?.first ?? await open(connectionIdSets);
   return {
     manager,
-    request: servers.resolved
-      ? { resolvedEnvironment: servers.resolved }
-      : {
+    request: {
+      ...(servers.resolved
+        ? { resolvedEnvironment: servers.resolved }
+        : {
           serverIds: servers.serverIds,
           serverNames: servers.serverNames,
           storageServerIds: target.storageServerIds ?? servers.refs,
-        },
+        }),
+      ...(plan && target.testCaseId ? {
+        quickRunAccounts: { plan, serverIds: servers.serverIds, ...(target.runAccounts ? { runAccounts: target.runAccounts } : {}) },
+      } : plan && groups ? {
+        evalAccounts: { plan, requested: target.runAccounts, managerForCase: groups.forCase },
+      } : {}),
+    },
     close: () =>
-      manager.disconnectAllServers().catch((error: unknown) => {
+      (groups ? groups.close() : manager.disconnectAllServers()).catch((error: unknown) => {
         logger.warn("[local evals] closing a run's connections failed", {
           error: error instanceof Error ? error.message : String(error),
         });
@@ -374,21 +429,11 @@ function normalizedUrl(url: string | undefined): string | undefined {
  * `serverBindings` maps each name the source run used to the id the server
  * runs under now. `undefined` when none is the project's.
  */
-export function localReplayServers(c: Context, convexAuthToken: string) {
-  return async (target: {
-    projectId?: string;
-    suiteId: string;
-    replayConfig: ReplayConfig;
-    /** The source run's environment, which lists servers its config left out. */
-    environment?: { servers?: unknown };
-  }): Promise<
-    | {
-        manager: MCPClientManager;
-        serverIds: string[];
-        serverBindings: Array<{ serverName: string; projectServerId: string }>;
-      }
-    | undefined
-  > => {
+export function projectReplayServers(
+  c: Context,
+  convexAuthToken: string,
+): NonNullable<ExecuteSuiteReplayFromRunParams["openReplayServers"]> {
+  return async (target) => {
     const { projectId, replayConfig } = target;
     if (!projectId) return undefined;
     const convex = createConvexClient(convexAuthToken);
@@ -406,11 +451,16 @@ export function localReplayServers(c: Context, convexAuthToken: string) {
       projectServerId: string;
     }> = [];
     const others: ReplayConfig["servers"] = [];
-    for (const ref of new Set([...stored.keys(), ...runRefs])) {
-      const named = projectServersNamed(projectServers, ref);
+    const bindings = new Map(target.environment?.serverBindings?.map(({ serverName, projectServerId }) => [serverName, projectServerId]));
+    const planned = new Set(target.plan?.map(({ serverId }) => serverId));
+    for (const ref of new Set([...stored.keys(), ...runRefs, ...planned])) {
+      const named = projectServersNamed(projectServers, bindings.get(ref) ?? ref);
       const server = named.length === 1 ? named[0] : undefined;
       const config = stored.get(ref);
       if (!server) {
+        if (target.plan && (!config || planned.has(ref) || !!bindings.get(ref))) {
+          throw new WebRouteError(409, ErrorCode.CONFLICT, `The replay cannot reconnect ${ref}. Start a new run with the current MCP servers.`);
+        }
         if (config) others.push(config);
         continue;
       }
@@ -428,34 +478,36 @@ export function localReplayServers(c: Context, convexAuthToken: string) {
       }
     }
     if (!authorized.size) return undefined;
-    const { manager } = await createAuthorizedManager(
-      callerContextFromHono(c),
-      convexAuthToken,
-      projectId,
-      [...authorized.keys()],
-      WEB_CALL_TIMEOUT_MS,
-      undefined,
-      undefined,
-      {
-        pluginComputerRuntime: false,
-        ...(connectionIdSets ? { connectionIdSets } : {}),
-        serverNames: [...authorized.values()],
-        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      },
-    );
-    try {
-      await connectReplayManagerServers(manager, {
-        ...replayConfig,
-        servers: others,
-      });
-    } catch (error) {
-      await manager.disconnectAllServers();
-      throw error;
-    }
+    const open = async (connectionIdSets?: ConnectionIdSets) => {
+      const { manager } = await createAuthorizedManager(
+        callerContextFromHono(c),
+        convexAuthToken,
+        projectId,
+        [...authorized.keys()],
+        WEB_CALL_TIMEOUT_MS,
+        undefined,
+        undefined,
+        {
+          pluginComputerRuntime: false,
+          ...(connectionIdSets ? { connectionIdSets } : {}),
+          serverNames: [...authorized.values()],
+          xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+        },
+      );
+      try {
+        await connectReplayManagerServers(manager, { ...replayConfig, servers: others });
+        return manager;
+      } catch (error) {
+        await manager.disconnectAllServers();
+        throw error;
+      }
+    };
+    const groups = target.plan ? await openEvalAccountGroups(target.plan, open, connectionIdSets) : undefined;
     return {
-      manager,
+      manager: groups?.first ?? await open(connectionIdSets),
       serverIds: [...authorized.keys(), ...others.map((s) => s.serverId)],
       serverBindings,
+      ...(groups ? { managerForCase: groups.forCase, close: groups.close } : {}),
     };
   };
 }

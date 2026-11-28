@@ -1,0 +1,37 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <mask id="vscode-mask" mask-type="alpha" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M181.534 254.252C185.475 255.787 189.967 255.688 193.93 253.785L246.314 228.585C251.629 226.029 255.009 220.652 255.009 214.753V41.247C255.009 35.348 251.629 29.971 246.314 27.415L193.93 2.215C188.731 -0.286 182.642 0.328 178.085 3.622C177.434 4.093 176.815 4.622 176.236 5.207L75.917 96.708L32.235 63.553C28.168 60.467 22.482 60.72 18.704 64.155L4.69 76.898C0.067 81.103 0.062 88.39 4.678 92.6L42.564 127.5L4.678 162.4C0.062 166.61 0.067 173.897 4.69 178.102L18.704 190.845C22.482 194.28 28.168 194.533 32.235 191.447L75.917 158.292L176.236 249.793C177.768 251.342 179.572 252.852 181.534 254.252ZM191.043 69.945L114.916 127.5L191.043 185.055V69.945Z" fill="white"/>
+  </mask>
+  <g mask="url(#vscode-mask)">
+    <path d="M246.434 27.475L193.999 2.245C187.929 -0.675 180.679 0.555 175.929 5.305L4.609 161.595C0.039 165.765 0.044 172.985 4.619 177.145L18.679 189.925C22.469 193.375 28.179 193.625 32.259 190.525L243.299 30.435C250.379 25.065 260.549 30.135 260.549 39.025V38.405C260.549 33.685 257.879 29.385 253.659 27.285L246.434 27.475Z" fill="#0065A9"/>
+    <g filter="url(#vscode-shadow1)">
+      <path d="M246.434 228.525L193.999 253.755C187.929 256.675 180.679 255.445 175.929 250.695L4.609 94.405C0.039 90.235 0.044 83.015 4.619 78.855L18.679 66.075C22.469 62.625 28.179 62.375 32.259 65.475L243.299 225.565C250.379 230.935 260.549 225.865 260.549 216.975V217.595C260.549 222.315 257.879 226.615 253.659 228.715L246.434 228.525Z" fill="#007ACC"/>
+    </g>
+    <g filter="url(#vscode-shadow2)">
+      <path d="M193.999 253.759C187.929 256.679 180.679 255.449 175.929 250.699C181.779 256.549 191.779 252.399 191.779 244.119V11.879C191.779 3.599 181.779 -0.551 175.929 5.299C180.679 0.549 187.929 -0.681 193.999 2.239L246.424 27.439C251.749 29.999 255.129 35.379 255.129 41.279V214.719C255.129 220.619 251.749 225.999 246.424 228.559L193.999 253.759Z" fill="#1F9CF0"/>
+    </g>
+    <g style="mix-blend-mode:overlay" opacity="0.25">
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M181.378 254.252C185.318 255.787 189.811 255.688 193.774 253.785L246.158 228.585C251.473 226.029 254.853 220.652 254.853 214.753V41.247C254.853 35.348 251.473 29.971 246.158 27.415L193.774 2.215C188.575 -0.286 182.486 0.328 177.929 3.622C177.278 4.093 176.659 4.622 176.08 5.207L75.761 96.708L32.079 63.553C28.012 60.467 22.326 60.72 18.548 64.155L4.534 76.898C-0.089 81.103 -0.094 88.39 4.522 92.6L42.408 127.5L4.522 162.4C-0.094 166.61 -0.089 173.897 4.534 178.102L18.548 190.845C22.326 194.28 28.012 194.533 32.079 191.447L75.761 158.292L176.08 249.793C177.612 251.342 179.416 252.852 181.378 254.252ZM190.887 69.945L114.76 127.5L190.887 185.055V69.945Z" fill="white"/>
+    </g>
+  </g>
+  <defs>
+    <filter id="vscode-shadow1" x="-23.4" y="38.36" width="307.59" height="243.93" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"/>
+      <feOffset/>
+      <feGaussianBlur stdDeviation="12.5"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/>
+      <feBlend mode="overlay" in2="BackgroundImageFix" result="effect1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1" result="shape"/>
+    </filter>
+    <filter id="vscode-shadow2" x="151.78" y="-23.47" width="127.35" height="302.95" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0"/>
+      <feOffset/>
+      <feGaussianBlur stdDeviation="12.5"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/>
+      <feBlend mode="overlay" in2="BackgroundImageFix" result="effect1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1" result="shape"/>
+    </filter>
+  </defs>
+</svg>

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   parseDesktopActivity,
   type DesktopActivity,
+  type StartupStage,
 } from "../shared/desktop-diagnostics.js";
 
 type RecordEntry = DesktopActivity & { at: number };
@@ -15,6 +16,23 @@ const PROXY_SERVICE = "proxy_resolver.mojom.ProxyResolverFactory";
 const WINDOW_MS = 60_000;
 
 /** No SDK dependency: the same state machine is exercised by tests and Electron. */
+// Sentry normalizes event context three levels deep, which turns each
+// activity entry into "[Object]". This bounded, allowlisted context may go two
+// levels deeper. Sentry 10 reads that from this global symbol; the property is
+// not enumerable, so it never shows up in JSON or in a spread copy.
+const SENTRY_NORMALIZATION_DEPTH = Symbol.for(
+  "sentry.overrideNormalizationDepth",
+);
+
+/** Marks a diagnostics context so Sentry keeps its activity entries. */
+export function withSentryDepth<T extends object>(context: T): T {
+  Object.defineProperty(context, SENTRY_NORMALIZATION_DEPTH, {
+    value: 5,
+    configurable: true,
+  });
+  return context;
+}
+
 export function createDesktopDiagnostics(options: {
   publish: (snapshot: Record<string, unknown>) => void;
   report: (summary: Record<string, unknown>) => void;
@@ -27,6 +45,7 @@ export function createDesktopDiagnostics(options: {
   let rendererAt: number | undefined;
   let auth: DesktopActivity["auth"];
   let version: string | undefined;
+  let startupStage: StartupStage | undefined;
   let reports = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending:
@@ -54,19 +73,18 @@ export function createDesktopDiagnostics(options: {
   };
   function snapshot() {
     history = history.filter((x) => now() - x.at <= 120_000).slice(-50);
-    return {
-      // Only this bounded, allowlisted context needs deeper normalization.
-      __sentry_override_normalization_depth__: 5,
+    return withSentryDepth({
       run_id: runId,
       renderer_version: version ?? "unknown",
       auth: auth ?? "unknown",
+      startup_stage: startupStage ?? "unknown",
       renderer_last_seen_at: rendererAt ?? null,
       renderer_context_stale:
         rendererAt === undefined || now() - rendererAt > 30_000,
       incident_id: pending?.incident_id ?? null,
       observation_event_id: pending?.observation_event_id ?? null,
       activity: [...history],
-    };
+    });
   }
   function publish() {
     safe(() => options.publish(snapshot()));
@@ -77,6 +95,7 @@ export function createDesktopDiagnostics(options: {
     rendererAt = now();
     if (activity.auth) auth = activity.auth;
     if (activity.version) version = activity.version;
+    if (activity.stage) startupStage = activity.stage;
     const entry = { ...activity, at: now() };
     history.push(entry);
     if (pending) {
@@ -191,6 +210,8 @@ export function createDesktopDiagnostics(options: {
     if (pending && exited) pending.renderer_exits++;
     rendererAt = undefined;
     auth = undefined;
+    // A new page load reports its own stage; the old one no longer applies.
+    startupStage = undefined;
     publish();
   }
   publish();

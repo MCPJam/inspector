@@ -581,6 +581,7 @@ export interface EnvironmentPreview {
     requireToolApproval: boolean | null;
     respectToolVisibility: boolean | null;
     progressiveToolDiscovery: boolean | null;
+    runUnloadedToolCalls: boolean | null;
     builtInToolIds: string[];
     /** Presence only. The computer's workdir/kind is execution configuration
      *  and never crosses to the browser through this route. */
@@ -701,6 +702,7 @@ export function toEnvironmentPreview(
         runtimeConfig,
         "respectToolVisibility"
       ),
+      runUnloadedToolCalls: readBoolean(runtimeConfig, "runUnloadedToolCalls"),
       progressiveToolDiscovery: readBoolean(
         runtimeConfig,
         "progressiveToolDiscovery"

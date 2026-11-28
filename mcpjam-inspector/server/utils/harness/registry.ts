@@ -84,6 +84,8 @@ import {
   HARNESS_CONVERSATION_STATE,
   type HarnessConversationState,
 } from "./conversation-state.js";
+import { chatgptWebAdapter, claudeWebAdapter } from "./web-client-adapters.js";
+import type { WebClientVendor } from "@/shared/web-clients";
 
 /** A harness id this inspector has a runtime adapter for. Derived from the SDK's
  *  portable `Harness` union (the persistence-contract source of truth), so the
@@ -174,6 +176,12 @@ export function buildBrokerDummyAuth(
         "The Cursor harness authenticates with the customer's own Cursor " +
           "account (modelAccess: 'external-account') and takes no broker " +
           "lease — buildBrokerDummyAuth must not be called for it.",
+      );
+    case "claude-web":
+    case "chatgpt-web":
+      throw new Error(
+        "A web client runs on a project's own web account " +
+          "(modelAccess: 'external-account') and takes no broker lease.",
       );
     default: {
       const unhandled: never = harnessId;
@@ -565,6 +573,7 @@ export type HarnessCreateArgs = {
 type BrokeredModelAccessArm = {
   modelAccess: "broker";
   externalAccountCredentialEnv?: never;
+  webAccount?: never;
 };
 
 /** External-account model access: the runtime authenticates with the
@@ -587,6 +596,15 @@ type ExternalAccountModelAccessArm = {
    * and keeps a project secret of the same name out of the box's session env.
    */
   externalAccountCredentialEnv: readonly [string, ...string[]];
+  webAccount?: never;
+};
+
+/** External-account model access through a website: the vendor's app runs on
+ *  a project's web account (a saved browser profile), not on a key. */
+type WebAccountModelAccessArm = {
+  modelAccess: "external-account";
+  externalAccountCredentialEnv?: never;
+  webAccount: { vendor: WebClientVendor };
 };
 
 /** NATIVE delivery, `sandbox-files` mechanism: MCPJam writes runtime config
@@ -614,6 +632,18 @@ type NativeSessionConfigArm = {
   createHarness(
     args: HarnessCreateArgs & { mcpJson: HarnessMcpJson },
   ): HarnessAgentAdapter;
+};
+
+/** NATIVE delivery through a website: the vendor's own MCP client dials
+ *  MCPJam's forwarding endpoint for each server, set up as a connector in the
+ *  vendor's app. Nothing is written into a box and nothing is constructed:
+ *  `runHarnessTurn` hands these turns to the web runtime before either. */
+type WebConnectorArm = {
+  mcpDelivery: "harness";
+  mcpNativeDelivery: "web-connector";
+  deliverMcpServers?: never;
+  /** Throws: a website has no runtime to start in a box. */
+  createHarness(args: HarnessCreateArgs): HarnessAgentAdapter;
 };
 
 /** HOST-EXECUTED delivery: the servers reach the model as host-executed tools
@@ -644,8 +674,17 @@ type HostExecutedArm = {
  * is `mcpNativeDelivery` and is invisible to everything but construction.
  */
 export type HarnessRuntimeAdapter = HarnessRuntimeAdapterBase &
-  (BrokeredModelAccessArm | ExternalAccountModelAccessArm) &
-  (NativeSandboxFilesArm | NativeSessionConfigArm | HostExecutedArm);
+  (
+    | BrokeredModelAccessArm
+    | ExternalAccountModelAccessArm
+    | WebAccountModelAccessArm
+  ) &
+  (
+    | NativeSandboxFilesArm
+    | NativeSessionConfigArm
+    | HostExecutedArm
+    | WebConnectorArm
+  );
 
 /**
  * Model support is no longer decided here. Which models each harness can run
@@ -1361,6 +1400,8 @@ const HARNESS_ADAPTERS: Record<HarnessId, HarnessRuntimeAdapter> = {
   "copilot-cli": copilotCliAdapter,
   cursor: cursorAdapter,
   opencode: opencodeAdapter,
+  "claude-web": claudeWebAdapter,
+  "chatgpt-web": chatgptWebAdapter,
 };
 
 /** Membership test against the installed adapters (own-property, prototype-safe).

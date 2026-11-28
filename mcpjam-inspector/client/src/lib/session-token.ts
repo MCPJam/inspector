@@ -10,7 +10,6 @@
  * - Get auth headers for fetch requests
  * - Add token to URLs for SSE/EventSource (which can't use headers)
  */
-
 import { HOSTED_MODE } from "@/lib/config";
 import {
   getApiAuthorizationHeader,
@@ -25,21 +24,21 @@ import {
   isSessionRevokedResponse,
   notifySessionRevoked,
 } from "@/lib/auth/session-revoked";
-
 import {
   ACCESS_REQUIRED_EVENT,
   readAccessToken,
   rememberAccessToken,
   isAccessToken,
 } from "./access-link";
+import { readAccessAnswer } from "./access-answer";
+import { HOSTED_MOCK_AUTH_PATH_PATTERNS } from "./hosted-mock-paths";
 
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
 
 /**
- * Error thrown when `/api/session-token` responds non-OK, carrying the HTTP
- * status so the bootstrap can tell the EXPECTED host-denial (403) apart from a
- * genuine failure.
+ * Error thrown when `/api/session-token` does not confirm the access link (a
+ * non-OK status, or a 2xx without `{ ok: true }`), with its status and code.
  *
  * A 403 here is not a bug: the server withholds the token from any host that
  * isn't localhost or in `MCPJAM_ALLOWED_HOSTS` (see server/utils/localhost-check.ts).
@@ -51,22 +50,45 @@ export class SessionTokenError extends Error {
   readonly status: number;
   readonly code?: string;
   readonly restarted: boolean;
-  constructor(status: number, code?: string, restarted = false) {
+  readonly contentType?: string;
+  constructor(
+    status: number,
+    {
+      code,
+      restarted = false,
+      contentType,
+    }: { code?: string; restarted?: boolean; contentType?: string } = {},
+  ) {
     super(`Failed to get session token: ${status}`);
     this.name = "SessionTokenError";
     this.status = status;
     this.code = code;
     this.restarted = restarted;
+    this.contentType = contentType;
   }
 }
 
 /**
- * Whether `error` is the expected "host not allowed" session-token denial (403).
- * These are self-inflicted-by-config, not defects: the caller renders guidance
- * instead of a generic error and skips error reporting.
+ * The Inspector's own host denial (403 `HOST_NOT_ALLOWED`): a config issue the
+ * caller explains instead of reporting. A 403 from anything else is reported.
  */
 export function isSessionTokenHostDenied(error: unknown): boolean {
-  return error instanceof SessionTokenError && error.status === 403;
+  return (
+    error instanceof SessionTokenError &&
+    error.status === 403 &&
+    error.code === "HOST_NOT_ALLOWED"
+  );
+}
+
+/** The Inspector asking for its access link (401 `ACCESS_LINK_REQUIRED`). */
+export function isAccessLinkRequired(
+  error: unknown,
+): error is SessionTokenError {
+  return (
+    error instanceof SessionTokenError &&
+    error.status === 401 &&
+    error.code === "ACCESS_LINK_REQUIRED"
+  );
 }
 
 type AuthFetchSurface = "scenario";
@@ -174,12 +196,13 @@ export async function confirmAccessToken(
     headers: token ? { "X-MCP-Session-Auth": `Bearer ${token}` } : {},
     cache: "no-store",
   });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new SessionTokenError(response.status, body.code, !!token);
-  }
-  if (!isAccessToken(token) || (await response.json()).ok !== true) {
-    throw new Error("Invalid Inspector access response");
+  const answer = await readAccessAnswer(response);
+  if (!response.ok || !answer.ok || !isAccessToken(token)) {
+    throw new SessionTokenError(response.status, {
+      code: answer.code,
+      restarted: !!token,
+      contentType: answer.contentType,
+    });
   }
   cachedToken = token;
   rememberAccessToken(token);
@@ -203,10 +226,7 @@ export async function refreshSessionToken(): Promise<string | null> {
   try {
     return await confirmAccessToken(readAccessToken(true));
   } catch (error) {
-    if (
-      error instanceof SessionTokenError &&
-      error.code === "ACCESS_LINK_REQUIRED"
-    ) {
+    if (isAccessLinkRequired(error)) {
       window.dispatchEvent(
         new CustomEvent(ACCESS_REQUIRED_EVENT, {
           detail: { restarted: error.restarted },
@@ -351,6 +371,13 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // symptom is a Browser section that silently never appears rather than an
   // error anyone can see.
   "/api/v1/built-in-tools/",
+  // Signing a project's Claude web or ChatGPT web account in, saving it and
+  // handing it back. The routes verify this bearer themselves; without it
+  // every sign-in answers 401 and no browser opens. The local Inspector's
+  // `/api/web-clients/local-connectors` is not listed: it takes the session
+  // token.
+  "/api/web-clients/accounts/",
+  "/api/web-clients/reconnect/",
   // The org-settings Capabilities page reading the agent's op registry, so its
   // toggles cannot drift from the tools the server actually offers.
   "/api/v1/agent-ops",
@@ -519,6 +546,7 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // route answers "Bearer token required" — which reaches the user as a failed
   // cancel on a run that is still burning model spend.
   /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/cancel$/,
+  ...HOSTED_MOCK_AUTH_PATH_PATTERNS,
 ];
 
 function pathMatchesHostedPrefix(pathname: string): boolean {

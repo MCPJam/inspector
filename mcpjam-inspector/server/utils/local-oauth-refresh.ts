@@ -8,6 +8,9 @@ import { isPrivateNetworkUrl } from "@/shared/private-address";
 import { HOSTED_MODE } from "../config.js";
 import { isBlockedEgressHost } from "./hosted-egress-guard.js";
 import { logger } from "./logger.js";
+import { withDefaultUserAgent } from "./outbound-user-agent.js";
+
+const dial = withDefaultUserAgent();
 
 /** Everything the backend hands back when it cannot refresh a credential itself. */
 export type PrivateAuthorizationServerRefreshMaterial = {
@@ -84,7 +87,7 @@ function urlOf(input: Parameters<typeof fetch>[0]): string {
  */
 const dialTokenEndpoint: typeof fetch = (input, init) => {
   assertPrivateRefreshTarget(urlOf(input), "the token endpoint");
-  return fetch(input, {
+  return dial(input, {
     ...init,
     redirect: "error",
     signal: withLocalCheckSignal(AbortSignal.timeout(REFRESH_TIMEOUT_MS)),
@@ -109,7 +112,7 @@ const dialDiscovery: typeof fetch = async (input, init) => {
 
   for (let hop = 0; ; hop++) {
     assertPrivateRefreshTarget(currentUrl, "the authorization server");
-    const response = await fetch(currentUrl, {
+    const response = await dial(currentUrl, {
       ...init,
       headers,
       redirect: "manual",

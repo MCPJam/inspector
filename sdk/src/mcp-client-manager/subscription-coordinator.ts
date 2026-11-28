@@ -61,6 +61,7 @@
  */
 
 import type { ServerCapabilities } from "@modelcontextprotocol/client";
+import { EventsListChangedNotificationMethod } from "./events-ext.js";
 // The ONE module allowed to read the tasks extension capability. Importing the
 // predicate rather than re-deriving it here is what keeps the "treat the
 // extension as absent on 2025-11-25" rule in a single place.
@@ -100,6 +101,7 @@ export type SubscriptionNotificationKind =
   | "tools-list-changed"
   | "prompts-list-changed"
   | "resources-list-changed"
+  | "events-list-changed"
   | "resource-updated"
   | "tasks";
 
@@ -107,6 +109,7 @@ const METHOD_TO_KIND: Readonly<Record<string, SubscriptionNotificationKind>> = {
   [ToolListChangedNotificationMethod]: "tools-list-changed",
   [PromptListChangedNotificationMethod]: "prompts-list-changed",
   [ResourceListChangedNotificationMethod]: "resources-list-changed",
+  [EventsListChangedNotificationMethod]: "events-list-changed",
   [ResourceUpdatedNotificationMethod]: "resource-updated",
   [TasksNotificationMethod]: "tasks",
 };
@@ -116,6 +119,7 @@ export interface DesiredSubscriptionInterests {
   toolsListChanged?: boolean;
   promptsListChanged?: boolean;
   resourcesListChanged?: boolean;
+  eventsListChanged?: boolean;
   /** Resource URIs to watch for `notifications/resources/updated`. */
   resourceUris?: readonly string[];
   /**
@@ -140,6 +144,7 @@ export interface SubscriptionFilterShape {
   toolsListChanged?: boolean;
   promptsListChanged?: boolean;
   resourcesListChanged?: boolean;
+  eventsListChanged?: boolean;
   resourceSubscriptions?: string[];
   taskIds?: string[];
 }
@@ -261,6 +266,7 @@ export interface McpSubscriptionHandle {
  */
 export interface SubscriptionClientPort {
   getServerCapabilities(): ServerCapabilities | undefined;
+  supportsEventsListChanged?(): boolean;
   getProtocolEra?(): "legacy" | "modern" | undefined;
   setNotificationHandler(
     method: string,
@@ -360,6 +366,7 @@ function filtersEqual(
     Boolean(a.toolsListChanged) === Boolean(b.toolsListChanged) &&
     Boolean(a.promptsListChanged) === Boolean(b.promptsListChanged) &&
     Boolean(a.resourcesListChanged) === Boolean(b.resourcesListChanged) &&
+    Boolean(a.eventsListChanged) === Boolean(b.eventsListChanged) &&
     uris(a) === uris(b) &&
     taskIds(a) === taskIds(b)
   );
@@ -370,6 +377,7 @@ function isEmptyFilter(filter: SubscriptionFilterShape): boolean {
     !filter.toolsListChanged &&
     !filter.promptsListChanged &&
     !filter.resourcesListChanged &&
+    !filter.eventsListChanged &&
     (filter.resourceSubscriptions?.length ?? 0) === 0 &&
     (filter.taskIds?.length ?? 0) === 0
   );
@@ -409,6 +417,8 @@ function filterAllows(
       return Boolean(acknowledged.promptsListChanged);
     case "resources-list-changed":
       return Boolean(acknowledged.resourcesListChanged);
+    case "events-list-changed":
+      return requested.eventsListChanged === true && acknowledged.eventsListChanged === true;
     case "resource-updated": {
       // A server may legitimately stamp an update for a URI whose exact form
       // differs only by template expansion; MCPJam does not guess — the URI
@@ -448,7 +458,8 @@ function filterAllows(
 export function resolveRequestedFilter(
   desired: DesiredSubscriptionInterests,
   capabilities: ServerCapabilities | undefined,
-  era?: "legacy" | "modern"
+  era?: "legacy" | "modern",
+  supportsEventsListChanged?: boolean,
 ): {
   requested: SubscriptionFilterShape;
   rejected: SubscriptionInterestRejection[];
@@ -465,7 +476,7 @@ export function resolveRequestedFilter(
     want: boolean | undefined,
     supported: boolean | undefined,
     interest: SubscriptionNotificationKind,
-    key: "toolsListChanged" | "promptsListChanged" | "resourcesListChanged"
+    key: "toolsListChanged" | "promptsListChanged" | "resourcesListChanged" | "eventsListChanged"
   ) => {
     if (!want) return;
     if (supported) {
@@ -492,6 +503,12 @@ export function resolveRequestedFilter(
     caps.resources?.listChanged,
     "resources-list-changed",
     "resourcesListChanged"
+  );
+  take(
+    desired.eventsListChanged,
+    era === "modern" && supportsEventsListChanged,
+    "events-list-changed",
+    "eventsListChanged",
   );
 
   const uris = [...new Set(desired.resourceUris ?? [])];
@@ -550,6 +567,7 @@ export function diffAcknowledgement(
     ["toolsListChanged", "tools-list-changed"],
     ["promptsListChanged", "prompts-list-changed"],
     ["resourcesListChanged", "resources-list-changed"],
+    ["eventsListChanged", "events-list-changed"],
   ];
   for (const [key, interest] of pairs) {
     if (requested[key] && !acknowledged[key]) {
@@ -755,6 +773,7 @@ export class SubscriptionCoordinator {
     if (this.handlersRegistered) return;
     this.handlersRegistered = true;
     for (const method of Object.keys(METHOD_TO_KIND)) {
+      if (method === EventsListChangedNotificationMethod && !this.client.supportsEventsListChanged?.()) continue;
       this.client.setNotificationHandler(method, (notification) =>
         this.handleNotification(notification)
       );
@@ -979,7 +998,8 @@ export class SubscriptionCoordinator {
     const { requested, rejected } = resolveRequestedFilter(
       this.desired,
       this.client.getServerCapabilities(),
-      this.era
+      this.era,
+      this.client.supportsEventsListChanged?.(),
     );
     const wantedTaskIds = requested.taskIds ?? [];
     if (wantedTaskIds.length === 0) return { requested, rejected };

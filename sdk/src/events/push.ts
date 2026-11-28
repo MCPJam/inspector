@@ -10,8 +10,9 @@
  *
  * Draft rules (*Push-Based Delivery → Lifecycle*) and the spike's gates:
  *   - Liveness is ANY frame — an event or a heartbeat (or `active`). Nothing
- *     for more than twice the heartbeat interval ⇒ the stream is dead ⇒
- *     reconnect with the last cursor.
+ *     for three times the heartbeat interval the server granted on `active`
+ *     (*Heartbeat interval*: the grant is authoritative) ⇒ the stream is
+ *     dead ⇒ reconnect with the last cursor.
  *   - The default request timeout must not apply; but the official client's
  *     timer is always finite (and `setTimeout` caps at ~24.8 days), so the
  *     runtime ROLLS THE STREAM OVER deliberately before the timer can fire:
@@ -45,6 +46,16 @@ import {
 
 /** Max delay for `setTimeout` (2^31 − 1 ms); longer values overflow to ~0. */
 export const MAX_TIMER_MS = 2_147_483_647;
+
+/** Silent heartbeat intervals after which a stream is dead (*Heartbeat interval*). */
+const LIVENESS_HEARTBEATS = 3;
+
+/**
+ * The shortest grant honoured. A server that sends seconds where the draft
+ * means milliseconds (`heartbeatMs: 30`) would otherwise have its stream
+ * declared dead and reopened every 90 ms, with no backoff.
+ */
+const MIN_HEARTBEAT_MS = 1_000;
 
 export interface PushConnectionPort {
   /** Send `events/stream`; see `MCPClientManager.openEventsStream`. */
@@ -84,7 +95,10 @@ export interface EventsPushRuntimeOptions {
   port: PushConnectionPort;
   inbox: InboxPort;
   clock?: { now(): number };
-  /** Server heartbeat cadence the liveness window is derived from. 30 s. */
+  /**
+   * Heartbeat cadence assumed until the server grants one on `active`, and
+   * when it grants none. 30 s, the draft's recommended default.
+   */
   heartbeatIntervalMs?: number;
   /** Roll the stream over after this long. ~24 days (under the timer cap). */
   rolloverMs?: number;
@@ -98,6 +112,8 @@ interface StreamState {
   controller?: AbortController;
   requestId?: string | number;
   livenessTimer?: ReturnType<typeof setTimeout>;
+  /** The `heartbeatMs` granted on this request's `active` (at least 1 s), once it arrives. */
+  grantedHeartbeatMs?: number;
   rolloverTimer?: ReturnType<typeof setTimeout>;
   reconnectTimer?: ReturnType<typeof setTimeout>;
   queue: Promise<void>;
@@ -208,6 +224,8 @@ export class EventsPushRuntime {
     if (state.stopped) return;
     const controller = new AbortController();
     state.controller = controller;
+    // A new request gets a new grant; until then the default applies.
+    state.grantedHeartbeatMs = undefined;
     state.attempts += 1;
     state.callbacks.onOpen?.({ attempt: state.attempts, cursor: state.cursor, reason });
     this.armLiveness(state);
@@ -294,11 +312,15 @@ export class EventsPushRuntime {
   private armLiveness(state: StreamState): void {
     clearTimeout(state.livenessTimer);
     const controller = state.controller;
-    state.livenessTimer = setTimeout(() => {
-      if (state.controller === controller) {
-        this.reconnect(state, "liveness_timeout", 0);
-      }
-    }, 2 * this.heartbeatIntervalMs);
+    const intervalMs = state.grantedHeartbeatMs ?? this.heartbeatIntervalMs;
+    state.livenessTimer = setTimeout(
+      () => {
+        if (state.controller === controller) {
+          this.reconnect(state, "liveness_timeout", 0);
+        }
+      },
+      Math.min(LIVENESS_HEARTBEATS * intervalMs, MAX_TIMER_MS)
+    );
   }
 
   private stopStream(id: string): void {
@@ -324,6 +346,11 @@ export class EventsPushRuntime {
     switch (notification.method) {
       case EventsActiveNotificationMethod: {
         state.failures = 0;
+        const granted = params.heartbeatMs;
+        if (typeof granted === "number" && Number.isFinite(granted) && granted > 0) {
+          state.grantedHeartbeatMs = Math.max(granted, MIN_HEARTBEAT_MS);
+          this.armLiveness(state);
+        }
         const cursor = normalizeCursor(params.cursor as string | null | undefined);
         if (params.truncated === true) {
           const journalled = await this.append(

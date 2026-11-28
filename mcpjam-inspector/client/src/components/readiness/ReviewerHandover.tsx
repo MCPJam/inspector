@@ -6,6 +6,7 @@ import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@mcpjam/design-system/button";
 import { createReviewerHandoff, type ReviewerAttempt } from "@/lib/apis/reviewer-attempts-api";
+import { buildProjectPath } from "@/lib/project-route";
 import { copyToClipboard } from "@/lib/clipboard";
 import { toast } from "@/lib/toast";
 import type { Handover } from "./reviewer-stages";
@@ -16,12 +17,14 @@ export function ReviewerHandover({
   handover,
   scope,
   onShow,
+  canAct,
 }: {
   attempt: ReviewerAttempt;
   handover: Handover | null;
   scope: { projectId: string; submissionId: string };
   /** Shows the page it stopped on; absent when the recording cannot. */
   onShow?: () => void;
+  canAct: boolean;
 }) {
   const [link, setLink] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
@@ -39,6 +42,15 @@ export function ReviewerHandover({
     }
   };
   const command = `mcpjam readiness reviewer resume ${scope.submissionId} --attempt ${attempt.id} --project ${scope.projectId}`;
+  const copySubmission = async () => {
+    const url = new URL(buildProjectPath(scope.projectId, "/readiness"), window.location.origin);
+    url.searchParams.set("submission", scope.submissionId);
+    if (await copyToClipboard(url.href)) {
+      toast.success("Submission link copied.");
+    } else {
+      toast.error("Could not copy the submission link. Try copying it again.");
+    }
+  };
   const copy = async () => {
     if (await copyToClipboard(command)) {
       toast.success("Resume command copied.");
@@ -53,7 +65,7 @@ export function ReviewerHandover({
     <div className="space-y-2 rounded-md border border-warning/70 bg-warning/10 p-3">
       {attempt.humanSignInCompletedAt ? (
         <p>Reviewer sign-in completed. Resume this attempt to run the checks.</p>
-      ) : (
+      ) : canAct ? (
         <div className="space-y-2">
           <Button type="button" disabled={opening} onClick={() => void createLink()}>
             {opening ? "Creating sign-in link…" : "Finish reviewer sign-in"}
@@ -61,12 +73,15 @@ export function ReviewerHandover({
           {link ? <a href={link} target="_blank" rel="noopener noreferrer">Open reviewer sign-in</a> : null}
           {error ? <p role="alert">{error}</p> : null}
         </div>
-      )}
+      ) : null}
+      <Button type="button" size="sm" variant="secondary" onClick={() => void copySubmission()}>
+        Copy submission link
+      </Button>
       <dl className="space-y-3">
         {handover ? (
           <>
             <div className="space-y-1">
-              <dt className={term}>What the page asked for</dt>
+              <dt className={term}>{attempt.humanSignInCompletedAt ? "Why verification paused" : "What the page asked for"}</dt>
               <dd className="[overflow-wrap:anywhere]">
                 {handover.asked}
                 {onShow ? (
@@ -87,7 +102,7 @@ export function ReviewerHandover({
         <div className="space-y-1">
           <dt className={term}>How to resume it</dt>
           <dd className="text-muted-foreground">
-            A teammate or an agent can resume this attempt with its id.
+            Share the submission with your teammate. Whoever finishes sign-in resumes the checks here or with this command.
           </dd>
           <dd className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-muted-foreground">Attempt id</span>

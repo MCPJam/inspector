@@ -10,6 +10,7 @@ interface __BaseEnv_Env {
 	MCPJAM_GUEST_JWKS_URL?: "http://localhost:6274/api/web/guest-jwks" | "https://staging.mcpjam.com/api/web/guest-jwks" | "https://app.mcpjam.com/api/web/guest-jwks";
 	MCPJAM_GUEST_MINT_URL?: "http://localhost:6274/api/web/guest-token" | "https://staging.mcpjam.com/api/web/guest-token" | "https://app.mcpjam.com/api/web/guest-token";
 	MCPJAM_GUEST_ACCESS?: "mixed" | "off";
+	POSTHOG_PROJECT_KEY?: "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
@@ -42,6 +43,7 @@ declare namespace Cloudflare {
 		MCPJAM_GUEST_JWKS_URL: "https://staging.mcpjam.com/api/web/guest-jwks";
 		MCPJAM_GUEST_MINT_URL: "https://staging.mcpjam.com/api/web/guest-token";
 		MCPJAM_GUEST_ACCESS: "off";
+		POSTHOG_PROJECT_KEY: "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
 	}
 	interface ProductionEnv {
 		AUTHKIT_DOMAIN: "login.mcpjam.com";
@@ -51,6 +53,7 @@ declare namespace Cloudflare {
 		MCPJAM_GUEST_JWKS_URL: "https://app.mcpjam.com/api/web/guest-jwks";
 		MCPJAM_GUEST_MINT_URL: "https://app.mcpjam.com/api/web/guest-token";
 		MCPJAM_GUEST_ACCESS: "off";
+		POSTHOG_PROJECT_KEY: "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";
 	}
 	interface Env extends __BaseEnv_Env {}
 }

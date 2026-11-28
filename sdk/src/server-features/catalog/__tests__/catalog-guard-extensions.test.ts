@@ -167,7 +167,11 @@ describe("check maps for the Apps, Tasks and Events suites", () => {
   );
 
   it("excludes checks that grade the client or a host, not the server", () => {
-    expect(TASKS_CHECK_FEATURES["tasks-declaration-hygiene"]).toBe("excluded");
+    // tasks-declaration-hygiene graded the client too; it was removed from the
+    // suite rather than excluded, and its rule is a client test in CI.
+    expect(Object.hasOwn(TASKS_CHECK_FEATURES, "tasks-declaration-hygiene")).toBe(
+      false
+    );
     expect(EVENTS_CHECK_FEATURES["chatgpt-readiness-webhook-listed"]).toBe(
       "excluded"
     );

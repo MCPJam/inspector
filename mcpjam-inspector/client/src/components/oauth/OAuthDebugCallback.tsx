@@ -7,6 +7,13 @@ import {
   consumeOAuthCallbackParams,
   readOAuthCallbackParams,
 } from "@/lib/oauth-callback-inbox";
+import {
+  buildOAuthCallbackMessage,
+  deleteOAuthPopupMarker,
+  hashOAuthState,
+  oauthCallbackChannelName,
+  resolveOAuthCallbackRoute,
+} from "@/lib/oauth/popup-handoff-marker";
 import { CheckCircle2, XCircle } from "lucide-react";
 
 /**
@@ -53,20 +60,24 @@ export default function OAuthDebugCallback() {
       return;
     }
 
-    const isInPopup = Boolean(window.opener && !window.opener.closed);
-    const isNamedOAuthPopup = window.name.startsWith("oauth_authorization_");
+    const hasOpener = Boolean(window.opener && !window.opener.closed);
+    const message = buildOAuthCallbackMessage(callbackSearch);
+    const state = callbackSearch.get("state");
+    // Decided by the marker the opening tab left, not by `window.opener` or
+    // `window.name`: a COOP provider page clears both, which makes a web
+    // popup look exactly like a desktop app's system-browser return.
+    const route = resolveOAuthCallbackRoute(hasOpener, state);
 
     // Electron cold-start debug callbacks do not have a live opener session to
     // hand results back to, so keep the callback visible instead of attempting
     // popup behavior in the only app window.
-    if (window.isElectron && !isInPopup) {
+    if (window.isElectron && route === "desktop") {
       return;
     }
 
-    // System-browser debug callbacks need to bounce back into the Electron app.
-    // Browser popup flows may lose `window.opener` due to COOP, so preserve the
-    // fallback path for our named OAuth popup windows.
-    if (!window.isElectron && !isInPopup && !isNamedOAuthPopup) {
+    // No tab in this browser is waiting on this sign-in, so the desktop app
+    // started it in the system browser.
+    if (route === "desktop") {
       hasAttemptedSendRef.current = true;
       const electronUrl = buildElectronDebugCallbackUrl(callbackSearch);
       setReturnToElectronUrl(electronUrl);
@@ -74,60 +85,32 @@ export default function OAuthDebugCallback() {
       return;
     }
 
-    // If successful and we have a code, send it to the parent window.
-    if (callbackParams.successful && callbackParams.code) {
-      hasAttemptedSendRef.current = true;
-      try {
-        const stateParam = callbackSearch.get("state");
-        // 2R-iss: forward the RFC 9207 `iss` so the opener can validate it
-        // against the recorded issuer before redeeming the code. An absent
-        // param must travel as `undefined`, not the `null` URLSearchParams
-        // returns — the machine treats `iss: null` as a present-but-mismatched
-        // issuer and refuses the exchange.
-        const issParam = callbackSearch.get("iss") ?? undefined;
-        const message = {
-          type: "OAUTH_CALLBACK",
-          code: callbackParams.code,
-          state: stateParam,
-          iss: issParam,
-        };
-
-        // Method 1: Try window.opener (works most of the time)
-        if (isInPopup) {
-          window.opener.postMessage(message, window.location.origin);
-          // Handed off: the opener redeems it, so its reload copy goes now.
-          consumeOAuthCallbackParams();
-          setCodeSent(true);
-
-          // Auto-close popup immediately (small delay to ensure message is sent)
-          setTimeout(() => {
-            window.close();
-          }, 100);
-        } else {
-          // Method 2: Fallback to BroadcastChannel (works when window.opener is broken)
-          // This handles OAuth servers that use Cross-Origin-Opener-Policy headers
-          try {
-            const channel = new BroadcastChannel("oauth_callback_channel");
-            channel.postMessage(message);
-            channel.close();
-            consumeOAuthCallbackParams();
-            setCodeSent(true);
-
-            // Auto-close popup after sending
-            setTimeout(() => {
-              window.close();
-            }, 500);
-          } catch (broadcastError) {
-            console.error(
-              "[OAuth Callback] BroadcastChannel failed:",
-              broadcastError,
-            );
-            // Show manual copy UI (already rendered by default)
-          }
-        }
-      } catch (error) {
-        console.error("[OAuth Callback] Failed to send code:", error);
+    if (!message) return;
+    hasAttemptedSendRef.current = true;
+    try {
+      if (route === "opener") {
+        window.opener.postMessage(message, window.location.origin);
+      } else if (state) {
+        const channel = new BroadcastChannel(
+          oauthCallbackChannelName(hashOAuthState(state)),
+        );
+        channel.postMessage(message);
+        channel.close();
+        deleteOAuthPopupMarker(state);
       }
+      // Handed off: the opener redeems it, so its reload copy goes now.
+      consumeOAuthCallbackParams();
+      if (message.code) setCodeSent(true);
+      // A small delay so the message is out before the window goes.
+      setTimeout(
+        () => {
+          window.close();
+        },
+        route === "opener" ? 100 : 500,
+      );
+    } catch (error) {
+      // The manual copy UI below stays up as the fallback.
+      console.error("[OAuth Callback] Failed to send the callback:", error);
     }
   }, [callbackParams, callbackSearch]);
 

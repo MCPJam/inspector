@@ -43,7 +43,7 @@ Local MCP testing:
   prompts            List and fetch MCP prompts
   apps               Validate MCP Apps metadata and resource wiring
   tasks              Create, inspect and drive MCP Tasks
-  events             List, poll, watch, subscribe to and conformance-check MCP Events (triggers, draft@28ec35e)
+  events             List, poll, watch, subscribe to and conformance-check MCP Events
   oauth              Run MCP OAuth login, proxy, and conformance flows
   xaa                Run the Cross-App Access (ID-JAG) debugger against an MCP server
   protocol           MCP protocol inspection and conformance checks
@@ -86,6 +86,8 @@ mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN --form
 mcpjam events list --url https://your-server.com/mcp
 mcpjam events watch comment.created --url https://your-server.com/mcp \
   --event-args '{"document_id":"doc_1"}' --duration 60
+mcpjam events conformance --profile beta --url https://your-server.com/mcp \
+  --checks events-capability-declared,events-list-shape
 
 # Run MCPJam itself as a stdio MCP server (for Claude Desktop, Claude Code, Cursor, ...)
 mcpjam mcp
@@ -95,6 +97,8 @@ mcpjam cloud login
 mcpjam cloud projects list
 mcpjam cloud eval run --suite smoke
 ```
+
+The CLI selects Events Beta when the server declares `io.modelcontextprotocol/events` on MCP `2026-07-28`. Use `--profile draft` or `--profile chatgpt` to exercise the corresponding top-level `capabilities.events` contract. Webhook conformance requires a receiver the MCP server can reach. Run `mcpjam events conformance --help` for receiver options.
 
 ## Why
 

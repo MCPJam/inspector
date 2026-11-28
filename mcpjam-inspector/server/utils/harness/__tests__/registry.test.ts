@@ -120,6 +120,14 @@ describe("harness registry", () => {
         if (adapter.mcpNativeDelivery === "sandbox-files") {
           // Writes runtime config into the box before the process starts.
           expect(adapter.deliverMcpServers).toBeTypeOf("function");
+        } else if (adapter.mcpNativeDelivery === "web-connector") {
+          // The vendor's app holds a connector to the forwarding endpoint:
+          // nothing is written and nothing is constructed.
+          expect(adapter.webAccount).toBeDefined();
+          expect(adapter.deliverMcpServers).toBeUndefined();
+          expect(() => adapter.createHarness({ modelId: "m", auth: {} })).toThrow(
+            /runs in a browser/,
+          );
         } else {
           // The servers are a CONSTRUCTOR setting instead, so there must be
           // nothing to write — a `session-config` adapter that also carried a
@@ -136,8 +144,12 @@ describe("harness registry", () => {
       // must NAME the credential it needs — otherwise the turn runner would
       // start it with no auth and the failure would surface from inside the box.
       expect(["broker", "external-account"]).toContain(adapter.modelAccess);
-      if (adapter.modelAccess === "external-account") {
-        expect(adapter.externalAccountCredentialEnv.length).toBeGreaterThan(0);
+      if (adapter.webAccount) {
+        // A web account is a browser profile, never a key in the env.
+        expect(adapter.modelAccess).toBe("external-account");
+        expect(adapter.externalAccountCredentialEnv).toBeUndefined();
+      } else if (adapter.modelAccess === "external-account") {
+        expect(adapter.externalAccountCredentialEnv?.length).toBeGreaterThan(0);
       } else {
         expect(adapter.externalAccountCredentialEnv).toBeUndefined();
       }
@@ -155,7 +167,14 @@ describe("harness registry", () => {
         expect(adapter.id).toBe("copilot-cli");
       }
       // The writer cleans what a runtime reads and writes where its adapter
-      // does, so both must be relative to the box's home.
+      // does, so both must be relative to the box's home. A web client has no
+      // box, so it names no folder at all.
+      if (adapter.mcpNativeDelivery === "web-connector") {
+        expect(adapter.supportsSkills).toBe(false);
+        expect(adapter.skills.readFolders).toEqual([]);
+        expect(adapter.skills.acceptsName("any-skill")).toBe(false);
+        continue;
+      }
       for (const folder of [
         adapter.skills.writeFolder,
         ...adapter.skills.readFolders,

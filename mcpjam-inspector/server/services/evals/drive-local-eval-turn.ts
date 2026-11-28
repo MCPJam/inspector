@@ -40,7 +40,11 @@ import {
 } from "../../utils/call-cost/local-usage-cost.js";
 import type { ModelCallCostEvidence } from "@mcpjam/sdk";
 import type { PrepareChatV2Result } from "../../utils/chat-v2-orchestration.js";
-import { buildPinnedTurnAccounting, runPinnedTurn } from "./pinned-turn.js";
+import {
+  buildPinnedTurnAccounting,
+  runPinnedTurn,
+  type PinnedCallEvidence,
+} from "./pinned-turn.js";
 import type { PinnedTurnSsePayload } from "./pinned-turn-sse.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
 import { withWidgetContextSystemPrompt } from "./widget-interaction-context.js";
@@ -120,7 +124,8 @@ export function modelLayerForErrorSpan(
 }
 
 export type LocalEvalTurnOutcome =
-  | { kind: "completed" }
+  // `pinnedCall`: a pinned turn's own result, for the assertions that grade it.
+  | { kind: "completed"; pinnedCall?: PinnedCallEvidence }
   | { kind: "cancelled" }
   | { kind: "failed"; timeout: TimeoutMetadata };
 
@@ -326,7 +331,7 @@ export async function driveLocalEvalTurn(
         ? { iterationError: pinnedResult.iterationError }
         : {}),
     });
-    return { kind: "completed" };
+    return { kind: "completed", pinnedCall: accounting.evidence };
   }
 
   if (!llmModel || !prepared) {

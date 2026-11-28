@@ -1097,3 +1097,42 @@ describe("mapMcpImageToolOutputs", () => {
     expect(readLinkedResource).not.toHaveBeenCalled();
   });
 });
+
+describe("mapMcpImageToolOutputs — replay under the host's client rule (KES-1007)", () => {
+  const raw = {
+    content: [{ type: "text", text: "VIS-CONTENT" }],
+    structuredContent: { token: "VIS-STRUCTURED" },
+    _meta: { token: "VIS-META" },
+  };
+  const history = (): ModelMessage[] =>
+    [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "probe",
+            output: { type: "json", value: raw },
+            result: raw,
+          },
+        ],
+      },
+    ] as unknown as ModelMessage[];
+
+  it("replays an earlier result the way the first turn saw it", async () => {
+    const mapped = (await mapMcpImageToolOutputs(history(), {
+      modelVisibleMcpToolResults: { structuredContent: "fallback" },
+    })) as any[];
+    expect(mapped[0].content[0].output).toEqual({
+      type: "text",
+      value: "VIS-CONTENT",
+    });
+    expect(JSON.stringify(mapped[0].content[0].output)).not.toContain("VIS-META");
+  });
+
+  it("leaves an earlier result as it was without a rule", async () => {
+    const mapped = (await mapMcpImageToolOutputs(history(), {})) as any[];
+    expect(mapped[0].content[0].output).toEqual({ type: "json", value: raw });
+  });
+});

@@ -56,11 +56,16 @@ export type EvidenceReadTransport = (body: {
 }) => Promise<{ status: number; body: Record<string, unknown> | null }>;
 
 /** The production transport: the backend's service-token read route. */
-export function createConvexEvidenceReadTransport(bearer?: string): EvidenceReadTransport {
+export function createConvexEvidenceReadTransport(
+  authorization?: string | (() => Promise<string>),
+): EvidenceReadTransport {
   return async (body) => {
     const base = process.env.CONVEX_HTTP_URL?.trim();
     const token = getServiceCredential();
-    if (!base || (!token && !bearer)) return { status: 500, body: null };
+    if (!base || (!token && !authorization)) return { status: 500, body: null };
+    // A renewing bearer is read per request, so a long turn's reads send the current token.
+    const bearer =
+      typeof authorization === "function" ? await authorization() : authorization;
     const response = await fetch(
       new URL("/eval-harness-tool-calls/read", base).toString(),
       {

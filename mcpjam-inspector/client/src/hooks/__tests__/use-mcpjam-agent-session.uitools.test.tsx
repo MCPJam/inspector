@@ -190,7 +190,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     );
   });
 
-  it("preserves executed tools when a later step hits the size limit", async () => {
+  it("keeps executed tools and sends nothing after a later step hits the size limit", async () => {
     const { result } = render();
     const messages: UIMessage[] = [
       {
@@ -223,7 +223,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     expect(mockState.lastChatInstance.messages).toBe(messages);
     expect(mockState.setMessages).not.toHaveBeenCalled();
     expect(mockState.clearError).not.toHaveBeenCalled();
-    expect(mockState.sendMessage).toHaveBeenCalledOnce();
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
   });
 
   it("returns a rejected message for editing without sending it", async () => {

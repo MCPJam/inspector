@@ -49,9 +49,9 @@ import {
 import {
   describePlaygroundBoxRefusal,
   playgroundCredentialRefusal,
-  playgroundHarnessBoxReason,
   playgroundHarnessBoxUnavailableReason,
 } from "../../utils/harness/playground-box.js";
+import { playgroundBoxPlan } from "./playground-box-plan.js";
 import {
   isSandboxNoticeReason,
   type SandboxNoticeReason,
@@ -113,6 +113,8 @@ export async function prepareManagedTools(args: {
     Awaited<ReturnType<typeof prepareManagedConnections>>,
     "validatedPageTools"
   >;
+  /** The Playground box the route booked right after setup, if it did. */
+  earlyPlaygroundBox?: ReturnType<typeof startPlaygroundBoxEarly>;
 }) {
   const { c, rawBody, bearerToken, localIngress, resources, timing } = args;
   let scenarioBox: HarnessBox | undefined;
@@ -125,7 +127,6 @@ export async function prepareManagedTools(args: {
     hostRuntimeConfig,
     environmentSpec,
     scenarioEnvironment,
-    pinsEnvironment,
     environmentServers,
     resolvedExecution,
     builtInToolPolicy,
@@ -142,30 +143,17 @@ export async function prepareManagedTools(args: {
   // secrets only to check a member's own credential, so otherwise it is booked
   // while the secrets read is in flight. Booked early only when none of the
   // refusals checked before the booking below could apply.
-  const playgroundBoxReason = playgroundHarnessBoxReason({
-    harnessId: resolvedExecution.harness,
-    localExecution: Boolean(harnessExecutionTarget),
-    isScenarioSession: turnMode === "recorded",
-    comparePane: hostedBody.comparePane === true,
-  });
-  const playgroundEnvironmentId =
-    pinsEnvironment || playgroundBoxReason === "credential"
-      ? environmentSpec?.environmentRef.environmentId
-      : undefined;
-  const playgroundBoxArgs = {
-    bearer: bearerToken,
-    projectId: hostedBody.projectId,
-    chatSessionId: hostedBody.chatSessionId,
-    ...(playgroundEnvironmentId
-      ? { projectEnvironmentId: playgroundEnvironmentId }
-      : {}),
-    harness: resolvedExecution.harness,
-    signal: c.req.raw.signal as AbortSignal | undefined,
-    timing,
-  };
-  const earlyPlaygroundBox = startPlaygroundBoxEarly(
-    resources, playgroundBoxReason, playgroundBoxArgs, Boolean(c.get("guestId")),
-  );
+  // The route may have booked it already, right after setup
+  // (`MCPJAM_HARNESS_BOX_FIRST`), under the same plan. That booking comes
+  // before the turn's authorization and connections, so a turn they refuse
+  // has woken its box for nothing; the turn's resources release it.
+  const { reason: playgroundBoxReason, args: playgroundBoxArgs } =
+    playgroundBoxPlan({ c, bearerToken, timing, setup: args.setup });
+  const earlyPlaygroundBox =
+    args.earlyPlaygroundBox ??
+    startPlaygroundBoxEarly(
+      resources, playgroundBoxReason, playgroundBoxArgs, Boolean(c.get("guestId")),
+    );
   // ── Phase 4: the scenario's own EPHEMERAL sandbox ────────────────────────
   // An env-backed scenario whose backend says `computerSandbox: 'ephemeral'`
   // runs bash on a per-conversation disposable box booted from the

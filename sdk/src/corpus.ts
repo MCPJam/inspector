@@ -34,7 +34,7 @@ import type { PromptResult } from "./PromptResult.js";
 import { canonicalDigest } from "./contract/canonical.js";
 import { aggregateEvaluationConfigHash } from "./contract/derive.js";
 import { checkRole } from "./predicates/policy.js";
-import { predicateSchema, type Predicate } from "./predicates/types.js";
+import { storedPredicateSchema, type Predicate } from "./predicates/types.js";
 import type { EvalMatchOptions } from "./matchers.js";
 import type { EvalExpectedToolCall } from "./eval-reporting-types.js";
 import type {
@@ -127,7 +127,7 @@ export type PublicCheckOverride = {
 /**
  * Resolve a case's effective checks against the suite's defaults.
  *
- * Every entry is parsed with the real `predicateSchema`. A parse failure is a
+ * Every entry is parsed with `storedPredicateSchema`. A parse failure is a
  * LOUD error naming the case, the ordinal and zod's message — never a dropped
  * check, which would silently weaken the case.
  */
@@ -146,7 +146,7 @@ export function resolveEffectiveChecks(
         : suite;
 
   return raw.map((entry, ordinal) => {
-    const parsed = predicateSchema.safeParse(entry);
+    const parsed = storedPredicateSchema.safeParse(entry);
     if (!parsed.success) {
       throw new Error(
         `Eval case "${context.caseTitle}" (${context.caseId}) has an ` +
@@ -358,7 +358,7 @@ export function evalTestFromPlatformCase(
             "Widget assertions need hosted render observations; run this case hosted."
           );
         }
-        const parsed = predicateSchema.safeParse(step.assertion);
+        const parsed = storedPredicateSchema.safeParse(step.assertion);
         if (!parsed.success) {
           throw new Error(
             `Eval case "${evalCase.title}" (${evalCase.id}) has an ` +

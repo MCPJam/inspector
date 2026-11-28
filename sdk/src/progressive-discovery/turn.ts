@@ -1,27 +1,13 @@
-/**
- * One prompt's progressive tool discovery, for a runner that drives the AI SDK
- * loop itself (`HostRunner`). It wires the same functions the hosted turns use
- * (chat-v2 orchestration, the direct and Convex engines), minus their
- * Inspector-only extras: the plan, the two meta-tools, and the per-step tool
- * narrowing with the forced first search.
- *
- * The narrowing is also the gate: the AI SDK refuses a call to a tool outside
- * the step's `activeTools` (a `NoSuchToolError`) and never runs it. `noteStep`
- * collects those calls so the runner can leave them out of the prompt's tool
- * calls, the way it leaves out calls a tool policy refused.
- */
-
-import { NoSuchToolError, type ModelMessage, type ToolSet } from "ai";
+import { planDiscoveryStep, type DiscoveryStep } from "./step.js";
+/** Progressive discovery for SDK runs. Each step registers eligible calls and advertises its loaded tools. */
+import { type ModelMessage, type ToolSet } from "ai";
 import {
   META_TOOL_NAMES,
-  META_TOOL_SEARCH,
   buildToolCatalog,
   commitNewlyLoaded,
   createDiscoveryState,
   decideProgressivePlan,
   hydrateDiscoveryStateFromHistory,
-  resolveActiveToolNames,
-  shouldForceInitialToolSearch,
   type ProgressiveDiscoveryEnabled,
 } from "./discovery.js";
 import { createProgressiveMetaTools } from "./meta-tools.js";
@@ -31,9 +17,6 @@ export interface ProgressiveStepSettings {
   activeTools: string[];
   toolChoice?: { type: "tool"; toolName: string };
 }
-
-/** The fields of a finished step's tool call that `noteStep` reads. */
-type StepToolCall = { toolCallId: string; invalid?: boolean; error?: unknown };
 
 /** A meta-tool call as it starts. */
 type StartedCall = {
@@ -46,10 +29,7 @@ export interface ProgressiveTurn {
   /** `search_mcp_tools` and `load_mcp_tools`, to add to the prompt's tools. */
   metaTools: ToolSet;
   prepareStep(stepNumber: number): ProgressiveStepSettings;
-  /** Records a finished step's calls to tools that were not loaded. */
-  noteStep(toolCalls: ReadonlyArray<StepToolCall>): void;
-  /** Calls the AI SDK refused because their tool was not loaded; none ran. */
-  refusedCallIds: ReadonlySet<string>;
+  currentStep(): DiscoveryStep | undefined;
 }
 
 /**
@@ -73,6 +53,7 @@ export function readDiscoveryMode(
 export function startProgressiveTurn(args: {
   tools: ToolSet;
   mode: ProgressiveDiscoveryEnabled;
+  runUnloadedToolCalls?: boolean;
   /** Earlier turns, so a tool they loaded stays loaded. */
   priorMessages?: ReadonlyArray<ModelMessage>;
   /**
@@ -89,7 +70,7 @@ export function startProgressiveTurn(args: {
   // share-of-context one.
   const plan = decideProgressivePlan({
     catalog,
-    options: { enabled: args.mode },
+    options: { enabled: args.mode, runUnloadedToolCalls: args.runUnloadedToolCalls },
   });
   if (!plan.enabled) return undefined;
 
@@ -105,13 +86,14 @@ export function startProgressiveTurn(args: {
   if (args.priorMessages?.length) {
     hydrateDiscoveryStateFromHistory(state, args.priorMessages, catalog);
   }
-  const refusedCallIds = new Set<string>();
   const metaTools = createProgressiveMetaTools({
     getCatalog: () => catalog,
     state,
     policy: plan.policy,
   });
   const notify = args.onCallStarted;
+  const names = [...Object.keys(args.tools), ...Object.keys(metaTools)];
+  let step = planDiscoveryStep(names, plan, state);
   for (const [name, tool] of Object.entries(metaTools)) {
     const execute = tool.execute;
     if (!notify || !execute) continue;
@@ -129,24 +111,11 @@ export function startProgressiveTurn(args: {
   }
   return {
     metaTools,
-    prepareStep(stepNumber) {
-      // Promote what `load_mcp_tools` loaded on the previous step.
+    prepareStep() {
       commitNewlyLoaded(state);
-      const activeTools = resolveActiveToolNames(plan, state);
-      return shouldForceInitialToolSearch(plan, state, stepNumber)
-        ? {
-            activeTools,
-            toolChoice: { type: "tool", toolName: META_TOOL_SEARCH },
-          }
-        : { activeTools };
+      step = planDiscoveryStep(names, plan, state);
+      return { activeTools: [...step.callable, ...step.loadRequired] };
     },
-    noteStep(toolCalls) {
-      for (const call of toolCalls) {
-        if (call.invalid && NoSuchToolError.isInstance(call.error)) {
-          refusedCallIds.add(call.toolCallId);
-        }
-      }
-    },
-    refusedCallIds,
+    currentStep: () => step,
   };
 }

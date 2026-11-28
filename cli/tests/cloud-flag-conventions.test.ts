@@ -29,6 +29,7 @@ const CLOUD_COMMAND_FILES = [
   "feedback.ts",
   "goals.ts",
   "images.ts",
+  "mocks.ts",
   "organizations.ts",
   "projects.ts",
   "registry.ts",

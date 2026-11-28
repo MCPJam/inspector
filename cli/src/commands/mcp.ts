@@ -13,12 +13,17 @@ export function registerMcpCommands(program: Command): void {
     .description(
       "Run MCPJam as an MCP server over stdio, so MCP clients (Claude Desktop, Claude Code, Cursor, ...) can connect to, exercise, and debug other MCP servers",
     )
-    .action(async (_options, command) => {
+    .option(
+      "--evals",
+      "Also serve MCPJam's eval tools and their skill, signed in with your MCPJam login (mcpjam cloud login, or MCPJAM_API_KEY in this server's env)",
+    )
+    .action(async (options: { evals?: boolean }, command) => {
       const globalOptions = getGlobalOptions(command);
       const handle = createMcpJamMcpServer({
         version: packageJson.version,
         defaultTimeoutMs: globalOptions.timeout,
         onToolCalled: captureMcpToolEvent,
+        evals: options.evals === true,
       });
 
       const transport = new StdioServerTransport();

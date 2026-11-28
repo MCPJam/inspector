@@ -10,8 +10,24 @@ import {
   type HarnessMcpPlanFacts,
 } from "../../harness-mcp-plan";
 import { CASES, assertFullMatrix, bumpedPin, hostedChatFacts } from "./support";
+import type { HarnessRuntimeAdapter } from "../../registry";
 
 it("covers every registered harness", assertFullMatrix);
+
+/**
+ * A web client has its own route on every surface, declared by its adapter:
+ * the vendor's MCP client always reaches the servers through the forwarding
+ * endpoint, so none of the forwarding exclusions applies to it.
+ */
+const webRoute = (adapter: HarnessRuntimeAdapter) =>
+  adapter.mcpNativeDelivery === "web-connector";
+const WEB_PLAN = {
+  upstream: "harness",
+  delivery: "mcp-endpoint",
+  forwardingKind: "pass-through",
+  gaps: [],
+  reasons: [],
+} as const;
 
 describe.each(CASES)("$id routing", ({ id, adapter, descriptor }) => {
   const configured = () =>
@@ -31,8 +47,17 @@ describe.each(CASES)("$id routing", ({ id, adapter, descriptor }) => {
 
   it("keeps an unforwarded chat on the configured route", () => {
     const plan = resolveHarnessMcpPlan(
-      hostedChatFacts({ dispatch: configured(), forwardingEnabled: false }),
+      hostedChatFacts({
+        dispatch: configured(),
+        forwardingEnabled: false,
+        webConnector: webRoute(adapter),
+      }),
     );
+    if (webRoute(adapter)) {
+      expect(plan).toMatchObject(WEB_PLAN);
+      expect(toDiscoveryDeliveryLabel(plan)).toBe("forwarded-native");
+      return;
+    }
     expect(plan.upstream).toBe("mcpjam");
     expect(toDiscoveryDeliveryLabel(plan)).toBe(
       descriptor.mcpClient === "harness" ? "native-proxy" : "host-tools",
@@ -53,11 +78,18 @@ describe.each(CASES)("$id routing", ({ id, adapter, descriptor }) => {
         dispatch,
         accountRouting: true,
         forwardingRuntime: qualifiedForwardingRuntime(adapter),
+        webConnector: webRoute(adapter),
         admit,
       }),
     );
-    expect(plan.delivery).toBe("host-tools");
     expect(admit).not.toHaveBeenCalled();
+    if (webRoute(adapter)) {
+      // The vendor's client picks no MCPJam account: the connector's own
+      // credential is what the endpoint forwards with.
+      expect(plan).toMatchObject(WEB_PLAN);
+      return;
+    }
+    expect(plan.delivery).toBe("host-tools");
   });
 
   it("runs a client that picks this harness as its loop on MCPJam's client", () => {
@@ -81,8 +113,17 @@ describe.each(CASES)("$id routing", ({ id, adapter, descriptor }) => {
     });
     expect(moved).toBeUndefined();
     const plan = resolveHarnessMcpPlan(
-      hostedChatFacts({ dispatch: configured(), forwardingRuntime: moved }),
+      hostedChatFacts({
+        dispatch: configured(),
+        forwardingRuntime: moved,
+        webConnector: webRoute(adapter),
+      }),
     );
+    if (webRoute(adapter)) {
+      // No CLI pin to qualify: the page module is what a run is compared by.
+      expect(plan).toMatchObject(WEB_PLAN);
+      return;
+    }
     expect(plan.forwardingKind).toBeUndefined();
     expect(plan.reasons).toContain("runtime contract unqualified");
   });
@@ -93,9 +134,15 @@ describe.each(CASES)("$id routing", ({ id, adapter, descriptor }) => {
       hostedChatFacts({
         dispatch: configured(),
         forwardingRuntime: contract,
+        webConnector: webRoute(adapter),
         admit: () => ({ delivery: "bridge", gaps: ["app-host-capabilities"] }),
       }),
     );
+    if (webRoute(adapter)) {
+      // There is no bridge for a website to fall back to.
+      expect(plan).toMatchObject(WEB_PLAN);
+      return;
+    }
     expect(plan.forwardingKind).toBe(contract ? "profiled" : undefined);
     expect(plan.reasons).toEqual(contract ? [] : ["runtime contract unqualified"]);
   });
@@ -105,10 +152,11 @@ describe.each(CASES)("$id routing", ({ id, adapter, descriptor }) => {
       hostedChatFacts({
         dispatch: configured(),
         forwardingRuntime: qualifiedForwardingRuntime(adapter),
+        webConnector: webRoute(adapter),
       }),
     );
     const label = toDiscoveryDeliveryLabel(plan);
-    if (adapter.forwardingRuntime) {
+    if (adapter.forwardingRuntime || webRoute(adapter)) {
       expect(label).toBe("forwarded-native");
     } else {
       expect(label).not.toMatch(/^forwarded-/);
@@ -146,9 +194,21 @@ describe.each(CASES)("$id in every product area", ({ id, adapter, descriptor }) 
     const opens = area === "the Playground, forwarding open" && contract !== undefined;
     for (const [said, admit] of ADMISSIONS) {
       const plan = resolveHarnessMcpPlan(
-        hostedChatFacts({ dispatch, forwardingRuntime: contract, admit, ...overrides }),
+        hostedChatFacts({
+          dispatch,
+          forwardingRuntime: contract,
+          admit,
+          webConnector: webRoute(adapter),
+          ...overrides,
+        }),
       );
       const label = `${area}: ${said}`;
+      if (webRoute(adapter)) {
+        // Its own route everywhere (E4): forwarded, never refused, never
+        // moved to MCPJam's client.
+        expect(plan, label).toMatchObject(WEB_PLAN);
+        continue;
+      }
       // No runtime refuses its servers for the route: every turn gets one.
       expect(plan, label).not.toHaveProperty("refused");
       expect(["mcp-endpoint", "host-tools"], label).toContain(plan.delivery);

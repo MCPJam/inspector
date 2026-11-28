@@ -10,6 +10,11 @@ import {
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { useAuth } from "@workos-inc/authkit-react";
 import { track } from "@/lib/analytics";
+import {
+  recordGitHubStarPromptUse,
+  requestGitHubStarPrompt,
+  useGitHubStarPromptOnReturn,
+} from "@/lib/github-star-prompt";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -716,6 +721,7 @@ export function XAAFlowTab({
       // Enum only — never an endpoint, client id, or credential.
       registration_strategy: effectiveStrategy,
     });
+    recordGitHubStarPromptUse("xaa");
   }, [
     runInput.mode,
     runInput.negativeTestMode,
@@ -739,6 +745,7 @@ export function XAAFlowTab({
         // The strategy the completed run actually used (state-authoritative).
         registration_strategy: flowStateRef.current.registrationStrategy,
       });
+      requestGitHubStarPrompt({ trigger: "xaa", reason: "completed" });
       setPositiveRunTargets((current) => {
         if (current.has(runGateKey)) return current;
         const next = new Set(current);
@@ -1274,6 +1281,7 @@ export function XAAFlowTab({
     // Fires once per mount; the counts are a point-in-time anchor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useGitHubStarPromptOnReturn("xaa");
 
   const resetFlow = useCallback(() => {
     // Ordinary reset retains the session credential cache, so a DCR run

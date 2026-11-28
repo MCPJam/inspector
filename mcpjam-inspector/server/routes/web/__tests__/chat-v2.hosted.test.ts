@@ -555,12 +555,16 @@ describe("web routes — chat-v2 hosted mode", () => {
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
-      })
+      }),
+      expect.anything(),
     );
     // Non-direct flows must NOT send hostConfig — backend skips with
     // missing_field, which is the desired behavior for scenario/serverShare.
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(persistArgs.hostConfig).toBeUndefined();
+    // The request context, so a failed save is logged as a typed event.
+    const persistContext = persistChatSessionToConvexMock.mock.calls[0][1];
+    expect(persistContext.req.raw).toBeInstanceOf(Request);
   });
 
   it("validates a pageTools snapshot and forwards it, so a hosted turn can offer a page's own tools", async () => {
@@ -1248,6 +1252,44 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
   });
 
+  it("forwards a multi-model column for hosted direct chats", async () => {
+    const { app, token } = createWebTestApp();
+    const multiModel = {
+      groupId: "group-1",
+      position: 1,
+      columnKind: "model",
+      compareId: "openai/gpt-5-mini",
+    };
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        selectedServerNames: ["Asana"],
+        chatSessionId: "chat-session-column",
+        multiModel,
+        messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatSessionId: "chat-session-column",
+        multiModel,
+      }),
+      expect.anything(),
+    );
+  });
+
   it("forwards directVisibility for hosted direct chats", async () => {
     const { app, token } = createWebTestApp();
 
@@ -1296,7 +1338,8 @@ describe("web routes — chat-v2 hosted mode", () => {
           // resolvedTemperature from prepareChatV2Mock default (0.7)
           temperature: 0.7,
         }),
-      })
+      }),
+      expect.anything(),
     );
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(
@@ -1342,7 +1385,8 @@ describe("web routes — chat-v2 hosted mode", () => {
         resumeConfig: expect.objectContaining({
           modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
         }),
-      })
+      }),
+      expect.anything(),
     );
   });
 

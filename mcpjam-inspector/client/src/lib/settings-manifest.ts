@@ -89,6 +89,7 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
     "theme",
     "dark mode",
     "light mode",
+    "auto-collapse sidebar",
   ]),
   personal("api-keys", "API Keys", "/api-keys", [
     "create key",

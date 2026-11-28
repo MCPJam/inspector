@@ -23,6 +23,7 @@ import { useHostedOAuthConnections } from "@/hooks/use-hosted-oauth-connections"
 import { updateOAuthConnection } from "@/lib/apis/web/oauth-connections";
 import { useSignInSharing } from "@/hooks/use-sign-in-sharing";
 import {
+  connectionLabel,
   type ConnectionIntent,
   type OAuthConnection,
 } from "@/shared/oauth-connections";
@@ -34,23 +35,22 @@ import {
 } from "@/lib/evals/run-account-credentials";
 
 /**
- * The account a credential reaches, named the way the server named it, with
- * anything the user renamed it to underneath — two lines carrying two
- * different facts. They used to carry the same one: the row's editable field
- * fell back to the profile email and the line under it WAS the profile email,
- * so an unlabelled account printed its address twice.
+ * Who the server says the account is, for the line under its name: under a
+ * rename, the email or name the server shared, so a renamed account still
+ * shows which login it is; under an email, the profile name, which tells two
+ * accounts on one address apart. Nothing that would repeat the name.
  */
-function identityOf(connection: OAuthConnection, index: number): string {
+function serverIdentityOf(
+  connection: OAuthConnection,
+  name: string,
+): string | undefined {
   const profile = connection.profile;
-  return (
-    profile?.email ||
-    profile?.name ||
-    profile?.nickname ||
-    // No profile, as with a test user's uploaded token: its name is all that
-    // tells the accounts apart, and it is what suite settings call it.
-    connection.label ||
-    `Account ${index + 1}`
-  );
+  const detail = connection.label
+    ? profile?.email || profile?.name || profile?.nickname
+    : name === profile?.email
+      ? profile?.name || profile?.nickname
+      : undefined;
+  return detail && detail !== name ? detail : undefined;
 }
 
 /**
@@ -65,16 +65,15 @@ function expiryOf(connection: OAuthConnection): string | undefined {
   return `${expiresAt <= Date.now() ? "Expired" : "Expires"} ${formatAccountTime(expiresAt)}`;
 }
 
-/** The user's own words for this account, whether chat uses it, and its expiry. */
+/** Who the account is on the server, whether it is the default, and its expiry. */
 function captionOf(
   connection: OAuthConnection,
-  identity: string,
+  name: string,
 ): string | undefined {
   if (connection.needsReauth) return undefined;
-  const named = connection.label || connection.profile?.name;
   return (
     [
-      named === identity ? undefined : named,
+      serverIdentityOf(connection, name),
       connection.isDefault ? "Default" : null,
       expiryOf(connection),
     ]
@@ -82,6 +81,22 @@ function captionOf(
       .join(" · ") || undefined
   );
 }
+
+/** The words that differ between an MCP server's accounts and other kinds. */
+export interface AccountListTerms {
+  /** The row's note when the account can't be used until someone acts. */
+  needsReauth: string;
+  /** The row menu's way to fix it. Without one, the menu offers none. */
+  reauthenticate?: string;
+  /** What removing an account deletes. */
+  removeBody: string;
+}
+
+export const SERVER_ACCOUNT_TERMS: AccountListTerms = {
+  needsReauth: "Needs reconnect",
+  reauthenticate: "Reconnect",
+  removeBody: "MCPJam will remove this connection and its stored credentials.",
+};
 
 export function ConnectionAccountsSection({
   projectId,
@@ -184,6 +199,7 @@ export function ConnectionAccountsList({
   localDeliveryAllowed,
   onAuthenticate,
   onUpdate,
+  terms = SERVER_ACCOUNT_TERMS,
 }: {
   connections: OAuthConnection[];
   /** Undefined until the server's list answers. */
@@ -195,12 +211,14 @@ export function ConnectionAccountsList({
   onReload?: () => void;
   isAdmin: boolean;
   sharingControl?: ReactNode;
-  onAuthenticate: (intent: ConnectionIntent) => void | Promise<void>;
+  /** Adds an account or signs one in again. Without it the list offers neither. */
+  onAuthenticate?: (intent: ConnectionIntent) => void | Promise<void>;
   onUpdate: (
     connection: OAuthConnection,
     operation: "label" | "default" | "delete",
     label?: string,
   ) => Promise<void>;
+  terms?: AccountListTerms;
 }) {
   const canManage = shared !== true || isAdmin;
   // An account that needs reconnecting holds no token, so it doesn't count.
@@ -273,7 +291,9 @@ export function ConnectionAccountsList({
 
       <div className="space-y-1">
         {connections.map((connection, index) => {
-          const identity = identityOf(connection, index);
+          // The user's name for the account, else the server's, else its
+          // stored number: one name per account, the same as chat's.
+          const identity = connectionLabel(connection, index);
           const caption = captionOf(connection, identity);
           return (
             <div
@@ -319,7 +339,7 @@ export function ConnectionAccountsList({
                     </p>
                     {connection.needsReauth ? (
                       <p className="truncate text-xs text-destructive">
-                        Needs reconnect
+                        {terms.needsReauth}
                       </p>
                     ) : (
                       caption && (
@@ -375,16 +395,18 @@ export function ConnectionAccountsList({
                         Set as default
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuItem
-                      onSelect={() =>
-                        void onAuthenticate({
-                          kind: "replace",
-                          credentialId: connection.connectionId,
-                        })
-                      }
-                    >
-                      Reconnect
-                    </DropdownMenuItem>
+                    {terms.reauthenticate && onAuthenticate ? (
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          void onAuthenticate({
+                            kind: "replace",
+                            credentialId: connection.connectionId,
+                          })
+                        }
+                      >
+                        {terms.reauthenticate}
+                      </DropdownMenuItem>
+                    ) : null}
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
                       onSelect={() => setRemoving(connection)}
@@ -400,7 +422,7 @@ export function ConnectionAccountsList({
       </div>
 
       {/* Hidden until the list answers: adding depends on the server's mode. */}
-      {shared !== undefined && canManage && (
+      {shared !== undefined && canManage && onAuthenticate && (
         <button
           type="button"
           disabled={busy || atAccountLimit}
@@ -430,9 +452,7 @@ export function ConnectionAccountsList({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove this account?</AlertDialogTitle>
-            <AlertDialogDescription>
-              MCPJam will remove this connection and its stored credentials.
-            </AlertDialogDescription>
+            <AlertDialogDescription>{terms.removeBody}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

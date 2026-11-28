@@ -1,0 +1,2057 @@
+[
+  {
+    "name": "get_me",
+    "annotations": {
+      "title": "Get the current MCPJam account",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_models",
+    "annotations": {
+      "title": "List hosted MCPJam models",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_organizations",
+    "annotations": {
+      "title": "List MCPJam organizations",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_projects",
+    "annotations": {
+      "title": "List MCPJam projects",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "create_project",
+    "annotations": {
+      "title": "Create an MCPJam project",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_project",
+    "annotations": {
+      "title": "Update an MCPJam project",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_project_servers",
+    "annotations": {
+      "title": "List MCPJam project servers",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "create_project_server",
+    "annotations": {
+      "title": "Create a project MCP server",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_project_server",
+    "annotations": {
+      "title": "Get a project MCP server",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_project_server",
+    "annotations": {
+      "title": "Update a project MCP server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "delete_project_server",
+    "annotations": {
+      "title": "Delete a project MCP server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "connect_project_server",
+    "annotations": {
+      "title": "Connect an MCP server to a project",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_project_server_connection_status",
+    "annotations": {
+      "title": "Check a server connection",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "cancel_project_server_connection",
+    "annotations": {
+      "title": "Cancel a server connection",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "diagnose_server",
+    "annotations": {
+      "title": "Diagnose MCPJam server",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_server_tools",
+    "annotations": {
+      "title": "List MCPJam server tools",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_server_revisions",
+    "annotations": {
+      "title": "List a server's revisions",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_server_revision",
+    "annotations": {
+      "title": "Get a server revision",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "diff_server_revisions",
+    "annotations": {
+      "title": "Diff two server revisions",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "create_mock_server",
+    "annotations": {
+      "title": "Create a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_mock_server",
+    "annotations": {
+      "title": "Update a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_mock_server",
+    "annotations": {
+      "title": "Get a mock server",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "patch_mock_server",
+    "annotations": {
+      "title": "Patch one path of a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "refresh_mock_server",
+    "annotations": {
+      "title": "Refresh a mock server from its real server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "open_mock_run",
+    "annotations": {
+      "title": "Open a test run of a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "reset_mock_run",
+    "annotations": {
+      "title": "Reset a test run of a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "close_mock_run",
+    "annotations": {
+      "title": "Close a test run of a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_mock_forwarding_policy",
+    "annotations": {
+      "title": "Get the mock forwarding policy",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "set_mock_forwarding_policy",
+    "annotations": {
+      "title": "Set the mock forwarding policy",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_server_accounts",
+    "annotations": {
+      "title": "List a server's accounts",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_server_account",
+    "annotations": {
+      "title": "Get a server account",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "delete_server_account",
+    "annotations": {
+      "title": "Delete a server account",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "call_server_tool",
+    "annotations": {
+      "title": "Call MCPJam server tool",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "render_server_widget",
+    "annotations": {
+      "title": "Render an MCP App widget",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_server_prompts",
+    "annotations": {
+      "title": "List MCPJam server prompts",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_server_prompt",
+    "annotations": {
+      "title": "Get MCPJam server prompt",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_server_resources",
+    "annotations": {
+      "title": "List MCPJam server resources",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "read_server_resource",
+    "annotations": {
+      "title": "Read MCPJam server resource",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_server_skills",
+    "annotations": {
+      "title": "List MCPJam server skills",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_server_skill",
+    "annotations": {
+      "title": "Get MCPJam server skill",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "read_server_skill_file",
+    "annotations": {
+      "title": "Read MCPJam server skill file",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "check_host_compatibility",
+    "annotations": {
+      "title": "Check MCP host compatibility",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "start_claude_readiness_run",
+    "annotations": {
+      "title": "Start a Claude directory readiness run",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "start_openai_readiness_run",
+    "annotations": {
+      "title": "Start an OpenAI directory readiness run",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "start_muse_readiness_run",
+    "annotations": {
+      "title": "Start a Muse directory readiness run",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_readiness_run",
+    "annotations": {
+      "title": "Get a directory readiness run",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_readiness_runs",
+    "annotations": {
+      "title": "List directory readiness runs",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "cancel_readiness_run",
+    "annotations": {
+      "title": "Cancel a directory readiness run",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "resume_readiness_run",
+    "annotations": {
+      "title": "Resume a directory readiness run",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_readiness_report",
+    "annotations": {
+      "title": "Get a directory readiness report",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_directory_flows",
+    "annotations": {
+      "title": "List directory submission flows",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_directory_flow",
+    "annotations": {
+      "title": "Get a directory submission flow",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "create_directory_submission",
+    "annotations": {
+      "title": "Create a directory submission",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_directory_submissions",
+    "annotations": {
+      "title": "List directory submissions",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_directory_submission",
+    "annotations": {
+      "title": "Get a directory submission",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_directory_submission",
+    "annotations": {
+      "title": "Save answers to a directory submission",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "delete_directory_submission",
+    "annotations": {
+      "title": "Delete a directory submission",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "start_directory_submission_run",
+    "annotations": {
+      "title": "Run a directory submission's checks",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_directory_submission_results",
+    "annotations": {
+      "title": "Get a directory submission's results",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "create_reviewer_attempt",
+    "annotations": {
+      "title": "Start a reviewer sign-in attempt",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_reviewer_attempts",
+    "annotations": {
+      "title": "List reviewer sign-in attempts",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_reviewer_attempt",
+    "annotations": {
+      "title": "Get a reviewer sign-in attempt",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "resume_reviewer_attempt",
+    "annotations": {
+      "title": "Resume a reviewer sign-in attempt",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "cancel_reviewer_attempt",
+    "annotations": {
+      "title": "Cancel a reviewer sign-in attempt",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_directory_submission_handoff",
+    "annotations": {
+      "title": "Get a directory submission's handoff summary",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_directory_submission_findings",
+    "annotations": {
+      "title": "List a directory submission's findings",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_directory_submission_finding",
+    "annotations": {
+      "title": "Get one directory submission finding",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "export_directory_submission",
+    "annotations": {
+      "title": "Export a directory submission",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_directory_submission_events",
+    "annotations": {
+      "title": "List a directory submission's events",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "record_directory_submission_status",
+    "annotations": {
+      "title": "Record a directory submission's status",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "record_directory_submission_snapshot",
+    "annotations": {
+      "title": "Record a directory submission snapshot",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "import_directory_finding",
+    "annotations": {
+      "title": "Import what a directory said",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_directory_submission_test_plan",
+    "annotations": {
+      "title": "Get a directory submission's test plan",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "draft_directory_submission_test_plan",
+    "annotations": {
+      "title": "Draft a directory submission's test plan",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "save_directory_submission_test_plan",
+    "annotations": {
+      "title": "Save a directory submission's test plan",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_directory_submission_tool_tests",
+    "annotations": {
+      "title": "Get a directory submission's tool tests",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_directory_submission_evals",
+    "annotations": {
+      "title": "Get a directory submission's evals",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "set_directory_submission_evals",
+    "annotations": {
+      "title": "Link a directory submission's evals",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "import_directory_submission_test_cases",
+    "annotations": {
+      "title": "Import a plugin's test cases into a directory submission's evals",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "export_directory_submission_test_cases",
+    "annotations": {
+      "title": "Export a directory submission's test cases",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "start_conformance_run",
+    "annotations": {
+      "title": "Start a conformance run",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_conformance_run",
+    "annotations": {
+      "title": "Get a conformance run",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_conformance_runs",
+    "annotations": {
+      "title": "List conformance runs",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_conformance_report",
+    "annotations": {
+      "title": "Get a conformance report",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_conformance_check",
+    "annotations": {
+      "title": "Get a conformance check",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_eval_suites",
+    "annotations": {
+      "title": "List MCPJam eval suites",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_eval_suite_runs",
+    "annotations": {
+      "title": "List MCPJam eval suite runs",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "run_eval_case",
+    "annotations": {
+      "title": "Run a single MCPJam eval case",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": true
+  },
+  {
+    "name": "run_eval_suite",
+    "annotations": {
+      "title": "Run MCPJam eval suite",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": true
+  },
+  {
+    "name": "create_eval_suite",
+    "annotations": {
+      "title": "Create MCPJam eval suite",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_eval_suite",
+    "annotations": {
+      "title": "Get MCPJam eval suite",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_eval_run_disclosure",
+    "annotations": {
+      "title": "Get eval run pre-run disclosure",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_eval_suite",
+    "annotations": {
+      "title": "Update MCPJam eval suite",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_eval_suite_revisions",
+    "annotations": {
+      "title": "List MCPJam eval suite revisions",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "delete_eval_suite",
+    "annotations": {
+      "title": "Delete MCPJam eval suite",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "set_eval_suite_environments",
+    "annotations": {
+      "title": "Set MCPJam eval suite environments",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_eval_cases",
+    "annotations": {
+      "title": "List MCPJam eval cases",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_eval_case",
+    "annotations": {
+      "title": "Get MCPJam eval case",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "create_eval_case",
+    "annotations": {
+      "title": "Create MCPJam eval case",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "create_eval_cases",
+    "annotations": {
+      "title": "Create MCPJam eval cases",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_eval_case",
+    "annotations": {
+      "title": "Update MCPJam eval case",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "delete_eval_case",
+    "annotations": {
+      "title": "Delete MCPJam eval case",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "generate_eval_cases",
+    "annotations": {
+      "title": "Generate MCPJam eval cases",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "import_eval_cases",
+    "annotations": {
+      "title": "Import MCPJam eval cases from a document",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_eval_run",
+    "annotations": {
+      "title": "Get MCPJam eval run",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_eval_run_stage_analytics",
+    "annotations": {
+      "title": "Get MCPJam eval run stage analytics",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_eval_run_gate",
+    "annotations": {
+      "title": "Get MCPJam eval run quality gate",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_eval_run_route_facts",
+    "annotations": {
+      "title": "Get MCPJam eval run route facts",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_eval_run_server_facts",
+    "annotations": {
+      "title": "Get MCPJam eval run server facts",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_eval_suite_stage_analytics",
+    "annotations": {
+      "title": "List MCPJam eval suite stage analytics",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "compare_eval_run",
+    "annotations": {
+      "title": "Compare MCPJam eval runs",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_eval_gate_waiver",
+    "annotations": {
+      "title": "Get an MCPJam eval run's gate waiver",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_eval_run_iterations",
+    "annotations": {
+      "title": "List MCPJam eval run iterations",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_eval_iteration_trace",
+    "annotations": {
+      "title": "Get MCPJam eval iteration trace",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_eval_run_steps",
+    "annotations": {
+      "title": "Get MCPJam eval iteration step results",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "cancel_eval_run",
+    "annotations": {
+      "title": "Cancel MCPJam eval run",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "backtest_eval_run",
+    "annotations": {
+      "title": "Preview MCPJam eval assertions",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "backtest_eval_run_judge",
+    "annotations": {
+      "title": "Preview MCPJam judge grading",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": true
+  },
+  {
+    "name": "request_eval_run_judge",
+    "annotations": {
+      "title": "Request MCPJam eval run grading",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": true
+  },
+  {
+    "name": "build_eval_run_findings",
+    "annotations": {
+      "title": "Build MCPJam eval run findings",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "request_eval_run_insights",
+    "annotations": {
+      "title": "Request MCPJam eval run insights",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "cancel_eval_run_insights",
+    "annotations": {
+      "title": "Cancel an MCPJam eval run insights request",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_project_environments",
+    "annotations": {
+      "title": "List MCPJam project environments",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_project_environment",
+    "annotations": {
+      "title": "Show an MCPJam project environment",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "resolve_project_environment",
+    "annotations": {
+      "title": "Preview what an MCPJam project environment resolves to",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "ensure_adhoc_environment",
+    "annotations": {
+      "title": "Compose an MCPJam environment without naming it",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_studies",
+    "annotations": {
+      "title": "List MCPJam studies",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_study",
+    "annotations": {
+      "title": "Get one MCPJam study",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_chat_sessions",
+    "annotations": {
+      "title": "List MCPJam chat sessions",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "send_chat_message",
+    "annotations": {
+      "title": "Send one agent Playground message",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": true
+  },
+  {
+    "name": "get_chat_session",
+    "annotations": {
+      "title": "Read a chat session's messages",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_chat_session_trace",
+    "annotations": {
+      "title": "Read a chat session's execution trace",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_capabilities",
+    "annotations": {
+      "title": "Get what you may do in an MCPJam project",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_personas",
+    "annotations": {
+      "title": "List MCPJam personas",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_persona",
+    "annotations": {
+      "title": "Get one MCPJam persona",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "create_persona",
+    "annotations": {
+      "title": "Create an MCPJam persona",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_persona",
+    "annotations": {
+      "title": "Update an MCPJam persona",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "delete_persona",
+    "annotations": {
+      "title": "Delete an MCPJam persona",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_secrets",
+    "annotations": {
+      "title": "List MCPJam project secrets",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_secret",
+    "annotations": {
+      "title": "Get one MCPJam project secret",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "delete_secret",
+    "annotations": {
+      "title": "Delete an MCPJam project secret",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "generate_personas",
+    "annotations": {
+      "title": "Draft MCPJam personas with a model",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_goals",
+    "annotations": {
+      "title": "List MCPJam goals",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_goal",
+    "annotations": {
+      "title": "Get one MCPJam goal",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "create_goal",
+    "annotations": {
+      "title": "Create an MCPJam goal",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_goal",
+    "annotations": {
+      "title": "Update an MCPJam goal",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "archive_goal",
+    "annotations": {
+      "title": "Archive an MCPJam goal",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "generate_goals",
+    "annotations": {
+      "title": "Draft MCPJam goals with a model",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_goal_runs",
+    "annotations": {
+      "title": "List runs of an MCPJam goal",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_goal_run",
+    "annotations": {
+      "title": "Get one MCPJam goal run",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_goal_run_sessions",
+    "annotations": {
+      "title": "List the sessions a goal run produced",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "launch_goal_run",
+    "annotations": {
+      "title": "Launch an MCPJam goal run",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": true
+  },
+  {
+    "name": "cancel_goal_run",
+    "annotations": {
+      "title": "Stop a running MCPJam goal run",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_swarms",
+    "annotations": {
+      "title": "List MCPJam swarm containers",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_swarm",
+    "annotations": {
+      "title": "Get one MCPJam swarm container",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "create_swarm",
+    "annotations": {
+      "title": "Create an MCPJam swarm container",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_swarm",
+    "annotations": {
+      "title": "Update an MCPJam swarm container",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "archive_swarm",
+    "annotations": {
+      "title": "Archive an MCPJam swarm container",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_swarms_overview",
+    "annotations": {
+      "title": "Get the MCPJam swarms overview",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_goal_run_scorecard",
+    "annotations": {
+      "title": "Get a journey run's rubric scorecard",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_swarm_findings",
+    "annotations": {
+      "title": "List MCPJam swarm findings",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "dismiss_swarm_finding",
+    "annotations": {
+      "title": "Dismiss an MCPJam swarm finding",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "undismiss_swarm_finding",
+    "annotations": {
+      "title": "Undismiss an MCPJam swarm finding",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_swarm_run_insights",
+    "annotations": {
+      "title": "Get an MCPJam swarm run's insights",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "request_swarm_run_insights",
+    "annotations": {
+      "title": "Request MCPJam swarm run insights",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "cancel_swarm_run_insights",
+    "annotations": {
+      "title": "Cancel an MCPJam swarm run insights request",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "publish_study",
+    "annotations": {
+      "title": "Publish a project environment as a study",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "unpublish_study",
+    "annotations": {
+      "title": "Take a study down",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_study_sessions",
+    "annotations": {
+      "title": "List the sessions a study produced",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_study_session",
+    "annotations": {
+      "title": "Read one user-testing session's transcript",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_study_metrics",
+    "annotations": {
+      "title": "Get a study's session metrics",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_study_usage",
+    "annotations": {
+      "title": "Get a study's usage breakdown",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_study_findings",
+    "annotations": {
+      "title": "List a study's findings",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_study_signals",
+    "annotations": {
+      "title": "Get a study's current window signals",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_study_insights",
+    "annotations": {
+      "title": "Get a user-testing window's insights",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_study",
+    "annotations": {
+      "title": "Update an MCPJam study",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "request_study_insights",
+    "annotations": {
+      "title": "Request insights for a study",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "cancel_study_insights",
+    "annotations": {
+      "title": "Cancel a user-testing insights request",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "dismiss_study_finding",
+    "annotations": {
+      "title": "Dismiss a user-testing finding",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "undismiss_study_finding",
+    "annotations": {
+      "title": "Undismiss a user-testing finding",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "set_study_guest_execution",
+    "annotations": {
+      "title": "Set a study's guest execution caps",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": true
+  },
+  {
+    "name": "rotate_study_link",
+    "annotations": {
+      "title": "Rotate a study's share link",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "upsert_study_member",
+    "annotations": {
+      "title": "Invite someone to a study",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "remove_study_member",
+    "annotations": {
+      "title": "Remove someone from a study",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "rebind_study",
+    "annotations": {
+      "title": "Point a study at a different environment",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_clients",
+    "annotations": {
+      "title": "List MCPJam clients",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_client",
+    "annotations": {
+      "title": "Show an MCPJam client",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "create_client",
+    "annotations": {
+      "title": "Create an MCPJam client",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_client",
+    "annotations": {
+      "title": "Update an MCPJam client",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "set_client_servers",
+    "annotations": {
+      "title": "Set an MCPJam client's servers",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "duplicate_client",
+    "annotations": {
+      "title": "Duplicate an MCPJam client",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_registry_servers",
+    "annotations": {
+      "title": "List registry cards",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_registry_connections",
+    "annotations": {
+      "title": "List registry installs",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "install_registry_server",
+    "annotations": {
+      "title": "Install a registry card",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "uninstall_registry_server",
+    "annotations": {
+      "title": "Uninstall a registry card",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "send_feedback",
+    "annotations": {
+      "title": "Send feedback to the MCPJam team",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  }
+]

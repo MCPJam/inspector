@@ -56,7 +56,7 @@ const REFUSALS: ReadonlyMap<string, 404 | 409> = new Map([
   ["plugin_version_not_applicable", 409],
   ["plugin_version_not_ready", 409],
   ["submission_mismatch", 409],
-  // Here rather than the shared branch, whose hint offers a suite-file write.
+  // Listed so this route answers it with `code`, like its other refusals.
   ["CI_OWNED_SUITE_READ_ONLY", 409],
 ]);
 

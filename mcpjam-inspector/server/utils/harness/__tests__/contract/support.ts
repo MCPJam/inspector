@@ -37,6 +37,9 @@ export const OWN_MODEL: Record<Harness, string> = {
   "copilot-cli": "openai/gpt-5.5",
   cursor: "cursor/auto",
   opencode: "anthropic/claude-haiku-4.5",
+  // The sentinel the catalog's templates carry: the account picks the model.
+  "claude-web": "claude-web/default",
+  "chatgpt-web": "chatgpt-web/default",
 };
 
 /** A model each runtime must refuse. */
@@ -46,6 +49,20 @@ export const FOREIGN_MODEL: Record<Harness, string> = {
   "copilot-cli": "anthropic/claude-haiku-4.5",
   cursor: "anthropic/claude-haiku-4.5",
   opencode: "openai/gpt-5.5",
+  "claude-web": "openai/gpt-5.5",
+  "chatgpt-web": "anthropic/claude-haiku-4.5",
+};
+
+/**
+ * Runtimes with no box, and why. Each drives a vendor's website in a browser,
+ * so there is no recipe to bake, no CLI to pin and no configuration to keep
+ * per chat lane. A runtime leaves this list only by gaining a box.
+ */
+export const NO_BOX: Partial<Record<Harness, string>> = {
+  "claude-web":
+    "drives claude.ai in a browser; the vendor's MCP client dials the forwarding endpoint",
+  "chatgpt-web":
+    "drives chatgpt.com in a browser; the vendor's MCP client dials the forwarding endpoint",
 };
 
 /** A patch bump of a pinned version, for "what if the pin moved" rows. */

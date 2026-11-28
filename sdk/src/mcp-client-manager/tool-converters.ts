@@ -1,3 +1,4 @@
+import { originalMcpInputSchema } from "../original-mcp-input-schema.js";
 /**
  * Tool conversion utilities for integrating MCP tools with Vercel AI SDK
  */
@@ -23,6 +24,10 @@ import {
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
 } from "./model-output.js";
+import {
+  projectToolResultByRule,
+  structuredContentRuleOf,
+} from "./tool-result-rule.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 
 /**
@@ -44,7 +49,7 @@ export function ensureJsonSchemaObject(schema: unknown): JSONSchema7 {
     const record = schema as Record<string, unknown>;
     const base: JSONSchema7 = record.jsonSchema
       ? ensureJsonSchemaObject(record.jsonSchema)
-      : (record as JSONSchema7);
+      : { ...record } as JSONSchema7;
 
     // Many MCP tools omit the top-level type; Anthropic requires an object schema
     if (!("type" in base) || base.type === undefined) {
@@ -256,6 +261,10 @@ export function projectMcpToolResultForModel(
   toolMeta: Parameters<typeof isMcpAppTool>[0],
   options: McpModelVisibleToolResultPolicy & { readResource?: McpLinkedResourceReader; abortSignal?: AbortSignal } = {}
 ) {
+  // A host that records its client's rule gets that client's view for App and
+  // plain tools alike, from the raw result; hosts without one keep the scrubs.
+  const rule = structuredContentRuleOf(options.modelVisibleMcpToolResults);
+  if (rule) return projectToolResultByRule(result, rule, options);
   const visible = isMcpAppTool(toolMeta)
     ? scrubMetaAndStructuredContentFromToolResult(result)
     : isChatGPTAppTool(toolMeta) ? scrubStructuredContentFromToolResult(result) : result;
@@ -373,6 +382,7 @@ export async function convertMCPToolsToVercelTools(
       });
     }
 
+    Object.assign(vercelTool, { [originalMcpInputSchema]: inputSchema });
     (vercelTool as any)[MCP_PRESERVE_RAW_RESULT_FOR_UI] = true;
     tools[name] = vercelTool;
   }

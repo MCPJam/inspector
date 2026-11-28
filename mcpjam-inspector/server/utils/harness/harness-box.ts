@@ -153,6 +153,8 @@ export interface ProvisionedHarnessBox {
    * terminal image. Shell, files and harness stay on this box.
    */
   browser?: { sandboxRowId: string; sandboxId: string };
+  /** See {@link TrustedHarnessSandboxBinding.unused}. */
+  unused?: true;
 }
 
 export type ProvisionHarnessBoxResult<Refusal> =
@@ -234,6 +236,7 @@ export function holdHarnessBox(
     ...(provisioned.retainUntil
       ? { retainUntil: provisioned.retainUntil }
       : {}),
+    ...(provisioned.unused ? { unused: true as const } : {}),
   };
   const ownsBox = HARNESS_BOX_SCOPES[options.surface].ownsBox;
   if (!ownsBox && !provisioned.idleMs) {

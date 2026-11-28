@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   query: vi.fn(), actor: vi.fn(), authorization: vi.fn(), grant: vi.fn(), rollout: vi.fn(),
-  status: vi.fn(), install: vi.fn(), register: vi.fn(),
+  status: vi.fn(), install: vi.fn(), register: vi.fn(), rolloutAnswer: vi.fn(),
   workspace: vi.fn(async () => ({ ok: true, grant: { workspaceGrantId: "set-up-workspace" } })),
   background: vi.fn(async () => ({ kind: "started" })), policy: vi.fn(() => "auto"),
   refresh: vi.fn(async () => ({ state: "skipped", list: null })),
@@ -12,7 +12,12 @@ const killSwitch = vi.hoisted(() => ({ enabled: true }));
 vi.mock("../../../../config.js", () => ({ HOSTED_MODE: false, get LOCAL_HARNESS_ENABLED() { return killSwitch.enabled; } }));
 vi.mock("../acting-user.js", () => ({ resolveLocalHarnessActor: mocks.actor }));
 vi.mock("../authorization.js", () => ({ readLocalHarnessAuthorization: mocks.authorization, authorizeLocalHarness: vi.fn() }));
-vi.mock("../../../analytics.js", () => ({ evaluateLocalHarnessRollout: mocks.rollout }));
+vi.mock("../../../analytics.js", () => ({ evaluateLocalHarnessRollout: mocks.rollout, localHarnessRolloutAnswer: mocks.rolloutAnswer }));
+const flagSource = vi.hoisted(() => ({ kind: "posthog" as "posthog" | "off" | "file" }));
+vi.mock("../../../feature-flag-source.js", async (original) => ({
+  ...await original<typeof import("../../../feature-flag-source.js")>(),
+  resolveFeatureFlagSource: () => ({ kind: flagSource.kind, answers: {} }),
+}));
 vi.mock("../runtime-install.js", () => ({ readRuntimeInstallStatus: mocks.status, installRuntimePack: mocks.install, startRuntimeInstall: vi.fn(), startBackgroundRuntimeUpdate: mocks.background, MANUAL_UPDATES_MESSAGE: "managed by your administrator", manifestWithExpectedBundleDigest: (value: unknown) => value }));
 vi.mock("../runtime-update-policy.js", () => ({ readLocalRuntimeUpdatePolicy: async () => ({ policy: mocks.policy(), source: null }) }));
 vi.mock("../runtime-identity.js", () => ({ resolveManagedBundle: async () => ({ ok: true, runtime: { runtimeId: "verified-runtime", adapterVersion: "1", digest: "sha256:verified" } }) }));
@@ -30,7 +35,7 @@ vi.mock("../grants.js", () => ({
 }));
 vi.mock("../instance-key.js", () => ({ readLocalInstanceIdentity: async () => ({ publicKey: "key", keyId: "registered" }), setRegisteredKeyId: vi.fn() }));
 vi.mock("../../harness-model-broker.js", () => ({ registerLocalInstance: mocks.register }));
-import { ensureLocalHarnessTarget, localHarnessAccountEnabled, resetLocalHarnessRolloutForTests, setupLocalHarness } from "../readiness.js";
+import { ensureLocalHarnessTarget, localHarnessAccountEnabled, localHarnessMemberRefusal, resetLocalHarnessRolloutForTests, setupLocalHarness } from "../readiness.js";
 import { takeTurnRuntimeStatus } from "../turn-runtime-status.js";
 import { resetLaunchCredentialsForTests } from "../launch-credentials.js";
 import { parkLocalTurn, resetApprovalParkForTests } from "../approval-park.js";
@@ -341,5 +346,51 @@ describe("an update never widens permissions (invariant 3)", () => {
     expect(after.workspaceGrantId).toBe(before.workspaceGrantId);
     // No new consent was recorded: the durable authorization carries over.
     expect(authorizeLocalHarness).not.toHaveBeenCalled();
+  });
+});
+
+describe("why the account check refused, for a refusal's text", () => {
+  beforeEach(() => {
+    flagSource.kind = "posthog";
+    mocks.rolloutAnswer.mockResolvedValue(true);
+  });
+
+  it("sends only a member in the rollout without this project's authorization to set it up", async () => {
+    mocks.authorization.mockResolvedValue(null);
+    await expect(localHarnessMemberRefusal("session", "project", "claude-code")).resolves.toBe("not-set-up");
+    expect(mocks.authorization).toHaveBeenCalledWith("authkit:user", "machine", "project", "claude-code");
+    // Asked of the harness's own cohort, with the backend-verified email.
+    mocks.query.mockResolvedValue({ email: "member@example.com" });
+    await localHarnessMemberRefusal("session", "project", "codex");
+    expect(mocks.rolloutAnswer).toHaveBeenLastCalledWith("user", "member@example.com", "local-codex-enabled");
+  });
+
+  it("says the account is outside the rollout rather than sending it to a setup it can't see", async () => {
+    mocks.authorization.mockResolvedValue(null);
+    mocks.rolloutAnswer.mockResolvedValue(false);
+    await expect(localHarnessMemberRefusal("session", "project", "claude-code")).resolves.toBe("not-rolled-out");
+  });
+
+  it("never reads a failed rollout request, or a switched-off flag source, as outside the rollout", async () => {
+    mocks.rolloutAnswer.mockResolvedValue(undefined);
+    await expect(localHarnessMemberRefusal("session", "project", "claude-code")).resolves.toBe("rollout-unknown");
+    mocks.query.mockRejectedValue(new Error("backend offline"));
+    await expect(localHarnessMemberRefusal("session", "project", "claude-code")).resolves.toBe("rollout-unknown");
+    flagSource.kind = "off";
+    await expect(localHarnessMemberRefusal("session", "project", "claude-code")).resolves.toBe("flags-off");
+    // Only the first case reached PostHog: the second failed reading the
+    // member's email, and the third never asks a switched-off source.
+    expect(mocks.rolloutAnswer).toHaveBeenCalledTimes(1);
+  });
+
+  it("names no fix a sign-in can't provide: no bearer, or no member identity here", async () => {
+    await expect(localHarnessMemberRefusal(undefined, "project", "claude-code")).resolves.toBe("actor-refused");
+    mocks.actor.mockResolvedValue({ ok: false, reason: "api-key", status: 403, message: "refused" });
+    await expect(localHarnessMemberRefusal("session", "project", "claude-code")).resolves.toBe("actor-refused");
+    expect(mocks.rolloutAnswer).not.toHaveBeenCalled();
+  });
+
+  it("finds nothing to refuse for an authorized member in the rollout", async () => {
+    await expect(localHarnessMemberRefusal("session", "project", "claude-code")).resolves.toBeNull();
   });
 });

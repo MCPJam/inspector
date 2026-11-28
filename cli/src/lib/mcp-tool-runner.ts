@@ -1,3 +1,4 @@
+import type { EvalToolName } from "@mcpjam/sdk/internal/mcp-surface";
 import { normalizeCliError } from "./output.js";
 
 /** Every tool `mcpjam mcp` serves. Telemetry sends only these names. */
@@ -25,7 +26,8 @@ export type McpJamMcpToolName = (typeof MCPJAM_MCP_TOOLS)[number];
 
 /** One finished tool call. Carries no arguments, results or error text. */
 export interface McpJamToolCall {
-  tool: McpJamMcpToolName;
+  /** A server-debugging tool, or one of the eval tools `--evals` adds. */
+  tool: McpJamMcpToolName | EvalToolName;
   success: boolean;
   durationMs: number;
   /** The CLI error code when the call failed. */
@@ -69,6 +71,18 @@ function toToolError(normalized: ReturnType<typeof normalizeCliError>) {
   };
 }
 
+/** Tells `onToolCalled` about a finished call; a throwing callback changes nothing. */
+export function reportToolCall(
+  onToolCalled: OnToolCalled | undefined,
+  call: McpJamToolCall,
+): void {
+  try {
+    onToolCalled?.(call);
+  } catch {
+    // Reporting is best-effort and must never affect the tool result.
+  }
+}
+
 /**
  * Runs a tool's operation and turns its value or error into a tool result.
  * Each finished call is reported to `onToolCalled`, which `mcpjam mcp` uses
@@ -76,13 +90,7 @@ function toToolError(normalized: ReturnType<typeof normalizeCliError>) {
  * never changes the result.
  */
 export function createToolRunner(onToolCalled?: OnToolCalled) {
-  const report = (call: McpJamToolCall) => {
-    try {
-      onToolCalled?.(call);
-    } catch {
-      // Reporting is best-effort and must never affect the tool result.
-    }
-  };
+  const report = (call: McpJamToolCall) => reportToolCall(onToolCalled, call);
 
   return async (
     tool: McpJamMcpToolName,

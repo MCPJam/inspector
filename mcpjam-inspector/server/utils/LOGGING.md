@@ -56,7 +56,8 @@ request body, path or header is not one, whatever its shape. Other IDs,
 | `tunnel.created` | `routes/mcp/tunnels.ts` | `tunnelKind`, `tunnelDomain`, `existed`, `credentialIdPresent?` |
 | `tunnel.creation_failed` | `routes/mcp/tunnels.ts` | `tunnelKind`, `errorCode` |
 | `tunnel.record_failed` | `routes/mcp/tunnels.ts` | `tunnelKind`, `tunnelDomain?`, `errorCode` |
-| `chat.session.persist.failed` | `utils/chat-ingestion.ts` | `failureKind`, `statusCode?`, `sourceType?` |
+| `chat.session.persist.failed` | `utils/chat-ingestion.ts` | `failureKind`, `ingestStatusCode?`, `sourceType?`, `chatOrigin?` |
+| `chat.session.persist.skipped` | `utils/chat-ingestion.ts` | `hasTurnId`, `sourceType?`, `chatOrigin?` |
 | `chat.secrets.undelivered` | `routes/web/chat-v2.ts` | `secretCount`, `isScenarioSession` |
 | `chat.builtin_tools.withheld` | `routes/web/chat-v2.ts` | `toolIds`, `unknownCount`, `reasons`, `targetKind` |
 | `chat.harness_model_unverified` | `routes/web/chat-v2.ts`, `routes/mcp/chat-v2.ts` | `harness`, `modelId`, `reason` |
@@ -111,5 +112,7 @@ shaped, rename it to say what it is (`client`, not `body`) rather than widening 
 
 ## ESLint enforcement
 
-`eslint.config.js` warns on new `logger.warn|error|info` calls in `server/routes/web/`.
-Run `npx eslint server/routes/web/` to check before committing route changes.
+`eslint.config.js` fails on new `logger.warn|error|info` calls in `server/routes/web/`: report a
+caught failure with `reportRouteFailure(message, error, { source, hop })` and everything else with
+`logger.event()`. In the other routes it fails on `logger.error` inside a `catch`, for the same reason.
+Run `npm run lint -w @mcpjam/inspector` to check before committing route changes.

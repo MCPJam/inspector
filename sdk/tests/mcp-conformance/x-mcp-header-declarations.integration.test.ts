@@ -67,7 +67,7 @@ async function serveTools(
       };
       if (frame.method === "server/discover") {
         reply({
-          resultType: "server/discover",
+          resultType: "complete",
           protocolVersions: [MODERN],
           capabilities: options.capabilities ?? { tools: {} },
           serverInfo: { name: "x-mcp-header-fixture", version: "1.0.0" },
@@ -249,9 +249,10 @@ describe("tools-x-mcp-header-declarations-valid", () => {
     const { check } = await runCheck(serverUrl);
     expect(check.status).toBe("failed");
     expect(check.details).toMatchObject({
-      toolCount: 3,
+      toolCountIncludingInvalid: 3,
       violations: [{ tool: "offender" }],
     });
+    expect(check.details).not.toHaveProperty("toolCount");
   });
 
   it("detects a cursor CYCLE, not just a repeat, and refuses to pass", async () => {

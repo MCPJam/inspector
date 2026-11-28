@@ -1,4 +1,8 @@
-import { listBaseServers } from "../../utils/mcp-connections.js";
+import {
+  getManagerConnections,
+  listBaseServers,
+} from "../../utils/mcp-connections.js";
+import { isCallToolResult, type MCPClientManager } from "@mcpjam/sdk";
 /**
  * Pull the evidence the Response and Tool-call checks need out of what the
  * runner already captured.
@@ -39,6 +43,7 @@ import type {
   TranscriptToolInventoryEntry,
   TranscriptToolResult,
 } from "@mcpjam/sdk/predicates";
+import type { AccountRouting } from "./account-routing";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -81,6 +86,35 @@ function outputText(output: unknown): string | undefined {
   }
 }
 
+/** Matched by wording, the only signal a transcript keeps; tests read it from the installed client and SDK. */
+export function toolCallFailure(
+  output: unknown,
+  toolName: string,
+): TranscriptToolResult["callFailure"] {
+  if (!isRecord(output)) return undefined;
+  if (output.type === "error-text" && typeof output.value === "string") {
+    // The AI SDK persists only the error message from upstream or MRTR.
+    const message = output.value.replace(/^(?:ProtocolError|TypeError): /, "");
+    if (
+      message.startsWith("Structured content does not match the tool's output schema: ") ||
+      message.startsWith(
+        `Tool "${toolName}" structured content does not match its output schema: `,
+      )
+    ) {
+      return "output_schema_mismatch";
+    }
+    if (
+      message === `Tool ${toolName} has an output schema but did not return structured content` ||
+      message === `Tool "${toolName}" has an output schema but did not return structured content.`
+    ) {
+      return "missing_structured_content";
+    }
+  }
+  return output.type === "error-text" || output.type === "error-json"
+    ? "protocol"
+    : undefined;
+}
+
 /** The JSON payload of a `{type: "json"}` output part. */
 function outputJson(output: unknown): unknown {
   if (!isRecord(output)) return undefined;
@@ -103,7 +137,11 @@ export type ExtractedEvidence = {
  * as "we do not know". A trace with no messages sets it false, and every
  * result-shaped check over that iteration reports `status: "error"`.
  */
-export function extractTranscriptEvidence(trace: unknown): ExtractedEvidence {
+export function extractTranscriptEvidence(
+  trace: unknown,
+  accountRouting?: AccountRouting,
+  connectionKeys?: ReadonlyMap<string, string>,
+): ExtractedEvidence {
   const messages = isRecord(trace)
     ? trace.messages
     : Array.isArray(trace)
@@ -112,6 +150,10 @@ export function extractTranscriptEvidence(trace: unknown): ExtractedEvidence {
   const spans: EvalTraceSpan[] = isRecord(trace) && Array.isArray(trace.spans)
     ? (trace.spans as EvalTraceSpan[])
     : [];
+  const toolSpans = new Map<string, EvalTraceSpan>();
+  for (const span of spans) {
+    if (span.category === "tool" && span.toolCallId) toolSpans.set(span.toolCallId, span);
+  }
 
   const toolResults: TranscriptToolResult[] = [];
   if (Array.isArray(messages)) {
@@ -124,11 +166,27 @@ export function extractTranscriptEvidence(trace: unknown): ExtractedEvidence {
         const toolName =
           typeof part.toolName === "string" ? part.toolName : undefined;
         if (!toolName) continue;
+        const declaredToolName = accountRouting?.get(toolName)?.serverToolName;
+        const span = typeof part.toolCallId === "string"
+          ? toolSpans.get(part.toolCallId)
+          : undefined;
+        const declaredServerKey = span?.connectionId
+          ? connectionKeys?.get(span.connectionId)
+          : span?.serverId;
 
         const text = outputText(part.output);
         const json = outputJson(part.output);
-        const raw = isRecord(part.result) ? part.result : undefined;
+        // The direct AI SDK path can project the whole MCP result as JSON.
+        const raw = isRecord(part.result)
+          ? part.result
+          : isCallToolResult(json)
+            ? json
+            : undefined;
         const structuredContent = raw?.structuredContent;
+        const callFailure =
+          raw === undefined
+            ? toolCallFailure(part.output, declaredToolName ?? toolName)
+            : undefined;
 
         // MEASURED ON THE OUTPUT PART, BEFORE any cap the transcript applies.
         // `complete: false` when the part will not serialize — a size check
@@ -141,12 +199,15 @@ export function extractTranscriptEvidence(trace: unknown): ExtractedEvidence {
             ? { toolCallId: part.toolCallId }
             : {}),
           toolName,
+          ...(declaredToolName !== undefined ? { declaredToolName } : {}),
+          ...(declaredServerKey !== undefined ? { declaredServerKey } : {}),
           ...(text !== undefined ? { text } : {}),
           ...(structuredContent !== undefined ? { structuredContent } : {}),
           ...(json !== undefined ? { json } : {}),
           ...(raw !== undefined && typeof raw.isError === "boolean"
             ? { isError: raw.isError }
             : {}),
+          ...(callFailure !== undefined ? { callFailure } : {}),
           size: {
             bytes: bytes ?? 0,
             basis: "model_visible_output",
@@ -187,6 +248,45 @@ export function extractTranscriptEvidence(trace: unknown): ExtractedEvidence {
     // at all is a custom executor that reports nothing — the same distinction
     // `traceLacksSpanChannel` draws for the stage chain.
     timingsCaptured: isRecord(trace) && Array.isArray(trace.spans),
+  };
+}
+
+/**
+ * A row for a result held as a raw `CallToolResult` rather than as a
+ * `tool-result` part: a pinned call's, which no model ever saw. Its text is
+ * every text block, and its bytes are measured on the whole result
+ * (`raw_result`), because there is no model-visible output to measure.
+ */
+export function callToolResultRow(
+  toolName: string,
+  result: unknown,
+  toolCallId?: string,
+  declaredServerKey?: string,
+): TranscriptToolResult | undefined {
+  if (!isRecord(result)) return undefined;
+  const texts = Array.isArray(result.content)
+    ? result.content.flatMap((part) =>
+        isRecord(part) && part.type === "text" && typeof part.text === "string"
+          ? [part.text]
+          : [],
+      )
+    : [];
+  const bytes = jsonBytes(result);
+  return {
+    ...(toolCallId !== undefined ? { toolCallId } : {}),
+    toolName,
+    ...(declaredServerKey !== undefined ? { declaredServerKey } : {}),
+    ...(texts.length > 0 ? { text: texts.join("\n") } : {}),
+    ...(result.structuredContent !== undefined
+      ? { structuredContent: result.structuredContent }
+      : {}),
+    ...(typeof result.isError === "boolean" ? { isError: result.isError } : {}),
+    size: {
+      bytes: bytes ?? 0,
+      basis: "raw_result",
+      complete: bytes !== undefined,
+    },
+    ...(bytes !== undefined ? { rawBytes: bytes } : {}),
   };
 }
 
@@ -329,34 +429,28 @@ export function toTranscriptToolInventory(
 
 /** Collect original catalogs only for the selected servers, without name merging. */
 export function collectToolDeclarations(
-  manager:
-    | {
-        getCapturedToolDeclarations?: (id: string) =>
-          | {
-              tools: Array<{
-                name: string;
-                description?: string;
-                inputSchema?: unknown;
-                outputSchema?: unknown;
-                annotations?: unknown;
-              }>;
-              capture: "complete" | "partial";
-            }
-          | undefined;
-      }
-    | undefined,
+  manager: MCPClientManager | undefined,
   serverIds: readonly string[],
 ): {
   toolDeclarations?: import("@mcpjam/sdk/predicates").TranscriptToolDeclaration[];
   declarationsCaptured: "complete" | "partial" | "absent";
+  connectionKeys?: ReadonlyMap<string, string>;
 } {
   if (typeof manager?.getCapturedToolDeclarations !== "function")
     return { declarationsCaptured: "absent" };
   const toolDeclarations: import("@mcpjam/sdk/predicates").TranscriptToolDeclaration[] =
     [];
   let complete = true;
+  const groups = getManagerConnections(manager);
+  const connectionKeys = new Map<string, string>();
+  const keys = serverIds.flatMap((serverId) => {
+    const group = groups?.[serverId];
+    if (!group?.length) return [serverId];
+    for (const { connectionId, key } of group) connectionKeys.set(connectionId, key);
+    return group.map(({ key }) => key);
+  });
   try {
-    for (const serverKey of new Set(serverIds)) {
+    for (const serverKey of new Set(keys)) {
       const captured = manager.getCapturedToolDeclarations(serverKey);
       if (!captured) {
         complete = false;
@@ -388,5 +482,6 @@ export function collectToolDeclarations(
   return {
     toolDeclarations,
     declarationsCaptured: complete ? "complete" : "partial",
+    ...(connectionKeys.size ? { connectionKeys } : {}),
   };
 }

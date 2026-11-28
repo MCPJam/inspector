@@ -62,9 +62,27 @@ export const ANALYTICS_EVENTS = {
   // `run_source` saying where the run came from. Hosted server runs go
   // through the SDK, so the app has no `_server` twin.
   conformance_run_triggered: { source: "client" },
+  conformance_tab_viewed: { source: "client" },
+  // A UI run this page saw finish; outcome is passed | failed | incomplete.
+  conformance_run_completed: { source: "client" },
+  // --- GitHub star ask (github-star-prompt.ts), once per browser ---
+  github_star_prompt_shown: { source: "client" },
+  github_star_prompt_clicked: { source: "client" },
+  github_star_prompt_dismissed: { source: "client" },
+  // The Star button itself; location is header | settings.
+  github_star_button_clicked: { source: "client" },
 
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
+  /**
+   * One Platform API request answered, hosted only
+   * (`server/utils/v1-usage-event.ts`). Route pattern, status, error code,
+   * latency, auth method and the client's declared surface and name. Never
+   * paths, bodies, query strings, error messages or raw user agents. A request
+   * with no identity (a refused credential, a public route) sends nothing, so
+   * failure rates cover authenticated callers; auth failures stay in Axiom.
+   */
+  api_v1_request_completed: { source: "server" },
   /**
    * One agent Playground turn finished (`POST /v1/chat-sessions/messages`).
    * Outcome/count/duration only — the messages and tool payloads on that
@@ -184,6 +202,9 @@ export const ANALYTICS_EVENTS = {
   app_builder_tab_viewed: { source: "client" },
   app_builder_tool_executed: { source: "client" },
   app_launched: { source: "client" },
+  // Sent before any actor is known; see the strict catalog entries.
+  app_startup_started: { source: "client" },
+  app_startup_blocked: { source: "client" },
   cancel_button_clicked: { source: "client" },
   chat_attachment_button_clicked: { source: "client" },
   chat_cleared: { source: "client" },
@@ -333,6 +354,8 @@ export const ANALYTICS_EVENTS = {
   evaluate_tour_skipped: { source: "client" },
   evaluate_tour_step_viewed: { source: "client" },
   events_tab_viewed: { source: "client" },
+  local_webhook_receiver_selected: { source: "client" },
+  local_webhook_receiver_failed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
   // The Swarms / User Testing gate (REEV-6). `guest_feature_preview_shown`
@@ -370,12 +393,6 @@ export const ANALYTICS_EVENTS = {
   host_toolbar_timezone_changed: { source: "client" },
   import_json_button_clicked: { source: "client" },
   interactive_signin_required: { source: "client" },
-  // Guest "Invite team members" nudge (sidebar CTA shown to signed-out users
-  // on hosted): shown/dismissed measure the gate's conversion funnel; the
-  // sign-up/sign-in clicks themselves reuse `sign_up_button_clicked` /
-  // `login_button_clicked` with location "invite_signup_nudge".
-  invite_signup_nudge_shown: { source: "client" },
-  invite_signup_nudge_dismissed: { source: "client" },
   logger_cleared: { source: "client" },
   logger_collapsed: { source: "client" },
   logger_copy_clicked: { source: "client" },
@@ -429,6 +446,7 @@ export const ANALYTICS_EVENTS = {
    */
   oauth_callback_no_session_recovery: { source: "client" },
   oauth_debugger_error_boundary: { source: "client" },
+  oauth_flow_completed: { source: "client" },
   oauth_flow_tab_next_step_button_clicked: { source: "client" },
   oauth_flow_tab_viewed: { source: "client" },
   ollama_running: { source: "client" },
@@ -448,6 +466,12 @@ export const ANALYTICS_EVENTS = {
   first_run_onboarding_connection_started: { source: "client" },
   first_run_onboarding_connection_succeeded: { source: "client" },
   first_run_onboarding_connection_failed: { source: "client" },
+  // Home setup checklist (BA-10): `step`, `action`, `variant`, optional
+  // `error_slug`, `already_done`, `rest`, and `agent` on onboard_agent copied.
+  // Connect actions include `demo_started` for the Excalidraw demo server.
+  home_checklist_step: { source: "client" },
+  // `outcome` completed | skipped, `done_count`, `already_done`.
+  home_checklist_finished: { source: "client" },
   first_run_onboarding_connection_cancelled: { source: "client" },
   first_run_onboarding_setup_later_clicked: { source: "client" },
   first_run_onboarding_playground_opened: { source: "client" },
@@ -457,6 +481,9 @@ export const ANALYTICS_EVENTS = {
   playground_repeat_tip_dismissed: { source: "client" },
   playground_test_case_saved: { source: "client" },
   playground_left_rail_tab_changed: { source: "client" },
+  // A multi-model session's first send. `rebuilt` says the same first prompt
+  // already ran side by side in the last 14 days; no prompt text is sent.
+  playground_multi_model_started: { source: "client" },
   playground_right_rail_tab_changed: { source: "client" },
   playground_tab_viewed: { source: "client" },
   playground_tool_run_clicked: { source: "client" },
@@ -521,6 +548,13 @@ export const ANALYTICS_EVENTS = {
   reconnect_server_clicked: { source: "client" },
   refresh_tools_clicked: { source: "client" },
   remove_server_clicked: { source: "client" },
+  // A hosted guest back on a new calendar day (`client/src/lib/returning-guest.ts`).
+  // visit_number, days_since_last_visit. The prompt events add prompt
+  // ("dialog"), copy_variant and page; sign-up clicks reuse
+  // `sign_up_button_clicked` with location "returning_guest_dialog".
+  returning_guest_detected: { source: "client" },
+  returning_guest_prompt_dismissed: { source: "client" },
+  returning_guest_prompt_shown: { source: "client" },
   run_all_cases_button_clicked: { source: "client" },
   run_selected_case_button_clicked: { source: "client" },
   save_api_key: { source: "client" },
@@ -540,6 +574,12 @@ export const ANALYTICS_EVENTS = {
   servers_tab_viewed: { source: "client" },
   share_dialog_opened: { source: "client" },
   sidebar_nav_clicked: { source: "client" },
+  // The always-on sidebar footer card. `prompt` is "guest_signup",
+  // "pro_upgrade" or "owner_request". Guest clicks reuse
+  // `sign_up_button_clicked`; Pro and owner-request clicks fire
+  // `upgrade_button_clicked`; the confirm dialog reuses
+  // `plans_upgrade_confirm_*`. All carry location "sidebar_prompt".
+  sidebar_prompt_shown: { source: "client" },
   stateless_protocol_connect: { source: "client" },
   suite_viewed: { source: "client" },
   swarm_create_generate_completed: { source: "client" },
@@ -558,6 +598,7 @@ export const ANALYTICS_EVENTS = {
   tunnel_created: { source: "client" },
   tunnel_rotated: { source: "client" },
   update_server_button_clicked: { source: "client" },
+  upgrade_button_clicked: { source: "client" },
   xaa_flow_completed: { source: "client" },
   xaa_flow_started: { source: "client" },
   xaa_resource_app_saved: { source: "client" },

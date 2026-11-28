@@ -18,6 +18,7 @@ import { API_ENDPOINTS } from "../constants";
 import type { EvalSuite } from "../types";
 import { createFetchResponse, createDeferred } from "@/test";
 import { setApiContext } from "@/lib/apis/web/context";
+import { launchReasonOf } from "@/lib/eval-launch-reason";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
 import {
   beginCaseLaunch,
@@ -482,6 +483,24 @@ describe("useEvalHandlers", () => {
         expect(mockNavigateApp).not.toHaveBeenCalled();
       },
     );
+
+    it("keeps a refusal's reason and rule on the error the run sheet catches", async () => {
+      mockAuthFetch.mockResolvedValue(createFetchResponse({
+        code: "VALIDATION_ERROR",
+        error: "Required code evaluators can't run in a local run.",
+        details: { code: "EVAL_CODE_EVALUATORS_UNAVAILABLE", reason: "EVAL_CODE_EVALUATORS_UNAVAILABLE", rule: "local_run" },
+      }, 400));
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      let failure: unknown;
+      await act(async () => {
+        try {
+          await result.current.handleRerun({ _id: "suite-123", name: "Suite", environment: { servers: ["server-1"] } } as any, { stayOnPage: true });
+        } catch (error) {
+          failure = error;
+        }
+      });
+      expect(launchReasonOf(failure)).toEqual({ reason: "EVAL_CODE_EVALUATORS_UNAVAILABLE", rule: "local_run" });
+    });
 
     it("keeps a prepared launch idempotent across run retries", async () => {
       const { result } = renderHook(() => useEvalHandlers(defaultProps));

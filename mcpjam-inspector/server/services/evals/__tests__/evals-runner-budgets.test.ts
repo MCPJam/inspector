@@ -1088,6 +1088,231 @@ describe("hosted iteration on a pinned box with a paired desktop", () => {
   });
 });
 
+// PLB-579 (INSPECTOR-HONO-97): a Browser run with more cases than the backend
+// lets one run hold boxes. The wire is answered by the backend's per-run rule
+// (`PER_RUN_SANDBOX_CONCURRENCY`): a fifth box in flight is a 503 `at_capacity`
+// with `resource: "run"` and `Retry-After: 30`.
+describe("hosted Browser run with more cases than its box budget", () => {
+  afterEach(() => {
+    harnessBoxOptionsOverride.current = undefined;
+    seedAttachmentsOverride.current = undefined;
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  async function runBrowserSuite(args: {
+    cases: number;
+    runsPerCase: number;
+    holdMs: number;
+    /** The first box's release is lost, so the backend keeps counting it. */
+    leakFirstBox?: boolean;
+    runTimeoutMs?: number;
+  }) {
+    vi.useFakeTimers();
+    vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
+    vi.stubEnv("MCPJAM_EVAL_ISOLATED_ITERATION_TIMEOUT", "1");
+    vi.stubEnv("E2B_API_KEY", "test-key");
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-secret");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-token");
+    const perRunCap = 4;
+    const live = new Set<string>();
+    const wire = { booted: 0, refused: 0, peak: 0 };
+    let nextBox = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown) => {
+        const json = (body: unknown, status = 200, headers = {}) =>
+          new Response(JSON.stringify(body), {
+            status,
+            headers: { "content-type": "application/json", ...headers },
+          });
+        if (!String(url).endsWith("/evals/sandbox/provision")) return json({});
+        if (live.size >= perRunCap) {
+          wire.refused++;
+          return json(
+            {
+              error: `This run already has ${perRunCap} sandboxes in flight. Wait for a session to finish.`,
+              code: "at_capacity",
+              resource: "run",
+            },
+            503,
+            { "retry-after": "30" },
+          );
+        }
+        nextBox++;
+        live.add(`row-${nextBox}`);
+        wire.booted++;
+        wire.peak = Math.max(wire.peak, live.size);
+        return json({
+          sandboxId: `sbx-${nextBox}`,
+          sandboxRowId: `row-${nextBox}`,
+          runtimeKind: "desktop-browser",
+          workdir: "/home/user",
+        });
+      }),
+    );
+    harnessBoxOptionsOverride.current = (options) => ({
+      ...options,
+      release: async (sandboxRowId: string) => {
+        if (args.leakFirstBox && sandboxRowId === "row-1") return;
+        live.delete(sandboxRowId);
+      },
+      touch: vi.fn(async () => "touched" as const),
+    });
+    seedAttachmentsOverride.current = async () => ({ note: null });
+    // Each iteration holds its desktop while its turn runs.
+    executeStepsMock.mockImplementation(
+      () =>
+        new Promise((resolve) => setTimeout(() => resolve({}), args.holdMs)),
+    );
+    const rows = new Map<string, Record<string, any>>();
+    const finalize = vi.fn(async () => {});
+    const tests = Array.from({ length: args.cases }, (_, index) => ({
+      title: `Case ${index + 1}`,
+      query: "Open the page",
+      model: "gpt-5-mini",
+      provider: "openai",
+      runs: args.runsPerCase,
+      testCaseId: `case-${index + 1}`,
+      expectedToolCalls: [],
+      promptTurns: [
+        { id: "turn-1", prompt: "Open the page", expectedToolCalls: [] },
+      ],
+    }));
+    const pending = runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: "run-1",
+      recorder: {
+        startIteration: vi.fn(async () => {
+          const id = `iter-${rows.size + 1}`;
+          rows.set(id, { _id: id, status: "pending", result: "pending" });
+          return id;
+        }),
+        beginExecutionAttempt: vi.fn(async () => {}),
+        finishIteration: vi.fn(async (update) =>
+          Object.assign(rows.get(update.iterationId) ?? {}, update),
+        ),
+        finalize,
+      },
+      config: { tests, environment: { servers: ["srv-1"] } },
+      suiteHostConfig: {
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+      },
+      orgModelConfigTarget: { projectId: "project-1" },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: {
+        query: vi.fn(async (name) =>
+          name === "testSuites:getTestSuiteRunDetails"
+            ? { iterations: [...rows.values()] }
+            : { status: "running" },
+        ),
+        mutation: vi.fn(async () => ({})),
+        action: vi.fn(async (name, update) => {
+          if (name === "testSuites:updateTestIteration")
+            Object.assign(rows.get(update.iterationId) ?? {}, update);
+        }),
+      },
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: {
+        getToolsForAiSdk: vi.fn(async () => ({})),
+        listTools: vi.fn(async () => ({ tools: [] })),
+        getAllToolAnnotations: vi.fn(() => ({})),
+        hasCachedToolAnnotations: vi.fn(() => true),
+        getConnectionStatus: vi.fn(() => "connected"),
+        listServers: vi.fn(() => ["srv-1"]),
+        getAllToolsMetadata: vi.fn(() => ({})),
+        executeTool: vi.fn(),
+      },
+      executionBudgets: {
+        ...defaultEvalExecutionBudgets(),
+        ...(args.runTimeoutMs ? { runTimeoutMs: args.runTimeoutMs } : {}),
+      },
+    } as any);
+    let settled = false;
+    void pending.finally(() => {
+      settled = true;
+    });
+    while (!settled) await vi.advanceTimersByTimeAsync(1_000);
+    await pending;
+    const setupFailed = [...rows.values()].filter(
+      (row) => row.status === "setup_failed",
+    );
+    return { rows, wire, setupFailed, finalize };
+  }
+
+  it("queues cases at the run's box budget instead of failing them at setup", async () => {
+    // The incident's shape: twice the budget in cases, iterations that hold
+    // their desktop longer than four 30s capacity retries.
+    const { rows, wire, setupFailed } = await runBrowserSuite({
+      cases: 8,
+      runsPerCase: 4,
+      holdMs: 60_000,
+    });
+    expect(setupFailed.map((row) => row.error)).toEqual([]);
+    expect(rows.size).toBe(32);
+    expect(wire.booted).toBe(32);
+    expect(wire.peak).toBe(4);
+    expect(wire.refused).toBe(0);
+  });
+
+  it("does not spend a queued case's iteration clock while it waits", async () => {
+    // Two waves of 6-minute iterations against a 10-minute iteration clock:
+    // a clock started at launch would time the second wave out at 12 minutes.
+    const { rows, setupFailed } = await runBrowserSuite({
+      cases: 8,
+      runsPerCase: 1,
+      holdMs: 6 * 60_000,
+    });
+    expect(setupFailed).toEqual([]);
+    expect([...rows.values()].map((row) => row.status)).not.toContain(
+      "timed_out",
+    );
+  });
+
+  it("ends a run out of time with cases still queued, booting no box for them", async () => {
+    // The trade-off: three waves of 6-minute iterations against an 8-minute
+    // run clock. The third wave never leaves the queue; the run is finalized
+    // `timed_out` and the backend's timeout sweep closes those cases' rows.
+    const { rows, wire, setupFailed, finalize } = await runBrowserSuite({
+      cases: 12,
+      runsPerCase: 1,
+      holdMs: 6 * 60_000,
+      runTimeoutMs: 8 * 60_000,
+    });
+    expect(finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "timed_out" }),
+    );
+    expect(wire.booted).toBe(8);
+    expect(rows.size).toBe(8);
+    expect(setupFailed).toEqual([]);
+  });
+
+  it("falls back to the capacity retry when a released box stays counted", async () => {
+    // The documented limit: a lost release leaves three slots for four
+    // cases until the backend stops counting the box, so some of the fourth
+    // case's iterations exhaust the retry. Each iteration either gets a box
+    // or fails on capacity, nothing else.
+    const { rows, wire, setupFailed } = await runBrowserSuite({
+      cases: 8,
+      runsPerCase: 4,
+      holdMs: 60_000,
+      leakFirstBox: true,
+    });
+    expect(rows.size).toBe(32);
+    expect(wire.refused).toBeGreaterThan(0);
+    expect(wire.peak).toBe(4);
+    expect(setupFailed.length).toBeGreaterThan(0);
+    expect(wire.booted + setupFailed.length).toBe(32);
+    for (const row of setupFailed) {
+      expect(row.error).toMatch(/^Waiting on sandbox capacity:/);
+    }
+  });
+});
+
 // Deleting a suite (or run) mid-run: the cancellation checker is the only
 // thing that stops the whole run. Production masks a plain error as
 // "Server Error", so the checker must act on the structured refusal and

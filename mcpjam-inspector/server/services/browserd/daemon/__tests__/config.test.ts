@@ -57,6 +57,8 @@ describe("readBrowserdConfig", () => {
       recordingEnabled: true,
       // An inspector replica handed us a token; nothing was minted here.
       startedBy: "inspector",
+      // The profile an earlier boot left is kept unless the boot asks.
+      freshProfile: false,
     });
   });
 

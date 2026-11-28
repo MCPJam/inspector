@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 345" width="760" height="345" role="img" aria-label="Run status lifecycle"><style>text{fill:#ecebe7;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:13px}
+.sm{font-size:11.5px}
+.mono{font-family:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace}
+.sm.mono{font-size:10.8px}
+.h{font-weight:600}
+.i{font-style:italic;fill:#a8a6a0}
+.big{font-size:34px;font-weight:600;font-family:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace}
+.b{fill:#262624;stroke:#ecebe7;stroke-width:1.4}
+.s{fill:#33322f;stroke:#ecebe7;stroke-width:1.2}
+.dash{stroke-dasharray:5 4}
+.thick{stroke-width:2.6}
+.none{fill:none;stroke:#ecebe7}
+.fill{fill:#ecebe7;stroke:#ecebe7}
+.ln{stroke:#ecebe7;stroke-width:1.4;fill:none;marker-end:url(#ah)}
+.ln-plain{stroke:#ecebe7;stroke-width:1.4;fill:none}
+.rule{stroke:#a8a6a0;stroke-width:1.2;fill:none}
+.ahp{fill:#ecebe7}
+.red{fill:#ef5350;stroke:none}
+.rt{fill:#ffffff;font-size:12px;font-weight:600}
+</style><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahp"/></marker></defs><rect width="760" height="345" fill="#262624"/><circle cx="80" cy="120" r="44" class="b"/><text x="80" y="125" class="h" text-anchor="middle">Pending</text><circle cx="240" cy="120" r="44" class="b"/><text x="240" y="125" class="h" text-anchor="middle">Running</text><circle cx="400" cy="120" r="44" class="b"/><text x="400" y="125" class="h" text-anchor="middle">Grading</text><line x1="124" y1="120" x2="194" y2="120" class="ln"/><text x="159" y="108" class="sm" text-anchor="middle">starts</text><line x1="284" y1="120" x2="354" y2="120" class="ln"/><text x="319" y="100" class="sm" text-anchor="middle">every</text><text x="319" y="112" class="sm" text-anchor="middle">iteration</text><text x="319" y="140" class="sm" text-anchor="middle">finished</text><rect x="540" y="24" width="212" height="52" rx="26" class="b thick"/><text x="646" y="46" class="h" text-anchor="middle">Passed or Failed</text><text x="646" y="63" class="sm" text-anchor="middle">the verdict</text><line x1="442" y1="104" x2="538" y2="50" class="ln"/><rect x="540" y="104" width="212" height="52" rx="26" class="b"/><text x="646" y="126" class="h" text-anchor="middle">Inconclusive</text><text x="646" y="143" class="sm" text-anchor="middle">per-case suite, too little evidence</text><line x1="442" y1="120" x2="538" y2="130" class="ln"/><rect x="540" y="184" width="212" height="52" rx="26" class="b"/><text x="646" y="206" class="h" text-anchor="middle">Completed</text><text x="646" y="223" class="sm" text-anchor="middle">no stored pass or fail result</text><line x1="442" y1="136" x2="538" y2="210" class="ln"/><circle cx="240" cy="270" r="40" class="b"/><text x="240" y="275" class="h" text-anchor="middle">Cancelled</text><path d="M80,164 Q80,270 196,270" class="ln"/><line x1="240" y1="164" x2="240" y2="228" class="ln"/><path d="M400,164 Q400,270 284,270" class="ln"/><text x="248" y="205" class="sm mono" text-anchor="start">Cancel run</text><text x="20" y="330" class="sm i" text-anchor="start">Cancelled iterations are recorded as cancelled, not as failures.</text></svg>

@@ -17,6 +17,7 @@ import {
   buildCaseSavePayload,
   buildCaseUpdatePayload,
   buildDraftTestCase,
+  caseAccountsChanged,
   useCaseSaveMutations,
 } from "@/components/evals/case-save-payload";
 import {
@@ -167,7 +168,11 @@ export function useCaseStepsDraft({
       storedAdvancedConfig: testCase.advancedConfig,
     });
     try {
-      await updateTestCase({ testCaseId, ...payload });
+      await updateTestCase({
+        testCaseId,
+        ...payload,
+        ...(caseAccountsChanged(draft, testCase) ? { accounts: draft.accounts } : {}),
+      });
       track("eval_test_case_edited", {
         location: LOCATION,
         suite_id: suiteId,

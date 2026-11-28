@@ -28,7 +28,7 @@ import {
   type BrowserPaneClient,
 } from "./pane-client";
 import type { BrowserLedgerEntry } from "./daemon/command-ledger";
-import type { BrowserCommand } from "./protocol";
+import type { BrowserCommand, BrowserdProfileExportOptions } from "./protocol";
 import {
   asRecord,
   decodeCommandResponse,
@@ -90,7 +90,7 @@ export interface InProcessBrowserdClient {
     errorCode: string;
     durationMs?: number;
   }): Promise<{ seq: number }>;
-  exportProfile(): Promise<Uint8Array>;
+  exportProfile(options?: BrowserdProfileExportOptions): Promise<Uint8Array>;
 }
 
 /** The shell's three calls, satisfied in-process. @see BrowserPaneClient */
@@ -205,8 +205,14 @@ export function createInProcessBrowserdClient(
         seq: typeof response.body.seq === "number" ? response.body.seq : 0,
       };
     },
-    async exportProfile() {
-      const response = await callRaw("POST", "/v1/profile/export");
+    async exportProfile(options = {}) {
+      const response = await callRaw(
+        "POST",
+        "/v1/profile/export",
+        options.excludeOrigins?.length
+          ? { excludeOrigins: options.excludeOrigins }
+          : undefined,
+      );
       if (response.status !== 200 || !(response.body instanceof Uint8Array)) {
         const body = asRecord(response.body);
         throw new Error(

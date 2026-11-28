@@ -3527,6 +3527,10 @@ export function registerEvalCommands(program: Command): void {
       "Start an eval run of an existing suite, or upload a versioned suite file and run it. " +
         "The upload-and-launch has a 120s deadline overall, not per request (raise it with the global --timeout <ms>); --wait-timeout bounds the RUN instead."
     )
+    .option(
+      "--account <server-id=account-id...>",
+      "Choose a project account per MCP server for this run only"
+    )
     .option("--suite <id-or-name>", "Eval suite name or ID")
     .option(
       "--file <path>",
@@ -3678,6 +3682,7 @@ export function registerEvalCommands(program: Command): void {
           suite?: string;
           file?: string;
           server?: string[];
+          account?: string[];
           environment?: string[];
           client?: string[];
           host?: string[];
@@ -3712,6 +3717,14 @@ export function registerEvalCommands(program: Command): void {
             "Use --iterations or --repetitions, not both — they are two spellings of one flag."
           );
         }
+        const accounts = options.account?.map((selection) => {
+          const parts = selection.split("=");
+          const [serverId, accountId] = parts.map((part) => part.trim());
+          if (parts.length !== 2 || !serverId || !accountId) {
+            throw usageError("Use --account <server-id=account-id>.");
+          }
+          return { serverId, accountId };
+        });
         // One selector from here down: `--client` is canonical under
         // `cloud eval`, `--host` is its deprecated alias, and both at once is
         // a refusal rather than a precedence rule.
@@ -3815,6 +3828,7 @@ export function registerEvalCommands(program: Command): void {
                     label: options.file === "-" ? "<stdin>" : options.file,
                     projectSelector: resolved.project ?? options.project,
                     knobs: {
+                      ...(accounts ? { accounts } : {}),
                       ...(options.server ? { server: options.server } : {}),
                       ...(options.environment
                         ? { environment: options.environment }
@@ -3860,6 +3874,7 @@ export function registerEvalCommands(program: Command): void {
                   {
                     project: resolved.project ?? options.project,
                     suite: options.suite!,
+                    ...(accounts ? { accounts } : {}),
                     ...(options.server ? { servers: options.server } : {}),
                     // ONE value maps to the singular field, several to the plural:
                     // the op rejects sending both, and the singular carries the

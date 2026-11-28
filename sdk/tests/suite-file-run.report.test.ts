@@ -215,7 +215,9 @@ describe("the local report", () => {
         : { toolCalls: [{ toolName: "read_note", rawInput: malformed }] }
     );
     expect(isLocalEvalRunReport(result.report)).toBe(true);
+    expect(fixture.methods).not.toContain("tools/call");
     for (const iteration of result.cases[0]!.iterations) {
+      expect(iteration.taskVerdict).toBe("failed");
       expect(iteration.toolCalls).toEqual([
         { toolName: "read_note", arguments: {}, rawArguments: malformed },
       ]);

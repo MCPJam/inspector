@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import { watchDiscordJourneyRun } from "../watcher.js";
+
+// The watcher sleeps on an `unref`'d timer; in the bot, the Gateway connection
+// is what keeps the process up. Without a ref'd handle here the event loop
+// drains during the first sleep, before any poll, and `node --test` cancels
+// the test.
+let keepAlive;
+before(() => {
+	keepAlive = setInterval(() => {}, 1_000);
+});
+after(() => {
+	clearInterval(keepAlive);
+});
 
 /**
  * The Discord journey watcher end to end against a fake API: the status
@@ -71,18 +83,22 @@ test("edits the status to a mixed verdict and posts scorecard evidence", async (
 test("posts NO evidence under a green verdict", async () => {
 	const { handle, edits } = makeHandle();
 	const delivered = [];
+	const fetched = [];
 	await watchDiscordJourneyRun({
 		apiClient: {
 			getJourneyRun: async () => ({
 				status: "completed",
 				summary: { total: 3, succeeded: 3, failed: 0 },
 			}),
-			// Would throw if consulted — a pass must not even fetch evidence.
+			// Recorded, not thrown: collectJourneyRunEvidence swallows fetch
+			// errors, so a throw here would let an ungated pass go unnoticed.
 			getJourneyRunScorecard: async () => {
-				throw new Error("evidence fetched for a pass");
+				fetched.push("scorecard");
+				return { criteria: [] };
 			},
 			listJourneyRunSessions: async () => {
-				throw new Error("evidence fetched for a pass");
+				fetched.push("sessions");
+				return [];
 			},
 		},
 		ctx: {},
@@ -99,6 +115,7 @@ test("posts NO evidence under a green verdict", async () => {
 	});
 	assert.equal(edits.length, 1);
 	assert.match(edits[0].content, /passed/);
+	assert.deepEqual(fetched, []);
 	assert.equal(delivered.length, 0);
 });
 

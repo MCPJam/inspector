@@ -24,6 +24,7 @@ import {
   withCapacityRetry,
 } from "../run-supervisor/capacity-retry.js";
 import { getServiceCredential } from "../../services/service-credential.js";
+import { authHeaderNow, type AuthHeaderSource } from "../run-bearer.js";
 
 export type ComputerStatus =
   | "requested"
@@ -390,9 +391,25 @@ function withPairedBrowser<T extends { browser?: PairedBrowserBox }>(
  * Every other failure (409, auth, a malformed body) is returned untouched on
  * the first attempt: only capacity is worth waiting on.
  */
+/** The phase boxes the control plane provisions for code evaluators and scripts. */
+export type EvalBoxPhase =
+  | "run_setup"
+  | "run_cleanup"
+  | "iteration_setup"
+  | "grading"
+  | "iteration_cleanup";
+
 export async function provisionEvalSandbox(
   args: (
-    | { runId: string; iterationId?: string; pairBrowser?: boolean }
+    | {
+        runId: string;
+        iterationId?: string;
+        pairBrowser?: boolean;
+        /** EFTW-90: a setup, grading or cleanup box instead of the iteration's own. */
+        phase?: EvalBoxPhase;
+        /** A grading box's one retry after a lost box: `2`. */
+        attempt?: number;
+      }
     /**
      * A SINGLE-CASE run has no suite run: the body names the iteration alone,
      * and the control plane authorizes the iteration itself. Terminal only —
@@ -434,6 +451,8 @@ export async function provisionEvalSandbox(
           ...("pairBrowser" in args && args.pairBrowser
             ? { pairBrowser: true }
             : {}),
+          ...("phase" in args && args.phase ? { phase: args.phase } : {}),
+          ...("attempt" in args && args.attempt ? { attempt: args.attempt } : {}),
         },
         signal,
       ).then(withPairedBrowser),
@@ -1469,7 +1488,8 @@ export async function touchComputerActivity(args: {
  * machine mid-wait, and rides the same authorization as the first call.
  */
 export async function ensureComputerReady(args: {
-  bearer: string;
+  /** Read before each reserve call, so a long poll sends a renewed bearer. */
+  bearer: AuthHeaderSource;
   projectId: string;
   /** Phase 3 scope; forwarded verbatim to reserveComputer (legacy when absent). */
   executionScope?: ExecutionScope;
@@ -1485,7 +1505,10 @@ export async function ensureComputerReady(args: {
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    const reserved = await reserveComputer(args);
+    const reserved = await reserveComputer({
+      ...args,
+      bearer: authHeaderNow(args.bearer),
+    });
     if (!reserved.ok) return reserved;
     const { status } = reserved.value;
     if (status === "ready") return reserved;

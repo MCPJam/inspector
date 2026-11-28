@@ -16,15 +16,18 @@ function fakeHandle(overrides: {
   fullStream?: unknown;
   response?: unknown;
   streamError?: unknown;
+  responseMessages?: unknown[];
+  rejectedIds?: string[];
 }) {
   const cleanup = vi.fn();
   const consumeStream = vi.fn(async () => {});
   const handle = {
+    rejectedToolCallIds: new Set(overrides.rejectedIds),
     result: {
       fullStream: overrides.fullStream,
       consumeStream,
       response: Promise.resolve(overrides.response ?? { modelId: "m-2026" }),
-      responseMessages: Promise.resolve([assistant]),
+      responseMessages: Promise.resolve(overrides.responseMessages ?? [assistant]),
       steps: Promise.resolve([{ stepNumber: 0 }]),
       totalUsage: Promise.resolve({ inputTokens: 2, outputTokens: 1 }),
       finishReason: Promise.resolve("stop"),
@@ -75,6 +78,21 @@ describe("consumeDirectChatTurnFullStream", () => {
       },
     });
     expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks only the refused call when streaming an eval", async () => {
+    const calls = ["refused", "retry"].map((toolCallId) => ({
+      type: "tool-call", toolName: "echo", toolCallId, input: {},
+    }));
+    const { handle } = fakeHandle({
+      responseMessages: [{ role: "assistant", content: calls }],
+      rejectedIds: ["refused"],
+    });
+    const result = await consumeDirectChatTurnFullStream(handle, vi.fn());
+    expect(result.messages).toEqual([{ role: "assistant", content: [
+      { ...calls[0], providerOptions: { mcpjam: { rejectedToolCall: true } } },
+      calls[1],
+    ] }]);
   });
 
   it("drains with consumeStream when the stream exposes no parts", async () => {

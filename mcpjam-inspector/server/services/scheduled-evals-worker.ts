@@ -19,7 +19,12 @@
  * write surface have their own `SCHEDULED_EVALS_ENABLED` gate).
  */
 
-import { loadSuiteConnectionIdSets } from "./evals/suite-account-choices.js";
+import {
+  loadEvalRunAccountPlan,
+  loadSuiteConnectionIdSets,
+  openEvalAccountGroups,
+} from "./evals/suite-account-choices.js";
+import type { ConnectionIdSets } from "../utils/oauth-account-sets.js";
 import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
 import { abortableSleep } from "../utils/run-supervisor/backoff.js";
@@ -46,6 +51,13 @@ import {
   type ResolvedEnvironmentForLaunch,
 } from "./environments/resolve.js";
 import { getServiceCredential } from "./service-credential.js";
+import { startJobBearer, type JobBearer } from "./scheduled-eval-job-bearer.js";
+import {
+  BEARER_REFUSED_PREFIX,
+  bearerNow,
+  followBearer,
+  type RunBearer,
+} from "../utils/run-bearer.js";
 import { serverDrain } from "./lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -71,6 +83,13 @@ type ClaimedScheduledRun = {
    * backend that predates the field.
    */
   environmentId?: string | null;
+  /**
+   * The run's job token for the schedule's owner, and the lease token that
+   * renews it. Absent from a backend that predates them: the worker then mints
+   * the owner's token itself, as before.
+   */
+  credentials?: { bearer: string; bearerExpiresAt: number };
+  leaseToken?: string;
 };
 
 export function isScheduledEvalsWorkerEnabled(): boolean {
@@ -185,6 +204,7 @@ export function classifyFailure(error: unknown): string {
   if (/delegated token exchange failed \(40[13]\)/i.test(message)) {
     return "auth";
   }
+  if (message.startsWith(BEARER_REFUSED_PREFIX)) return message.slice(0, 160);
   return `run_create_failed: ${message.slice(0, 160)}`;
 }
 
@@ -197,7 +217,8 @@ export async function executeClaimedRun(
     suiteId: claimed.suiteId,
     suiteName: claimed.suiteName,
   };
-  if (!claimed.projectId) {
+  const { projectId, environmentId } = claimed;
+  if (!projectId) {
     await reportComplete({
       triggerId: claimed.triggerId,
       ok: false,
@@ -206,15 +227,28 @@ export async function executeClaimedRun(
     return;
   }
 
+  let closeAccounts: (() => Promise<void>) | undefined;
   let manager:
     Awaited<ReturnType<typeof createAuthorizedManager>>["manager"] | null =
     null;
+  let jobBearer: JobBearer | null = null;
   try {
-    const bearer = await getConvexBearerForDelegation(
-      claimed.createdByExternalId,
-      claimed.organizationId,
-    );
-    const convex = createConvexClient(bearer);
+    const bearer: RunBearer =
+      claimed.credentials && claimed.leaseToken
+        ? (jobBearer = startJobBearer({
+            triggerId: claimed.triggerId,
+            leaseToken: claimed.leaseToken,
+            bearer: claimed.credentials.bearer,
+            bearerExpiresAt: claimed.credentials.bearerExpiresAt,
+            renew: (body) =>
+              postServiceRoute("/internal/v1/scheduled-eval-runs/renew", body),
+          }))
+        : await getConvexBearerForDelegation(
+            claimed.createdByExternalId,
+            claimed.organizationId,
+          );
+    const convex = createConvexClient(bearerNow(bearer));
+    followBearer(bearer, (token) => convex.setAuth(token));
     // Environment claims connect the environment's authoritatively resolved
     // closed set, not the suite's saved selection — the saved selection
     // predates (or ignores) the pinned environment. The SAME resolution is
@@ -226,14 +260,14 @@ export async function executeClaimedRun(
       serverIds: string[];
       serverNames: string[];
       resolvedEnvironment?: ResolvedEnvironmentForLaunch;
-    } = claimed.environmentId
+    } = environmentId
       ? await (async () => {
           const resolved = await resolveEnvironmentForLaunch(
             convex,
             {
               serverSource: EVAL_LAUNCH_SERVER_SOURCE,
-              projectId: claimed.projectId!,
-              environmentId: claimed.environmentId!,
+              projectId,
+              environmentId,
             },
           );
           return {
@@ -243,7 +277,7 @@ export async function executeClaimedRun(
           };
         })()
       : await fetchSuiteRunServerSelection(
-          bearer,
+          bearerNow(bearer),
           claimed.suiteId,
           undefined,
           "authorized",
@@ -264,18 +298,18 @@ export async function executeClaimedRun(
       { failClosed: true },
     );
 
-    // The schedule runs as its owner, so it uses the owner's saved accounts.
-    const connectionIdSets = await loadSuiteConnectionIdSets(convex, {
+    const accountPlan = await loadEvalRunAccountPlan(convex, {
       suiteId: claimed.suiteId,
+      serverIds: selection.serverIds,
     });
     // Empty caller context = plain-JWT caller (locked by caller-context
     // contract test); the delegated JWT is the principal. There is no request
     // to read the XAA issuer from, so it comes from the deployment's public
     // origin; without one, a `useXaa` server fails closed in the builder.
-    const authorized = await createAuthorizedManager(
+    const open = (connectionIdSets?: ConnectionIdSets) => createAuthorizedManager(
       {},
       bearer,
-      claimed.projectId,
+      projectId,
       selection.serverIds,
       WEB_CALL_TIMEOUT_MS,
       undefined,
@@ -288,7 +322,15 @@ export async function executeClaimedRun(
         xaaPolicy: xaaPolicyFromMcpProfile(hostConfig.mcpProfile),
       },
     );
-    manager = authorized.manager;
+    const connectionIdSets = await loadSuiteConnectionIdSets(convex, {
+      suiteId: claimed.suiteId,
+      serverIds: selection.serverIds,
+    });
+    const groups = accountPlan
+      ? await openEvalAccountGroups(accountPlan, async (sets) => (await open(sets)).manager, connectionIdSets)
+      : undefined;
+    closeAccounts = groups?.close;
+    manager = groups?.first ?? (await open(connectionIdSets)).manager;
 
     let prepared: PreparedEvalRun;
     try {
@@ -302,6 +344,9 @@ export async function executeClaimedRun(
         convexAuthToken: bearer,
         suiteRerun: true,
         source: "schedule",
+        ...(groups && accountPlan ? {
+          evalAccounts: { plan: accountPlan, managerForCase: groups.forCase },
+        } : {}),
         ...(claimed.environmentId
           ? { environmentId: claimed.environmentId }
           : {}),
@@ -374,7 +419,10 @@ export async function executeClaimedRun(
       failureReason: classifyFailure(translateEnvironmentResolveError(error)),
     });
   } finally {
-    if (manager) {
+    jobBearer?.stop();
+    if (closeAccounts) {
+      await closeAccounts();
+    } else if (manager) {
       await manager.disconnectAllServers().catch(() => {});
     }
   }

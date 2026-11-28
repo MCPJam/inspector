@@ -10,8 +10,8 @@ import {
   runEvalSuiteOperation,
   showServersOperation,
 } from "@mcpjam/sdk/platform";
+import { compactModelCatalogForModel } from "@mcpjam/sdk/internal/mcp-surface";
 import {
-  compactModelCatalogForModel,
   EXCLUDED_FROM_CATALOG,
   PLATFORM_CATALOG_OPERATIONS,
   PLATFORM_TOOL_WIDGET_VIEWS,
@@ -158,6 +158,13 @@ const PLAIN_TOOLS = [
   "list_server_revisions",
   "get_server_revision",
   "diff_server_revisions",
+  "create_mock_server",
+  "update_mock_server",
+  "get_mock_server",
+  "patch_mock_server",
+  "refresh_mock_server",
+  "get_mock_forwarding_policy",
+  "set_mock_forwarding_policy",
   // Server accounts: metadata reads and the delete, no widget view.
   "list_server_accounts",
   "get_server_account",
@@ -507,6 +514,16 @@ describe("platform tool registration", () => {
       "list_server_revisions",
       "get_server_revision",
       "diff_server_revisions",
+      "create_mock_server",
+      "update_mock_server",
+      "get_mock_server",
+      "patch_mock_server",
+      "refresh_mock_server",
+      "open_mock_run",
+      "reset_mock_run",
+      "close_mock_run",
+      "get_mock_forwarding_policy",
+      "set_mock_forwarding_policy",
       "list_server_accounts",
       "get_server_account",
       "delete_server_account",
@@ -1259,6 +1276,41 @@ describe("runPlatformOperation", () => {
     expect(
       (result.structuredContent?.error as { requestId?: string }).requestId
     ).toBe("req_0123456789abcdef");
+  });
+
+  it("reports a guest mint failure, which never reaches the Platform API", async () => {
+    const onGuestMintFailed = vi.fn();
+    const result = (await runPlatformOperation(
+      { ...fakeToolContext(), onGuestMintFailed },
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(onGuestMintFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the agent by its clientInfo on what it launches, over its user agent", async () => {
+    const seen: Headers[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        seen.push(new Headers(init?.headers));
+        return Response.json({ data: [] });
+      })
+    );
+    await runPlatformOperation(
+      {
+        ...fakeToolContext({ bearerToken: "user-jwt", callerUserAgent: "node" }),
+        callerClientName: "claude-code",
+      },
+      listProjectsOperation,
+      {}
+    );
+    expect(JSON.parse(seen[0]!.get("x-mcpjam-client") ?? "null")).toEqual({
+      kind: "mcp",
+      client: "claude-code",
+    });
   });
 
   it("tells the model when a usage-limit refusal lifts, in both channels", async () => {

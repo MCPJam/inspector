@@ -62,7 +62,8 @@ export async function completeHeadlessAuthorization({
           );
         }
 
-        return { code };
+        const iss = callbackUrl.searchParams.get("iss");
+        return { code, ...(iss ? { iss } : {}) };
       }
 
       currentUrl = nextUrl;

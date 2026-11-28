@@ -956,6 +956,27 @@ describe("useChatSession hosted mode", () => {
     });
   });
 
+  it.each(["chatgpt-web", "claude-web"] as const)(
+    "keeps an empty system prompt for %s and preserves explicit edits",
+    (harnessId) => {
+      const { result, rerender, unmount } = renderHook(
+        ({ hostLoaded }) => useChatSession({
+          selectedServers: [],
+          harnessModelTarget: hostLoaded ? { harnessId } : null,
+        }),
+        { initialProps: { hostLoaded: false } },
+      );
+      expect(result.current.systemPrompt.length).toBeGreaterThan(0);
+      rerender({ hostLoaded: true });
+      expect(result.current.systemPrompt).toBe("");
+      act(() => result.current.setSystemPrompt("My instructions"));
+      expect(result.current.systemPrompt).toBe("My instructions");
+      act(() => result.current.setSystemPrompt(""));
+      expect(result.current.systemPrompt).toBe("");
+      unmount();
+    },
+  );
+
   it("offers a Codex client only Codex models and never falls back to a Claude one", async () => {
     // The user's saved lead is a Claude model, which Codex cannot run.
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";

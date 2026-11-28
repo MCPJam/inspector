@@ -43,7 +43,7 @@ export function SidebarUser() {
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
-  const { isMobile } = useSidebar();
+  const { isMobile, setOpenMobile } = useSidebar();
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   // Set when the Notifications item is selected so the dropdown's
@@ -237,6 +237,12 @@ export function SidebarUser() {
           <NotificationsPanelContent
             side={isMobile ? "bottom" : "right"}
             align="end"
+            onNavigate={() => {
+              // The opened page would sit under the popover and the mobile
+              // sidebar sheet.
+              setNotificationsOpen(false);
+              if (isMobile) setOpenMobile(false);
+            }}
           />
         </Popover>
       </SidebarMenuItem>

@@ -1,3 +1,5 @@
+import { makeFunctionReference } from "convex/server";
+import { ConvexError } from "convex/values";
 /**
  * ENVIRONMENT quick runs — the case editor's Run executing an environment.
  *
@@ -40,6 +42,7 @@ import {
 } from "../environments/resolve.js";
 import { resolveQuickRunPluginServers } from "../plugins/run-plugin-servers.js";
 import { asBillingRouteError } from "./recorder.js";
+import type { QuickRunAccounts } from "./suite-account-choices.js";
 import { asAiRefusalRouteError } from "../../utils/ai-refusal-route-error.js";
 import {
   buildPinnedSkillSource,
@@ -229,6 +232,14 @@ export function assertEnvironmentQuickRunModel(
  */
 export function translateQuickRunCommitError(error: unknown): unknown {
   if (error instanceof WebRouteError) return error;
+  if (error instanceof ConvexError) {
+    const data: unknown = error.data;
+    if (data && typeof data === "object" && "code" in data && "message" in data &&
+        typeof data.message === "string" &&
+        (data.code === "EVAL_ACCOUNT_PLAN_REQUIRED" || data.code === "EVAL_ACCOUNT_PLAN_CHANGED")) {
+      return new WebRouteError(409, ErrorCode.CONFLICT, data.message, { code: data.code });
+    }
+  }
   const billing = asBillingRouteError(error);
   if (billing) return billing;
   // The organization's AI-key policy refused the launch (its code and the
@@ -293,6 +304,40 @@ function isQuickRunExecution(value: unknown): value is QuickRunExecution {
  * Step 2: commit every attempt in one backend transaction, echoing the
  * preflight so the backend refuses anything that moved since.
  */
+export async function commitLegacyAccountQuickRun(
+  convexClient: Pick<ConvexHttpClient, "action">,
+  args: {
+    testCaseId: string;
+    testCaseSnapshot: Record<string, unknown>;
+    count: number;
+    startedAt: number;
+    idempotencyKey: string;
+    namedHostId?: string;
+    runtimeVenue?: "local" | "hosted";
+    accounts: QuickRunAccounts;
+  },
+): Promise<Pick<CommittedQuickRun, "iterationIds" | "replayed">> {
+  let response: { iterationIds?: unknown; replayed?: unknown } | null;
+  try {
+    const start = makeFunctionReference<
+      "action", typeof args, { iterationIds?: unknown; replayed?: unknown } | null
+    >("testSuites:startQuickRunIterations");
+    response = await convexClient.action(start, args);
+  } catch (error) {
+    throw translateQuickRunCommitError(error);
+  }
+  const iterationIds = Array.isArray(response?.iterationIds) ?
+    response.iterationIds.filter((id): id is string => typeof id === "string" && id.length > 0) : [];
+  if (iterationIds.length !== args.count) {
+    if (iterationIds.length && response?.replayed !== true) {
+      await failCommittedQuickRun(convexClient, iterationIds, "The backend did not commit all quick run attempts.");
+    }
+    throw new WebRouteError(502, ErrorCode.INTERNAL_ERROR,
+      "The backend could not record this quick run. Retry after the backend deploys.");
+  }
+  return { iterationIds, replayed: response?.replayed === true };
+}
+
 export async function commitEnvironmentQuickRun(
   convexClient: Pick<ConvexHttpClient, "action">,
   args: {
@@ -302,6 +347,7 @@ export async function commitEnvironmentQuickRun(
     startedAt: number;
     resolved: ResolvedEnvironmentForLaunch;
     idempotencyKey: string;
+    accounts?: QuickRunAccounts;
   },
 ): Promise<CommittedQuickRun> {
   let raw: unknown;
@@ -325,6 +371,7 @@ export async function commitEnvironmentQuickRun(
           expectedServerIds: environmentEffectiveServerIds(args.resolved),
         },
         idempotencyKey: args.idempotencyKey,
+        ...(args.accounts ? { accounts: args.accounts } : {}),
       },
     );
   } catch (error) {

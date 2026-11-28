@@ -22,6 +22,7 @@ export type SharedSuiteReport = {
   };
   groups?: Array<{ cases?: SavedReportCase[] }>;
   advisories?: unknown;
+  passedAdvisories?: unknown;
 };
 
 export type SharedConformanceArtifact = {

@@ -17,6 +17,8 @@ const UPGRADE_REQUEST_REASON: Record<UpgradeOrigin, string> = {
     "I've hit the free plan's eval iteration limit on MCPJam and can't run evals until it resets.",
   native_harness:
     "Our organization has used its free native harness turns on MCPJam, so our clients can't run on their native harnesses until we upgrade.",
+  sidebar:
+    "I'd like our organization on a paid MCPJam plan, so our credits roll over and we can top up when we run low.",
 };
 
 /**

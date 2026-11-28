@@ -17,7 +17,7 @@ import { harnessRecipeIdentity } from "../../harness-bake";
 import { hostedBootstrapRuntimes } from "../../prepare-conversation-box";
 import type { HarnessId } from "../../registry";
 import { sessionProxyInputs } from "../../session-mcp-config";
-import { CASES, OWN_MODEL, assertFullMatrix } from "./support";
+import { CASES, NO_BOX, OWN_MODEL, assertFullMatrix } from "./support";
 
 const tools = vi.hoisted(() => ({
   list: [{ name: "read", inputSchema: { type: "object" } }] as Array<
@@ -62,6 +62,8 @@ const STARTS_COLD: Partial<Record<HarnessId, string>> = {
     "a CLI kept between messages would hold the turn's Cursor login after the turn removed it",
   opencode:
     "its bridge keeps the OpenCode server it started until openCodeConfig changes, so a kept agent would keep the previous message's tools",
+  "claude-web": "no agent runs in a box; claude.ai holds the conversation",
+  "chatgpt-web": "no agent runs in a box; chatgpt.com holds the conversation",
 };
 
 /** Runtimes whose MCP servers are not in their own configuration, and why. */
@@ -83,6 +85,12 @@ beforeEach(() => {
 
 describe.each(CASES)("$id lifecycle", ({ id, adapter }) => {
   it("prepares its box before Send with exactly the recipes the template bakes", async () => {
+    if (NO_BOX[id]) {
+      // Named with its reason in `NO_BOX`: nothing to prepare, nothing baked.
+      expect(hostedBootstrapRuntimes(id, OWN_MODEL[id])).toEqual([]);
+      expect(baked.recipes.some((recipe) => recipe.harnessId === id)).toBe(false);
+      return;
+    }
     const identities = await Promise.all(
       hostedBootstrapRuntimes(id, OWN_MODEL[id]).map(async (runtime) =>
         harnessRecipeIdentity((await runtime.getBootstrap!({}))!),
@@ -104,6 +112,12 @@ describe.each(CASES)("$id lifecycle", ({ id, adapter }) => {
   });
 
   it("keeps one MCP configuration for a chat lane, changed only by its server's tools", async () => {
+    if (NO_BOX[id]) {
+      // The vendor's app keeps its own connector, pointed at the forwarding
+      // endpoint; MCPJam writes no configuration anywhere.
+      expect(adapter.mcpNativeDelivery).toBe("web-connector");
+      return;
+    }
     if (TAKES_TOOLS_PER_MESSAGE(id)) {
       // MCPJam's own client lists the tools and hands them over with each
       // message, so there is no configuration to keep.

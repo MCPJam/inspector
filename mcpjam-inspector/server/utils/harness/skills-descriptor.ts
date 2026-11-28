@@ -71,6 +71,17 @@ const CURSOR_HOME =
 
 const COPILOT_BUILTIN_SKILL_NAMES = new Set<string>(COPILOT_BUILTIN_SKILLS);
 
+/** A website has no box and no skill folder: it takes no skills by any name. */
+const WEB_CLIENT_SKILLS: HarnessSkillsDescriptor = {
+  writeFolder: "",
+  trailingNewline: false,
+  readFolders: [],
+  acceptsName: () => false,
+  frontmatter: { descriptionMaxLength: DESCRIPTION_MAX_LENGTH, strictYaml: true },
+  headlessLoading: "native",
+  serverSkills: "box-files",
+};
+
 export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
   // Reads `~/.claude/skills` and `.claude/skills` up to the repository root,
   // stopping below the home. Acts on `allowed-tools`, which is never written.
@@ -172,6 +183,8 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
     headlessLoading: "bridge-opt-in",
     serverSkills: "harness-tools",
   },
+  "claude-web": WEB_CLIENT_SKILLS,
+  "chatgpt-web": WEB_CLIENT_SKILLS,
 };
 
 /**

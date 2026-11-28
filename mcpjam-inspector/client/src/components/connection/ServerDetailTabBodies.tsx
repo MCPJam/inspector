@@ -1,4 +1,5 @@
 import { Loader2 } from "lucide-react";
+import { useId } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Switch } from "@mcpjam/design-system/switch";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
@@ -10,7 +11,6 @@ import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
-import { ServerUrlChangeHistory } from "./ServerUrlChangeHistory";
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
 import type { ServerDetailController } from "./hooks/use-server-detail-controller";
 
@@ -92,6 +92,7 @@ export function ServerDetailConnectionControls({
         </span>
       </span>
       <Switch
+        aria-label="Server connection"
         checked={connection.isConnected}
         disabled={connection.toggleDisabled}
         onCheckedChange={connection.toggle}
@@ -110,23 +111,16 @@ export function ServerConfigTabBody({
 }) {
   const { form, protocol, projectId, hostedServerId } = controller;
   return (
-    <>
-      <EditServerFormContent
-        formState={form.state}
-        isDuplicateServerName={form.isDuplicateServerName}
-        projectId={projectId}
-        hostedServerId={hostedServerId}
-        projectXaaDefaultIdentity={projectXaaDefaultIdentity}
-        mcpProtocolVersionOverride={protocol.override}
-        hostDefaultMcpProtocolVersion={protocol.hostDefault}
-        onMcpProtocolVersionOverrideChange={protocol.onOverrideChange}
-      />
-      {/* MJ-003 AC 3: where this server has been repointed, and
-          whether that cleared credentials. Readable on every plan,
-          unlike the organization audit log. Renders nothing when
-          there is no history. */}
-      <ServerUrlChangeHistory serverId={hostedServerId} />
-    </>
+    <EditServerFormContent
+      formState={form.state}
+      isDuplicateServerName={form.isDuplicateServerName}
+      projectId={projectId}
+      hostedServerId={hostedServerId}
+      projectXaaDefaultIdentity={projectXaaDefaultIdentity}
+      mcpProtocolVersionOverride={protocol.override}
+      hostDefaultMcpProtocolVersion={protocol.hostDefault}
+      onMcpProtocolVersionOverrideChange={protocol.onOverrideChange}
+    />
   );
 }
 
@@ -136,31 +130,50 @@ export function ServerConfigTabBody({
  */
 export function ServerConfigSaveButton({ controller }: ControllerProps) {
   const { form, connection } = controller;
+  const hintId = useId();
   return (
-    <Button
-      type={form.offersReconnect ? "button" : "submit"}
-      onClick={
-        form.offersReconnect
-          ? () =>
-              void connection.connect({
-                allowInteractiveOAuthFlow: false,
-              })
-          : undefined
-      }
-      disabled={form.saveBlocked}
-      size="sm"
-    >
-      {form.isSaving || connection.isReconnecting ? (
-        <>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          {form.isSaving ? "Saving..." : "Reconnecting..."}
-        </>
-      ) : form.offersReconnect ? (
-        "Reconnect"
-      ) : (
-        "Save & Connect"
+    <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+      {form.saveHint && (
+        <p
+          ref={form.saveHintRef}
+          id={hintId}
+          role="status"
+          tabIndex={-1}
+          className="text-xs text-muted-foreground"
+        >
+          {form.saveHint}
+        </p>
       )}
-    </Button>
+      <Button
+        ref={form.saveButtonRef}
+        // The modal footer changes visibility with the tab. Do not transition
+        // inherited visibility, so the button can take focus as Config opens.
+        className="transition-colors"
+        type={form.offersReconnect ? "button" : "submit"}
+        onClick={
+          form.offersReconnect
+            ? () =>
+                void connection.connect({
+                  allowInteractiveOAuthFlow: false,
+                })
+            : undefined
+        }
+        aria-describedby={form.saveHint ? hintId : undefined}
+        disabled={form.saveBlocked}
+        size="sm"
+      >
+        {form.isSaving || connection.isReconnecting ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            {form.isSaving ? "Saving..." : "Reconnecting..."}
+          </>
+        ) : form.offersReconnect ? (
+          "Reconnect"
+        ) : (
+          "Save & Connect"
+        )}
+      </Button>
+    </div>
   );
 }
 
@@ -301,11 +314,15 @@ export function ServerClientsTabBody({
   );
 }
 
-/** Persisted snapshot revisions; works while disconnected. */
+/** URL changes, command changes, and revisions, available while disconnected. */
 export function ServerHistoryTabBody({ controller }: ControllerProps) {
   const { projectId, hostedServerId } = controller;
   if (!projectId || !hostedServerId) return null;
   return (
-    <ServerHistoryContent projectId={projectId} serverId={hostedServerId} />
+    <ServerHistoryContent
+      key={hostedServerId}
+      projectId={projectId}
+      serverId={hostedServerId}
+    />
   );
 }

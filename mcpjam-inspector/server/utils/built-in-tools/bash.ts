@@ -45,12 +45,13 @@ import {
   type BashRunner,
   type RunComputerCommandResult,
 } from "../computers/run-command.js";
+import { authHeaderNow, type AuthHeaderSource } from "../run-bearer.js";
 
 export const BASH_TOOL_NAME = "bash";
 
 export interface BashToolOptions {
   /** Bearer authorization forwarded to Convex (already in scope). */
-  authHeader: string;
+  authHeader: AuthHeaderSource;
   /** Project whose (project, user) computer this turn runs on. */
   projectId: string;
   /**
@@ -151,7 +152,7 @@ export function buildBashTool(
         );
       }
       const execArgs = {
-        authHeader: opts.authHeader,
+        authHeader: authHeaderNow(opts.authHeader),
         projectId: opts.projectId,
         executionScope: opts.executionScope,
         command,
@@ -162,7 +163,10 @@ export function buildBashTool(
       };
       if (engine === "e2b") {
         return annotate(
-          await runComputerCommand({ ...execArgs, source: "chat" }, runner)
+          await runComputerCommand(
+            { ...execArgs, authHeader: opts.authHeader, source: "chat" },
+            runner,
+          )
         );
       }
       if (engine === "delegated") {

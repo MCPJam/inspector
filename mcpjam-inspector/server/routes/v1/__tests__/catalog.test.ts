@@ -15,7 +15,8 @@ vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
 }));
 
-vi.mock("../../../utils/analytics.js", () => ({
+vi.mock("../../../utils/analytics.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/analytics.js")>()),
   captureServerEvent: captureServerEventMock,
 }));
 

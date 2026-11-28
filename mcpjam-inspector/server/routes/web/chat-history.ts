@@ -143,12 +143,52 @@ async function proxyPost(
 chatHistory.get("/list", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
-    const { projectId, status, limit, before } = c.req.query();
+    const { projectId, status, limit, before, includeMultiModelSiblings } =
+      c.req.query();
     return await proxyGet(bearerToken, "/direct-chat/list", {
       projectId,
       status,
       limit,
       before,
+      includeMultiModelSiblings,
+    });
+  }),
+);
+
+// GET /chat-history/group?groupId=...&projectId=...
+chatHistory.get("/group", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const { groupId, projectId } = c.req.query();
+    if (!groupId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "groupId is required",
+      );
+    }
+    return await proxyGet(bearerToken, "/direct-chat/group", {
+      groupId,
+      projectId,
+    });
+  }),
+);
+
+// GET /chat-history/group?groupId=...&projectId=...
+chatHistory.get("/group", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const { groupId, projectId } = c.req.query();
+    if (!groupId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "groupId is required",
+      );
+    }
+    return await proxyGet(bearerToken, "/direct-chat/group", {
+      groupId,
+      projectId,
     });
   }),
 );

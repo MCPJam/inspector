@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { convexErrMessage } from "@/lib/convex-error";
+import { runsOnMcpjamInstead, suiteOnMcpjamUrl } from "@/lib/eval-launch-reason";
 import {
   aiLaunchRefusalOf,
   type AiLaunchProblem,
@@ -21,11 +22,11 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { ConfiguredSuiteRunReview } from "./suite-run-matrix";
 import {
   hasBlockingPreflight,
-  RunPreflightNotices,
   scopePreflightToEnvironments,
   scopePreflightToHosts,
   type RunPreflightState,
 } from "./suite-run-preflight";
+import { RunPreflightNotices } from "./run-preflight-notices";
 import type { CaseRunLaunchOptions, EvalCase, EvalSuite } from "../evals/types";
 import {
   savedCaseTargets,
@@ -35,6 +36,9 @@ import type { CaseLaunchTarget } from "./case-workspace/pending-case-launches";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import { RunsAsLine } from "./suite-runs-as";
 import { scopeAccountPreflight } from "./suite-run-account-preflight";
+import { ServerLabel } from "../evals/account-picker";
+import { SharedServerAccountRows } from "../evals/shared-account-pickers";
+import type { SharedEvalAccountSelection } from "@/lib/evals/eval-accounts";
 
 type ReviewEnvironment = Pick<
   ProjectEnvironmentView,
@@ -202,17 +206,20 @@ export function SuiteRunReviewContent({
     ),
   );
   const [starting, setStarting] = useState(false);
+  const [runAccounts, setRunAccounts] = useState<SharedEvalAccountSelection[]>([]);
   const [error, setError] = useState<string | null>(null);
   // The backend's launch refusal under the org's AI key policy lists every
   // dependency that can't run on the organization's providers.
   const [launchProblems, setLaunchProblems] = useState<AiLaunchProblem[]>([]);
+  const [cloudOnly, setCloudOnly] = useState(false);
   const [connecting, setConnecting] = useState(false);
   // A failed start's reason is about that setup; a different one gets a
   // fresh try.
   useEffect(() => {
     setError(null);
     setLaunchProblems([]);
-  }, [iterations, selected, matrix?.signature]);
+    setCloudOnly(false);
+  }, [iterations, selected, runAccounts, matrix?.signature]);
   const lock = useRef(false);
   const count = Number(iterations);
   const validCount = Number.isInteger(count) && count >= 1 && count <= 10;
@@ -235,10 +242,16 @@ export function SuiteRunReviewContent({
           suite,
           selectedIds,
         );
+  const sharedServers = scopedPreflight?.sharedServers;
+  const sharedServerName = scopedPreflight?.sharedServerName;
+  const unavailableRunAccounts = runAccounts.filter((account) =>
+    !sharedServers?.some((server) => server.serverId === account.serverId),
+  );
   // The notices say which server; this only has to stop the launch.
   const disabledReason =
     blockedReason ??
     scopedPreflight?.outOfCreditsReason ??
+    (unavailableRunAccounts.length ? "Review your MCP server account choices." : null) ??
     (hasBlockingPreflight(scopedPreflight)
       ? "Fix the setup problem above before running."
       : null);
@@ -280,6 +293,7 @@ export function SuiteRunReviewContent({
               hostNamesById,
             }),
           count,
+          runAccounts,
         );
       } catch (failure) {
         setError(
@@ -293,6 +307,7 @@ export function SuiteRunReviewContent({
     setStarting(true);
     setError(null);
     setLaunchProblems([]);
+    setCloudOnly(false);
     try {
       await onStart(
         matrix
@@ -302,7 +317,11 @@ export function SuiteRunReviewContent({
               activeTargets.map((target) => target.id),
             ),
         // Failures come back here to show inline, not as a toast behind it.
-        { iterationOverride: count, throwOnFailure: true },
+        {
+          iterationOverride: count,
+          throwOnFailure: true,
+          ...(runAccounts.length ? { runAccounts } : {}),
+        },
       );
       if (!isCaseRun) rememberIterations(suite._id, count);
       onClose();
@@ -313,6 +332,8 @@ export function SuiteRunReviewContent({
       // "[CONVEX M(…)] Server Error".
       const refusal = aiLaunchRefusalOf(failure);
       setLaunchProblems(refusal?.problems ?? []);
+      // A suite only MCPJam's runners can run: link to it there.
+      setCloudOnly(runsOnMcpjamInstead(failure));
       setError(
         refusal?.message ??
           convexErrMessage(failure, "Could not start this run. Try again."),
@@ -348,19 +369,44 @@ export function SuiteRunReviewContent({
               {caseTitle || "Untitled test case"}
             </p>
           )}
+          {scopedPreflight?.serverNames?.length || onEditSettings ? (
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-sm">
+              <span
+                className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
+                data-testid="run-review-servers"
+              >
+                {scopedPreflight?.serverNames?.map((name, index) => (
+                  <span key={name} className="inline-flex min-w-0 items-center gap-2">
+                    {index > 0 ? <span aria-hidden className="text-muted-foreground">·</span> : null}
+                    <ServerLabel name={name} />
+                  </span>
+                ))}
+              </span>
+              {onEditSettings && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-muted-foreground"
+                  disabled={starting}
+                  onClick={() => {
+                    onClose();
+                    onEditSettings();
+                  }}
+                >
+                  <Settings2 className="size-4" aria-hidden />
+                  Suite settings
+                </Button>
+              )}
+            </div>
+          ) : null}
         </SheetHeader>
         <div className="flex-1 space-y-5 overflow-y-auto p-6">
-          <RunIterationControl
-            value={iterations}
-            onChange={setIterations}
-            disabled={starting}
-          />
           {matrix ? (
             matrix.render(starting)
           ) : (
             <section>
               <h3 className="text-sm font-semibold">
-                Clients × models{" "}
+                Clients and models{" "}
                 <span className="ml-1 font-mono text-xs font-normal text-muted-foreground">
                   {activeTargets.length}/{targets.length}
                 </span>
@@ -413,7 +459,38 @@ export function SuiteRunReviewContent({
               )}
             </section>
           )}
-          <RunsAsLine entries={scopedPreflight?.runsAs} />
+          <RunsAsLine
+            entries={scopedPreflight?.runsAs?.filter(
+              (entry) =>
+                !sharedServers?.some((server) => server.serverId === entry.serverId),
+            )}
+          />
+          {sharedServers?.length && sharedServerName ? (
+            <section data-testid="run-accounts-shared">
+              <h3 className="mb-3 text-sm font-semibold">
+                {sharedServers.length > 1 ? "Accounts" : "Account"}
+              </h3>
+              <SharedServerAccountRows
+                servers={sharedServers}
+                serverName={sharedServerName}
+                selections={runAccounts}
+                onChange={setRunAccounts}
+                disabled={starting}
+                suiteDefaults={suite.accounts}
+                cases={cases}
+              />
+            </section>
+          ) : null}
+          {unavailableRunAccounts.length ? (
+            <div className="text-sm" role="alert">
+              Some selected accounts are outside the current setup.
+              <Button type="button" variant="link" onClick={() => setRunAccounts((accounts) =>
+                accounts.filter((account) => !unavailableRunAccounts.includes(account)),
+              )}>
+                Clear those choices
+              </Button>
+            </div>
+          ) : null}
           {scopedPreflight && (
             <RunPreflightNotices
               preflight={scopedPreflight}
@@ -429,20 +506,11 @@ export function SuiteRunReviewContent({
               }
             />
           )}
-          {onEditSettings && (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={starting}
-              onClick={() => {
-                onClose();
-                onEditSettings();
-              }}
-            >
-              <Settings2 className="size-4" aria-hidden />
-              Suite settings
-            </Button>
-          )}
+          <RunIterationControl
+            value={iterations}
+            onChange={setIterations}
+            disabled={starting}
+          />
         </div>
         <div className="space-y-4 border-t border-border bg-muted/20 p-6">
           <div className="flex items-baseline justify-between gap-4">
@@ -480,6 +548,13 @@ export function SuiteRunReviewContent({
               <p>{error ?? disabledReason}</p>
               {error ? (
                 <AiLaunchProblemsList problems={launchProblems} />
+              ) : null}
+              {error && cloudOnly ? (
+                <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
+                  <a href={suiteOnMcpjamUrl(suite._id)} target="_blank" rel="noreferrer">
+                    Open on MCPJam
+                  </a>
+                </Button>
               ) : null}
             </div>
           )}

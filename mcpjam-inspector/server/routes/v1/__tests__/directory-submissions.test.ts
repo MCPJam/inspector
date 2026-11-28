@@ -814,6 +814,24 @@ describe("v1 directory submissions", () => {
       });
     });
 
+    it("refuses a mock server by name before a run is requested", async () => {
+      authorizeServerMock.mockResolvedValue({
+        authorized: true,
+        serverConfig: { transportType: "http", url: "https://placeholder.invalid/mcp", mock: { mockId: "m1" } },
+      });
+      const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { idempotencyKey: "r1" },
+      });
+      expect(res.status).toBe(422);
+      expect(((await res.json()) as { message: string }).message).toContain(
+        "Directory submissions do not take mock servers",
+      );
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ submissionId: SUBMISSION }),
+      );
+    });
+
     it("grades the submission's own server and forwards the submission", async () => {
       const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
         body: { idempotencyKey: "r1" },

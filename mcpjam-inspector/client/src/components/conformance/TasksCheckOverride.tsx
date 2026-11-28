@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import {
+  taskCheckUsesInput,
   isTasksToolCheck,
   MCP_TASKS_TOOL_CHECK_IDS,
   type MCPTasksCheckId,
@@ -15,7 +16,6 @@ import type {
   ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
 
-const UPDATE = "tasks-update-ack-shape";
 const HINTS: Partial<Record<MCPTasksCheckId, string>> = {
   "tasks-result-type-discipline":
     "Choose a tool that creates a task when Tasks support is declared.",
@@ -55,7 +55,7 @@ export function TasksSuiteDefaults({
   onChange,
   onValidChange,
 }: SettingsProps & {
-  onValidChange: (valid: boolean) => void;
+  onValidChange: (part: string, valid: boolean) => void;
 }) {
   return (
     <div className="my-3 space-y-2">
@@ -70,8 +70,18 @@ export function TasksSuiteDefaults({
           else delete next.tasksProbe;
           onChange(next);
         }}
-        onValidChange={onValidChange}
+        onValidChange={(valid) => onValidChange("tasksProbe", valid)}
       />
+      {probes.tasksProbe?.toolName && (
+        <TaskAnswersField
+          key={probes.tasksProbe.toolName}
+          probe={probes.tasksProbe}
+          onChange={(probe) => onChange({ ...probes, tasksProbe: probe })}
+          onInvalidChange={(invalid) =>
+            onValidChange("tasksProbeAnswers", !invalid)
+          }
+        />
+      )}
     </div>
   );
 }
@@ -116,17 +126,14 @@ function SelectedTaskOverride({
   onValidChange: (part: string, valid: boolean) => void;
 }) {
   const override = probes.tasksOverrides?.[checkId];
-  const effective = override ?? probes.tasksProbe;
+
   const setOverride = (probe?: ConformanceProbe) => {
     const tasksOverrides = { ...probes.tasksOverrides };
     if (probe) tasksOverrides[checkId] = probe;
     else delete tasksOverrides[checkId];
     onChange({ ...probes, tasksOverrides });
   };
-  useEffect(
-    () => () => onValidChange(`${checkId}:answers`, true),
-    [checkId],
-  );
+  useEffect(() => () => onValidChange(`${checkId}:answers`, true), [checkId]);
   return (
     <div className="space-y-2">
       <CheckToolField
@@ -137,19 +144,15 @@ function SelectedTaskOverride({
         inheritLabel="Use suite default"
         checkTitle={checkTitle}
         hint={HINTS[checkId]}
-        keepAnswers={checkId === UPDATE}
+        keepAnswers={taskCheckUsesInput(checkId)}
         onOverrideChange={setOverride}
         onValidChange={(valid) => onValidChange(checkId, valid)}
       />
-      {checkId === UPDATE && effective?.toolName ? (
+      {taskCheckUsesInput(checkId) && override?.toolName ? (
         <TaskAnswersField
-          key={`${override ? "custom" : "default"}:${effective.toolName}`}
-          probe={effective}
-          onChange={(probe) =>
-            override
-              ? setOverride(probe)
-              : onChange({ ...probes, tasksProbe: probe })
-          }
+          key={override.toolName}
+          probe={override}
+          onChange={setOverride}
           onInvalidChange={(invalid) =>
             onValidChange(`${checkId}:answers`, !invalid)
           }

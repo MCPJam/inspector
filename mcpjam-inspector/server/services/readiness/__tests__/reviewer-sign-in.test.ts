@@ -206,7 +206,8 @@ describe("rehearseReviewerSignIn", () => {
           features: [...features],
         },
       );
-      expect((await sign(deps)).kind).not.toBe("connected");
+      expect((await sign(deps)).kind).toBe("waiting-for-person");
+      expect(deps.connect.prepare).toHaveBeenCalledTimes(1);
       expect(run).not.toHaveBeenCalled();
       expect(writes.at(-1)?.stage?.stage).toBe(stage);
       expect(deps.desktop.release).toHaveBeenCalledTimes(1);
@@ -255,7 +256,14 @@ describe("the desktop is released on every path", () => {
   it("when the desktop or the connection cannot be prepared", async () => {
     const first = fakes(async () => ({ kind: "callback", url: CALLBACK }));
     first.deps.desktop.reserve.mockRejectedValueOnce(new Error("no box"));
-    expect(await sign(first.deps)).toMatchObject({ kind: "failed" });
+    expect(await sign(first.deps)).toMatchObject({
+      kind: "waiting-for-person",
+      reason: expect.stringContaining("No password was entered by this run"),
+      action: expect.stringContaining("Finish reviewer sign-in"),
+    });
+    expect(first.deps.connect.prepare).toHaveBeenCalledTimes(1);
+    expect(first.run).not.toHaveBeenCalled();
+    expect(first.deps.desktop.release).toHaveBeenCalledTimes(1);
     const second = fakes(async () => ({ kind: "callback", url: CALLBACK }));
     second.deps.connect.prepare.mockRejectedValueOnce(
       new Error("discovery failed"),

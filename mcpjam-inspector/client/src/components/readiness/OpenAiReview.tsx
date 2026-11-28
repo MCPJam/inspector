@@ -193,6 +193,8 @@ export function OpenAiReview({
             step={step}
             projectId={view.projectId}
             submissionId={view.id}
+            resultsRunId={view.resultsRunId}
+            steps={view.steps}
             values={session.values}
             onAnswer={session.setAnswer}
           />

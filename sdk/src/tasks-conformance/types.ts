@@ -4,20 +4,18 @@ import type {
 } from "../conformance-outcome.js";
 import type { ConformanceProfileStamp } from "../conformance-profile.js";
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
-import type { MCPReadinessWarning } from "../mcp-conformance/types.js";
+import type {
+  MCPPassedAdvice,
+  MCPReadinessWarning,
+} from "../mcp-conformance/types.js";
 import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 
-export const MCP_TASKS_CHECK_CATEGORIES = [
-  "dispatch",
-  "creation",
-  "lifecycle",
-] as const;
+// `dispatch` held only the two checks in {@link REMOVED_MCP_TASKS_CHECK_IDS}.
+export const MCP_TASKS_CHECK_CATEGORIES = ["creation", "lifecycle"] as const;
 
 export type MCPTasksCheckCategory = (typeof MCP_TASKS_CHECK_CATEGORIES)[number];
 
 export const MCP_TASKS_CHECK_IDS = [
-  "tasks-wire-resolvable",
-  "tasks-declaration-hygiene",
   "tasks-result-type-discipline",
   "tasks-undeclared-creation-refused",
   "tasks-undeclared-capability-rejected",
@@ -60,7 +58,17 @@ export type MCPTasksToolCheckId = (typeof MCP_TASKS_TOOL_CHECK_IDS)[number];
 export function isTasksToolCheck(id: string): id is MCPTasksToolCheckId {
   return MCP_TASKS_TOOL_CHECK_IDS.some((check) => check === id);
 }
+export function taskCheckUsesInput(id: string): boolean {
+  return [
+    "tasks-ttl-shape",
+    "tasks-inline-result",
+    "tasks-status-payload-shape",
+    "tasks-ttl-integer-shape",
+    "tasks-update-ack-shape",
+  ].includes(id);
+}
 export interface MCPTasksToolSetup {
+  inputResponses?: Record<string, unknown>;
   toolName: string;
   toolArguments?: Record<string, unknown>;
 }
@@ -87,6 +95,41 @@ export const RENAMED_MCP_TASKS_CHECK_IDS = {
 } as const satisfies Record<string, MCPTasksCheckId>;
 
 export type RenamedMCPTasksCheckId = keyof typeof RENAMED_MCP_TASKS_CHECK_IDS;
+
+/**
+ * Tasks check ids an older SDK accepted that were removed with nothing in
+ * their place, each with the reason. Kept so a config or `--check-id` list
+ * written for that SDK still runs its other checks instead of failing as
+ * unknown. Both graded MCPJam's own client, so a server could not fail them
+ * on their own logic; their rules are now client tests in CI
+ * (`sdk/tests/tasks-client-rules.*.test.ts`).
+ *
+ * - `tasks-wire-resolvable` passed whenever a protocol version was
+ *   negotiated, which every successful connection has, and `resolveTasksWire`
+ *   returns exactly one wire by construction. It passed on a server with no
+ *   tasks at all.
+ * - `tasks-declaration-hygiene` read only the requests MCPJam sent (whether
+ *   `params.task` and the tasks extension declaration went on the right
+ *   wire). Its rules (2025-11-25 tasks, Tool-Level Negotiation; ext-tasks,
+ *   Capability Negotiation) bind the client.
+ */
+export const REMOVED_MCP_TASKS_CHECK_IDS = {
+  "tasks-wire-resolvable":
+    "It graded MCPJam's own client: it passed whenever a protocol version was negotiated, even on a server with no tasks. The wire resolution it covered is now a client test in CI.",
+  "tasks-declaration-hygiene":
+    "It graded MCPJam's own client: it read only the requests MCPJam sent, so a server could not fail it. The rule (send params.task only on the 2025-11-25 wire, the tasks extension declaration only on the 2026-07-28 wire) is now a client test in CI.",
+} as const satisfies Record<string, string>;
+
+export type RemovedMCPTasksCheckId = keyof typeof REMOVED_MCP_TASKS_CHECK_IDS;
+
+/**
+ * The category an older SDK accepted that went away with its checks: every
+ * check in it is in {@link REMOVED_MCP_TASKS_CHECK_IDS}.
+ */
+export const REMOVED_MCP_TASKS_CHECK_CATEGORIES = {
+  dispatch:
+    "Its two checks (tasks-wire-resolvable, tasks-declaration-hygiene) graded MCPJam's own client and were removed; their rules are client tests in CI.",
+} as const satisfies Record<string, string>;
 
 /**
  * The Tasks suite's advice channel: the extension's SHOULDs, typed with their
@@ -121,6 +164,11 @@ export interface MCPTasksUncheckedAdvice {
   id: MCPTasksReadinessId;
   title: string;
   reason: string;
+}
+
+/** Advice the run checked and the server already meets. */
+export interface MCPTasksPassedAdvice extends Omit<MCPPassedAdvice, "id"> {
+  id: MCPTasksReadinessId;
 }
 
 export type MCPTasksCheckStatus = "passed" | "failed" | "skipped";
@@ -181,9 +229,13 @@ export type MCPTasksConformanceConfig = MCPServerConfig & {
   __suppressTelemetry?: boolean;
   /**
    * Run only these checks. A renamed id
-   * ({@link RENAMED_MCP_TASKS_CHECK_IDS}) runs the check under its new name.
+   * ({@link RENAMED_MCP_TASKS_CHECK_IDS}) runs the check under its new name. A
+   * removed id ({@link REMOVED_MCP_TASKS_CHECK_IDS}) is dropped: nothing runs
+   * in its place.
    */
-  checkIds?: (MCPTasksCheckId | RenamedMCPTasksCheckId)[];
+  checkIds?: (
+    MCPTasksCheckId | RenamedMCPTasksCheckId | RemovedMCPTasksCheckId
+  )[];
   /**
    * Report only this advice. Absent ⇒ all of it; empty ⇒ none. The advice
    * comes from checks that already run, so leaving it out sends nothing less.
@@ -252,6 +304,8 @@ export interface MCPTasksConformanceResult {
   readiness?: MCPTasksReadinessWarning[];
   /** Picked advice this run could not judge. Absent when there is none. */
   uncheckedAdvice?: MCPTasksUncheckedAdvice[];
+  /** Advice the run checked and found nothing to change. Absent when none. */
+  passedAdvice?: MCPTasksPassedAdvice[];
   summary: string;
   durationMs: number;
   categorySummary: Record<

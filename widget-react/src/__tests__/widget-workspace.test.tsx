@@ -447,8 +447,11 @@ describe("workspace-owned widget surfaces", () => {
       maxInstances: 1,
       maxIdentities: 2,
     });
-    // Well past the old lifetime cap: each closed App frees its identity.
-    for (let i = 0; i < 2100; i += 1) {
+    // Several times both caps: a registry that counted every bridge ever
+    // registered would refuse the second or third. Each closed App frees its
+    // identity. Every pass awaits a SHA-256 on the libuv threadpool, so a
+    // count in the thousands times out on a loaded machine.
+    for (let i = 0; i < 10; i += 1) {
       const bridgeId = `bridge-${i}`;
       await registry
         .getState()
@@ -460,6 +463,27 @@ describe("workspace-owned widget surfaces", () => {
     }
     expect(registry.getState().instancesByBridgeId.size).toBe(0);
     expect(registry.getState().aliases.size).toBe(0);
+  });
+
+  it("frees an identity when its registration settles, with the bridge still open", async () => {
+    const registry = createAppToolsRegistry({
+      maxInstances: 3,
+      maxIdentities: 2,
+    });
+    // No bridge closes here, so only settlement can free an identity for the
+    // third registration.
+    for (let i = 0; i < 3; i += 1) {
+      await registry
+        .getState()
+        .registerInstance(
+          instance(`open-${i}`, { parentToolCallId: `open-call-${i}` })
+        );
+    }
+    expect([...registry.getState().instancesByBridgeId.keys()]).toEqual([
+      "open-0",
+      "open-1",
+      "open-2",
+    ]);
   });
 
   it("still invalidates a registration that is hashing when its bridge closes", async () => {

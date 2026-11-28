@@ -162,12 +162,14 @@ describe("review-surface snapshots redact and bound", () => {
       config: { secret: SECRET },
     }));
     const snapshot = buildCaniuseCapabilitySnapshot({
-      capabilitySlug: "elicitation",
-      capabilityLabel: "Elicitation",
+      capabilitySlug: "event-delivery",
+      capabilityLabel: "MCP Events",
+      slice: "poll",
       rows,
     });
     expectNoSecrets(snapshot);
-    expect(snapshot.capability).toBe("Elicitation");
+    expect(snapshot.capability).toBe("MCP Events");
+    expect(snapshot.slice).toBe("poll");
     expect(snapshot.hosts).toHaveLength(REVIEW_SNAPSHOT_MAX_ITEMS);
     expect(snapshot.hostCount).toBe(40);
   });

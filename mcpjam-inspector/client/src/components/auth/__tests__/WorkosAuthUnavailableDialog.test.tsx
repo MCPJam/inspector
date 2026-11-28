@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WorkosAuthUnavailableDialog } from "../WorkosAuthUnavailableDialog";
-import { InviteTeamSignUpDialog } from "../InviteTeamSignUpDialog";
+import { FeatureSignUpNudgeDialog } from "../FeatureSignUpNudgeDialog";
 import { useWorkosAuthUnavailableStore } from "@/stores/workos-auth-unavailable-store";
 
 beforeEach(() => useWorkosAuthUnavailableStore.getState().dismiss());
@@ -57,7 +57,7 @@ it("opens above an existing sign-up dialog and returns focus on Cancel", async (
   vi.stubGlobal("location", new URL("http://devhub.htb:6274/servers"));
   render(
     <>
-      <InviteTeamSignUpDialog isOpen onClose={vi.fn()} />
+      <FeatureSignUpNudgeDialog feature="swarms" isOpen onClose={vi.fn()} />
       <WorkosAuthUnavailableDialog />
     </>,
   );

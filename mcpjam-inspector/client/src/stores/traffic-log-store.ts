@@ -48,9 +48,11 @@ function describeHttpTarget(url: string): string {
 
 export type UiProtocol = "mcp-apps" | "openai-apps";
 /**
- * `webhook` rows are MCP Events feed entries the Events tab observed (a
- * delivery the inbox journalled, or a simulated one). They carry the journal
- * entry, which never holds a webhook secret or a viewer token (contract C8).
+ * `webhook` rows are MCP Events feed entries the Events tab observed, of any
+ * delivery mode (push, poll, webhook, or a simulated one), shown as "event".
+ * The id stays `webhook` because the Tracing filter reports it. They carry the
+ * journal entry, which never holds a webhook secret or a viewer token
+ * (contract C8).
  */
 export type McpServerLogKind = "rpc" | "oauth" | "http" | "webmcp" | "webhook";
 

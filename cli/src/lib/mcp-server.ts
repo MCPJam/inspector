@@ -24,12 +24,17 @@ import { redactForTelemetry } from "./redaction.js";
 import { summarizeServerDoctorTarget } from "./server-doctor.js";
 import { listToolsWithMetadata } from "./server-ops.js";
 import { createToolRunner, type OnToolCalled } from "./mcp-tool-runner.js";
+import { registerEvalTools, type ResolveEvalToolClient } from "./mcp-eval-tools.js";
 
 export interface McpJamMcpServerOptions {
   version: string;
   defaultTimeoutMs?: number;
   /** Told about each finished tool call, with no arguments or results. */
   onToolCalled?: OnToolCalled;
+  /** Also serve MCPJam's eval tools and their skill (`mcpjam mcp --evals`). */
+  evals?: boolean;
+  /** Replaces the CLI's own sign-in for the eval tools; for tests. */
+  resolveEvalClient?: ResolveEvalToolClient;
 }
 
 export interface McpJamMcpServerHandle {
@@ -68,6 +73,10 @@ const SERVER_INSTRUCTIONS = `This is the MCPJam CLI running locally as an MCP se
 Typical flow: connect_server (stdio command or HTTP url) -> list_tools / call_tool / list_resources / read_resource / list_prompts / get_prompt -> get_notifications to see what the target emitted -> disconnect_server. Connections stay open between calls, so notifications, list_changed events, and session state are observable across calls.
 
 For one-shot triage without managing a connection, use server_doctor (full diagnostic sweep, stdio or HTTP) or probe_server (HTTP-only reachability/auth probe). Tool results are JSON payloads about the target server; call_tool returns the target's raw CallToolResult, so check its "isError" field to detect tool-level failures. No MCPJam account is required.`;
+
+// The hosted MCP server's permalink lines, and where eval runs go from here.
+const EVAL_TOOLS_INSTRUCTIONS = `The eval tools (list_eval_suites, create_eval_suite, run_eval_suite, get_eval_run and the rest) are the hosted MCPJam MCP server's own. They use your MCPJam sign-in (mcpjam cloud login, or MCPJAM_API_KEY in this server's env) and run evals on the MCPJam server the CLI is signed in to, which can reach only HTTP servers saved in your project.
+Tool results may include a \`permalinks\` array; the text output repeats each one as a \`Label: https://…\` line. Those URLs carry the project they belong to. An MCPJam app URL built from an id alone has no project in it, so it opens whichever project the reader last selected rather than the one described.`;
 
 const targetConfigFields = {
   url: z
@@ -324,14 +333,22 @@ export function createMcpJamMcpServer(
         tools: {},
         extensions: SKILLS_EXTENSION_CAPABILITY,
       },
-      instructions: SERVER_INSTRUCTIONS,
+      instructions: options.evals
+        ? `${SERVER_INSTRUCTIONS.replace("No MCPJam account is required.", "Server debugging needs no MCPJam account.")}\n\n${EVAL_TOOLS_INSTRUCTIONS}`
+        : SERVER_INSTRUCTIONS,
     },
   );
 
   // Serve the skills that teach THIS surface — `mcp-inspector` interprets the
   // probe/doctor/OAuth output of the tools registered below, so an agent gets
   // the interpretation rules in the same connection as the tools.
-  registerSkillsSurface(server);
+  registerSkillsSurface(server, { evals: options.evals === true });
+  if (options.evals) {
+    registerEvalTools(server, {
+      onToolCalled: options.onToolCalled,
+      resolveClient: options.resolveEvalClient,
+    });
+  }
 
   server.registerTool(
     "connect_server",

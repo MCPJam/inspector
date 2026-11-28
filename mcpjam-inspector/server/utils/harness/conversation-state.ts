@@ -60,4 +60,7 @@ export const HARNESS_CONVERSATION_STATE: Record<
   },
   cursor: null,
   opencode: null,
+  // The conversation lives on the vendor's servers, in the web account.
+  "claude-web": null,
+  "chatgpt-web": null,
 };

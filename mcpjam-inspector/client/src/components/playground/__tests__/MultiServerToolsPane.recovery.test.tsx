@@ -1,19 +1,23 @@
 import type { AggregatedToolsState } from "@/hooks/use-aggregated-tools";
 import { beforeEach, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MultiServerToolsPaneInner } from "../panes/MultiServerToolsPane";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 
 const mocks = vi.hoisted(() => ({
   flat: [] as AggregatedToolsState["flat"],
+  errorByServer: {} as AggregatedToolsState["errorByServer"],
   execute: vi.fn(),
+  refetch: vi.fn(),
 }));
 vi.mock("@/hooks/use-aggregated-tools", () => ({
   useAggregatedTools: () => ({
     flat: mocks.flat,
     collidingNames: [],
     loadingByServer: {},
-    refetch: vi.fn(),
+    errorByServer: mocks.errorByServer,
+    refetch: mocks.refetch,
   }),
 }));
 vi.mock("@/state/app-state-context", () => ({
@@ -41,8 +45,66 @@ vi.mock("@/components/ui-playground/ParametersForm", () => ({
 beforeEach(() => {
   useUIPlaygroundStore.getState().reset();
   mocks.flat = [];
+  mocks.errorByServer = {};
   mocks.execute.mockReset();
+  mocks.refetch.mockReset();
 });
+
+it("identifies a server whose tool listing failed and lets the user refresh", () => {
+  mocks.errorByServer = { bench: "Upstream failure" };
+  const { rerender } = render(
+    <MultiServerToolsPaneInner activeServerNames={["bench"]} />,
+  );
+
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Couldn't load tools from bench. Use Refresh tools to try again.",
+  );
+  fireEvent.click(screen.getByTitle("Refresh tools"));
+  expect(mocks.refetch).toHaveBeenCalledOnce();
+
+  mocks.errorByServer = {};
+  mocks.flat = [
+    {
+      serverId: "bench",
+      toolName: "echo",
+      tool: { name: "echo", inputSchema: { type: "object" } },
+    },
+  ];
+  rerender(<MultiServerToolsPaneInner activeServerNames={["bench"]} />);
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("button", { name: /^echo\b/ })).toBeInTheDocument();
+});
+
+it("lets Enter activate Reconnect when a working tool is still selected", async () => {
+  const user = userEvent.setup();
+  const reconnect = vi.fn();
+  mocks.flat = [
+    {
+      serverId: "bench",
+      toolName: "echo",
+      tool: { name: "echo", inputSchema: { type: "object" } },
+    },
+  ];
+  render(
+    <MultiServerToolsPaneInner
+      activeServerNames={["bench"]}
+      serverConnectionControl={
+        <button type="button" onClick={reconnect}>
+          Reconnect a server
+        </button>
+      }
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /^echo\b/ }));
+  fireEvent.click(screen.getByRole("button", { name: "echo", exact: true }));
+  expect(screen.getByRole("button", { name: "Run", exact: true })).toBeEnabled();
+
+  screen.getByRole("button", { name: "Reconnect a server" }).focus();
+  await user.keyboard("{Enter}");
+  expect(reconnect).toHaveBeenCalledOnce();
+  expect(mocks.execute).not.toHaveBeenCalled();
+});
+
 it("restores the exact server and inputs when its tools arrive, retaining them after refresh", () => {
   const servers = ["other", "bench"];
   const view = render(

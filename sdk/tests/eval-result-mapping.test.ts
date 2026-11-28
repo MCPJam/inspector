@@ -17,6 +17,11 @@ import {
   USER_VALUE_STAGES,
   type StageResultRow,
 } from "../src/contract/index.js";
+import { resolveScoreDefinition } from "../src/contract/derive";
+import {
+  toolExecutionScoreDefinition,
+  toolExecutionScoreResult,
+} from "../src/contract/platform-gates";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -309,7 +314,40 @@ describe("iterationToEvalResult", () => {
     ]);
   });
 
-  it("marks passed false when merged trace has errored tool span", () => {
+  // The run graded the iteration from its score rows, tool errors included;
+  // the mapper must not grade it a second time from the trace.
+  it("sends the iteration's own verdict when it carries platform rows", () => {
+    const p = makePrompt({
+      spans: [
+        {
+          id: "tool-1",
+          name: "create_view",
+          category: "tool",
+          startMs: 0,
+          endMs: 1,
+          status: "error",
+        },
+      ],
+    });
+    const definition = resolveScoreDefinition(
+      toolExecutionScoreDefinition({ gating: false })
+    );
+    const iteration = makeIteration({
+      passed: true,
+      prompts: [p],
+      scores: [
+        toolExecutionScoreResult(definition, {
+          trace: { messages: [], spans: p.getSpans() },
+        }),
+      ],
+    });
+    const result = iterationToEvalResult(iteration, 0, { caseTitle: "x" });
+    expect(result.passed).toBe(true);
+  });
+
+  // An older SDK's iteration has no row for the tool error, so the mapper
+  // keeps the check it applied before those rows existed.
+  it("fails an iteration without platform rows on an errored tool span", () => {
     const p = makePrompt({
       spans: [
         {
@@ -1263,7 +1301,7 @@ describe("iterationsToEvalResultInputs", () => {
     expect(results[0].passed).toBe(false);
   });
 
-  it("fails passed when trace has tool error span despite iteration.passed", () => {
+  it("sends iteration.passed rather than re-deriving it from a tool error span", () => {
     const iteration = makeIteration({
       passed: true,
       prompts: [
@@ -1283,7 +1321,7 @@ describe("iterationsToEvalResultInputs", () => {
     });
 
     const results = iterationsToEvalResultInputs("t", [iteration]);
-    expect(results[0].passed).toBe(false);
+    expect(results[0].passed).toBe(true);
   });
 
   it("preserves passed when failOnToolError is false", () => {

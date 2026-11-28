@@ -25,8 +25,10 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "eval-test-case-steps-editor",
   "evaluate-observe-first",
   "evaluate-run-result-pages",
+  "evaluator-library",
   "evals-start-recording",
   "guest-credit-wall-copy",
+  "home-setup-checklist",
   "hosted-browser-enabled",
   "integrations-tab",
   "learn-more-enabled",
@@ -41,9 +43,11 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "mcpjam-compatibility",
   "mcpjam-directory-readiness",
   "mcpjam-learning",
+  "mock-servers-enabled",
   "opencode-host-enabled",
   "org-model-gateways",
   "platform-post-launch",
+  "playground-multi-model-sessions",
   "plugin-extensions-enabled",
   "plugins-enabled",
   "pricing-feature-signin-required",
@@ -54,6 +58,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "scheduled-evals-enabled",
   "server-canvas",
   "shared-slack-channel-enabled",
+  "sidebar-pro-upgrade-card",
   "skills-enabled",
   "slack-agent-org-settings",
   "synthetic-monitors",
@@ -62,6 +67,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "trace-destinations",
   "unified-sessions-enabled",
   "unified-share-evals",
+  "web-clients-enabled",
 ] as const;
 
 export type ClientFeatureFlagKey = (typeof CLIENT_FEATURE_FLAG_KEYS)[number];

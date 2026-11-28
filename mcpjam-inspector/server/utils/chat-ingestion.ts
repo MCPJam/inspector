@@ -5,7 +5,7 @@ import type { PersistedRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
 import type { Context } from "hono";
-import type { ChatRewind } from "@/shared/chat-v2";
+import type { ChatMultiModelColumn, ChatRewind } from "@/shared/chat-v2";
 import type {
   ModelReasoningEffort,
   RequestedModelSelection,
@@ -26,6 +26,7 @@ import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { SecretScrubber } from "./secrets/secret-scrubber";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type { ChatOrigin } from "./chat-origin.js";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 /**
@@ -124,6 +125,7 @@ export interface ResumeConfig {
   requireToolApproval?: boolean;
   requireNativeToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServers?: string[];
@@ -184,6 +186,7 @@ export interface DirectHostConfig {
    * `undefined` so pre-feature rows stay byte-identical.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServerIds: string[];
@@ -211,6 +214,7 @@ export function buildDirectHostConfig(input: {
   requireToolApproval?: boolean;
   requireNativeToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServerIds?: string[];
@@ -224,6 +228,7 @@ export function buildDirectHostConfig(input: {
     requireToolApproval,
     requireNativeToolDiscovery,
     respectToolVisibility,
+    runUnloadedToolCalls,
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     selectedServerIds,
@@ -243,6 +248,7 @@ export function buildDirectHostConfig(input: {
     // Pass through verbatim so undefined-vs-set semantics survive into
     // the backend canonicalizer (drops undefined; keeps explicit false).
     ...(respectToolVisibility !== undefined ? { respectToolVisibility } : {}),
+    ...(runUnloadedToolCalls !== undefined ? { runUnloadedToolCalls } : {}),
     ...(modelVisibleMcpToolResults !== undefined
       ? { modelVisibleMcpToolResults }
       : {}),
@@ -260,6 +266,8 @@ export function buildDirectHostConfig(input: {
  * Kept in one place so the producer callbacks and the wire body can't drift.
  */
 export interface PersistedTurnTrace {
+  runUnloadedToolCalls?: boolean;
+  engineVersion?: string;
   setupAtTurn?: SetupAtTurn;
   connectionsAtTurn?: Array<{
     serverId: string;
@@ -324,6 +332,12 @@ export interface PersistedTurnTrace {
    * the backend drops a receipt it cannot parse and keeps the trace.
    */
   harnessMcpAtTurn?: HarnessMcpAtTurn;
+  /**
+   * The MCP event that started this turn. Inside the turn trace like
+   * `skillsAtTurn`, so it reaches the wire with no change to the body builder;
+   * the backend drops a record it cannot parse and keeps the trace.
+   */
+  eventAtTurn?: EventAtTurn;
 }
 
 // Its own import-free module so `log-events.ts`, which the client typecheck
@@ -389,6 +403,7 @@ interface PersistChatSessionOptions {
   resumeConfig?: ResumeConfig;
   expectedVersion?: number;
   rewind?: ChatRewind;
+  multiModel?: ChatMultiModelColumn;
   turnTrace?: PersistedTurnTrace;
   turnLeaseOwnerToken?: string;
   /**
@@ -639,6 +654,7 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
     // stay on the legacy path.
     ...(options.turnTrace?.turnId ? { turnId: options.turnTrace.turnId } : {}),
     ...(options.rewind ? { rewind: options.rewind } : {}),
+    ...(options.multiModel ? { multiModel: options.multiModel } : {}),
     ...(options.turnTrace ? { turnTrace: options.turnTrace } : {}),
     ...(options.turnLeaseOwnerToken
       ? { turnLeaseOwnerToken: options.turnLeaseOwnerToken }
@@ -902,10 +918,10 @@ export async function persistChatSessionToConvex(
         "chat.session.persist.failed",
         {
           failureKind,
-          ...(status !== undefined ? { statusCode: status } : {}),
+          ...(status !== undefined ? { ingestStatusCode: status } : {}),
           ...(preview ? { responsePreview: preview } : {}),
           sourceType: options.sourceType,
-          origin: options.origin,
+          chatOrigin: options.origin,
         },
         error ? { error } : undefined,
       );
@@ -982,7 +998,7 @@ export async function persistChatSessionToConvex(
             "chat.session.persist.skipped",
             {
               sourceType: options.sourceType,
-              origin: options.origin,
+              chatOrigin: options.origin,
               hasTurnId: Boolean(options.turnTrace?.turnId),
             },
           );

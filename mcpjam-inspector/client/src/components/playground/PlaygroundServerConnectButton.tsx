@@ -18,7 +18,7 @@ import type { ServerWithName } from "@/state/app-types";
 interface PlaygroundServerConnectButtonProps {
   servers: Record<string, ServerWithName>;
   catalogKnown: boolean;
-  onAddServer: (formData: ServerFormData) => void;
+  onAddServer?: (formData: ServerFormData) => void;
   ensureServersReady?: (
     names: string[],
     options?: { allowInteractiveOAuthFlow?: boolean },
@@ -26,7 +26,7 @@ interface PlaygroundServerConnectButtonProps {
   /** Commits the pick before OAuth can navigate away; returns its undo. */
   onChooseServer?: (name: string) => (() => void) | undefined;
   onConnected?: (name: string) => void;
-  onPendingChange: (pending: boolean) => void;
+  onPendingChange?: (pending: boolean) => void;
 }
 
 export function PlaygroundServerConnectButton({
@@ -54,28 +54,37 @@ export function PlaygroundServerConnectButton({
     mounted.current = true;
     return () => {
       mounted.current = false;
-      if (inFlight.current) onPendingChange(false);
+      if (inFlight.current) onPendingChange?.(false);
     };
   }, [onPendingChange]);
 
-  const names = Object.keys(servers);
+  const names = Object.keys(servers).filter(
+    (name) =>
+      onAddServer ||
+      name === pendingName ||
+      (servers[name].connectionStatus !== "connecting" &&
+        servers[name].connectionStatus !== "oauth-flow"),
+  );
+  const pickerLabel = onAddServer
+    ? "Connect a saved server"
+    : "Reconnect a server";
   const addServer = () => {
     setOpen(false);
     setAdding(true);
   };
   useEffect(() => {
-    if (open && catalogKnown && names.length === 0) {
+    if (open && catalogKnown && names.length === 0 && onAddServer) {
       setOpen(false);
       setAdding(true);
     }
-  }, [open, catalogKnown, names.length]);
+  }, [open, catalogKnown, names.length, onAddServer]);
 
   const connect = async (name: string) => {
     if (inFlight.current || !ensureServersReady) return;
     inFlight.current = true;
     setPendingName(name);
     setError(null);
-    onPendingChange(true);
+    onPendingChange?.(true);
     track("connecting_server", { location: "playground_tools_rail" });
     let undoChoice: (() => void) | undefined;
     try {
@@ -95,7 +104,9 @@ export function PlaygroundServerConnectButton({
         setError(`${name} needs authorization. Click Connect to sign in.`);
       } else if (result.missingServerNames.includes(name)) {
         setError(
-          `${name} is no longer available. Choose another server or add one.`,
+          onAddServer
+            ? `${name} is no longer available. Choose another server or add one.`
+            : `${name} is no longer available. Check the pane's server settings.`,
         );
       } else {
         setError(
@@ -113,7 +124,7 @@ export function PlaygroundServerConnectButton({
       inFlight.current = false;
       if (mounted.current) {
         setPendingName(null);
-        onPendingChange(false);
+        onPendingChange?.(false);
       }
     }
   };
@@ -130,12 +141,15 @@ export function PlaygroundServerConnectButton({
       onConnect: ensureServersReady ? () => void connect(name) : undefined,
     }));
 
+  // A reconnect-only picker can stay open while its own attempt is pending.
+  if (!onAddServer && !open && names.length === 0) return null;
+
   return (
     <>
       <Popover
         open={open}
         onOpenChange={(next) => {
-          if (next && catalogKnown && names.length === 0) {
+          if (next && catalogKnown && names.length === 0 && onAddServer) {
             addServer();
           } else {
             setOpen(next);
@@ -146,16 +160,16 @@ export function PlaygroundServerConnectButton({
         <PopoverTrigger asChild>
           <Button variant="outline" size="sm">
             <Plug className="h-3.5 w-3.5" />
-            Connect a server
+            {onAddServer ? "Connect a server" : "Reconnect a server"}
           </Button>
         </PopoverTrigger>
         <PopoverContent
           align="start"
           className="w-80 max-w-[calc(100vw-2rem)] p-0"
-          aria-label="Connect a saved server"
+          aria-label={pickerLabel}
         >
           <div className="space-y-2 border-b border-border p-3">
-            <p className="text-sm font-medium">Connect a saved server</p>
+            <p className="text-sm font-medium">{pickerLabel}</p>
             <SearchInput
               value={query}
               onValueChange={setQuery}
@@ -176,18 +190,20 @@ export function PlaygroundServerConnectButton({
               />
             )}
           </div>
-          <div className="border-t border-border p-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start"
-              onClick={addServer}
-              disabled={pendingName !== null || !catalogKnown}
-            >
-              <Plus className="size-3.5" />
-              Add server
-            </Button>
-          </div>
+          {onAddServer ? (
+            <div className="border-t border-border p-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full justify-start"
+                onClick={addServer}
+                disabled={pendingName !== null || !catalogKnown}
+              >
+                <Plus className="size-3.5" />
+                Add server
+              </Button>
+            </div>
+          ) : null}
           {pendingName && (
             <p
               role="status"
@@ -206,15 +222,17 @@ export function PlaygroundServerConnectButton({
           )}
         </PopoverContent>
       </Popover>
-      <AddServerModal
-        isOpen={adding}
-        onClose={() => setAdding(false)}
-        onSubmit={(formData) => {
-          track("connecting_server", { location: "playground_tools_rail" });
-          onAddServer(formData);
-          setAdding(false);
-        }}
-      />
+      {onAddServer ? (
+        <AddServerModal
+          isOpen={adding}
+          onClose={() => setAdding(false)}
+          onSubmit={(formData) => {
+            track("connecting_server", { location: "playground_tools_rail" });
+            onAddServer(formData);
+            setAdding(false);
+          }}
+        />
+      ) : null}
     </>
   );
 }

@@ -140,8 +140,18 @@ export type SuiteCapabilities = {
     rubricChecks?: {
       role: "advisory";
       template: { version: number; hash: string };
+      questionKinds?: readonly string[];
       execution: "wired";
       calibration: "unavailable";
+    };
+    /** Author-written judges; absent on a backend that cannot run them. */
+    custom?: {
+      role: "advisory";
+      templateVersion: number;
+      maxJudges: number;
+      maxPromptLength: number;
+      variables: string[];
+      execution: "wired";
     };
   };
   /**
@@ -225,19 +235,27 @@ export function useSuiteCapabilities(
   refreshKey?: unknown,
 ): SuiteCapabilitiesState {
   const convex = useConvex();
-  // The answer is stored WITH the suite it was asked about — see the return.
+  // Scope the answer to the suite and the client that fetched it.
   const [answered, setAnswered] = useState<{
+    convex: typeof convex;
     suiteId: string | null;
     result: SuiteCapabilitiesState;
-  }>({ suiteId, result: LOADING });
+  }>({ convex, suiteId, result: LOADING });
 
   useEffect(() => {
     if (!suiteId) {
-      setAnswered({ suiteId, result: UNAVAILABLE });
+      setAnswered({ convex, suiteId, result: UNAVAILABLE });
       return;
     }
     let cancelled = false;
-    setAnswered({ suiteId, result: LOADING });
+    // Keep the same suite's editor mounted while a revision refreshes.
+    setAnswered((previous) =>
+      previous.convex === convex &&
+      previous.suiteId === suiteId &&
+      previous.result.state === "ready"
+        ? previous
+        : { convex, suiteId, result: LOADING },
+    );
     void (async () => {
       try {
         const result = await convex.query(
@@ -249,6 +267,7 @@ export function useSuiteCapabilities(
         // 404-never-403, so it cannot be used to discover which ids exist. It
         // is not an error, and it is not a set of capabilities either.
         setAnswered({
+          convex,
           suiteId,
           result: result
             ? {
@@ -262,7 +281,7 @@ export function useSuiteCapabilities(
         // deployment that predates this query, which is the two repos
         // releasing independently rather than a fault. Every caller falls back
         // to the behaviour it had before capabilities existed.
-        if (!cancelled) setAnswered({ suiteId, result: UNAVAILABLE });
+        if (!cancelled) setAnswered({ convex, suiteId, result: UNAVAILABLE });
       }
     })();
     return () => {
@@ -291,7 +310,9 @@ export function useSuiteCapabilities(
    * Derived on the way out rather than reset during render: there is then no
    * window at all, not merely a shorter one.
    */
-  return answered.suiteId === suiteId ? answered.result : LOADING;
+  return answered.convex === convex && answered.suiteId === suiteId
+    ? answered.result
+    : LOADING;
 }
 
 /**
@@ -306,8 +327,24 @@ export function hasRubricChecksCapability(
   return capabilities?.judges?.rubricChecks != null;
 }
 
+/**
+ * True when this deployment accepts authored yes/no rubric-check questions.
+ */
+export function hasYesNoRubricQuestionsCapability(
+  capabilities: Pick<SuiteCapabilities, "judges"> | null | undefined,
+): boolean {
+  return capabilities?.judges?.rubricChecks?.questionKinds?.includes("yesno") === true;
+}
+
 export function hasJudgeSeverityCapability(
   capabilities: SuiteCapabilities | null | undefined,
 ): boolean {
   return capabilities?.judges?.goalCompletion != null;
+}
+
+/** The backend runs author-written judges (evaluator library slice 3). */
+export function hasCustomJudgesCapability(
+  capabilities: Pick<SuiteCapabilities, "judges"> | null | undefined,
+): boolean {
+  return capabilities?.judges?.custom?.execution === "wired";
 }

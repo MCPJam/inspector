@@ -54,3 +54,18 @@ export function clearPendingAgentPrompt(
     // to this exact session id.
   }
 }
+
+// Text kept in a chat that was too large to continue, for the composer of the
+// chat Start new chat opens next. In memory: that composer mounts right away.
+let keptDraft = "";
+
+export function keepDraftForNewChat(text: string): void {
+  keptDraft = text;
+}
+
+/** Read once: the next composer to mount takes the kept text. */
+export function takeKeptDraft(): string {
+  const text = keptDraft;
+  keptDraft = "";
+  return text;
+}

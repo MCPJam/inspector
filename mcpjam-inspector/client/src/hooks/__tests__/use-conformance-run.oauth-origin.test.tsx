@@ -56,14 +56,16 @@ async function armOAuthListener() {
   return view;
 }
 
-function postCallback(origin: string) {
+function postCallback(
+  origin: string,
+  data: Record<string, unknown> = {
+    type: "OAUTH_CALLBACK",
+    code: "injected-code",
+    state: "s",
+  },
+) {
   act(() => {
-    window.dispatchEvent(
-      new MessageEvent("message", {
-        origin,
-        data: { type: "OAUTH_CALLBACK", code: "injected-code", state: "s" },
-      }),
-    );
+    window.dispatchEvent(new MessageEvent("message", { origin, data }));
   });
 }
 
@@ -74,7 +76,7 @@ describe("useConformanceRun OAuth callback listener", () => {
     api.startOAuthConformance.mockResolvedValue({
       phase: "authorization_needed",
       sessionId: "session-1",
-      authorizationUrl: "https://idp.example/authorize",
+      authorizationUrl: "https://idp.example/authorize?state=s",
     });
     api.submitOAuthConformanceCode.mockResolvedValue({ phase: "pending" });
     api.completeOAuthConformance.mockResolvedValue({ phase: "pending" });
@@ -108,5 +110,44 @@ describe("useConformanceRun OAuth callback listener", () => {
         }),
       ),
     );
+  });
+
+  it("ignores a code whose state belongs to another sign-in", async () => {
+    await armOAuthListener();
+
+    postCallback(window.location.origin, {
+      type: "OAUTH_CALLBACK",
+      code: "other-code",
+      state: "another-flow",
+    });
+
+    expect(api.submitOAuthConformanceCode).not.toHaveBeenCalled();
+  });
+
+  it("redeems only the first delivery of the code", async () => {
+    await armOAuthListener();
+
+    postCallback(window.location.origin);
+    postCallback(window.location.origin);
+
+    await waitFor(() =>
+      expect(api.submitOAuthConformanceCode).toHaveBeenCalledTimes(1),
+    );
+  });
+
+  it("ends the OAuth suite when the provider denies sign-in", async () => {
+    const view = await armOAuthListener();
+
+    postCallback(window.location.origin, {
+      type: "OAUTH_CALLBACK",
+      state: "s",
+      error: "access_denied",
+      errorDescription: "The user denied access",
+    });
+
+    await waitFor(() => expect(view.result.current.oauth.status).toBe("error"));
+    // `iss` is unchecked on this side, so the provider's text never shows.
+    expect(view.result.current.oauth.error).not.toContain("denied access");
+    expect(api.submitOAuthConformanceCode).not.toHaveBeenCalled();
   });
 });

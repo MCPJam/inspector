@@ -1,6 +1,6 @@
 import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
 import { widgetSessionPath } from "./widget-session-types.js";
-import { DirectoryReviewerAttemptClient } from "./directory-reviewer-attempt-client.js";
+import { MockServerClient } from "./mock-client.js";
 import type {
   PlatformWidgetSessionTarget,
   PlatformWidgetSessionCreateBody,
@@ -37,6 +37,7 @@ import type {
   ModelSelection,
 } from "../host-config/model-selection.js";
 import { PlatformApiError } from "./errors.js";
+import { asciiJson, clientDeclarationHeaders } from "./client-declaration.js";
 import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
@@ -410,6 +411,10 @@ export const EVAL_VOCABULARY_HEADER = "x-mcpjam-eval-vocabulary";
  */
 export const API_VOCABULARY_HEADER = "x-mcpjam-api-vocabulary";
 
+/** Host-config keys this SDK understands, so a `/v1` server can return them. */
+export const HOST_CONFIG_FEATURES_HEADER = "x-mcpjam-host-config-features";
+export const HOST_CONFIG_FEATURES = "model-visible-structured-content";
+
 /**
  * `study` → `scenario`, the stored spelling, before a noun VALUE goes on the
  * wire.
@@ -482,7 +487,7 @@ function buildLaunchHeaders(
       MAX_LAUNCHER_FIELD_CHARS
     );
     const serialized = withinHeaderCap(
-      JSON.stringify({
+      asciiJson({
         kind,
         ...(client ? { client } : {}),
         ...(version ? { version } : {}),
@@ -716,7 +721,7 @@ function isBrowserPage(): boolean {
   return scope.window !== undefined && scope.document !== undefined;
 }
 
-export class PlatformApiClient extends DirectoryReviewerAttemptClient {
+export class PlatformApiClient extends MockServerClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
   private readonly fetchFn: typeof fetch;
@@ -732,6 +737,8 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
    * them.
    */
   private readonly launchHeaders?: Record<string, string>;
+  /** `x-mcpjam-client`, from the same launcher, for every request. */
+  private readonly clientHeaders?: Record<string, string>;
   /** The vocabulary every request declares; `1` sends no header. */
   private readonly evalVocabulary: 1 | 2;
   /** The noun-value vocabulary every request declares; `1` sends no header. */
@@ -762,6 +769,9 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
       ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
       : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
+    this.clientHeaders = clientDeclarationHeaders(
+      this.launchHeaders?.[RUN_LAUNCH_HEADERS.launcher]
+    );
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
     // keys are not, and `{Authorization, authorization}` would send both.
@@ -3971,7 +3981,12 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
    */
   callServerTool(
     params: ServerScope & {
-      body: { toolName: string; parameters?: Record<string, unknown> };
+      body: {
+        toolName: string;
+        parameters?: Record<string, unknown>;
+        /** Makes a write to a mock's records safe to retry; sent as `_meta["mcpjam.com/operationKey"]`. */
+        operationKey?: string;
+      };
     },
     options?: RequestOptions
   ): Promise<Record<string, unknown>> {
@@ -4976,7 +4991,9 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
       endpointUrl: string;
       headers?: Record<string, string>;
       resourceAttributes?: Record<string, string>;
-      sourceTypes?: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
+      sourceTypes?: Array<
+        "eval" | "scenario" | "study" | "swarm" | "direct" | "event"
+      >;
       includeContent?: boolean;
       projectIds?: string[];
       compression?: "gzip" | "none";
@@ -5015,7 +5032,9 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
       endpointUrl?: string;
       headers?: Record<string, string>;
       resourceAttributes?: Record<string, string>;
-      sourceTypes?: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
+      sourceTypes?: Array<
+        "eval" | "scenario" | "study" | "swarm" | "direct" | "event"
+      >;
       includeContent?: boolean;
       projectIds?: string[];
       allProjects?: boolean;
@@ -6669,8 +6688,12 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
     } else {
       delete headers[API_VOCABULARY_HEADER];
     }
+    // This SDK's canonicalizer understands these host-config keys; a server
+    // leaves them out of the configs it returns to a client that doesn't say so.
+    headers[HOST_CONFIG_FEATURES_HEADER] = HOST_CONFIG_FEATURES;
     // After `extraHeaders`, like every other header this client owns: an edge
     // authenticator's credential must not be able to relabel a run's origin.
+    if (this.clientHeaders) Object.assign(headers, this.clientHeaders);
     if (init.declareLaunch && this.launchHeaders) {
       Object.assign(headers, this.launchHeaders);
     }

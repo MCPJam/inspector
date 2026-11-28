@@ -23,7 +23,7 @@ export type EvalStreamToolCall = {
  */
 // `skipped` (PR6/PR5): a step the fail-fast engine never ran because an earlier
 // `assert`/`interact` failed. The step card greys out rather than ticking ok/fail.
-export type EvalStepStatus = "running" | "ok" | "fail" | "skipped";
+export type EvalStepStatus = "running" | "ok" | "fail" | "skipped" | "not_applicable";
 
 export type EvalStreamEvent =
   | { type: "turn_start"; turnIndex: number; prompt: string }

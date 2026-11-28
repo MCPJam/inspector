@@ -17,7 +17,10 @@ import {
 } from "../../src/error-describer/index.js";
 import { MCPAuthError, MCPError } from "../../src/mcp-client-manager/errors.js";
 import { PlatformApiError } from "../../src/platform/errors.js";
-import { ProtocolVersionPinUnsupported } from "../../src/mcp-client-manager/managed-mcp-client.js";
+import {
+  ModernProtocolVersionRefused,
+  ProtocolVersionPinUnsupported,
+} from "../../src/mcp-client-manager/managed-mcp-client.js";
 
 function makeError(message: string, extras: Record<string, unknown> = {}) {
   const err = new Error(message) as Error & Record<string, unknown>;
@@ -412,6 +415,17 @@ const CASES: Case[] = [
     name: "ProtocolVersionPinUnsupported sentinel",
     build: () => new ProtocolVersionPinUnsupported("srv-1", "2026-07-28"),
     expectSlug: "sdk/protocol_version_pin_unsupported",
+  },
+  {
+    // The real error again, for the same reason. The -32022 it wraps sits on
+    // `cause`, which the numeric rule never reads: without its own rule the
+    // server's refusal is filed as `internal/unknown`.
+    name: "ModernProtocolVersionRefused sentinel",
+    build: () =>
+      new ModernProtocolVersionRefused("srv-1", {
+        supportedVersions: ["2099-01-01"],
+      }),
+    expectSlug: "jsonrpc/unsupported_protocol_version",
   },
   // Provider
   {

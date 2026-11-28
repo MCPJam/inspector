@@ -53,6 +53,18 @@ colors:
   run-origin-cli-bg: "oklch(0.65 0.11 195 / 0.1)"
   run-origin-agent-border: "oklch(0.62 0.21 330 / 0.5)"
   run-origin-agent-bg: "oklch(0.62 0.21 330 / 0.1)"
+  account-avatar-1-bg: "oklch(0.65 0.15 255 / 0.16)"
+  account-avatar-1-fg: "oklch(0.45 0.15 255)"
+  account-avatar-2-bg: "oklch(0.65 0.15 295 / 0.16)"
+  account-avatar-2-fg: "oklch(0.45 0.15 295)"
+  account-avatar-3-bg: "oklch(0.65 0.15 160 / 0.16)"
+  account-avatar-3-fg: "oklch(0.45 0.15 160)"
+  account-avatar-4-bg: "oklch(0.65 0.15 75 / 0.16)"
+  account-avatar-4-fg: "oklch(0.45 0.15 75)"
+  account-avatar-5-bg: "oklch(0.65 0.15 15 / 0.16)"
+  account-avatar-5-fg: "oklch(0.45 0.15 15)"
+  account-avatar-6-bg: "oklch(0.65 0.15 210 / 0.16)"
+  account-avatar-6-fg: "oklch(0.45 0.15 210)"
   overlay: "oklch(0 0 0 / 0.5)"
   json-key: "oklch(0.55 0.2 255)"
   json-string: "oklch(0.5 0.1 55)"
@@ -121,6 +133,18 @@ colors:
   run-origin-cli-bg-dark: "oklch(0.78 0.1 195 / 0.15)"
   run-origin-agent-border-dark: "oklch(0.74 0.18 330 / 0.5)"
   run-origin-agent-bg-dark: "oklch(0.74 0.18 330 / 0.15)"
+  account-avatar-1-bg-dark: "oklch(0.7 0.13 255 / 0.22)"
+  account-avatar-1-fg-dark: "oklch(0.84 0.1 255)"
+  account-avatar-2-bg-dark: "oklch(0.7 0.13 295 / 0.22)"
+  account-avatar-2-fg-dark: "oklch(0.84 0.1 295)"
+  account-avatar-3-bg-dark: "oklch(0.7 0.13 160 / 0.22)"
+  account-avatar-3-fg-dark: "oklch(0.84 0.1 160)"
+  account-avatar-4-bg-dark: "oklch(0.7 0.13 75 / 0.22)"
+  account-avatar-4-fg-dark: "oklch(0.84 0.1 75)"
+  account-avatar-5-bg-dark: "oklch(0.7 0.13 15 / 0.22)"
+  account-avatar-5-fg-dark: "oklch(0.84 0.1 15)"
+  account-avatar-6-bg-dark: "oklch(0.7 0.13 210 / 0.22)"
+  account-avatar-6-fg-dark: "oklch(0.84 0.1 210)"
   overlay-dark: "oklch(0 0 0 / 0.5)"
   json-key-dark: "oklch(0.7 0.18 255)"
   json-string-dark: "oklch(0.7 0.1 55)"
@@ -490,6 +514,14 @@ dismissible toast for a validation error risks the reader missing the correction
 entirely, and errors belong adjacent to where they occurred. A message asking
 someone to select, enter or fix something belongs beside the control they are
 looking at.
+
+**One message per box.** When a surface has several warnings or errors at once,
+give each its own bordered notice, with the action that fixes it beside it. Never
+stack several messages in one shared box: a long block of unrelated sentences
+hides which one is blocking and which button belongs to which problem. The
+Set up run sheet's `PreflightNotice`
+(`mcpjam-inspector/client/src/components/evaluate/preflight-notice.tsx`) is the
+reference.
 
 ### Tone
 

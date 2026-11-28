@@ -144,6 +144,35 @@ describe("capability capture (C10)", () => {
     expect(resolveEventsSupport(capture.read("s")).handshakeObserved).toBe(false);
   });
 
+  it.each([
+    // The Beta: the extension key, on 2026-07-28's server/discover.
+    ["server/discover", { extensions: { "io.modelcontextprotocol/events": {} } }, { declared: true, beta: true, legacy: false }],
+    // ChatGPT's documented shape on 2026-07-28: top-level `events`.
+    ["server/discover", { events: {} }, { declared: true }],
+    // Both at once (a server targeting ChatGPT and the Beta).
+    ["server/discover", { events: {}, extensions: { "io.modelcontextprotocol/events": {} } }, { declared: true, beta: true, legacy: true }],
+    // 2025 sessions: top-level `events` on initialize.
+    ["initialize", { events: {} }, { declared: true }],
+    // The Beta is defined for 2026-07-28 and later only, and 2025 has no
+    // `extensions` capability, so the key alone on initialize is not Events.
+    ["initialize", { extensions: { "io.modelcontextprotocol/events": {} } }, { declared: false }],
+  ] as const)("reads %s capabilities %j as %j", (method, capabilities, expected) => {
+    const capture = new EventsCapabilityCapture();
+    capture.observe({
+      direction: "send",
+      serverId: "s",
+      message: { jsonrpc: "2.0", id: 1, method },
+    } as any);
+    capture.observe({
+      direction: "receive",
+      serverId: "s",
+      message: { jsonrpc: "2.0", id: 1, result: { capabilities } },
+    } as any);
+    const support = resolveEventsSupport(capture.read("s"));
+    expect(support).toMatchObject({ handshakeObserved: true, ...expected });
+    if (!("beta" in expected)) expect(support.beta).toBeUndefined();
+  });
+
   it("reads an absent events key as undeclared, not unknown", () => {
     const capture = new EventsCapabilityCapture();
     capture.observe({
@@ -243,13 +272,20 @@ describe("profiles (C1)", () => {
     ).toBeUndefined();
   });
 
-  it("refreshes with a lead of max(60 s, 10%)", () => {
+  it("refreshes with a lead of max(60 s, 10%), capped at half the grant", () => {
     expect(
       computeRefreshAt({ now: 0, refreshBefore: 60 * 60 * 1000, healthCheckIntervalMs: 1 })
     ).toBe(54 * 60 * 1000);
     expect(
       computeRefreshAt({ now: 0, refreshBefore: 2 * 60 * 1000, healthCheckIntervalMs: 1 })
     ).toBe(60 * 1000);
+    expect(
+      computeRefreshAt({
+        now: 0,
+        refreshBefore: 60 * 1000,
+        healthCheckIntervalMs: 1,
+      })
+    ).toBe(30 * 1000);
     expect(computeRefreshAt({ now: 10, refreshBefore: 5, healthCheckIntervalMs: 1 })).toBe(
       10
     );

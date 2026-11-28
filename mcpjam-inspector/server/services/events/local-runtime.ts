@@ -6,12 +6,7 @@
  *
  *   - an in-memory registry of `SubscriptionRecord`s (`locality: "local"`),
  *     each with the development overrides the user explicitly acknowledged;
- *   - ONE `MemoryEventInbox` whose callback URLs are this inspector's own
- *     development receiver — `http://127.0.0.1:<port>/api/mcp/events/hooks/
- *     i/<inboxId>/s/<slotId>`. Plain http, so a webhook subscription is only
- *     created when the user explicitly picked it and acknowledged the
- *     `insecure-local-receiver` override; it is labelled as such everywhere
- *     and is never a conformance pass;
+ *   - ONE `MemoryEventInbox` with a callback base pinned to each webhook subscription;
  *   - an `EventsCoordinator` whose rpc port drives the singleton manager for
  *     the record's server, stepped by a small scheduler (a timer armed at the
  *     earliest `nextActionAt`, bounded concurrency, and a generation fence
@@ -20,6 +15,10 @@
  *     (one per server, sharing the inbox), so pushed events journal exactly
  *     like polled and webhook ones;
  *   - a broadcaster of `EventsStreamFrame`s for the Events tab.
+ *
+ * Subscriptions, the feed and the stream are scoped by project, like the
+ * hosted registry and its one inbox per project: an entry belongs to its
+ * subscription's project, and a request sees only its own project's.
  *
  * There is no trigger dispatcher locally (triggers run hosted), so every
  * journal entry is acknowledged as it lands: the inbox's undispatched
@@ -31,6 +30,7 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  DEFAULT_LOCAL_WEBHOOK_TTL_MS,
   EventsCoordinator,
   EventsPushRuntime,
   IDLE_NEXT_ACTION_AT,
@@ -39,6 +39,7 @@ import {
   computeArgumentsHash,
   computeBindingKey,
   createManagerPushPort,
+  rememberEventsErrorProfile,
   type EventsRpcPort,
   type JournalEntry,
   type PushStreamHandle,
@@ -54,7 +55,13 @@ import type {
   EventsHostView,
   EventsSubscriptionView,
 } from "@/shared/events-api";
+import { localEventsServerSegment } from "@/shared/local-events-hooks";
 import { logger } from "../../utils/logger.js";
+import {
+  localWebhookFailureKind,
+  resolveWebhookReceiver,
+  type LocalWebhookReceiver,
+} from "./receivers.js";
 import {
   feedEntryView,
   rejectionView,
@@ -62,7 +69,7 @@ import {
   type LocalOverride,
 } from "./views.js";
 
-/** Records are keyed by project; the local app has exactly one. */
+/** The project of a request that names none. */
 export const LOCAL_EVENTS_PROJECT_ID = "local";
 /** Whose credentials a local binding uses: the local user's own. */
 export const LOCAL_CREDENTIAL_OWNER = "local";
@@ -87,6 +94,8 @@ interface LocalSubscription {
   host: EventsHostView;
   overrides: LocalOverride[];
   argumentsHash: string;
+  receiver?: LocalWebhookReceiver;
+  lastWebhookAt?: number;
   push?: PushStreamHandle;
 }
 
@@ -108,14 +117,20 @@ export interface LocalEventsRuntimeOptions {
 
 type Listener = (frame: EventsStreamFrame) => void;
 
+function projectScope(projectId?: string): string {
+  return projectId || LOCAL_EVENTS_PROJECT_ID;
+}
+
 export class LocalEventsRuntime {
   readonly inbox: MemoryEventInbox;
   private readonly manager: MCPClientManager;
+  private readonly publicOrigin: string;
   private readonly clock: { now(): number };
   private readonly coordinator: EventsCoordinator;
   private readonly subscriptions = new Map<string, LocalSubscription>();
   private readonly inFlight = new Set<string>();
-  private readonly listeners = new Set<Listener>();
+  /** Each stream listener with the project it reads. */
+  private readonly listeners = new Map<Listener, string>();
   private readonly pushRuntimes = new Map<string, EventsPushRuntime>();
   private readonly concurrency: number;
   private readonly pushOptions: LocalEventsRuntimeOptions["pushOptions"];
@@ -126,11 +141,17 @@ export class LocalEventsRuntime {
 
   constructor(options: LocalEventsRuntimeOptions) {
     this.manager = options.manager;
+    this.publicOrigin = options.publicOrigin;
     this.clock = options.clock ?? { now: () => Date.now() };
     this.concurrency = Math.max(1, options.concurrency ?? 4);
     this.pushOptions = options.pushOptions;
     this.inbox = new MemoryEventInbox({
       publicOrigin: options.publicOrigin,
+      resolveCallbackBase: ({ logicalSubscriptionId }) => {
+        const receiver = this.subscriptions.get(logicalSubscriptionId)?.receiver;
+        if (!receiver) throw new Error("The subscription has no webhook receiver.");
+        return receiver.callbackBase;
+      },
       clock: this.clock,
     });
     this.coordinator = new EventsCoordinator({
@@ -152,7 +173,17 @@ export class LocalEventsRuntime {
     return {
       list: (params) => manager.listServerEvents(serverId, params),
       poll: (params) => manager.pollServerEvents(serverId, params),
-      subscribe: (params) => manager.subscribeServerEvents(serverId, params),
+      subscribe: async (params) => {
+        try {
+          return await manager.subscribeServerEvents(serverId, params);
+        } catch (error) {
+          // The manager and coordinator can load through different SDK entry points.
+          const profile = manager.getServerConfig(serverId)?.eventsWireProfile
+            ?? (manager.getEventsSupport(serverId).beta ? "beta" : "legacy");
+          rememberEventsErrorProfile(error, profile);
+          throw error;
+        }
+      },
       unsubscribe: (params) => manager.unsubscribeServerEvents(serverId, params),
     };
   }
@@ -175,8 +206,9 @@ export class LocalEventsRuntime {
   // Broadcast
   // -------------------------------------------------------------------------
 
-  private emit(frame: EventsStreamFrame): void {
-    for (const listener of [...this.listeners]) {
+  private emit(projectId: string, frame: EventsStreamFrame): void {
+    for (const [listener, scope] of [...this.listeners]) {
+      if (scope !== projectId) continue;
       try {
         listener(frame);
       } catch {
@@ -190,45 +222,63 @@ export class LocalEventsRuntime {
     // No local dispatcher: acknowledge so backpressure counts only real
     // backlog (see the module header).
     this.inbox.ackDispatch(entry.seq);
-    this.emit({ type: "entry", entry: feedEntryView(entry) });
+    const local = this.subscriptions.get(entry.logicalSubscriptionId);
+    // Records are never dropped, so every local entry has an owner.
+    if (local) this.emit(local.record.projectId, { type: "entry", entry: feedEntryView(entry) });
     // A delivery landing on a removed webhook slot re-arms the removal step
     // (C4: one more unsubscribe after a late delivery).
     if (entry.origin === "webhook") {
-      const local = this.subscriptions.get(entry.logicalSubscriptionId);
-      if (local && local.record.desiredState === "removed" && local.record.mode === "webhook") {
+      if (!local) return;
+      if (local.record.desiredState === "removed" && local.record.mode === "webhook") {
         local.record = { ...local.record, nextActionAt: this.clock.now() };
         this.kick();
+      } else if (entry.kind === "event" && !entry.quarantined) {
+        const first = local.lastWebhookAt === undefined;
+        local.lastWebhookAt = entry.receivedAt;
+        if (first) this.publish(local);
       }
     }
   }
 
   private view(local: LocalSubscription): EventsSubscriptionView {
+    const slotId = local.record.slotId;
     return subscriptionView(local.record, {
       locality: "local",
+      receiverKind: local.receiver?.kind,
+      callbackVerifiedAt: slotId ? this.inbox.slotState(slotId)?.verifiedAt : undefined,
+      lastWebhookAt: local.lastWebhookAt,
       host: local.host,
       overrides: local.overrides,
     });
   }
 
   private publish(local: LocalSubscription): void {
-    this.emit({ type: "subscription", subscription: this.view(local) });
+    this.emit(local.record.projectId, { type: "subscription", subscription: this.view(local) });
+  }
+
+  private ownedBy(entry: JournalEntry, projectId: string): boolean {
+    return this.subscriptions.get(entry.logicalSubscriptionId)?.record.projectId === projectId;
   }
 
   /**
-   * Register a stream listener. Returns the snapshot frame to send first and
-   * the backlog after `after`; backlog and live registration happen in one
-   * synchronous step, so nothing falls between them.
+   * Register a stream listener for one project. Returns the snapshot frame to
+   * send first and the backlog after `after`; backlog and live registration
+   * happen in one synchronous step, so nothing falls between them.
    */
   openStream(
     after: number,
     listener: Listener,
+    projectId?: string,
   ): { snapshot: EventsStreamFrame; backlog: EventsFeedEntryView[]; close: () => void } {
-    const backlog = this.inbox.read(after, Number.MAX_SAFE_INTEGER).entries;
-    this.listeners.add(listener);
+    const scope = projectScope(projectId);
+    const backlog = this.inbox
+      .read(after, Number.MAX_SAFE_INTEGER)
+      .entries.filter((entry) => this.ownedBy(entry, scope));
+    this.listeners.set(listener, scope);
     return {
       snapshot: {
         type: "snapshot",
-        subscriptions: this.list(),
+        subscriptions: this.list(undefined, scope),
         nextAfter: Math.max(after, this.head),
       },
       backlog: backlog.map((entry) => feedEntryView(entry)),
@@ -242,9 +292,13 @@ export class LocalEventsRuntime {
   // Registry
   // -------------------------------------------------------------------------
 
-  list(serverId?: string): EventsSubscriptionView[] {
+  list(serverId?: string, projectId?: string): EventsSubscriptionView[] {
+    const scope = projectScope(projectId);
     return [...this.subscriptions.values()]
-      .filter((local) => !serverId || local.record.serverId === serverId)
+      .filter(
+        (local) =>
+          local.record.projectId === scope && (!serverId || local.record.serverId === serverId),
+      )
       .map((local) => this.view(local));
   }
 
@@ -259,18 +313,20 @@ export class LocalEventsRuntime {
     return local;
   }
 
-  /** Idempotent: one LIVE subscription per (server, event, arguments, mode). */
+  /** Idempotent: one LIVE subscription per (project, server, event, arguments, mode). */
   create(request: EventsCreateSubscriptionRequest): EventsSubscriptionView {
-    const overrides: LocalOverride[] = (request.overrides ?? []).filter(
-      (value): value is LocalOverride => value === "insecure-local-receiver",
-    );
-    if (request.mode === "webhook" && !overrides.includes("insecure-local-receiver")) {
-      throw new LocalEventsError(
-        400,
-        "EVENTS_UNAVAILABLE",
-        "Local webhook delivery uses the plain-http development receiver on this inspector's own port. " +
-          'It is never a conformance pass; acknowledge it with overrides: ["insecure-local-receiver"].',
+    const projectId = projectScope(request.projectId);
+    let receiver: LocalWebhookReceiver | undefined;
+    if (request.mode === "webhook") {
+      const resolved = resolveWebhookReceiver(
+        request.receiver ?? { kind: "local" },
+        this.publicOrigin,
+        request.serverId,
       );
+      if ("reason" in resolved) {
+        throw new LocalEventsError(400, "EVENTS_UNAVAILABLE", resolved.reason);
+      }
+      receiver = resolved.receiver;
     }
     const argumentsHash = computeArgumentsHash(request.arguments);
     const host: EventsHostView = request.host
@@ -279,6 +335,7 @@ export class LocalEventsRuntime {
     for (const existing of this.subscriptions.values()) {
       if (
         existing.record.desiredState !== "removed" &&
+        existing.record.projectId === projectId &&
         existing.record.serverId === request.serverId &&
         existing.record.eventName === request.eventName &&
         existing.record.mode === request.mode &&
@@ -287,19 +344,36 @@ export class LocalEventsRuntime {
         // The same subscription under another host is a different test:
         // returning it would quietly change the host.
         if (existing.host.id !== host.id) {
+          // Named, because the Playground subscribes as the chat's client and
+          // the Events tab may hold the same subscription under another one.
           throw new LocalEventsError(
             409,
             "EVENTS_CONFLICT",
-            "This event is already subscribed under another client. Remove that subscription first.",
+            `${request.eventName} is already subscribed under ${existing.host.name} with the same arguments. Remove that subscription in the Events tab, then subscribe again.`,
           );
         }
+        if (
+          existing.receiver?.kind !== receiver?.kind ||
+          existing.receiver?.callbackBase !== receiver?.callbackBase
+        ) {
+          throw new LocalEventsError(
+            409,
+            "EVENTS_CONFLICT",
+            "This event already uses a different callback. Remove that subscription first.",
+          );
+        }
+        this.requireWebhookConsent(receiver, request.overrides);
         return this.view(existing);
       }
     }
+    this.requireWebhookConsent(receiver, request.overrides);
+    const ttlMs = request.ttlMs === undefined && receiver
+      ? DEFAULT_LOCAL_WEBHOOK_TTL_MS
+      : request.ttlMs;
     const now = this.clock.now();
     const record: SubscriptionRecord = {
       id: `esub_${randomUUID().replace(/-/g, "")}`,
-      projectId: LOCAL_EVENTS_PROJECT_ID,
+      projectId,
       environmentId: null,
       bindingKey: computeBindingKey({
         serverId: request.serverId,
@@ -317,12 +391,13 @@ export class LocalEventsRuntime {
       nextActionAt: now,
       consecutiveFailures: 0,
       ...(request.maxAgeMs !== undefined ? { maxAgeMs: request.maxAgeMs } : {}),
-      ...(request.ttlMs !== undefined ? { ttlMs: request.ttlMs } : {}),
+      ...(ttlMs !== undefined ? { ttlMs } : {}),
     };
     const local: LocalSubscription = {
       record,
       host,
-      overrides: request.mode === "webhook" ? overrides : [],
+      overrides: receiver?.insecure ? ["insecure-local-receiver"] : [],
+      receiver,
       argumentsHash,
     };
     this.subscriptions.set(record.id, local);
@@ -330,6 +405,16 @@ export class LocalEventsRuntime {
     this.publish(local);
     this.kick();
     return this.view(local);
+  }
+
+  private requireWebhookConsent(receiver: LocalWebhookReceiver | undefined, overrides?: LocalOverride[]): void {
+    if (receiver?.insecure && !overrides?.includes("insecure-local-receiver")) {
+      throw new LocalEventsError(
+        400,
+        "EVENTS_UNAVAILABLE",
+        'To use an HTTP callback, acknowledge the non-conformant mode with overrides: ["insecure-local-receiver"].',
+      );
+    }
   }
 
   /** A user edit: bumps the generation, which fences any in-flight step. */
@@ -427,9 +512,23 @@ export class LocalEventsRuntime {
     return feedEntryView(entry);
   }
 
-  feed(after = 0, limit = 200): { entries: EventsFeedEntryView[]; nextAfter: number } {
-    const { entries, nextAfter } = this.inbox.read(after, Math.min(Math.max(limit, 1), 1000));
-    return { entries: entries.map((entry) => feedEntryView(entry)), nextAfter };
+  feed(
+    after = 0,
+    limit = 200,
+    projectId?: string,
+  ): { entries: EventsFeedEntryView[]; nextAfter: number } {
+    const max = Math.min(Math.max(limit, 1), 1000);
+    const scope = projectScope(projectId);
+    const { entries, nextAfter: head } = this.inbox.read(after, Number.MAX_SAFE_INTEGER);
+    const own = entries.filter((entry) => this.ownedBy(entry, scope));
+    const page = own.slice(0, max);
+    // A full page resumes after its last entry; otherwise every entry up to
+    // the head was read, other projects' included.
+    const last = page.at(-1);
+    return {
+      entries: page.map((entry) => feedEntryView(entry)),
+      nextAfter: own.length > max && last ? last.seq : head,
+    };
   }
 
   /**
@@ -437,13 +536,16 @@ export class LocalEventsRuntime {
    * C3 acceptance table. New rejections are broadcast as frames.
    */
   async receive(args: {
+    serverSegment: string;
     inboxId: string;
     slotId: string;
     headers: Headers;
     body: Uint8Array;
   }): Promise<ReceiveResult> {
-    if (args.inboxId !== this.inbox.inboxId) {
-      return { status: 410, body: { error: "unknown_inbox" } };
+    const slot = args.inboxId === this.inbox.inboxId ? this.inbox.slotState(args.slotId) : undefined;
+    const local = slot && this.subscriptions.get(slot.logicalSubscriptionId);
+    if (!local || localEventsServerSegment(local.record.serverId) !== args.serverSegment) {
+      return { status: 404, body: { error: "unknown_slot" } };
     }
     const before = this.inbox.rejections.length;
     const lastBefore = this.inbox.rejections[before - 1];
@@ -457,7 +559,10 @@ export class LocalEventsRuntime {
     // new ones start by identity rather than by length alone.
     const start = lastBefore ? rejections.lastIndexOf(lastBefore) + 1 : 0;
     for (const rejection of rejections.slice(start)) {
-      this.emit({ type: "rejection", rejection: rejectionView(rejection) });
+      this.emit(local.record.projectId, { type: "rejection", rejection: rejectionView(rejection) });
+    }
+    if (local.record.slotId === args.slotId && this.inbox.slotState(args.slotId)?.verifiedAt !== slot?.verifiedAt) {
+      this.publish(local);
     }
     return result;
   }
@@ -564,6 +669,12 @@ export class LocalEventsRuntime {
         if (current.record.rotation !== snapshot.rotation) {
           if (current.record.rotation) next.rotation = current.record.rotation;
           next.nextActionAt = Math.min(next.nextActionAt, this.clock.now());
+        }
+        if (snapshot.desiredState === "active" && current.receiver && next.lastError) {
+          const kind = localWebhookFailureKind(next.lastError.kind, current.receiver.insecure);
+          if (kind.startsWith("callback_")) {
+            next.lastError = { ...next.lastError, kind, message: "Couldn't deliver webhook events." };
+          }
         }
         current.record = next;
         if (outcome.action === "failed" && outcome.failure) {

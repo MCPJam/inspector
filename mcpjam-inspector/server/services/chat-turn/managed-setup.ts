@@ -1,3 +1,4 @@
+import { withoutStructuredContentRule } from "@mcpjam/sdk";
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch";
 import { authorizeManagedProject } from "./turn-authorization.js";
 import { resolveHostedChatSetup } from "./resolve-hosted-chat-setup.js";
@@ -289,6 +290,7 @@ export async function resolveManagedTurnSetup(args: {
       temperature: bodyTemperature,
       requireToolApproval: bodyRequireToolApproval,
       respectToolVisibility: bodyRespectToolVisibility,
+      runUnloadedToolCalls: body.runUnloadedToolCalls,
       progressiveToolDiscovery: body.progressiveToolDiscovery,
       modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
       mcpToolResultImageRendering: body.mcpToolResultImageRendering,
@@ -515,8 +517,12 @@ export async function resolveManagedTurnSetup(args: {
   const respectToolVisibility = resolvedExecution.respectToolVisibility;
   const resolvedProgressiveToolDiscovery =
     resolvedExecution.progressiveToolDiscovery;
-  const { modelVisibleMcpToolResults, mcpToolResultImageRendering } =
-    resolvedExecution.hostPolicy;
+  const { mcpToolResultImageRendering } = resolvedExecution.hostPolicy;
+  // A harness host keeps today's projection, including on a step-up resume
+  // that runs MCPJam's own engine (KES-1007).
+  const modelVisibleMcpToolResults = resolvedExecution.harness
+    ? withoutStructuredContentRule(resolvedExecution.hostPolicy.modelVisibleMcpToolResults)
+    : resolvedExecution.hostPolicy.modelVisibleMcpToolResults;
   let harnessExecutionTarget: LocalHarnessExecutionTarget | undefined;
   if (
     (await shouldUseLocalHarness(

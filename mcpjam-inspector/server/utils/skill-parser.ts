@@ -1,7 +1,8 @@
-import { splitSkillMarkdown } from "@mcpjam/sdk";
 import fs from "fs/promises";
 import path from "path";
+import { stringify as stringifyYaml } from "yaml";
 import { logger } from "./logger";
+import { readSkillDocument } from "../../shared/skill-document";
 import {
   isValidSkillName,
   type Skill,
@@ -197,14 +198,6 @@ export function parseSkillFile(
   return parseSkillFileWithFrontmatter(fileContent, skillPath)?.skill ?? null;
 }
 
-/** The Inspector accepts YAML frontmatter; skill files cannot select a parser. */
-export function readSkillDocument(fileContent: string) {
-  // Preserve the optional BOM, explicit YAML marker and trailing blanks accepted
-  // by older skill files while passing only the standard delimiter to the SDK.
-  const markdown = fileContent.replace(/^\uFEFF?---(?:yaml)?[ \t]*(?=\r?\n)/, "---");
-  return splitSkillMarkdown(markdown);
-}
-
 export function parseSkillFileWithFrontmatter(
   fileContent: string,
   skillPath: string,
@@ -251,8 +244,14 @@ export function parseSkillFileWithFrontmatter(
         path: skillPath,
       },
     };
-  } catch (error) {
-    logger.error(`Error parsing skill file at ${skillPath}:`, error);
+  } catch {
+    // The reader returns no frontmatter for YAML it cannot parse, so what
+    // throws here is a SKILL.md the YAML library refuses to expand, such as
+    // one built from repeated aliases. That is user input: a warning like the
+    // validation failures above, not a Sentry capture. A literal message,
+    // because the telemetry catalog only keeps literal `logger` messages; a
+    // templated one reaches Axiom as an anonymous `log.unknown` row.
+    logger.warn("[skills] SKILL.md frontmatter could not be parsed");
     return null;
   }
 }
@@ -276,10 +275,13 @@ export function generateSkillFileContent(
   description: string,
   content: string,
 ): string {
-  const frontmatter = `---
-name: ${name}
-description: ${description}
----`;
-
-  return `${frontmatter}\n\n${content}`;
+  // The YAML 1.2 core schema `readSkillDocument` parses with, so a value it
+  // would misread, such as "Fetches: weather" or the name "0o12", is quoted
+  // and reads back as the same string. `lineWidth: 0` keeps a long
+  // description on one line. The body is appended as written, never parsed.
+  const frontmatter = stringifyYaml(
+    { name, description },
+    { schema: "core", lineWidth: 0 },
+  );
+  return `---\n${frontmatter}---\n\n${content}`;
 }

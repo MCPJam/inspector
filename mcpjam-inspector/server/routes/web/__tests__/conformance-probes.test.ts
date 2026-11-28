@@ -10,6 +10,9 @@ const runProtocolConformanceMock = vi.hoisted(() => vi.fn());
 const runAppsConformanceMock = vi.hoisted(() => vi.fn());
 const authorizeServerMock = vi.hoisted(() => vi.fn());
 
+// The route authorizes a saved mock as the caller; these cases use ordinary servers.
+vi.mock("../mock-dial.js", () => ({ mockDialForRequest: () => undefined }));
+
 vi.mock("../auth.js", async () => {
   const { z } = await import("zod");
   return {

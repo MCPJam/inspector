@@ -268,6 +268,7 @@ export type EvalSuiteEnvironmentTarget = {
 
 export type EvalSuite = {
   _id: string;
+  accounts?: import("@/lib/evals/eval-accounts").SharedEvalAccountSelection[];
   createdBy: string;
   projectId?: string;
   name: string;
@@ -474,6 +475,7 @@ export type EvalServerAttachment = {
 
 export type EvalCase = {
   _id: string;
+  accounts?: import("@/lib/evals/eval-accounts").SharedEvalAccountSelection[];
   testSuiteId: string;
   createdBy: string;
   projectId?: string;
@@ -929,6 +931,10 @@ export type EvalSuiteRunSummary = {
  */
 export type EvalRunAccount = {
   serverId: string;
+  cases?: Array<{
+    testCaseId: string;
+    source: "case" | "run" | "suite" | "default";
+  }>;
   /** A person's own account, a shared server's project account, or an XAA identity. */
   kind: "account" | "shared" | "xaa";
   connectionId?: string;
@@ -1695,6 +1701,7 @@ export type EvalSuiteRunListItem = Pick<
 /** One-case suite launch, with the same transient setup as the suite sheet. */
 export type CaseRunLaunchOptions = {
   caseLaunchId?: string;
+  runAccounts?: import("@/lib/evals/eval-accounts").SharedEvalAccountSelection[];
   iterationOverride?: number;
   skipJudge?: boolean;
   ephemeralEnvironment?: boolean;

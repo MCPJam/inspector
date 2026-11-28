@@ -270,6 +270,61 @@ export async function verifyAuthKitToken(
   return sid ? { sub, orgId, sid } : { sub, orgId };
 }
 
+/**
+ * Verify an access token the AuthKit OAuth issuer gave an MCP client for one
+ * of `audiences`, the resource the client asked for (RFC 8707). Only that
+ * issuer mints these tokens, so its own JWKS is the only key set consulted,
+ * and a token for any other resource, MCPJam's own included, is refused.
+ *
+ * Throws `AuthKitVerificationError` for a token that fails, and
+ * `AuthKitConfigError` when AuthKit is not configured; a key set that cannot
+ * be fetched rethrows as is, because no verdict on the token was reached.
+ */
+export async function verifyAuthKitResourceToken(
+  token: string,
+  audiences: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<VerifiedSession> {
+  const clientId = resolveWorkosClientId(env);
+  const issuer = clientId ? resolveAuthkitIssuer(clientId, env) : undefined;
+  if (!issuer) {
+    throw new AuthKitConfigError("AuthKit is not configured on this server");
+  }
+  let unverifiedIssuer: unknown;
+  try {
+    unverifiedIssuer = decodeJwt(token).iss;
+  } catch {
+    throw new AuthKitVerificationError("Malformed access token");
+  }
+  if (unverifiedIssuer !== issuer) {
+    throw new AuthKitVerificationError("Untrusted access token issuer");
+  }
+  let payload: JWTPayload;
+  try {
+    ({ payload } = await jwtVerify(token, remoteJwks(`${issuer}/oauth2/jwks`), {
+      issuer,
+      audience: [...audiences],
+      algorithms: ["RS256"],
+      clockTolerance: 5,
+      requiredClaims: ["exp"],
+    }));
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (typeof code === "string" && TOKEN_REJECTION_CODES.has(code)) {
+      throw new AuthKitVerificationError(code);
+    }
+    throw error;
+  }
+  const sub = stringClaim(payload, "sub");
+  // An agent registration is not a user, so it can't stand for one here.
+  if (!sub || sub.startsWith(AGENT_REGISTRATION_SUBJECT_PREFIX)) {
+    throw new AuthKitVerificationError("Access token does not name a user");
+  }
+  const orgId = stringClaim(payload, "org_id");
+  const sid = stringClaim(payload, "sid");
+  return { sub, ...(orgId ? { orgId } : {}), ...(sid ? { sid } : {}) };
+}
+
 // ---------------------------------------------------------------------------
 // Gateway verification (`bearerAuthMiddleware`)
 // ---------------------------------------------------------------------------
@@ -292,7 +347,8 @@ export async function verifyAuthKitToken(
  *   issuer, but for a different audience (the MCP worker's resource
  *   indicator, a Connect OAuth application such as the CLI). The backend
  *   accepts these on some paths, so the gateway lets them through for
- *   downstream to judge rather than rejecting a valid credential.
+ *   downstream to judge rather than rejecting a valid credential. `sub` rides
+ *   along for usage analytics only (`analyticsUserId`), never for access.
  * - `keys_unavailable` — the issuer is trusted but its signing keys could not
  *   be fetched. The gateway cannot decide; downstream still verifies.
  * - `not_authkit` — not a JWT, or not from an AuthKit issuer (MCPJam-minted
@@ -308,7 +364,7 @@ export type AuthKitBearerVerdict =
       agent?: AgentRegistrationClaim;
     }
   | { kind: "invalid"; reason: string }
-  | { kind: "foreign_audience" }
+  | { kind: "foreign_audience"; sub: string }
   | { kind: "keys_unavailable"; issuer: string; reason: string }
   | { kind: "not_authkit" };
 
@@ -511,6 +567,6 @@ export async function classifyAuthKitBearer(
     };
   }
   return resolved.anyAudienceIssuers.has(issuer)
-    ? { kind: "foreign_audience" }
+    ? { kind: "foreign_audience", sub }
     : { kind: "invalid", reason: "audience" };
 }

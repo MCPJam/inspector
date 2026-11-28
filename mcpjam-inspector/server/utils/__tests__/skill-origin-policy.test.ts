@@ -35,6 +35,9 @@ import {
 function mockManager(tools: Record<string, unknown> = {}) {
   return {
     getToolsForAiSdk: vi.fn(async () => tools),
+    // The turn asks each server for its log records, so a running tool call can show them.
+    setPerRequestLogLevel: vi.fn(),
+    onLogMessage: vi.fn(),
     listTools: vi.fn(async () => ({ tools: [] })),
     getSkillsSupport: vi.fn(() => ({
       declared: false,
@@ -53,6 +56,8 @@ function liveSkillsManager() {
   const uri = "skill://srv/refunds/SKILL.md";
   return {
     getToolsForAiSdk: vi.fn(async () => ({})),
+    setPerRequestLogLevel: vi.fn(),
+    onLogMessage: vi.fn(),
     listTools: vi.fn(async () => ({ tools: [] })),
     hasServer: vi.fn(() => true),
     getSkillsSupport: vi.fn(() => ({

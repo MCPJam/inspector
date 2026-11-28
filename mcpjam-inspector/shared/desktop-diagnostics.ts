@@ -1,3 +1,5 @@
+import { APP_LOAD_STALL_CODES } from "./app-load-stall";
+
 /** Internal, allowlisted telemetry; never accepts callback URLs or error messages. */
 export const DESKTOP_DIAGNOSTICS_CHANNEL = "desktop:diagnostic";
 export const DIAGNOSTIC_KINDS = [
@@ -8,7 +10,11 @@ export const DIAGNOSTIC_KINDS = [
   "token_import",
   "auth",
   "renderer",
+  "startup",
 ] as const;
+/** The renderer's startup stage, or `ready` once the app is usable. */
+export const STARTUP_STAGES = [...APP_LOAD_STALL_CODES, "ready"] as const;
+export type StartupStage = (typeof STARTUP_STAGES)[number];
 export type DiagnosticKind = (typeof DIAGNOSTIC_KINDS)[number];
 export type DesktopActivity = {
   kind: DiagnosticKind;
@@ -18,6 +24,7 @@ export type DesktopActivity = {
   status?: number;
   error?: "network" | "timeout" | "access_denied" | "not_found" | "other";
   version?: string;
+  stage?: StartupStage;
 };
 
 export function parseDesktopActivity(value: unknown): DesktopActivity | null {
@@ -62,6 +69,10 @@ export function parseDesktopActivity(value: unknown): DesktopActivity | null {
     )
       return null;
     out.error = v.error as DesktopActivity["error"];
+  }
+  if (v.stage !== undefined) {
+    if (!STARTUP_STAGES.includes(v.stage as StartupStage)) return null;
+    out.stage = v.stage as StartupStage;
   }
   if (v.version !== undefined) {
     if (

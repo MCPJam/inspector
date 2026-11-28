@@ -42,9 +42,15 @@ describe("protocol advice picks", () => {
   it("lists only the advice a pinned version can give", () => {
     const legacy = protocolAdviceCatalog("2025-11-25").map((entry) => entry.id);
     expect(legacy).not.toContain("readiness-log-level-filtering");
+    expect(legacy).not.toContain("readiness-tool-order-deterministic");
     expect(
       protocolAdviceCatalog("2026-07-28").map((entry) => entry.id),
-    ).toContain("readiness-log-level-filtering");
+    ).toEqual(
+      expect.arrayContaining([
+        "readiness-log-level-filtering",
+        "readiness-tool-order-deterministic",
+      ]),
+    );
     // Auto lists all of it and tags the era-only ones.
     expect(
       protocolAdviceCatalog("auto").find(
@@ -178,11 +184,12 @@ describe("runnableSelection", () => {
   it("offers and runs the tasks update acknowledgement check", () => {
     // The app sends the answers set under it, so it runs like any other.
     const selection = runnableSelection(
-      { tasks: ["tasks-update-ack-shape", "tasks-wire-resolvable"] },
+      { tasks: ["tasks-update-ack-shape", "tasks-invalid-task-id-rejected"] },
       "auto",
     );
+    // In catalog order.
     expect(selection?.tasks).toEqual([
-      "tasks-wire-resolvable",
+      "tasks-invalid-task-id-rejected",
       "tasks-update-ack-shape",
     ]);
     expect(checkCatalogs("auto").tasks.map((entry) => entry.id)).toContain(

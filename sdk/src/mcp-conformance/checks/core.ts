@@ -233,7 +233,7 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
     category: "core",
     title: "Modern Client Handshake",
     description:
-      "The official client negotiates the modern revision and receives the server identity and capabilities.",
+      "The official client negotiates the modern revision and receives the server's capabilities.",
     async run(ctx) {
       const startedAt = Date.now();
       const info = ctx.initializationInfo;
@@ -258,9 +258,12 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
       if (!info.serverCapabilities) {
         problems.push("server capabilities are missing");
       }
-      if (!info.serverVersion?.name) {
-        problems.push("server identity (name) is missing");
-      }
+      // The server's name is NOT one of them. On 2026-07-28 the identity rides
+      // in `_meta` as `io.modelcontextprotocol/serverInfo`, which servers
+      // SHOULD include and the schema types optional (basic/index.mdx:397-403,
+      // schema.ts:157). A server that leaves it out completed the handshake.
+      // The Server Identity advice says so; a malformed one fails Server
+      // Discover.
 
       if (problems.length > 0) {
         return failedResult(
@@ -278,7 +281,12 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
         protocolVersion: info.protocolVersion,
         transport: info.transport,
         serverCapabilities: info.serverCapabilities as Record<string, unknown>,
-        serverVersion: info.serverVersion as Record<string, unknown>,
+        // `null` when the server sent none, so a silent server is visible in
+        // the report without being scored as a failure.
+        serverVersion: (info.serverVersion ?? null) as Record<
+          string,
+          unknown
+        > | null,
       });
     },
   },

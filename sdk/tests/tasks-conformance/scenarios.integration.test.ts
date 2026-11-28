@@ -255,9 +255,25 @@ describe("tasks-status-payload-shape", () => {
     expect(result.uncheckedAdvice).toBeUndefined();
   });
 
+  // A `null` never reaches this path end to end: the client's task schema
+  // rejects it first. The helper's own test covers it.
+  it("advises, not passes, when a failed task's statusMessage is blank", async () => {
+      const phases = failedTaskPhases();
+      phases[phases.length - 1] = {
+        ...phases[phases.length - 1]!,
+        statusMessage: "  ",
+      };
+      const result = await run(await serve(phases), [ID]);
+      expect(result.passedAdvice).toBeUndefined();
+      expect(result.readiness).toEqual([
+        expect.objectContaining({ id: "tasks-readiness-failed-status-message" }),
+      ]);
+  });
+
   it("says the failed-task advice was not checked when the task did not fail", async () => {
     const result = await run(await serve(quickPhases()), [ID]);
     expect(result.readiness).toBeUndefined();
+    expect(result.passedAdvice).toBeUndefined();
     expect(result.uncheckedAdvice).toEqual([
       {
         id: "tasks-readiness-failed-status-message",
@@ -268,10 +284,17 @@ describe("tasks-status-payload-shape", () => {
     ]);
   });
 
-  it("reports neither when a failed task carries a statusMessage", async () => {
+  it("lists the advice as met when a failed task carries a statusMessage", async () => {
     const result = await run(await serve(failedTaskPhases()), [ID]);
     expect(result.readiness).toBeUndefined();
     expect(result.uncheckedAdvice).toBeUndefined();
+    expect(result.passedAdvice).toEqual([
+      {
+        id: "tasks-readiness-failed-status-message",
+        title: "Failed Task Status Message",
+        specStrength: "SHOULD",
+      },
+    ]);
   });
 
   it("leaves out the not-checked line when the advice was not picked", async () => {
@@ -434,6 +457,53 @@ describe("tasks-update-ack-shape", () => {
     },
   };
 
+  it("answers only matching keys and grades the resulting terminal payload without T12", async () => {
+    const phases = defaultTaskPhases();
+    const gate = phases.find((phase) => phase.status === "input_required")!;
+    gate.extra = { inputRequests: gate.inputRequests, ttlMs: 1.5 };
+    gate.polls = 16;
+    const fixture = await serve(phases);
+    const result = await run(
+      fixture,
+      ["tasks-inline-result", "tasks-ttl-integer-shape"],
+      {
+        inputResponses: { ...RESPONSES, other: { action: "cancel" } },
+      }
+    );
+    expect(check(result, "tasks-inline-result").status).toBe("passed");
+    expect(check(result, "tasks-ttl-integer-shape").status).toBe("failed");
+    const updates = fixture.received.filter((r) => r.method === "tasks/update");
+    expect(updates.map((r) => r.params?.inputResponses)).toEqual([RESPONSES]);
+    expect(result.checks.some((entry) => entry.id === ID)).toBe(false);
+  });
+
+  it("reports the answered key at timeout without sending it twice", async () => {
+    const gate = defaultTaskPhases().find(phase => phase.status === "input_required")!;
+    const fixture = await serve([{ ...gate, extra: { inputRequests: gate.inputRequests } }]);
+    const id = "tasks-inline-result";
+    const entry = check(await run(fixture, [id], { inputResponses: RESPONSES, pollTimeoutMs: 1000 }), id);
+    expect(entry.skipReason).toBe("could-not-run");
+    expect(entry.error?.message).toContain("already answered");
+    expect(entry.error?.message).toContain(DEFAULT_INPUT_REQUEST_KEY);
+    expect(entry.error?.message).not.toContain("--poll-timeout");
+    expect(fixture.received.filter(r => r.method === "tasks/update")).toHaveLength(1);
+    expect(entry.error?.message).toContain("polling deadline");
+  });
+
+  it("stops without sending an unrelated answer", async () => {
+    const fixture = await serve(defaultTaskPhases());
+    const result = await run(fixture, ["tasks-inline-result", ID], {
+      inputResponses: { unrelated: { action: "cancel" } },
+    });
+    expect(check(result, "tasks-inline-result").skipReason).toBe(
+      "could-not-run"
+    );
+    expect(check(result, ID).skipReason).toBe("could-not-run");
+    expect(fixture.received.some((r) => r.method === "tasks/update")).toBe(
+      false
+    );
+  });
+
   it("passes an empty acknowledgement", async () => {
     const fixture = await serve(defaultTaskPhases());
     const result = await run(fixture, [ID], { inputResponses: RESPONSES });
@@ -583,10 +653,7 @@ describe("the mcp-tasks profile", () => {
     const fixture = await serve(quickPhases(), {
       misbehave: { answerUnknownTaskId: true },
     });
-    const result = await run(fixture, [
-      "tasks-invalid-task-id-rejected",
-      "tasks-wire-resolvable",
-    ]);
+    const result = await run(fixture, ["tasks-invalid-task-id-rejected"]);
     expect(check(result, "tasks-invalid-task-id-rejected").status).toBe(
       "failed",
     );
@@ -656,11 +723,7 @@ describe("per-check task subjects", () => {
   });
   it("makes no tool calls for task-free checks, even with a suite default", async () => {
     const fixture = await serve(quickPhases());
-    await run(fixture, [
-      "tasks-wire-resolvable",
-      "tasks-declaration-hygiene",
-      "tasks-invalid-task-id-rejected",
-    ]);
+    await run(fixture, ["tasks-invalid-task-id-rejected"]);
     expect(
       fixture.received.filter((r) => r.method === "tools/call")
     ).toHaveLength(0);
@@ -677,18 +740,26 @@ describe("per-check task subjects", () => {
       ["tasks-inline-result", "tasks-update-ack-shape"],
       {
         toolName: "success",
-        inputResponses: {
-          [DEFAULT_INPUT_REQUEST_KEY]: {
-            result: { action: "accept", content: { name: "Ada" } },
+        checkOverrides: {
+          "tasks-update-ack-shape": {
+            toolName: "input",
+            inputResponses: {
+              [DEFAULT_INPUT_REQUEST_KEY]: {
+                action: "accept",
+                content: { name: "Ada" },
+              },
+            },
           },
         },
-        checkOverrides: { "tasks-update-ack-shape": { toolName: "input" } },
       }
     );
     expect(result.checks.every((check) => check.status === "passed")).toBe(
       true
     );
-    const id = check(result, "tasks-update-ack-shape").details?.taskId;
+    const updates = fixture.received.filter((r) => r.method === "tasks/update");
+    expect(updates).toHaveLength(1);
+    const id = updates[0]?.params?.taskId;
+    expect(id).toBeTruthy();
     expect(
       fixture.received
         .filter((r) => r.method === "tasks/update")

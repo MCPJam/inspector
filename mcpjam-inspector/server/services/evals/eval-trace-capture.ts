@@ -1,3 +1,10 @@
+import { withToolNotifications } from "../chat-turn/tool-notifications.js";
+import type { ToolNotification } from "../../../shared/tool-notification.js";
+import {
+  mockAnswerSpan,
+  withMockAnswerSink,
+} from "../mock/answer-marks.js";
+import type { MockCallMark } from "../../../shared/mock-answer-span.js";
 import { toolOrigin } from "@/shared/tool-origin";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -87,6 +94,8 @@ export type AiSdkEvalTraceContext = {
   prepareStepEverCalled: boolean;
   lastStepClosedEndAt: number;
   recordedResponseMessageCount: number;
+  /** Where the progress and logs a server sends during a tool call go (the chat stream); absent for evals. */
+  onToolNotification?: (notification: ToolNotification) => void;
 };
 
 type BackendStepToolPhase = {
@@ -287,8 +296,20 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
         let policyBlocked = false;
         let mcpErrorCode: number | undefined;
         let authChallenge: ToolAuthChallengeFinding | undefined;
+        // What a mock did with this call, read off the connection's responses.
+        const mockMarks: MockCallMark[] = [];
         try {
-          const result = await origExecute(input, options);
+          const result = await withMockAnswerSink(
+            (marks) => mockMarks.push(...marks),
+            () => {
+              const emit = ctx.onToolNotification;
+              return emit
+                ? withToolNotifications({ toolCallId, serverId, emit }, () =>
+                    origExecute(input, options),
+                  )
+                : origExecute(input, options);
+            },
+          );
           policyBlocked = isToolPolicyBlockResult(result);
           if (policyBlocked) return result;
           if (isCallToolResultError(result)) {
@@ -348,6 +369,19 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               });
             }
             ctx.recordedSpans.push(toolSpan);
+            if (mockMarks.length > 0) {
+              ctx.recordedSpans.push(
+                mockAnswerSpan(mockMarks, {
+                  id: `mock-${toolCallId}`,
+                  parentId: toolSpan.id,
+                  promptIndex: resolvedPromptIndex,
+                  stepIndex: stepNumber,
+                  serverId,
+                  startMs: toolSpan.startMs,
+                  endMs: toolSpan.endMs,
+                }),
+              );
+            }
             if (!success) {
               ctx.recordedSpans.push({
                 id: `tool-err-${toolCallId}`,
@@ -876,8 +910,13 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
         let success = true;
         let mcpErrorCode: number | undefined;
         let authChallenge: ToolAuthChallengeFinding | undefined;
+        // What a mock did with this call, read off the connection's responses.
+        const mockMarks: MockCallMark[] = [];
         try {
-          const result = await origExecute(input, options);
+          const result = await withMockAnswerSink(
+            (marks) => mockMarks.push(...marks),
+            () => origExecute(input, options),
+          );
           if (isCallToolResultError(result)) {
             success = false;
             authChallenge = classifyToolAuthChallenge(
@@ -934,6 +973,19 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             });
           }
           params.spans.push(toolSpan);
+          if (mockMarks.length > 0) {
+            params.spans.push(
+              mockAnswerSpan(mockMarks, {
+                id: `mock-${toolCallId}`,
+                parentId: toolSpan.id,
+                promptIndex: params.promptIndex,
+                stepIndex: params.stepIndex,
+                ...(raw._serverId ? { serverId: raw._serverId } : {}),
+                startMs: toolSpan.startMs,
+                endMs: toolSpan.endMs,
+              }),
+            );
+          }
           if (!success) {
             params.spans.push({
               id: `backend-tool-err-${toolCallId}`,

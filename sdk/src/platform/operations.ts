@@ -15,6 +15,11 @@ import {
   judgeRubricSchema,
 } from "../contract/judge-settings.js";
 import {
+  codeEvaluatorsSchema,
+  suiteGradingSchema,
+  suiteScriptsSchema,
+} from "../contract/code-evaluators.js";
+import {
   judgeBacktestRequestSchema,
   type JudgeBacktestReport,
 } from "../contract/judge-backtest.js";
@@ -132,6 +137,20 @@ import {
   getServerRevisionOperation,
   listServerRevisionsOperation,
 } from "./server-revision-operations.js";
+import {
+  createMockServerOperation,
+  getMockForwardingPolicyOperation,
+  getMockServerOperation,
+  patchMockServerOperation,
+  refreshMockServerOperation,
+  setMockForwardingPolicyOperation,
+  updateMockServerOperation,
+} from "./mock-operations.js";
+import {
+  closeMockRunOperation,
+  openMockRunOperation,
+  resetMockRunOperation,
+} from "./mock-run-operations.js";
 import {
   deleteServerAccountOperation,
   getServerAccountOperation,
@@ -1278,6 +1297,15 @@ const callServerToolInput = serverScopedInput.extend({
     .record(z.string(), z.unknown())
     .optional()
     .describe("Tool arguments matching the tool's input schema."),
+  operationKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "A key that makes a write to a mock server's records safe to retry: sent with the same call again, it returns the first outcome and writes once. A different call with the same key is refused. Ignored by other servers."
+    ),
 });
 
 export type CallServerToolInput = z.infer<typeof callServerToolInput>;
@@ -1433,6 +1461,7 @@ export const callServerToolOperation: PlatformOperation<
         body: {
           toolName: input.toolName,
           parameters: input.parameters ?? {},
+          ...(input.operationKey !== undefined && { operationKey: input.operationKey }),
         },
       },
       { signal }
@@ -2916,6 +2945,7 @@ async function resolveSuiteEnvironmentTargets(
 /** The knobs both launch shapes forward, in the wire's own vocabulary. */
 function runKnobBody(
   input: {
+    accounts?: Array<{ serverId: string; accountId: string }>;
     iterations?: number;
     /** Legacy spelling of iterations. */
     repetitions?: number;
@@ -2930,6 +2960,7 @@ function runKnobBody(
   caseIds: string[] | undefined
 ): Record<string, unknown> {
   return {
+    ...(input.accounts ? { accounts: input.accounts } : {}),
     ...(input.iterations !== undefined || input.repetitions !== undefined
       ? { iterationOverride: input.iterations ?? input.repetitions }
       : {}),
@@ -4110,8 +4141,18 @@ const RUN_KNOB_FIELDS = {
     ),
 } as const;
 
+const evalAccountSelectionsSchema = z.array(z.object({
+  serverId: z.string().trim().min(1),
+  accountId: z.string().trim().min(1),
+}).strict()).min(1).max(32);
+
+const evalRunAccountSelectionSchema = evalAccountSelectionsSchema.optional().describe(
+  "Project account IDs to use for this run only, one for each selected MCP server ID. Explicit case selections still apply."
+);
+
 const runEvalSuiteInput = z
   .object({
+    accounts: evalRunAccountSelectionSchema,
     project: z
       .string()
       .trim()
@@ -4791,6 +4832,7 @@ export const runEvalSuiteOperation: PlatformOperation<
 
 const runEvalCaseInput = z
   .object({
+    accounts: evalRunAccountSelectionSchema,
     project: z
       .string()
       .trim()
@@ -5000,6 +5042,7 @@ export const runEvalCaseOperation: PlatformOperation<
           body: {
             suiteId: suite.id,
             caseIds: [testCase.id],
+            ...(input.accounts ? { accounts: input.accounts } : {}),
             ...(overrideServers
               ? {
                   serverIds: overrideServers.map((server) => server.id),
@@ -5759,6 +5802,7 @@ const declaredSuiteIdField = z
 // never happened. A refusal that names the key is the honest answer.
 const updateEvalSuiteInput = z
   .strictObject({
+    accounts: evalAccountSelectionsSchema.nullable().optional(),
     project: z
       .string()
       .trim()
@@ -5914,6 +5958,24 @@ const updateEvalSuiteInput = z
           .describe(
             "Live quality-gate policy. null CLEARS it. Comparative conditions require a baseline; previous_completed is reserved. Requires expectedRevisionNumber and revisionNote."
           ),
+        codeEvaluators: codeEvaluatorsSchema
+          .nullable()
+          .optional()
+          .describe(
+            "Up to 10 scripts that grade every iteration in a grading box (score rows code:<id>). Replaces the list; null or [] clears it. A Required one needs grading set to Enforce."
+          ),
+        scripts: suiteScriptsSchema
+          .nullable()
+          .optional()
+          .describe(
+            "Bash scripts run before and after the run and each iteration (runSetup, iterationSetup, iterationCleanup, runCleanup). Replaces all four; null clears them."
+          ),
+        grading: suiteGradingSchema
+          .nullable()
+          .optional()
+          .describe(
+            "Files to copy from the agent's box into the grading box, and its network (none by default). null clears it."
+          ),
       })
       .optional(),
     expectedRevisionNumber: z
@@ -6064,6 +6126,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
       }
     }
     for (const key of [
+      "accounts",
       "name",
       "description",
       "environment",
@@ -6589,6 +6652,7 @@ export const createEvalCasesOperation: PlatformOperation<
 };
 
 const updateEvalCaseInput = z.object({
+  accounts: evalAccountSelectionsSchema.nullable().optional(),
   project: z
     .string()
     .trim()
@@ -6663,6 +6727,7 @@ export const updateEvalCaseOperation: PlatformOperation<
           // field either, so it is added here rather than widening that shape.
           body: {
             ...buildCaseBody(input),
+            ...(input.accounts !== undefined ? { accounts: input.accounts } : {}),
             ...(input.declaredSuiteId
               ? { declaredSuiteId: input.declaredSuiteId }
               : {}),
@@ -9733,7 +9798,7 @@ export const getChatSessionTraceOperation: PlatformOperation<
   name: "get_chat_session_trace",
   title: "Read a chat session's execution trace",
   description:
-    "Return per-turn execution spans for a session: per-tool-call latency, token usage, and indices into the transcript. INCREMENTAL — returns the LATEST turn by default, not the whole session; use turnId or afterPromptIndex for older turns and includeSpans:false for summaries. A turn whose spans could not be read reports spansUnavailable rather than an empty span list, because 'made no calls' and 'could not fetch' are opposite conclusions.",
+    "Return per-turn execution spans for a session: per-tool-call latency, token usage, and indices into the transcript. INCREMENTAL — returns the LATEST turn by default, not the whole session; use turnId or afterPromptIndex for older turns and includeSpans:false for summaries. A turn whose spans could not be read reports spansUnavailable rather than an empty span list, because 'made no calls' and 'could not fetch' are opposite conclusions. A turn an MCP event started carries `event`: its name, id, delivery mode, origin and when MCPJam received it.",
   readOnly: true,
   permalink: derivePermalinks((result, _input, context) => {
     const projectId =
@@ -10211,6 +10276,7 @@ const clientFieldSet = z
       .nullable()
       .optional()
       .describe("null clears the host-level opt-in."),
+    runUnloadedToolCalls: z.boolean().nullable().optional(),
     progressiveToolDiscovery: z
       .boolean()
       .nullable()
@@ -14796,6 +14862,7 @@ const traceDestinationSourceTypes = z.enum([
   "study",
   "swarm",
   "direct",
+  "event",
 ]);
 
 const listTraceDestinationsInput = z.object({
@@ -14897,7 +14964,7 @@ const createTraceDestinationInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Which traces to stream. `direct` is Playground, and only sessions SHARED to the workspace are ever sent — a private Playground session is excluded server-side. `swarm` is high volume: one run is many sessions."
+      "Which traces to stream. `direct` is Playground, and only sessions SHARED to the workspace are ever sent — a private Playground session is excluded server-side. `event` selects background trigger runs; until they export under their own source type (a server-side rollout), they still match `direct`, as a Playground event turn always does. `swarm` is high volume: one run is many sessions."
     ),
   includeContent: z
     .boolean()
@@ -19393,6 +19460,18 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  // Mock servers: a saved server (or nothing) with a definition laid over it,
+  // and the policy for whether a mock may call its real server.
+  createMockServerOperation,
+  updateMockServerOperation,
+  getMockServerOperation,
+  patchMockServerOperation,
+  refreshMockServerOperation,
+  openMockRunOperation,
+  resetMockRunOperation,
+  closeMockRunOperation,
+  getMockForwardingPolicyOperation,
+  setMockForwardingPolicyOperation,
   // Server accounts. Tokens are write-only, and the upload and the update are
   // excluded from the MCP catalog and the agent registry: the upload carries a
   // token in its INPUT, and the default decides which account runs with no

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -48,12 +48,24 @@ vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
       {children}
     </div>
   ),
-  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => (
-    <button type="button">{children}</button>
+  DropdownMenuTrigger: ({
+    children,
+    "aria-label": ariaLabel,
+  }: {
+    children: ReactNode;
+    "aria-label"?: string;
+  }) => (
+    <button type="button" aria-label={ariaLabel}>
+      {children}
+    </button>
   ),
-  DropdownMenuContent: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
+  DropdownMenuContent: ({
+    children,
+    onClick,
+  }: {
+    children: ReactNode;
+    onClick?: (e: MouseEvent) => void;
+  }) => <div onClick={onClick}>{children}</div>,
   DropdownMenuItem: ({
     children,
     onClick,
@@ -345,14 +357,69 @@ describe("ChatHistoryRow", () => {
     );
 
     const promote = screen.getByTestId("chat-history-promote-to-test-case");
-    expect(promote).toHaveAttribute("aria-label", "Promote to test case");
-    expect(
-      screen.queryByText("Promote to test case", { exact: true })
-    ).not.toBeInTheDocument();
+    expect(promote).toHaveAttribute("aria-label", "Save as test case");
 
     await user.click(promote);
     expect(onConvertToTestCase).toHaveBeenCalledTimes(1);
     expect(onConvertToTestCase).toHaveBeenCalledWith(session);
+  });
+
+  it("offers Save as test case in the row menu", async () => {
+    const onConvertToTestCase = vi.fn();
+    const user = userEvent.setup();
+    const session = sessionStub({ status: "active" });
+    render(
+      <ChatHistoryRow
+        session={session}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={vi.fn()}
+        canConvertToTestCase
+        onConvertToTestCase={onConvertToTestCase}
+        actions={actions}
+      />
+    );
+
+    await user.click(screen.getByText("Save as test case", { exact: true }));
+    expect(onConvertToTestCase).toHaveBeenCalledWith(session);
+  });
+
+  it("does not open the session when a menu item is chosen", async () => {
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ status: "active" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={onSelect}
+        actions={actions}
+      />
+    );
+
+    await user.click(screen.getByText("Archive", { exact: true }));
+    expect(actions.archive).toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("keeps the timestamp and the row menu trigger rendered together", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub()}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={vi.fn()}
+        actions={actions}
+      />
+    );
+
+    expect(screen.getByText("now")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Session actions" })
+    ).toBeInTheDocument();
   });
 
   it("shows Unarchive when the session is archived", () => {
@@ -370,7 +437,7 @@ describe("ChatHistoryRow", () => {
     expect(screen.getByText("Unarchive")).toBeInTheDocument();
   });
 
-  it("shows Share to project when shared threads are enabled", () => {
+  it("shows Add to Shared Sessions when shared threads are enabled", () => {
     render(
       <ChatHistoryRow
         session={sessionStub({ directVisibility: "private" })}
@@ -383,10 +450,10 @@ describe("ChatHistoryRow", () => {
       />
     );
 
-    expect(screen.getByText("Share to project")).toBeInTheDocument();
+    expect(screen.getByText("Add to Shared Sessions")).toBeInTheDocument();
   });
 
-  it("hides Share to project when shared threads are disabled", () => {
+  it("hides Add to Shared Sessions when shared threads are disabled", () => {
     render(
       <ChatHistoryRow
         session={sessionStub({ directVisibility: "private" })}
@@ -399,7 +466,7 @@ describe("ChatHistoryRow", () => {
       />
     );
 
-    expect(screen.queryByText("Share to project")).not.toBeInTheDocument();
+    expect(screen.queryByText("Add to Shared Sessions")).not.toBeInTheDocument();
   });
 
   it("hides Unshare when shared threads are disabled", () => {

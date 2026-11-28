@@ -263,6 +263,36 @@ describe("GET /v1/chat-sessions/:id/trace", () => {
     ).toEqual([1, 2]);
   });
 
+  it("returns the event that started a turn, receive time in epoch ms, and nothing else of it", async () => {
+    const eventAtTurn = {
+      name: "comment.created",
+      eventId: "evt_1",
+      timestamp: "2026-09-30T00:00:00Z",
+      receivedAt: 1_700_000_000_000,
+      delivery: "webhook",
+      origin: "server",
+      subscriptionId: "esub_1",
+      triggerId: "trg_1",
+    };
+    queryMock.mockImplementation(async (name: string) =>
+      name === "chatSessions:getSession"
+        ? sessionRow()
+        : [
+            traceRow(0),
+            traceRow(1, { eventAtTurn: { ...eventAtTurn, internalNote: "x" } }),
+          ],
+    );
+    const response = await call(
+      "GET",
+      `/api/v1/chat-sessions/${SESSION}/trace?includeSpans=false&limit=2`,
+    );
+    const body = await response.json();
+    expect(body.turns[0]).not.toHaveProperty("event");
+    expect(body.turns[1].event).toEqual(eventAtTurn);
+    expect(typeof body.turns[1].event.receivedAt).toBe("number");
+    expect(body.turns[1]).not.toHaveProperty("eventAtTurn");
+  });
+
   it("serves cheap summaries with includeSpans=false", async () => {
     queryMock.mockImplementation(async (name: string) =>
       name === "chatSessions:getSession" ? sessionRow() : [traceRow(0)],

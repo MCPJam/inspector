@@ -1015,3 +1015,36 @@ describe("ElicitationManager pending accounting", () => {
     expect(mgr.hasPendingForServer("srv")).toBe(false);
   });
 });
+
+describe("getAdvertisedClientCapabilities", () => {
+  it("returns what initialize sent once connected, even after the handler is gone", () => {
+    // A server may only use what `initialize` negotiated (2025-11-25
+    // `basic/lifecycle.mdx`), so the stored set is the one to judge by. A
+    // rebuild from config would miss an `elicitation` whose handler was
+    // cleared after connecting, and the server could still ask for it.
+    const manager = new MCPClientManager();
+    seedRegisteredServer(manager, "srv", {
+      url: "http://127.0.0.1:1/mcp",
+      clientCapabilities: { elicitation: {} },
+    });
+
+    // Before connecting: the configured set after the handler gate. Nothing
+    // answers elicitation, so the exact set loses it.
+    expect(manager.getAdvertisedClientCapabilities("srv")).not.toHaveProperty(
+      "elicitation"
+    );
+
+    seedLiveState(manager, "srv", {
+      initializedClientCapabilities: { elicitation: {} },
+    });
+    expect(manager.getAdvertisedClientCapabilities("srv")).toEqual({
+      elicitation: {},
+    });
+  });
+
+  it("is undefined for a server that is not registered", () => {
+    expect(
+      new MCPClientManager().getAdvertisedClientCapabilities("nope")
+    ).toBeUndefined();
+  });
+});

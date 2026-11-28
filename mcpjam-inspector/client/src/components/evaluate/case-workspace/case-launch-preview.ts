@@ -5,6 +5,7 @@ import { modelTarget, modelTargetKey } from "@/lib/model-target";
 import { isModelFree } from "@/shared/steps";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import type { SuiteRunReviewProps } from "../suite-run-review";
+import type { SharedEvalAccountSelection } from "@/lib/evals/eval-accounts";
 import { CASE_SAVE_FAILURE_MESSAGE } from "../../evals/case-save-feedback";
 import {
   beginCaseLaunch,
@@ -93,6 +94,7 @@ export async function startCaseReview(
   >,
   targets: CaseLaunchTarget[],
   count: number,
+  runAccounts: SharedEvalAccountSelection[] = [],
 ) {
   let id: string | undefined;
   try {
@@ -114,6 +116,7 @@ export async function startCaseReview(
       iterationOverride: count,
       throwOnFailure: true,
       caseLaunchId: id,
+      ...(runAccounts.length ? { runAccounts } : {}),
     });
     finishCaseLaunch(id);
   } catch (error) {

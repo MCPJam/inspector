@@ -23,6 +23,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "flag-source-"));
   vi.stubEnv("DO_NOT_TRACK", "");
   vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", "");
+  vi.stubEnv("MCPJAM_FEATURE_FLAGS", "");
 });
 
 afterEach(() => {
@@ -213,5 +214,68 @@ describe("loadFeatureFlagFileAtBoot", () => {
     loadFeatureFlagFileAtBoot();
     expect(stderr).not.toHaveBeenCalled();
     expect(resolveFeatureFlagSource()).toEqual({ kind: "posthog" });
+  });
+});
+
+describe("inline answers in MCPJAM_FEATURE_FLAGS", () => {
+  it("answers from the variable when no file is named, even under DO_NOT_TRACK", () => {
+    // A Jamroom preview sets both: the opt-out and its environment's flags.
+    vi.stubEnv("DO_NOT_TRACK", "1");
+    vi.stubEnv(
+      "MCPJAM_FEATURE_FLAGS",
+      JSON.stringify({ "web-clients-enabled": true, "copy-test": "treatment" }),
+    );
+    expect(resolveFeatureFlagSource()).toEqual({
+      kind: "file",
+      answers: { "web-clients-enabled": true, "copy-test": "treatment" },
+    });
+    expect(rolloutAnswerWithoutPostHog("web-clients-enabled")).toBe(true);
+    expect(rolloutAnswerWithoutPostHog("missing")).toBe(false);
+  });
+
+  it("lets a named file win over the variable", () => {
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS", JSON.stringify({ inline: true }));
+    vi.stubEnv(
+      "MCPJAM_FEATURE_FLAGS_FILE",
+      flagFile(JSON.stringify({ file: true })),
+    );
+    expect(resolveFeatureFlagSource()).toEqual({
+      kind: "file",
+      answers: { file: true },
+    });
+  });
+
+  it("turns every flag off for a variable that is not one JSON object, without quoting it", () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS", "secret-looking { not json");
+    expect(resolveFeatureFlagSource()).toEqual({ kind: "file", answers: {} });
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS", "[true]");
+    expect(resolveFeatureFlagSource()).toEqual({ kind: "file", answers: {} });
+    const reports = error.mock.calls.map(([message]) => String(message));
+    expect(reports).toEqual([
+      "[flags] MCPJAM_FEATURE_FLAGS is not valid JSON, so every feature flag is off. Fix the variable and restart.",
+      "[flags] MCPJAM_FEATURE_FLAGS must hold one JSON object of flag keys to answers, so every feature flag is off. Fix the variable and restart.",
+    ]);
+    expect(reports.join("\n")).not.toContain("secret-looking");
+  });
+
+  it("asks PostHog as before when the variable is blank", () => {
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS", "   ");
+    expect(resolveFeatureFlagSource()).toEqual({ kind: "posthog" });
+  });
+
+  it("prints a broken variable's problem on stderr at boot", () => {
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS", JSON.stringify({ bad: 3, good: true }));
+    loadFeatureFlagFileAtBoot();
+    expect(stderr).toHaveBeenCalledWith(
+      '[flags] MCPJAM_FEATURE_FLAGS answers "bad" with something other than true, false or a variant name, so those flags are off. Fix the variable and restart.\n',
+    );
+    expect(resolveFeatureFlagSource()).toEqual({
+      kind: "file",
+      answers: { good: true },
+    });
   });
 });

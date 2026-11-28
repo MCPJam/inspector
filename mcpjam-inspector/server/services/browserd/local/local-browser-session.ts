@@ -717,7 +717,15 @@ async function startSession(
     ...(args.captureTypedText ? { captureTypedText: true } : {}),
     ...(profileDir
       ? {
-          profileExport: async () => {
+          profileExport: async ({ excludeOrigins }) => {
+            // As on a hosted box: cleared in the live browser before the
+            // close, or the export stops.
+            if (excludeOrigins.length > 0) {
+              if (!context.clearOriginData) {
+                throw new Error("profile_exclusions_unavailable");
+              }
+              await context.clearOriginData(excludeOrigins);
+            }
             await context.close();
             await driver.close();
             return exportBrowserProfileArchive(profileDir);

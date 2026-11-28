@@ -109,12 +109,11 @@ export function StepStatusBadge({ status }: { status: EvalStepStatus }) {
       />
     );
   }
-  if (status === "skipped") {
-    // Fail-fast never ran this step — greyed, distinct from fail (red).
+  if (status === "skipped" || status === "not_applicable") {
     return (
       <MinusCircle
         className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60"
-        aria-label="Step skipped"
+        aria-label={status === "skipped" ? "Step skipped" : "Step not applicable"}
       />
     );
   }

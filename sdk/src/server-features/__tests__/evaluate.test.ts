@@ -539,6 +539,31 @@ describe("evaluateServerFeatures", () => {
     expect(family?.counts.supported).toBe(1);
   });
 
+  it("offers the Playground only where traffic can show the feature", () => {
+    const legacyOnly = feature("test.legacy-only", {
+      assessment: {
+        primary: "observed",
+        observable: true,
+        observableEra: "legacy",
+      },
+    });
+    const modern = makeSurface({ protocolVersion: "2026-07-28" });
+    const onModern = evaluateServerFeatures(
+      [legacyOnly],
+      connected({}, modern)
+    );
+    expect(onModern.assessments["test.legacy-only"]).toMatchObject({
+      state: "not-checked",
+      reason: "MCPJam cannot check this yet.",
+    });
+    expect(onModern.assessments["test.legacy-only"].nextAction).toBeUndefined();
+
+    const onLegacy = evaluateServerFeatures([legacyOnly], connected());
+    expect(onLegacy.assessments["test.legacy-only"].nextAction).toBe(
+      "use-in-playground"
+    );
+  });
+
   it("gives a rolled-up parent the chip of its supported children", () => {
     const parent = feature("test.parent");
     const declaredChild = feature("test.parent.a", {

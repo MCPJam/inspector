@@ -369,6 +369,7 @@ const MCP_CLIENT_ERROR_NAMES: ReadonlySet<string> = new Set([
   "UnauthorizedError",
   "MCPAuthError",
   "ProtocolVersionPinUnsupported",
+  "ModernProtocolVersionRefused",
   "BlockedEgressTargetError",
 ]);
 
@@ -432,6 +433,28 @@ function describeVersionPinRefusal(error: unknown): string | undefined {
 }
 
 /**
+ * An unpinned connection the server answered with its own "protocol version
+ * not supported" error. The offered versions are kept only when each is a
+ * well-formed version string, as for a pin refusal.
+ */
+function describeModernVersionRefusal(error: unknown): string | undefined {
+  for (const node of errorChain(error)) {
+    if (read(node, "name") !== "ModernProtocolVersionRefused") continue;
+    const offered = read(node, "supportedVersions");
+    const versions = Array.isArray(offered)
+      ? offered
+          .slice(0, MAX_OFFERED_VERSIONS)
+          .map(parseProtocolVersion)
+          .filter((version): version is string => version !== undefined)
+      : [];
+    return `The MCP server doesn't support an MCP protocol version this client speaks.${
+      versions.length > 0 ? ` It offers ${versions.join(", ")}.` : ""
+    }`;
+  }
+  return undefined;
+}
+
+/**
  * The status-line-only account of a failed connection or operation. `logs` is
  * the hosted log envelope of the same request, consulted when the error itself
  * carries no status — a 200 answer that was not MCP, for instance.
@@ -452,6 +475,10 @@ export function describeHostedConnectFailure(
   const pinRefusal = describeVersionPinRefusal(error);
   if (pinRefusal !== undefined) {
     return { message: pinRefusal, blockedTarget: false };
+  }
+  const modernRefusal = describeModernVersionRefusal(error);
+  if (modernRefusal !== undefined) {
+    return { message: modernRefusal, blockedTarget: false };
   }
   if (statusLineFromChain(error) === undefined) {
     if (isRequestTimeout(error)) {

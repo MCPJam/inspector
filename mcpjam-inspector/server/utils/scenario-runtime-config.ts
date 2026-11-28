@@ -130,6 +130,7 @@ export type ScenarioRuntimeConfig = RuntimeExecutionFields & {
   // mcpjam-backend PR #334 (which adds the field) returns omitted →
   // undefined and the inspector falls back to its auto policy.
   progressiveToolDiscovery?: boolean;
+  runUnloadedToolCalls?: boolean;
   // Host/client policy for MCP tool-result content/resource visibility.
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   // Human-facing rendering policy for MCP tool-returned images.

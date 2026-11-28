@@ -97,7 +97,7 @@ describe("useConformanceRun OAuth callback hint", () => {
     api.startOAuthConformance.mockResolvedValue({
       phase: "authorization_needed",
       sessionId: "session-1",
-      authorizationUrl: "https://idp.example/authorize",
+      authorizationUrl: "https://idp.example/authorize?state=s",
     });
     api.submitOAuthConformanceCode.mockResolvedValue({ phase: "pending" });
     api.completeOAuthConformance.mockResolvedValue({ phase: "pending" });
@@ -114,10 +114,35 @@ describe("useConformanceRun OAuth callback hint", () => {
     vi.useRealTimers();
   });
 
-  it("shows the hint once when the popup closes with no code back", async () => {
-    await openPopup();
+  // A COOP provider page makes Chrome report the popup closed straight away
+  // while the user is still signing in, so a close alone says nothing.
+  it("stays quiet when the popup reads as closed before the deadline", async () => {
+    await openPopup(60);
 
     closePopup();
+
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+
+  it("still redeems a code that arrives after the popup reads as closed", async () => {
+    await openPopup(60);
+
+    closePopup();
+    postCode();
+
+    await waitFor(() =>
+      expect(api.submitOAuthConformanceCode).toHaveBeenCalledTimes(1),
+    );
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+
+  it("shows the hint at the deadline even after the popup read as closed", async () => {
+    await openPopup(5);
+
+    closePopup();
+    act(() => {
+      vi.advanceTimersByTime(5_000);
+    });
 
     expect(toast.warning).toHaveBeenCalledTimes(1);
     expect(toast.warning).toHaveBeenCalledWith(
@@ -130,23 +155,15 @@ describe("useConformanceRun OAuth callback hint", () => {
     );
   });
 
-  it("stays quiet when the code came back before the popup closed", async () => {
-    await openPopup();
+  it("stays quiet at the deadline when the code already came back", async () => {
+    await openPopup(5);
 
     postCode();
-    closePopup();
+    act(() => {
+      vi.advanceTimersByTime(5_000);
+    });
 
     expect(toast.warning).not.toHaveBeenCalled();
-  });
-
-  it("drops a hint shown early once the code comes back", async () => {
-    await openPopup();
-
-    closePopup();
-    postCode();
-
-    expect(toast.warning).toHaveBeenCalledTimes(1);
-    expect(toast.dismiss).toHaveBeenCalledTimes(1);
   });
 
   it("stays quiet when OAuth was skipped before the popup closed", async () => {

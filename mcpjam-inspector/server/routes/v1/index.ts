@@ -22,6 +22,8 @@ import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
 import serverGroups from "./server-groups.js";
+import mockServers from "./mock-servers.js";
+import mockRuns from "./mock-runs.js";
 import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
@@ -78,6 +80,9 @@ import directorySubmissionHandoff from "./directory-submission-handoff.js";
 import directoryTestPlans from "./directory-test-plans.js";
 import directorySubmissionEvals from "./directory-submission-evals.js";
 import conformanceRuns from "./conformance-runs.js";
+import productionTrafficOtlp from "./production-traffic-otlp.js";
+import productionTrafficReads from "./production-traffic-reads.js";
+import productionTrafficAdmin from "./production-traffic-admin.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
 const v1 = new Hono();
@@ -89,6 +94,12 @@ const v1 = new Hono();
 // share-link previews. GET-only router; no project/user data.
 v1.route("/", hostCatalog);
 v1.route("/", publicModels);
+// The production traffic OTLP receiver also mounts BEFORE the bearer
+// middleware: its caller is an OpenTelemetry exporter holding a producer
+// credential, which is not a user, and the route verifies that credential
+// against Convex itself on every batch. POST-only, one exact path; the
+// production traffic reads and admin routes mount below with the user routes.
+v1.route("/", productionTrafficOtlp);
 
 // Every v1 live-op route requires bearer auth + guest rate limiting, matching
 // the /api/web/* MCP operation routes.
@@ -180,6 +191,9 @@ v1.route("/", servers);
 // Convex reads are membership-gated and creating one is a member write, so
 // there is no share-link flow that needs them.
 v1.route("/", serverGroups);
+// Mock servers (guest-DENIED by default).
+v1.route("/", mockServers);
+v1.route("/", mockRuns);
 v1.route("/", serverConnections);
 v1.route("/", tools);
 v1.route("/", prompts);
@@ -344,6 +358,12 @@ v1.route("/", capabilities);
 v1.route("/", evalDisclosure);
 v1.route("/", tunnels);
 v1.route("/", browserSessions);
+// Production traffic (PT-1): members read counts and calls, metadata only;
+// admins manage producer credentials and the ingest switch. Convex checks
+// both with the caller's own bearer. Guest-DENIED by default (no
+// GUEST_ALLOWED_V1_RULES entry).
+v1.route("/", productionTrafficReads);
+v1.route("/", productionTrafficAdmin);
 
 v1.onError((error, c) => v1OnError(error, c));
 

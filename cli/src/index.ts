@@ -39,6 +39,7 @@ import {
   resolveCommandOutcome,
 } from "./lib/command-outcome.js";
 import { installDeploymentPreflight } from "./lib/deployment-preflight.js";
+import { recordErrorHelp, writeErrorHelp } from "./lib/error-help.js";
 import { installProxyDispatcher } from "./lib/network-proxy.js";
 import { addGlobalOptions } from "./lib/server-config.js";
 import {
@@ -91,14 +92,15 @@ export async function main(
         "Test, debug, and validate MCP servers locally, or manage MCPJam Cloud via `mcpjam cloud`. Health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.",
       )
       .allowExcessArguments(false)
-      .exitOverride()
-      .configureOutput({
-        writeOut: (value) => process.stdout.write(value),
-        writeErr: () => {
-          // Usage errors are emitted as structured JSON in the catch block.
-        },
-      }),
+      .exitOverride(),
   );
+  // Usage errors are emitted as structured JSON in the catch block, so
+  // Commander's own error text is dropped. Help it prints as an error is kept.
+  const errorHelp = recordErrorHelp(program);
+  program.configureOutput({
+    writeOut: (value) => process.stdout.write(value),
+    writeErr: errorHelp.writeErr,
+  });
   const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
   installDeploymentPreflight(program);
 
@@ -160,7 +162,9 @@ export async function main(
     if (error instanceof CommanderError) {
       if (
         error.code === "commander.helpDisplayed" ||
-        error.code === "commander.version"
+        error.code === "commander.version" ||
+        // `mcpjam help [command]`, written to stdout.
+        (error.code === "commander.help" && error.exitCode === 0)
       ) {
         await telemetry.flush();
         return {
@@ -169,7 +173,13 @@ export async function main(
         };
       }
 
-      writeError(usageError(error.message), format);
+      const help =
+        error.code === "commander.help" ? errorHelp.captured() : undefined;
+      if (help) {
+        writeErrorHelp(help, format);
+      } else {
+        writeError(usageError(error.message), format);
+      }
       captureUsageErrorEvent(argv);
       await telemetry.flush();
       return {

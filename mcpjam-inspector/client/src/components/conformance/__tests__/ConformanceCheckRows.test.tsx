@@ -106,6 +106,25 @@ describe("CheckRow", () => {
     },
   );
 
+  it("says the failed x-mcp-header check's tool count includes invalid tools", () => {
+    render(
+      <CheckRow
+        check={check({
+          status: "failed",
+          error: {
+            message: "1 tool(s) carry invalid x-mcp-header declarations",
+          },
+          details: { toolCountIncludingInvalid: 8 },
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByText("Tool count (incl. invalid x-mcp-header tools):"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Tool count including invalid:")).toBeNull();
+  });
+
   it("shows how long a check that ran took", () => {
     render(<CheckRow check={check({})} />);
     expect(screen.getByText("420ms")).toBeInTheDocument();

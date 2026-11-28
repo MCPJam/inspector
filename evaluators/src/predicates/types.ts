@@ -64,6 +64,9 @@ export type ArgMatcher = {
   argumentMatching?: ArgMatchMode;
 };
 
+/** The author-provided JSON Schema document for a result check. */
+export type AuthoredResultSchema = Record<string, unknown> | boolean;
+
 /**
  * The deterministic predicate library.
  *
@@ -185,8 +188,16 @@ export type Predicate = (
    * Any JSON root: protocol 2026-07-28 dropped 2025-11-25's object-only
    * restriction on `structuredContent`, so requiring an object here would fail
    * servers that are correct under the current spec.
+   *
+   * `schema: "declared"` validates each result's `structuredContent` against
+   * the output schema its own tool declared instead of one authored schema.
    */
-  | { type: "toolResultMatchesSchema"; schema: unknown; toolName?: string }
+  | {
+      type: "toolResultMatchesSchema";
+      /** Unsupported legacy roots are readable so the check can be repaired. */
+      schema: AuthoredResultSchema | "declared" | unknown[] | number | null;
+      toolName?: string;
+    }
   /**
    * Every tool result in scope is strictly under `maxBytes`.
    *
@@ -497,10 +508,25 @@ export const argMatcherSchema = z.object({
  * loader accepted the new value — exactly the divergence
  * `scripts/eval-suite-schema-artifacts.ts` refuses to publish.
  */
+/** Library evaluator ids are short slugs such as `no-wasted-calls`. */
+export const MAX_EVALUATOR_ID_CHARS = 64;
+
 const checkPolicyShape = {
   role: z.enum(["gating", "advisory", "required"]).optional(),
   severity: z.literal("warn").optional(),
+  evaluator: z
+    .strictObject({
+      id: z.string().min(1).max(MAX_EVALUATOR_ID_CHARS),
+      version: z.number().int().positive(),
+    })
+    .optional(),
 };
+
+export const authoredResultSchemaRoot = z.union([
+  z.literal("declared"),
+  z.record(z.string(), z.unknown()),
+  z.boolean(),
+]);
 
 /**
  * The fields `toolInputMatches` and `toolResultMatches` share, in the order
@@ -716,11 +742,16 @@ export const predicateUnion = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("toolResultMatchesSchema"),
-    // Author content, capped rather than inspected: a schema is a document,
-    // and the cap is what keeps an unbounded one out of every persisted
-    // predicate row. Shape is the validator engine's problem at evaluate time.
+    // The storage shape includes invalid roots written by older clients.
     schema: z
-      .unknown()
+      .union([
+        authoredResultSchemaRoot.options[0],
+        authoredResultSchemaRoot.options[1],
+        z.array(z.unknown()),
+        z.number(),
+        authoredResultSchemaRoot.options[2],
+        z.null(),
+      ])
       .refine(
         (value) => canonicalSize(value) <= MAX_SCHEMA_BYTES,
         `schema must canonicalize to at most ${MAX_SCHEMA_BYTES} bytes`
@@ -797,9 +828,10 @@ export const predicateUnion = z.discriminatedUnion("type", [
 /**
  * Zod schema for {@link Predicate}. The discriminated union is refined so
  * `severity` requires `role: "advisory"`. Kind lists must read
- * {@link predicateUnion}.options, not this wrapper.
+ * {@link predicateUnion}.options, not this wrapper. It reads persisted
+ * predicates, legacy result schema roots included.
  */
-export const predicateSchema = predicateUnion.superRefine((value, ctx) => {
+export const storedPredicateSchema = predicateUnion.superRefine((value, ctx) => {
   if (
     value.type === "responseCloseTo" &&
     normalizeCloseToText(value.reference, value).length === 0
@@ -831,6 +863,17 @@ export const predicateSchema = predicateUnion.superRefine((value, ctx) => {
   }
 });
 
+/** Validates predicates at the authoring boundary. */
+export const predicateSchema = storedPredicateSchema.refine(
+  (value) =>
+    value.type !== "toolResultMatchesSchema" ||
+    authoredResultSchemaRoot.safeParse(value.schema).success,
+  {
+    path: ["schema"],
+    message: 'Replace this schema with a JSON Schema object, true, false, or "declared".',
+  }
+);
+
 /** Array of predicates — used for both suite defaults and case overrides. */
 export const predicateArraySchema = z.array(predicateSchema);
 
@@ -850,7 +893,7 @@ export const casePredicatesSchema = z.object({
 export type CasePredicates = z.infer<typeof casePredicatesSchema>;
 export type PredicatePlaceholder =
   (typeof PREDICATE_PLACEHOLDER_STRINGS)[number];
-export type { CheckPolicy } from "./policy.js";
+export type { CheckEvaluatorOrigin, CheckPolicy } from "./policy.js";
 
 /**
  * How a tool failure surfaced. The plan requires `noToolErrors` to distinguish
@@ -967,6 +1010,10 @@ export type TranscriptToolResultSize = {
 export type TranscriptToolResult = {
   toolCallId?: string;
   toolName: string;
+  /** Server tool name when the AI SDK exposed it under an account variant key. */
+  declaredToolName?: string;
+  /** Catalog key of the server connection that executed the call. */
+  declaredServerKey?: string;
   /** Flattened model-visible text, capped. See `truncated`. */
   text?: string;
   /** True when `text` was capped for storage. Never changes `size.bytes`. */
@@ -977,6 +1024,8 @@ export type TranscriptToolResult = {
   json?: unknown;
   /** MCP `isError` on the result. */
   isError?: boolean;
+  /** A failed call that produced no MCP `CallToolResult`. */
+  callFailure?: "output_schema_mismatch" | "missing_structured_content" | "protocol";
   size: TranscriptToolResultSize;
   /** Bytes of the raw `CallToolResult`, when the runner had it. */
   rawBytes?: number;
@@ -1119,13 +1168,21 @@ export const predicateScopeSchema = z.object({
  * failure, because a measurement we could not take must not manufacture
  * attribution.
  *
+ * A `not_applicable` row means the check has nothing to judge on this run
+ * (no tool declares an output schema, say). It carries `passed: true`, so a
+ * reader that predates the status does not fail a case over it, and becomes
+ * a not-applicable score result.
+ *
  * Absent ⇒ `scored`. Legacy rows predate the field and were all real verdicts.
  */
 export type PredicateResult = {
   predicate: Predicate;
   passed: boolean;
-  /** Absent ⇒ `"scored"`. `"error"` ⇒ no evidence; never a verdict. */
-  status?: "scored" | "error";
+  /**
+   * Absent ⇒ `"scored"`. `"error"` ⇒ no evidence; never a verdict.
+   * `"not_applicable"` ⇒ nothing to judge on this run.
+   */
+  status?: "scored" | "error" | "not_applicable";
   /** Structured, deterministic explanation — names the expected vs actual on failure. */
   reason: string;
   /** Absent ⇒ case-level; `{ kind: "turn", promptIndex }` ⇒ per-turn. */

@@ -188,6 +188,54 @@
       "status": "unsupported",
       "evidence": "Hosted OpenCode only runs Anthropic models through MCPJam's brokered Anthropic lease.",
       "observedAt": "2026-11-08"
+    },
+    {
+      "harness": "claude-web",
+      "versionRange": "*",
+      "familyPattern": "^claude-web/",
+      "status": "supported",
+      "evidence": "Claude web's own sentinel: the signed-in account picks the model on claude.ai.",
+      "observedAt": "2026-11-20"
+    },
+    {
+      "harness": "claude-web",
+      "versionRange": "*",
+      "familyPattern": "^anthropic/",
+      "status": "supported",
+      "evidence": "Claude web runs the model the signed-in account picks on claude.ai; the host's Claude model is a label for it.",
+      "observedAt": "2026-11-20"
+    },
+    {
+      "harness": "claude-web",
+      "versionRange": "*",
+      "familyPattern": ".*",
+      "status": "unsupported",
+      "evidence": "Claude web runs Claude models only. Choose a Claude model for this client.",
+      "observedAt": "2026-11-20"
+    },
+    {
+      "harness": "chatgpt-web",
+      "versionRange": "*",
+      "familyPattern": "^chatgpt-web/",
+      "status": "supported",
+      "evidence": "ChatGPT web's own sentinel: the signed-in account picks the model on chatgpt.com.",
+      "observedAt": "2026-11-20"
+    },
+    {
+      "harness": "chatgpt-web",
+      "versionRange": "*",
+      "familyPattern": "^openai/",
+      "status": "supported",
+      "evidence": "ChatGPT web runs the model the signed-in account picks on chatgpt.com; the host's OpenAI model is a label for it.",
+      "observedAt": "2026-11-20"
+    },
+    {
+      "harness": "chatgpt-web",
+      "versionRange": "*",
+      "familyPattern": ".*",
+      "status": "unsupported",
+      "evidence": "ChatGPT web runs OpenAI models only. Choose an OpenAI model for this client.",
+      "observedAt": "2026-11-20"
     }
   ]
 }

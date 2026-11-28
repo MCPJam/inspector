@@ -20,9 +20,10 @@
  *     Codex turn). The conversation's box is its machine.
  *
  * A LOCAL harness (npx / Electron) runs on the member's own machine and is never
- * given a box; neither is a scenario session (its own box path) or a turn with
- * no harness. This module owns the decision and the acquisition; the chat
- * routes only ask it.
+ * given a box; neither is a scenario session (its own box path), a web client
+ * (it drives the vendor's website in a browser) or a turn with no harness.
+ * This module owns the decision and the acquisition; the chat routes only ask
+ * it.
  */
 import { logger } from "../logger.js";
 import {
@@ -40,6 +41,7 @@ import {
   resolveOrgKeyCredentialPlan,
 } from "./external-account-credentials.js";
 import { getHarnessAdapter, harnessUsesExternalAccount } from "./registry.js";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 
 export type PlaygroundBoxReason = "credential" | "compare" | "conversation";
 
@@ -56,6 +58,9 @@ export function playgroundHarnessBoxReason(args: {
   if (!args.harnessId || args.localExecution || args.isScenarioSession) {
     return null;
   }
+  // External-account like Cursor, but on a web account, not an org key: the
+  // vendor's own app runs the turn, so a box would sit idle.
+  if (isWebClientRuntimeId(args.harnessId)) return null;
   if (harnessUsesExternalAccount(args.harnessId)) return "credential";
   if (args.comparePane) return "compare";
   return "conversation";
@@ -176,6 +181,7 @@ export async function acquirePlaygroundHarnessBox(args: {
           ...(result.value.retainUntil
             ? { retainUntil: result.value.retainUntil }
             : {}),
+          ...(prepared ? { unused: true as const } : {}),
         },
       };
     },

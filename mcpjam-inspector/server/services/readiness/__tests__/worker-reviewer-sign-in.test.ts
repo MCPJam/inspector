@@ -321,6 +321,15 @@ describe("how a connected attempt ends", () => {
     });
   });
 
+  it("keeps a completed human sign-in for another identity check when the server is unavailable", () => {
+    const person = { ...automated, signedInBy: "person" as const };
+    expect(attemptEnding(person, { outcome: "unverified", reason: "initialize returned 503" })).toMatchObject({
+      stage: { stage: "identity", status: "blocked" },
+      waitingFor: { reason: expect.stringContaining("503"), action: expect.stringContaining("retry verification") },
+    });
+    expect(attemptEnding(person, { outcome: "wrong-account" }).outcome).toBe("failed");
+  });
+
   it("distinguishes an organization check from an account identity check", () => {
     expect(attemptEnding(automated, {
       outcome: "verified", expected: { organization: "Example Org" },

@@ -12,6 +12,11 @@ async function startMeFixture(): Promise<{
   close: () => Promise<void>;
 }> {
   const server: Server = createServer((req, res) => {
+    if (req.url?.endsWith("/organizations")) {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ items: [] }));
+      return;
+    }
     if (req.url?.endsWith("/me")) {
       res.statusCode = 200;
       res.setHeader("content-type", "application/json");

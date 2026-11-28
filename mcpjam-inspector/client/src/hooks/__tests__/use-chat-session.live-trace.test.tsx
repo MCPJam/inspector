@@ -631,6 +631,50 @@ describe("useChatSession live trace state", () => {
     });
   });
 
+  it("puts the event a live turn_start carries on the envelope, and none for a typed turn", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+      }),
+    );
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+      expect(mockState.chatOnData).not.toBeNull();
+    });
+    const event = {
+      name: "demo.ping",
+      receivedAt: 4_900,
+      delivery: "push" as const,
+      origin: "server" as const,
+    };
+
+    act(() => {
+      mockState.chatOnData?.(
+        tracePart({
+          type: "turn_start",
+          turnId: "typed",
+          promptIndex: 0,
+          startedAtMs: 1_000,
+        }),
+      );
+      mockState.chatOnData?.(
+        tracePart({
+          type: "turn_start",
+          turnId: "evented",
+          promptIndex: 1,
+          startedAtMs: 5_000,
+          event,
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.liveTraceEnvelope?.turnEvents).toEqual([
+        { promptIndex: 1, turnStartedAtMs: 5_000, event },
+      ]);
+    });
+  });
+
   it("exposes preview waterfall spans before the first trace_snapshot", async () => {
     const { result } = renderHook(() =>
       useChatSession({

@@ -40,6 +40,9 @@ import swarmGenerate from "./swarm-generate.js";
 import { harnessForwardingApprovals } from "./harness-forwarding.js";
 import { harnessWidgets } from "./harness-widget.js";
 import { harnessMcp } from "./harness-mcp.js";
+import mockMcp, { mockDoorMiddleware } from "./mock-mcp.js";
+import { registerMockInProcessHandler } from "../../services/mock/registry.js";
+import { inProcessMockHandler } from "../../services/mock/route.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
 import environments from "./environments.js";
@@ -178,6 +181,9 @@ web.use("/registry/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // tool/prompt/resource leg against a freshly-authorized manager.
 web.use("/mrtr/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/server/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// A mock server's HTTP door. Its own chain (bearer auth, guest refusal) answers
+// in JSON-RPC, so it does not take the guest limiter above.
+web.use("/mock-mcp/*", ...mockDoorMiddleware);
 // `/computers/exec` runs commands — bearer required. `/computers/config` is
 // deliberately open: it returns only a boolean and a public URL, and the
 // client needs it before any authed flow to know where the terminal lives.
@@ -337,6 +343,10 @@ web.use("/harness-forwarding/*", bearerAuthMiddleware, denyGuests("Forwarding ap
 web.route("/harness-forwarding", harnessWidgets);
 web.route("/harness-forwarding", harnessForwardingApprovals);
 web.route("/harness-mcp", harnessMcp);
+web.route("/mock-mcp", mockMcp);
+// MCPJam's own dialers call a mock in process through this handler (hosted,
+// `npx` and the desktop app all mount this router).
+registerMockInProcessHandler(inProcessMockHandler());
 web.route("/mcpjam-agent", mcpjamAgent);
 web.route("/plugin-forms", pluginFormAnswers);
 web.route("/apps/plugin-instances", pluginInstances);

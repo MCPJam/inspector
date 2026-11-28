@@ -611,10 +611,10 @@ export function composeWireFindingsSummary(
   const signals = wireSignalTotals(wire);
   const signal = signals[0];
   if (signal) {
+    // Recorded signals can include sessions without an AI report, so the
+    // number of sessions read is not a denominator for these counts.
     const lines = [
-      `${SWARM_FINDING_SIGNAL_LABELS[signal.signal]} in ${signal.count} of ${
-        wire.population.read
-      } sessions read.`,
+      `${SWARM_FINDING_SIGNAL_LABELS[signal.signal]} in ${plural(signal.count, "session")}.`,
     ];
     const persona = personaGoalLine(
       wire.findings.filter((row) => row.signal === signal.signal),

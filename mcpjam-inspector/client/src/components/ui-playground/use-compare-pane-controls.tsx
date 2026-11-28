@@ -49,7 +49,9 @@ import {
 } from "@/stores/compare-pane-display-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { extractHostTheme } from "@/lib/client-config";
+import { resolveComparePaneTheme } from "@/lib/compare-pane-theme";
+import { resolveHostLogoByName } from "@/lib/host-logo";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { ComparePaneDisplay, paneDeviceLabel } from "./compare-pane-display";
 import {
   ComparePaneSettings,
@@ -161,6 +163,21 @@ export function useComparePaneControls({
     [serverIdByName],
   );
 
+  /** An environment pane's servers: each on unless the pane narrowed them. */
+  const environmentServers = useCallback(
+    (pane: RecoveryPane) =>
+      (paneEnvironments.get(pane.paneId)?.preview?.servers ?? []).map(
+        (server) => ({
+          serverId: server.serverId,
+          name: server.name,
+          source: server.source,
+          enabled:
+            pane.serverIds == null || pane.serverIds.includes(server.serverId),
+        }),
+      ),
+    [paneEnvironments],
+  );
+
   const options = useMemo(
     () =>
       active
@@ -170,27 +187,48 @@ export function useComparePaneControls({
                 (entry.status === "ready" ? entry.column : entry).compareId ===
                 pane.paneId,
             );
+            const column =
+              resolution?.status === "ready" ? resolution.column : resolution;
+            const label = column?.compareLabel ?? "Client";
+            const config = column?.hostConfig;
+            const serverNames = paneServerNames(pane);
+            const environment = paneEnvironments.get(pane.paneId);
+            const enabledServers =
+              pane.target.kind === "host"
+                ? (serverNames ?? sharedServers).length
+                : environment?.visible && environment.preview
+                  ? environmentServers(pane).filter((server) => server.enabled)
+                      .length
+                  : undefined;
             return {
               paneId: pane.paneId,
-              label:
-                (resolution?.status === "ready"
-                  ? resolution.column.compareLabel
-                  : resolution?.compareLabel) ?? "Client",
+              label,
+              logoSrc: config
+                ? getScenarioHostLogo(
+                    config.hostStyle,
+                    config.chatUiOverride,
+                    sharedTheme,
+                  )
+                : resolveHostLogoByName(label, sharedTheme),
+              modelName: column?.model?.name,
+              serverSummary:
+                enabledServers === undefined
+                  ? undefined
+                  : serverCount(enabledServers),
               hostId:
                 pane.target.kind === "host"
                   ? pane.target.hostId
-                  : (paneEnvironments.get(pane.paneId)?.preview?.host
-                      .hostId ?? null),
+                  : (environment?.preview?.host.hostId ?? null),
               // Only while environments are visible to this member, so the
               // Tools rail never lists an environment the pane cannot run.
               ...(pane.target.kind === "environment" &&
-              paneEnvironments.get(pane.paneId)?.visible
+              environment?.visible
                 ? {
                     environmentId: pane.target.environmentId,
                     environmentOverrides: paneEnvironmentOverrides(pane),
                   }
                 : { environmentId: null }),
-              serverNames: paneServerNames(pane),
+              serverNames,
               ...(pane.target.kind === "host" && pane.serverIds != null
                 ? {
                     onServerChosen: (name: string) => {
@@ -222,8 +260,11 @@ export function useComparePaneControls({
       resolutions,
       paneServerNames,
       paneEnvironments,
+      environmentServers,
       serverIdByName,
       setPaneOverrides,
+      sharedServers,
+      sharedTheme,
     ],
   );
   useEffect(() => publishPanes(options), [options, publishPanes]);
@@ -272,21 +313,6 @@ export function useComparePaneControls({
         : null;
     },
     [panes, paneServerNames, serverIdByName],
-  );
-
-  /** An environment pane's servers: each on unless the pane narrowed them. */
-  const environmentServers = useCallback(
-    (pane: RecoveryPane) =>
-      (paneEnvironments.get(pane.paneId)?.preview?.servers ?? []).map(
-        (server) => ({
-          serverId: server.serverId,
-          name: server.name,
-          source: server.source,
-          enabled:
-            pane.serverIds == null || pane.serverIds.includes(server.serverId),
-        }),
-      ),
-    [paneEnvironments],
   );
 
   const setEnvironmentServer = useCallback(
@@ -506,10 +532,12 @@ export function useComparePaneControls({
       );
       const display = paneDisplays[pane.paneId];
       const device = display?.deviceType ?? sharedDevice;
-      const theme =
-        display?.theme ??
-        (hostConfig ? extractHostTheme(hostConfig.hostContext) : undefined) ??
-        sharedTheme;
+      const theme = resolveComparePaneTheme(
+        sharedTheme,
+        display?.theme,
+        hostConfig?.hostContext,
+        (column ?? blocked)?.preferAppThemeInCompare,
+      );
       return (lane) => ({
         actions: (
           <ComparePaneSettings
@@ -553,7 +581,8 @@ export function useComparePaneControls({
             <ComparePaneDisplay
               label={label}
               device={device}
-              theme={theme}
+              theme={theme.choice}
+              hasClientTheme={theme.clientTheme !== undefined}
               onDeviceChange={(deviceType) =>
                 setPaneDisplay(pane.paneId, { deviceType })
               }

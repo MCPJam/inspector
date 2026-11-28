@@ -60,6 +60,7 @@ const UPGRADE_RETURN_NEXT_STEP: Record<UpgradeOrigin, string> = {
   credits: "Your credits are available now.",
   evals: "Run your suite again to pick up where you left off.",
   native_harness: "Native harnesses now run without a turn limit.",
+  sidebar: "Your daily credit limit is gone, and you can add credits anytime.",
 };
 
 interface UpgradeReturn {

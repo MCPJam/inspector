@@ -39,11 +39,27 @@ import {
 // @ts-expect-error Local build helper is implemented as plain ESM.
 import { buildCliSkillsBundle, CLI_SKILL_ROOTS } from "../scripts/generate-skills-bundle.mjs";
 
-test("the CLI serves the skills that teach its own surface", () => {
+test("the CLI serves the skills that teach its own surface", async () => {
   const names = SKILLS_BUNDLE_ENTRIES.map((entry) =>
     entry.uri.split("/").at(-2)
   ).sort();
-  assert.deepEqual(names, ["mcp-inspector", "mcpjam-eval-import"]);
+  assert.deepEqual(names, [
+    "mcp-inspector",
+    "mcpjam-eval-import",
+    "run-mcpjam-evals",
+  ]);
+  // `run-mcpjam-evals` teaches the eval tools, so only `--evals` serves it.
+  const listed = async (evals: boolean) =>
+    (await capture({ evals }).handlers.get("skills/list")!({})).skills
+      .map((skill: { uri: string }) => skill.uri.split("/").at(-2))
+      .sort();
+  assert.deepEqual(await listed(false), ["mcp-inspector", "mcpjam-eval-import"]);
+  assert.deepEqual(await listed(true), names);
+  assert.ok(
+    !capture().resources.some((resource) =>
+      resource.uri.includes("/run-mcpjam-evals/")
+    )
+  );
   // `mcp-inspector` is the load-bearing one: it interprets the probe/doctor
   // output of the tools this server registers.
   assert.ok(names.includes("mcp-inspector"));
@@ -76,7 +92,7 @@ test("uses a valid public cache scope for the static catalog", () => {
  * Exercising the real handler rather than asserting on the constants: a
  * constant can be correct while the response still carries the wrong field.
  */
-function capture() {
+function capture(options: { evals?: boolean } = {}) {
   const handlers = new Map<string, (params: any) => Promise<any>>();
   const resources: {
     name: string;
@@ -107,7 +123,7 @@ function capture() {
       });
     },
   };
-  registerSkillsSurface(stub as never);
+  registerSkillsSurface(stub as never, options);
   return { handlers, resources };
 }
 
@@ -142,7 +158,7 @@ test("names and describes each SKILL.md resource from its frontmatter", () => {
   // The spec's SHOULD for skill resources: `name` from the frontmatter name,
   // `description` from the frontmatter description. Supporting files are
   // named by their path within the skill.
-  const { resources } = capture();
+  const { resources } = capture({ evals: true });
   for (const entry of SKILLS_BUNDLE_ENTRIES) {
     const skillMd = resources.find((resource) => resource.uri === entry.uri);
     assert.ok(skillMd, `${entry.uri} must be registered`);
@@ -246,5 +262,5 @@ test("the committed bundle matches a fresh regeneration byte for byte", async ()
     committed,
     "skills bundle is out of date — run: npm run bundle:skills -w @mcpjam/cli"
   );
-  assert.equal((CLI_SKILL_ROOTS as string[]).length, 2);
+  assert.equal((CLI_SKILL_ROOTS as string[]).length, 3);
 });

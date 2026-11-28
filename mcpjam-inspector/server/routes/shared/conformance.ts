@@ -52,6 +52,8 @@ import {
   type OAuthConformanceSession,
 } from "../../services/conformance-oauth-sessions.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
+import { mockTransportOf } from "../../utils/mock-servers.js";
+import { http1Fetch } from "@mcpjam/sdk/internal/network-proxy";
 import {
   bindCredentialHeaders,
   type CredentialHeaderBinding,
@@ -103,7 +105,8 @@ const CONFORMANCE_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
  * following its redirects unchecked as it did while this comment's predecessor
  * documented the gap.
  *
- * A no-op outside hosted mode, where reaching localhost is the point.
+ * No guard outside hosted mode, where reaching localhost is the point; local
+ * runs only stay on HTTP/1.1 (`localFetch` below).
  *
  * With a `binding`, the connection's own credentials (a delivered token, its
  * stored credential headers) go only to the origins they are bound to.
@@ -122,6 +125,10 @@ export function createConformanceFetch(
     // SSE without punishing a healthy stream for staying open.
     bodyIdleTimeoutMs: CONFORMANCE_BODY_IDLE_TIMEOUT_MS,
     maxResponseBytes: CONFORMANCE_MAX_RESPONSE_BYTES,
+    // Local runs stay on HTTP/1.1 where Node's fetch would negotiate HTTP/2:
+    // a run connects and disconnects at once, and on Node 26's HTTP/2 that
+    // crashes the process (CQT-216). Hosted runs use the pinned transport.
+    localFetch: http1Fetch,
   });
   // An MCP server's answers are read as MCP (hosted: see
   // `withHostedMcpAnswerBodies`). An OAuth endpoint's are not — its error
@@ -163,6 +170,8 @@ export interface ResolvedHttpConfig extends ConformanceDeadlineInput {
   customHeaders?: Record<string, string>;
   /** The connection's delivered credentials, held to their origins. */
   credentialBinding?: CredentialHeaderBinding;
+  /** A mock's in-process transport: the suite reaches `serverUrl` through it, not the network. */
+  transport?: typeof fetch;
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion?: McpProtocolVersion;
   /** Run only these checks; absent ⇒ every check the revision has. */
@@ -172,6 +181,10 @@ export interface ResolvedHttpConfig extends ConformanceDeadlineInput {
   /** Per-check limit in ms; absent ⇒ the SDK default. */
   checkTimeout?: number;
 }
+
+/** Why the sign-in checks refuse a mock: it has no sign-in of its own to grade. */
+export const MOCK_HAS_NO_OAUTH =
+  "OAuth checks grade a real server's sign-in, and a mock server has none. Run them on the server the mock is based on.";
 
 export class UnsupportedTransportError extends Error {
   readonly code = "unsupportedTransport" as const;
@@ -183,6 +196,9 @@ export function assertHttpSupported(
   config: MCPServerConfig,
 ): void {
   const support = canRunConformance(suite, config);
+  if (suite === "oauth" && mockTransportOf(config)) {
+    throw new UnsupportedTransportError(MOCK_HAS_NO_OAUTH);
+  }
   if (!support.supported) {
     throw new UnsupportedTransportError(support.reason ?? "Unsupported transport");
   }
@@ -213,7 +229,7 @@ export async function runProtocolConformance(
     // belong in this change") was taken up by the runner, and then by every
     // hosted connection factory when the gap it left became MJ-001.
     fetchFn: deadlineFetch(
-      createConformanceFetch("MCP server", input.credentialBinding),
+      input.transport ?? createConformanceFetch("MCP server", input.credentialBinding),
       signal,
     ),
     // The browser counts the whole run once; a suite request must not.
@@ -481,6 +497,8 @@ export interface SubmitOAuthConformanceCodeInput {
   sessionId: string;
   code: string;
   state?: string;
+  /** RFC 9207 `iss` from the callback, for the runner's issuer check. */
+  iss?: string;
   /** The caller that started the run; see `StartOAuthConformanceInput.owner`. */
   owner?: string;
 }
@@ -494,6 +512,7 @@ export function submitOAuthConformanceCode(
     input.code,
     input.state,
     input.owner,
+    input.iss,
   );
 }
 

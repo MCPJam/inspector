@@ -29,6 +29,10 @@ export interface PlatformEvalRunAccountIdentity {
 
 /** One account a run used on one server. */
 export interface PlatformEvalRunAccount {
+  cases?: Array<{
+    testCaseId: string;
+    source: "case" | "run" | "suite" | "default";
+  }>;
   /** The saved server, as `listProjectServers` returns it. */
   serverId: string;
   /** The account's id in the server accounts API. Absent for a project server's default account and for XAA. */

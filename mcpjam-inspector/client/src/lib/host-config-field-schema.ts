@@ -948,6 +948,16 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     read: (cfg) => cfg.requireToolApproval,
   },
   {
+    id: "runUnloadedToolCalls",
+    section: "agent",
+    subsection: "Agent tooling",
+    label: "Run calls to unloaded tools",
+    path: "runUnloadedToolCalls",
+    description: "When the model calls a tool it has not loaded, run the call if its inputs are valid. Off refuses the call until the tool is loaded.",
+    kind: { kind: "boolean" },
+    read: (cfg) => cfg.runUnloadedToolCalls ?? true,
+  },
+  {
     id: "respectToolVisibility",
     section: "agent",
     subsection: "Agent tooling",
@@ -1259,13 +1269,12 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     subsection: "Client policy",
     label: "Event delivery",
     path: `mcpProfile.extensions.${MCPJAM_EVENTS_EXTENSION_ID}`,
-    description:
-      "The MCP Events delivery modes this client accepts. Without a saved choice, its client style decides.",
+    description: "The MCP Events delivery modes this client accepts.",
     kind: { kind: "mode-set", modes: EVENT_DELIVERY_MODES, baseline: 0 },
     // The saved setting only, like Task execution above: this row is public
-    // on caniuse.dev, where a style default is not a measurement, so a client
-    // with nothing saved reads as "Not yet tested". Subscriptions still use
-    // the default (`resolveHostEventDeliveryModes`).
+    // on caniuse.dev, where a client with nothing saved reads as "Not yet
+    // tested". Subscriptions treat nothing saved as no events
+    // (`resolveHostEventDeliveryModes`).
     read: (cfg) => {
       const setting = readEventsHostSetting(cfg);
       if (setting.kind === "unset") return undefined;

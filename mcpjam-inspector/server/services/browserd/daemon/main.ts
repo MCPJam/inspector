@@ -16,7 +16,10 @@ import { ChromiumDriver } from "./chromium-driver";
 import { launchBrowserdContext } from "./chromium-launch";
 import { createPublicNetworkPolicy } from "./public-network";
 import { HandoffLease } from "./lease";
-import { prepareBrowserProfile } from "./prepare-browser-profile";
+import {
+  prepareBrowserProfile,
+  withProfileClaim,
+} from "./prepare-browser-profile";
 import { mkdirSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { displayGeometryFor, resizeHostedDisplay } from "./display-resize";
@@ -88,18 +91,21 @@ function displayHeight(config: { deviceScaleFactor: number }): number {
 async function main(): Promise<void> {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
-  const profileImported = await prepareBrowserProfile(config);
-  const context = await launchBrowserdContext({
-    userDataDir: config.userDataDir,
-    profileImported,
-    headless: config.headless,
-    extraArgs: extraArgsFor(config),
-    contextMode: config.contextMode,
-    deviceScaleFactor: config.deviceScaleFactor,
-    ...(config.networkPolicy === "public"
-      ? { egressPolicy: createPublicNetworkPolicy() }
-      : {}),
-  });
+  // Held until the browser holds its own lock, so no other boot can empty the
+  // profile while this one's browser starts on it.
+  const context = await withProfileClaim(config.userDataDir, async () =>
+    launchBrowserdContext({
+      userDataDir: config.userDataDir,
+      profileImported: await prepareBrowserProfile(config),
+      headless: config.headless,
+      extraArgs: extraArgsFor(config),
+      contextMode: config.contextMode,
+      deviceScaleFactor: config.deviceScaleFactor,
+      ...(config.networkPolicy === "public"
+        ? { egressPolicy: createPublicNetworkPolicy() }
+        : {}),
+    }),
+  );
   // One lease, shared by the handler (which blocks commands while a person
   // holds the browser) and the driver (which makes the first observation after
   // they hand it back loud).
@@ -264,7 +270,17 @@ async function main(): Promise<void> {
     ...(recorder ? { recorder } : {}),
     ...(config.contextMode === "persistent"
       ? {
-          profileExport: async () => {
+          profileExport: async ({ excludeOrigins }) => {
+            // Cleared in the live browser, before the close: Chromium keeps a
+            // site's data across several stores and formats, and only the
+            // browser can remove all of it. An exclusion it can't honor stops
+            // the export rather than archive that site's session.
+            if (excludeOrigins.length > 0) {
+              if (!context.clearOriginData) {
+                throw new Error("profile_exclusions_unavailable");
+              }
+              await context.clearOriginData(excludeOrigins);
+            }
             // Closing Chromium flushes cookies/LevelDB before the archive is read.
             // The handler holds the export lease until the bytes are complete.
             await context.close();

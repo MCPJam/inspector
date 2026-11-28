@@ -67,7 +67,6 @@ it("sends newly entered answers after resetting and reconfiguring the update ove
   expect(
     JSON.parse(screen.getByRole("status").textContent ?? "{}"),
   ).toMatchObject({
-    inputResponses: { name: "new" },
-    checkOverrides: { "tasks-update-ack-shape": { toolName: "ask" } },
+    checkOverrides: { "tasks-update-ack-shape": { toolName: "ask", inputResponses: { name: "new" } } },
   });
 });

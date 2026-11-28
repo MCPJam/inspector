@@ -1,0 +1,210 @@
+@font-face {
+  font-family: "Caniuse Instrument Sans";
+  src: url("./caniuse-instrument-sans.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+/* Public caniuse.dev surfaces and their portaled dialogs. */
+.dark.caniuse-site,
+.dark.caniuse-dialog,
+.caniuse-intro {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.96 0.01 86);
+  --card: oklch(0.175 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.21 0.005 55);
+  --popover-foreground: var(--foreground);
+  --muted: oklch(0.215 0.004 55);
+  --muted-foreground: oklch(0.769 0.015 70);
+  --border: oklch(0.31 0.006 65);
+  --input: var(--border);
+  --primary: oklch(0.786 0.148 48);
+  --primary-foreground: oklch(0.19 0.026 52);
+  --ring: var(--primary);
+  --accent: oklch(0.259 0.041 48);
+  --accent-foreground: var(--primary);
+  --secondary: var(--muted);
+  --secondary-foreground: var(--foreground);
+  --caniuse-compare-background: oklch(0 0 0);
+}
+
+.caniuse-site,
+.caniuse-dialog,
+.caniuse-intro {
+  font-family: "Caniuse Instrument Sans", var(--font-sans);
+}
+
+.caniuse-site[data-page="compare"],
+.caniuse-intro {
+  background-color: var(--caniuse-compare-background);
+}
+
+.caniuse-intro {
+  color: var(--foreground);
+}
+
+.caniuse-wrap {
+  width: min(1320px, calc(100% - clamp(32px, 6.1vw, 88px)));
+  margin-inline: auto;
+}
+
+.caniuse-hero {
+  font-size: clamp(1.875rem, 5.8vw, 3.75rem);
+  line-height: 1.13;
+  letter-spacing: -0.04em;
+}
+
+.caniuse-byline {
+  font-size: clamp(0.875rem, 1.6vw, 1.0625rem);
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+@media (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .caniuse-client-strip {
+    scrollbar-width: none;
+  }
+}
+
+.caniuse-site .caniuse-hero input {
+  border-bottom: 2px solid transparent;
+}
+
+.caniuse-hero input::placeholder {
+  color: color-mix(in oklab, var(--muted-foreground) 72%, var(--primary));
+}
+
+:is(.caniuse-site, .caniuse-dialog)
+  :is(input:not([type]), input[type="text"], input[type="email"], input[type="search"], textarea):focus-visible {
+  --ring: var(--input);
+  background-color: color-mix(in oklab, var(--foreground) 8%, transparent);
+  outline: none;
+  box-shadow: none;
+}
+
+.caniuse-site .caniuse-hero input:focus-visible {
+  background-color: transparent;
+  border-bottom-color: var(--muted-foreground);
+}
+
+.caniuse-site .caniuse-sidebar-search input,
+.caniuse-site .caniuse-sidebar-search input:focus-visible {
+  background-color: var(--caniuse-compare-background);
+}
+
+.caniuse-sidebar-search:has(input:focus-visible) > svg {
+  color: var(--foreground);
+  stroke-width: 2.5;
+}
+
+@media (forced-colors: active) {
+  :is(.caniuse-site, .caniuse-dialog)
+    :is(input:not([type]), input[type="text"], input[type="email"], input[type="search"], textarea):focus-visible,
+  .caniuse-site .caniuse-hero input:focus-visible {
+    border-bottom: 2px solid Highlight;
+  }
+}
+
+.caniuse-nav-link {
+  display: flex;
+  align-items: center;
+  border-bottom: 2px solid transparent;
+  color: var(--muted-foreground);
+}
+
+.caniuse-nav-link:hover,
+.caniuse-nav-link[aria-current="page"] {
+  color: var(--foreground);
+}
+
+.caniuse-nav-link[aria-current="page"] {
+  border-bottom-color: var(--primary);
+}
+
+.caniuse-glow {
+  background-image: radial-gradient(
+    ellipse at 16% 110%,
+    color-mix(in oklab, var(--primary) 18%, transparent),
+    transparent 72%
+  );
+}
+
+.caniuse-map-group {
+  background-image: linear-gradient(110deg, transparent, var(--card) 58%);
+}
+
+.caniuse-dialog {
+  background-color: var(--caniuse-compare-background);
+  background-image: none;
+  border-radius: 12px;
+}
+
+.caniuse-dialog,
+.caniuse-client-tooltip {
+  box-shadow: 0 0 50px color-mix(in oklab, var(--primary) 19%, transparent);
+}
+
+.caniuse-dialog [data-slot="dialog-close"] {
+  background-color: transparent;
+}
+
+[data-caniuse-matrix] [data-support-level] {
+  --badge-color: var(--muted-foreground);
+  border: 1px solid color-mix(in oklab, var(--badge-color) 55%, var(--card));
+  border-radius: 5px;
+  background-color: color-mix(in oklab, var(--badge-color) 25%, var(--card));
+  color: color-mix(in oklab, var(--foreground) 65%, var(--badge-color));
+  padding: 2px 6px;
+  line-height: 1.5;
+}
+
+[data-caniuse-matrix] [data-support-level="supported"] {
+  --badge-color: var(--success);
+}
+
+[data-caniuse-matrix] [data-support-level="partial"] {
+  --badge-color: var(--warning);
+}
+
+[data-caniuse-matrix] [data-support-level="unsupported"] {
+  --badge-color: var(--destructive);
+}
+
+[data-caniuse-matrix] [data-support-dot] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .caniuse-brand:hover img {
+    animation: caniuse-wiggle 450ms ease;
+  }
+  .caniuse-reveal {
+    animation: caniuse-reveal 380ms ease both;
+  }
+  .caniuse-prompt {
+    animation: caniuse-reveal 480ms ease both;
+  }
+}
+
+@keyframes caniuse-wiggle {
+  25%,
+  75% {
+    transform: rotate(-8deg);
+  }
+  50% {
+    transform: rotate(8deg);
+  }
+}
+
+@keyframes caniuse-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

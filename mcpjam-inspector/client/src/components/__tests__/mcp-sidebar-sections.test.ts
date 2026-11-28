@@ -59,13 +59,14 @@ describe("sidebar section grouping", () => {
     expect(titlesIn("Educate")).toEqual(["Learning"]);
   });
 
-  it("places Triggers right after Playground in Explore", () => {
+  it("keeps background trigger management inside Playground", () => {
     // Triggers are the unattended version of a Playground turn: a model with
     // the project's servers, reacting to an event instead of a message.
     const explore = navigationSections
       .find((section) => section.label === "Explore")!
       .items.map((item) => item.title);
-    expect(explore.indexOf("Triggers")).toBe(explore.indexOf("Playground") + 1);
+    expect(explore).toContain("Playground");
+    expect(explore).not.toContain("Triggers");
   });
 
   it("keeps flag-gated items in the section that matches what they do", () => {
@@ -108,7 +109,7 @@ describe("sidebar section grouping", () => {
       .filter((item) => item.badge === "New")
       .map((item) => item.title);
 
-    expect(badged).toEqual(["Conformance", "WebMCP"]);
+    expect(badged).toEqual(["Conformance", "Events"]);
   });
 
   it("lists Evaluate before Swarms and User Testing in Measure", () => {

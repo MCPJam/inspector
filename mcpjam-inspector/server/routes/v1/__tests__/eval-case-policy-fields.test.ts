@@ -196,7 +196,7 @@ describe("per-case verdict-policy fields", () => {
       });
     }
 
-    it("leaves an ordinary edit alone — and does not read the suite for it", async () => {
+    it("leaves an ordinary edit alone — one suite read, for the CI-owned pre-check only", async () => {
       const res = await request("PATCH", `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx`, {
         title: "Renamed",
       });
@@ -207,7 +207,25 @@ describe("per-case verdict-policy fields", () => {
         convexQueryMock.mock.calls.filter(
           (c) => c[0] === "testSuites:getTestSuite",
         ),
-      ).toHaveLength(0);
+      ).toHaveLength(1);
+    });
+
+    it("reads the suite once for a file sync's ordinary edit too", async () => {
+      // The pre-check needs it even with a marker: a marker on an SDK-created
+      // suite can never succeed, and is refused before the mutation.
+      const res = await request(
+        "PATCH",
+        `${SUITE_PATH}/cases/case1xxxxxxxxxxxxxxxxxxxxxxxxxxx?declaredSuiteId=s_from_file`,
+        { title: "Renamed" },
+      );
+
+      expect(res.status).toBe(200);
+      expect(patchedCase().title).toBe("Renamed");
+      expect(
+        convexQueryMock.mock.calls.filter(
+          (c) => c[0] === "testSuites:getTestSuite",
+        ),
+      ).toHaveLength(1);
     });
   });
 

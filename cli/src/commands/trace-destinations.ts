@@ -25,8 +25,8 @@ import { getGlobalOptions } from "../lib/server-config.js";
  *
  * A destination is a generic OTLP/HTTP target: an endpoint, the auth headers
  * the vendor expects, and any extra resource attributes it routes on. Every
- * eligible eval, scenario, swarm and shared-Playground turn is pushed to it
- * within about a minute, continuously, with no export step.
+ * eligible eval, scenario, swarm, background-trigger and shared-Playground turn
+ * is pushed to it within about a minute, continuously, with no export step.
  *
  * ## Header values never come back
  *
@@ -245,7 +245,7 @@ export function resolveAttributes(
   return { ...out };
 }
 
-const SOURCE_TYPES = ["eval", "scenario", "swarm", "direct"] as const;
+const SOURCE_TYPES = ["eval", "scenario", "swarm", "direct", "event"] as const;
 type SourceType = (typeof SOURCE_TYPES)[number];
 
 export function resolveSourceTypes(
@@ -359,7 +359,7 @@ export function registerTraceDestinationsCommands(program: Command): void {
     )
     .option(
       "--source <type>",
-      "Repeatable: eval, scenario, swarm or direct. `direct` is Playground, and only sessions SHARED to the workspace are ever sent. Defaults to the server's default set.",
+      "Repeatable: eval, scenario, swarm, direct or event. `direct` is Playground, and only sessions SHARED to the workspace are ever sent. `event` selects background trigger runs; until they export under their own source type (a server-side rollout), they still match `direct`. Defaults to the server's default set.",
       collect
     )
     .option(

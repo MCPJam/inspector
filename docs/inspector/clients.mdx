@@ -1,229 +1,61 @@
 ---
 title: "Clients"
-description: "Reusable MCP client configurations for testing servers and apps under realistic conditions"
+description: "Test your MCP server the way a specific host would call it. Create a client from a template, check its settings, and use it in the Playground. About 5 minutes."
 icon: "user-cog"
 ---
 
-<Note>
-  Open the **Connect** tab in the left sidebar to manage Clients (labelled
-  **Servers** in some builds). The page name "Clients" refers to the
-  configuration object, not the sidebar label.
-</Note>
+A **client** is a saved configuration that makes MCPJam behave like one MCP host, such as ChatGPT Desktop, Claude Desktop or Cursor. It sets the model, what MCPJam advertises when it connects to your server, and how MCP Apps are rendered and sandboxed. The Playground, Evaluate, Swarms and User Testing all run through a client, so the same settings apply wherever you test.
 
-A **Client** is a named, reusable configuration that defines how MCPJam connects to and talks to your MCP servers when you test them in the Playground, Studies, and Evals. It bundles everything that would normally be scattered across one-off settings (model, system prompt, attached servers, protocol-level knobs, and MCP App sandbox controls) behind a single picker.
+Use a client when you want to check how your server behaves in a particular host before you ship to it. MCPJam emulates that host; it isn't the official app.
 
-Real MCP hosts (Claude Desktop, ChatGPT, Cursor, your own product) each advertise slightly different capabilities and apply different sandbox policies to MCP Apps. Clients let you reproduce those environments in MCPJam so you can verify your server behaves correctly _before_ shipping to a specific host.
+## Before you start
 
-## Why Clients exist
+- **A project where you're an Admin.** Only Admins can create clients. See [Sharing Projects](/inspector/projects#sharing-projects).
+- **A project with at least one server.** Follow [Start testing](/#start-testing) to connect the Excalidraw demo server if you don't have one.
 
-Without Clients, every Chat or Eval would be tied to whatever ambient settings were active when you ran it. That makes results hard to reproduce and hard to share. Clients fix this by giving you:
+<Steps titleSize="h3">
+  <Step title="Open the client view" id="open-the-client-view">
+    In the sidebar, select **Connect**, then select **Client** at the top of the page.
 
-- **Reproducibility**: A snapshot of every setting that affects a run, so a teammate hitting the same Client gets the same conditions.
-- **Host emulation**: Configure the inspector to look like Claude Desktop, ChatGPT, or your own host so you can verify your MCP server or MCP App degrades gracefully across them.
-- **Faster iteration**: Switch between configurations with one click instead of editing fields in five places.
+    <Check>The view shows the active client, with its settings on the right. The switcher next to **Add client** shows its name and position, for example `3 / 5`.</Check>
+  </Step>
+  <Step title="Create a client from a template" id="create-a-client">
+    Select **Add client**. In the **New Client** dialog, under **Start from template**, select **ChatGPT Desktop**. The **Name** field fills in with the template's name. Select **Create**.
 
-## What you can configure
+    <Frame>
+      <img src="/images/clients/v1/new-client-dialog.png" alt="The New Client dialog with Start from template listing hosts such as ChatGPT Desktop, Claude Desktop and Cursor, a Name field, and Cancel and Create buttons" width="360" />
+    </Frame>
 
-A Client groups settings into two layers: the **protocol layer** (how the MCP connection itself behaves) and the **app layer** (what an MCP App running inside the client is allowed to do).
+    <Check>A message says **Client "ChatGPT Desktop" created**, and the switcher now shows **ChatGPT Desktop**.</Check>
+  </Step>
+  <Step title="Check what the template set" id="check-the-settings">
+    The panel on the right has the **Agent**, **MCP Protocol** and **Apps** tabs. Depending on your account, it can also show **Tools** and **Browser**.
 
-### Protocol-level settings
+    - **Agent** shows the model the client runs and how it handles tools.
+    - **MCP Protocol** shows what MCPJam advertises when it connects to your server.
+    - **Apps** shows how MCP App views are rendered and sandboxed.
+    - **Tools**, when shown, lists the built-in tools the client offers besides your MCP servers, such as web search.
 
-These map directly to fields the inspector sends during the standard MCP `initialize` handshake and on every subsequent request.
+    <Frame>
+      <img src="/images/clients/v1/client-panel.png" alt="The ChatGPT Desktop client panel with the Agent, MCP Protocol, Apps and Tools tabs, and the Agent tab showing the model, reasoning effort, temperature and tool settings" width="420" />
+    </Frame>
 
-- **Supported protocol versions**: The ordered list of MCP protocol versions the client advertises. The first entry is sent as `protocolVersion`; the rest form the accept-set. Useful for testing how your server handles older or newer clients.
-- **`clientInfo`**: The `name`, `version`, and any additional fields sent in `initialize.params.clientInfo`. Set this to match a real host's identifier when you want your server to take a host-specific code path.
-- **Client capabilities**: The capabilities object sent in `initialize` (sampling, roots, elicitation, experimental, etc.). Enable or disable each one to test what your server does when a capability is missing.
-- **Advertise EMA support by default**: Toggle in the **MCP Protocol** settings card that adds the `io.modelcontextprotocol/enterprise-managed-authorization` extension to the stored `clientCapabilities`. When on, the extension appears in the MCP Protocol JSON editor and host-card capability chips. This controls the stored baseline only. XAA-configured connections always advertise the extension at connect time regardless of this setting.
-- **Elicitation**: Toggle in the **MCP Protocol** settings card that controls the top-level `clientCapabilities.elicitation` key. When off, the key is absent. When on, the inspector advertises `{ form: {} }`, signalling that the client can handle elicitation requests from the server. An optional **URL mode** sub-checkbox (visible only when Elicitation is on) adds `{ url: {} }` to the elicitation object, indicating the client can also handle requests to open a URL. Enabling this before server-side elicitation support is active is safe. It is a no-op rather than a break.
-- **Mirror tool params into `Mcp-Param-*` headers (SEP-2243)**: Dropdown in the **MCP Protocol** settings card. **Mirror** (the default) copies a tool argument annotated with `x-mcp-header` into an `Mcp-Param-{Name}` request header on `tools/call`, as MCP `2026-07-28` requires. **Omit** deliberately simulates a client that has _not_ implemented the mirroring (real-world support is uneven, and browser clients never send these headers) so you can see what your server does when they don't arrive. A conforming server should answer `-32020 HeaderMismatch`; MCPJam surfaces that failure as-is rather than silently retrying. The setting applies to the whole client, not per server, because conformance is a property of the client.
-- **Mid-session sign-in**: Four dropdowns in the **MCP Protocol** settings card that set how the client reacts when a server asks for sign-in on one call: an HTTP `401`, or a ChatGPT-style tool result carrying `_meta["mcp/www_authenticate"]`. Each has an action (**Prompt to sign in**, **Notify**, or **Pass through**) and a trigger that says what counts as a challenge. They are read on every call, so changes apply without reconnecting. See [Mid-session sign-in](/inspector/lazy-authentication).
-- **Request timeout**: Per-request timeout in milliseconds applied to all MCP calls (`tools/call`, `resources/read`, etc.). Lower it to verify your server handles cancellation correctly; raise it for long-running tools.
-- **Default headers**: Headers attached to every HTTP-transport request. Useful for auth tokens, tenant IDs, or anything else your server expects upstream.
+    If the **Agent** tab asks you to select a model, select one; your project may not have the template's model. Otherwise you don't need to change anything now. Each setting is described in the [Clients reference](/inspector/clients/reference).
+  </Step>
+  <Step title="Use the client in the Playground" id="use-the-client">
+    Open **Playground**. On any pane, select the settings icon to open **Pane settings**, then set **Client** to **ChatGPT Desktop**. If your project has environments, the field is called **Client or environment**.
 
-### Per-server connection overrides
+    <Check>In **Pane settings**, **ChatGPT Desktop** is selected. Prompts you send in that pane now use the client's model and settings.</Check>
+  </Step>
+</Steps>
 
-You can override the request timeout and headers **per server** from the project-wide server list. This lets a single project connect to one server with a long timeout and an auth header while keeping defaults for the others.
+## What you did
 
-### Agent behavior
+You created a client from a template, looked at the settings it brought, and used it in the Playground.
 
-These settings control how the model interacts with tools during a chat session. They appear in the **Agent** tab of the Client focus panel.
+**Next:** [Chat and inspect tool calls](/inspector/playground) to see how your server's tools are called through the client.
 
-- **Require tool approval**: When on, the model pauses before tool calls so you can approve or deny each one. The setting **raises** the bar and never lowers it, so it is not the whole story in either direction. Browser and WebMCP page tools follow the chat’s Tool Approval setting. With it off, agents can act in signed-in websites without a per-call prompt. Browser device permission is a separate prerequisite for local browsing and inspection. Others never pause even when it is on: read-only lookups of your own project, the progressive-discovery meta-tools, and read-only UI actions. Web search follows the switch: its query is your text leaving for a third party, and the call spends credits. For [workspace tools](/inspector/playground#workspace-tools), the saved value is what counts: the reads that open a connection to one of your servers pause unless it is saved off, and the tools that change something in your project always pause.
-- **Respect tool visibility**: Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
-- **Progressive tools**: Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size.
-- **Built-in tools**: A checkbox list of host-managed built-in tools (for example, `web_search`) that the model can use on each turn. Selected tool IDs are forwarded with the chat request so the server can resolve them alongside your MCP server tools. Browser is not listed here. It is configured in the **Browser** tab. This section only appears when the deployment has a populated built-in tool catalog; it is hidden otherwise.
+## Related
 
-### Browser settings
+- [Clients reference](/inspector/clients/reference): every setting, who can change clients, servers for evals, and comparing hosts.
 
-The **Browser** tab in the Client focus panel separates saved browser configuration from your personal browser preferences. It is visible when Browser is enabled for your account or when the client already has a browser configured.
-
-**This client**: Saved configuration that applies to every chat and environment using this client:
-
-- **Browser**: Enable or disable the browser tool for this client. When the feature is not yet rolled out to your account, the toggle is disabled unless the client already has Browser enabled (so existing configurations remain inspectable).
-- **Browser profile**: Optionally pin a saved browser profile for this client. Without a selection, new chats use your personal default profile. This field appears only when Browser is enabled or a profile is already saved.
-
-**Your browser**: Personal preferences that do not change the client configuration:
-
-- **Device permission**: Grant or revoke permission for the local browser on this machine. Appears only when local browser is available and selected.
-- **Saved profiles**: Manage your personal browser profiles.
-
-#### Browser canvas island
-
-The client canvas shows a **Browser** island (or **+ Browser** when not yet enabled). The island displays the active profile label. Clicking it opens the Browser tab.
-
-### MCP App settings (SEP-1865)
-
-When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps), interactive UIs delivered via `ui://` resources, the Client controls how the inspector renders and sandboxes them. These map to the fields a real host advertises in `HostCapabilities` and `HostContext`.
-
-- **Host capabilities**: The set of `HostCapabilities` keys the inspector advertises in the `ui/initialize` handshake. Each host preset reflects that host's published capability subset: for example, the **Copilot** preset advertises only `openLinks`, `serverTools`, `updateModelContext`, and `message`, matching Microsoft 365 Copilot's published Component-bridge table, and omits `serverResources` and `logging`. Use this to verify your app degrades gracefully when a capability it relies on is absent.
-- **Sandbox CSP mode**: `host-default`, `declared`, or `relaxed`. Controls the baseline Content Security Policy the inspector applies to your app's iframe.
-- **CSP restrictTo**: Per-directive intersections (`connectDomains`, `resourceDomains`, `frameDomains`, `baseUriDomains`) that further narrow what the app is allowed to fetch, embed, or set as a base URI. Restrict-only. The inspector never adds an undeclared domain.
-- **Custom CSP directives**: Verbatim source-expression overrides (e.g. `script-src: 'unsafe-eval' 'wasm-unsafe-eval'`) for cases where you need to model exactly what a particular host emits at the browser layer.
-- **Permission Policy**: Per-feature toggles for `camera`, `microphone`, `geolocation`, and `clipboard-write`. Choose `resource-declared` (grant what the app's resource metadata asks for), `deny-all`, or `custom` (your own allow map).
-- **Display modes**: Which of `inline`, `fullscreen`, and `pip` the inspector advertises in `HostContext.availableDisplayModes`. Test how your app responds when a requested mode isn't available.
-- **Theme and styles**: The CSS variables and font block the inspector injects into `HostContext.styles` so you can verify your app picks up host theming.
-- **`window.openai` injection**: Toggle whether the inspector injects the OpenAI Apps SDK `window.openai` shim into widget HTML before sandboxing. ChatGPT, Copilot, and MCPJam host presets enable this by default; Claude and Cursor presets leave it off. You can override the preset per host using the toggle in the **Apps Extension** tab. The chip in the host capability matrix shows the current state and whether it comes from the preset or a manual override.
-- **Same-origin app iframe**: Toggle in the **Apps Extension** tab (under **Sandbox**) that controls whether the app's iframe shares the sandbox page's origin. When off, the inspector mounts every app with `srcdoc` and no `allow-same-origin`, so the view runs in an opaque origin: `localStorage`, `sessionStorage`, `indexedDB`, and cookies all throw, and outbound fetches send `Origin: null`. Claude, Claude Desktop, ChatGPT, and Copilot are measured as same-origin (`true`), so their presets leave this on. When the setting has never been probed for a client, the toggle defaults to on with a tooltip noting it has not yet been tested. If an app running in opaque mode reloads itself, the proxy stops relaying messages for it and the Sandbox Stack debug panel shows **channel closed**.
-
-#### Apps Extension tab
-
-The Apps Extension tab contains two independent capability matrices that never cross-gate, toggling a row in one has no effect on the other.
-
-**`window.openai` matrix (ChatGPT compat shim)**: Controls the `window.openai.*` surface advertised to apps using the ChatGPT compatibility shim. A master **Inject window.openai** toggle enables or disables injection entirely; a collapsed per-method disclosure lets you activate individual methods to build an exact subset from scratch. Switching on any single method turns injection on with only that method enabled; turning the last method off disables injection again.
-
-**`app.*` matrix (SEP-1865 spec bridge)**: Controls the `app.*` surface advertised to apps using the primary MCP Apps protocol. A master **MCP App support** switch advertises the MCP UI client extension (`io.modelcontextprotocol/ui`). The matrix rows include:
-
-- **`availableDisplayModes`**: multi-checkbox cluster (`inline`, `fullscreen`, `pip`); unchecking the last mode force-enables `inline`.
-- **`widgetDisplayModeRequests`**: tri-state host policy (`accept`, `user-initiated-only`, `decline`) for widget-initiated display-mode requests.
-- **Boolean dimensions**: a flat list of all `app.*` capability flags (e.g. `toolInputPartial`, `toolCancelled`, `serverResources`, `logging`, `toolInfo`, `openLinks`, `serverTools`, `updateModelContext`, `message`). Rows that diverge from the selected host preset are stored as sparse overrides.
-
-<Note>
-  Widget iframes are only rendered when the effective `clientCapabilities` advertise
-  `io.modelcontextprotocol/ui` with a `mimeTypes` array that includes
-  `text/html;profile=mcp-app`. Custom capability configs with a bare
-  `{ extensions: { "io.modelcontextprotocol/ui": {} } }` entry (no `mimeTypes`
-  array) will not render widgets. SDK-default host shapes (Claude, ChatGPT,
-  Copilot, MCPJam) include the correct `mimeTypes` and are unaffected.
-</Note>
-
-<Note>
-  All MCP App settings only take effect when the connected server actually
-  delivers a `ui://` resource. For plain tool-only servers, the protocol-level
-  settings are what matter.
-</Note>
-
-## Creating a Client
-
-<Note>
-  Only project admins can create clients. Members and guests see the create
-  button disabled with the message "Only project admins can create clients."
-</Note>
-
-1. Open the **Clients** tab in the inspector.
-2. Click **New Client**.
-3. Give it a name (e.g. `Claude Desktop`, `ChatGPT`, `Strict CSP`).
-4. Open the focus panel to drill into protocol or MCP App settings.
-5. Click **Save**.
-
-<Note>
-  The **Auto-connect** switch in the Connect tab header is project-wide: it
-  connects every project server for you in this browser, whichever Client is
-  active. It is a personal setting, not a project one. Which servers an eval
-  suite or swarm run actually uses is chosen per run through its
-  [server attachment](#server-attachments). Per-server overrides (headers,
-  timeout) are configured on the Connect tab too.
-</Note>
-
-The canvas on the left shows a live diagram of the Client: the model, attached servers, and any per-server overrides. Cards flash briefly when you switch between Clients so you can see what changed.
-
-The Connect section has a **client selector** in the top-left of each view's header row. Its controls vary by view:
-
-- **Servers view**: Shows a switcher pill only. The switcher displays the active client's logo, name, and its position in the list (e.g. `2 / 3`). Click to open a dropdown listing all clients; select one to switch the active client without navigating away. A delete button appears on hover for each client (disabled on the last remaining client).
-- **Client view**: Shows the full selector with two controls:
-  - **Add client** pill: opens the Create client dialog directly.
-  - **Switcher pill**: same as the Servers view switcher, but switching also updates the canvas URL. The switcher menu also includes an **Add clients** item that opens the same Create client dialog.
-
-## Using a Client
-
-Once saved, a Client shows up in the picker at the top of every consumer:
-
-- **Chat**: Drives the model, system prompt, attached servers, and connection settings for the conversation.
-- **Studies**: Same as Chat, but persisted as a saved study configuration.
-- **Evals**: Every test run inside an Eval uses the selected Client, so results are reproducible across teammates.
-- **Swarms**: Goals in the Swarms surface can target any project client, including standalone ones.
-
-Switching the active Client in any of these views swaps the entire configuration in place. There's no separate "apply" step.
-
-### Standalone clients (Swarms-managed)
-
-Some clients are **standalone**: they are owned by the Swarms surface and have no Scenario or publish surface. If you select a standalone client in the Scenarios tab, the tab shows a **"Managed by Swarms"** notice instead of a scenario. The client picker stays visible so you can switch to a publishable client.
-
-Standalone clients do not appear as options in the Studies client picker dropdown. If you need a client for both Studies and Swarms goals, create a regular client from the Connect tab instead of from Swarms → Clients.
-
-## Server attachments
-
-A **server attachment** is a named, reusable set of servers drawn from the project pool. Server attachments let you decouple _which servers are active_ from the Client configuration itself, so you can swap the server set without touching the model or prompt settings.
-
-### Eval suites
-
-When you create an eval suite, you can pick a server attachment in the **Servers** section of the create dialog. All hosts attached to the suite run against that same server set. You can also change the attachment later from the suite header.
-
-- If no attachment is selected, the suite header shows an amber indicator. Runs will be rejected at start until an attachment is picked.
-- Click the attachment pill in the suite header to open the picker and switch to a different attachment or create a new one inline.
-
-**Creating an attachment inline:**
-
-1. Open the server attachment picker (suite create dialog or suite header).
-2. Click **Create new attachment…** in the dropdown.
-3. Enter a name (e.g. `Production servers`) and check the servers to include.
-4. Click **Create**. The new attachment is selected immediately.
-
-### Studies
-
-The **Servers** section on the study Publish tab shows which project servers the study connects to. Click **Edit servers** to open the attachment editor and update the selection.
-
-- If no servers are picked, the study displays an amber warning. Chat sessions started from that study will have no tools until at least one server is selected.
-- The server pick is sticky, editing the client's model or system prompt does not change it.
-
-## Managing Clients
-
-From the Clients index page:
-
-- **Duplicate**: Copy a Client when you want a small variant (e.g. `Claude Desktop (strict CSP)`) without rebuilding from scratch.
-- **Delete**: Removes the Client. The delete button is greyed out when a client is the last one in the project ("You need at least one client.") or when a test suite still references it ("In use by a test suite."). Detach the client from any eval suites that use it before deleting.
-
-<Tip>
-  Keep one Client per host you intend to ship to. Duplicate it to make scoped
-  variants for individual debugging sessions instead of editing the original.
-  That way your "known-good" baselines stay stable.
-</Tip>
-
-## Sharing across a project
-
-Clients are scoped to the project, like servers and views. Every member of a shared project sees the same Client list and any saves sync automatically. This means a teammate can reproduce your exact test conditions by selecting the same Client from the picker. No copy-pasting settings.
-
-## Comparing hosts
-
-The **Compare** view lets you see how multiple host configurations stack up side by side, useful for spotting differences in capabilities, sandbox policies, or protocol settings before you ship to a specific host.
-
-### Opening Compare
-
-Compare is the third tab in the Connect section of the sidebar (`Servers | Client | Compare`). Click **Compare** from any Connect view to open it. The `/host-compare` route is preserved, so any existing bookmarks or links continue to work.
-
-### Deep-linking to a specific selection
-
-Append `?hosts=<id1>,<id2>` to the `/host-compare` URL to pre-select a specific set of hosts on load:
-
-```
-/host-compare?hosts=host-abc,host-def
-```
-
-The URL updates automatically as you toggle hosts on or off. When the default selection (ChatGPT and Claude presets, in that order) is active, the `?hosts` parameter is omitted so shared links stay clean.
-
-## Best practices
-
-- **Mirror your target hosts.** Create one Client per real host you care about (`Claude Desktop`, `ChatGPT`, your own product) and keep its `clientInfo`, capabilities, and sandbox settings aligned with what that host actually advertises.
-- **Test the negative paths.** Build a "minimal" Client with most capabilities disabled and a strict CSP, running your server against it surfaces assumptions that won't hold on more restrictive hosts.
-- **Pin Evals to a Client.** Always select a Client before running an eval suite so the results are reproducible. Evals run against ambient settings drift the moment someone toggles something elsewhere.
-- **Duplicate before debugging.** When you're chasing a bug, duplicate the Client first and tweak the copy. Your baseline stays intact for comparison.
-- **Share Compare links.** Toggle down to the hosts you care about and copy the URL. The `?hosts=` parameter preserves your selection for teammates.

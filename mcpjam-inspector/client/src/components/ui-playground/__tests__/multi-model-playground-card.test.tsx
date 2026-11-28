@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
 import { createCompareBroadcast } from "../compare-broadcast";
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import type { UIMessage } from "ai";
 import { MultiModelPlaygroundCard } from "../multi-model-playground-card";
 import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
@@ -9,6 +10,7 @@ import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-
 import { showPluginNotice } from "@/lib/plugins/plugin-notice-display";
 import type { LiveChatTraceEnvelope } from "@/shared/live-chat-trace";
 import { useBrowserComparisonStore } from "@/stores/browser-comparison-store";
+import { usePaneDisplay } from "@/contexts/pane-display-context";
 
 const composition = vi.hoisted(() => ({ wanted: false, failed: false, blockingError: undefined as string | undefined, inputs: vi.fn() }));
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
@@ -63,6 +65,7 @@ vi.mock("@/components/chat-v2/history/chat-history-prefetch", () => ({
   getCachedChatHistoryDetail: historyDetail,
 }));
 let sessionModel: { id: string; name: string; provider: string; hosted?: boolean } | undefined;
+const emptyMessages: UIMessage[] = [];
 const mockUseChatSession = {
   loadChatSession: vi.fn().mockResolvedValue(undefined),
   // Elicitation surface (hosted). These suites never elicit, but the shape
@@ -84,7 +87,7 @@ const mockUseChatSession = {
   set selectedModel(value: typeof sessionModel) {
     sessionModel = value === model ? undefined : value;
   },
-  messages: [],
+  messages: emptyMessages,
   setMessages: vi.fn(),
   sendMessage: vi.fn(),
   stop: vi.fn(),
@@ -146,7 +149,11 @@ vi.mock("@/components/host-workspace/CompareLaneWorkspace", () => ({
 }));
 
 vi.mock("@/components/chat-v2/thread", () => ({
-  Thread: (props: unknown) => { lane.thread(props); return <div data-testid="thread" />; },
+  Thread: (props: unknown) => {
+    const display = usePaneDisplay();
+    lane.thread(props);
+    return <div data-testid="thread" data-pane-theme={display?.theme} />;
+  },
 }));
 
 vi.mock("@/components/evals/trace-viewer", () => ({
@@ -359,6 +366,28 @@ function Harness({
 }
 
 describe("MultiModelPlaygroundCard", () => {
+  it("exposes the resolved host pane theme to the widget display context", () => {
+    const previousMessages = mockUseChatSession.messages;
+    onTestFinished(() => {
+      mockUseChatSession.messages = previousMessages;
+    });
+    mockUseChatSession.messages = [
+      { id: "m-1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+    ];
+    const { rerender } = render(<Harness compareKind="host" theme="dark" />);
+
+    expect(screen.getByTestId("thread")).toHaveAttribute(
+      "data-pane-theme",
+      "dark",
+    );
+
+    rerender(<Harness compareKind="host" theme="light" />);
+    expect(screen.getByTestId("thread")).toHaveAttribute(
+      "data-pane-theme",
+      "light",
+    );
+  });
+
   it("scopes opposite themes over entire sibling panes without changing the workspace", () => {
     const { container, rerender } = render(
       <div className="app-theme-scope dark" data-testid="workspace">

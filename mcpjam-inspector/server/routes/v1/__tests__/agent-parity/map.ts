@@ -51,6 +51,7 @@ export const NOT_BACKEND_PREFIXES: Readonly<Record<string, string>> = {
   read: "OAuth scope names",
   route: "case scorecard and case spine keys",
   scenario: "raw data export section keys",
+  sm: "Tailwind responsive class names",
   style: "eval helper fallback labels",
   swarm: "raw data export section keys",
   toolCalls: "suite grading model keys",
@@ -69,6 +70,14 @@ export const COVERED: Readonly<Record<string, string>> = {};
  * module → a one-line reason.
  */
 export const NOT_EXPOSED: Readonly<Record<string, string>> = {
+  "projectAccessRequests:requestProjectAccess":
+    "A person asks from the screen a project link shows when they lack access; agents work in projects they already belong to",
+  "projectAccessRequests:getProjectAccessRequest":
+    "Feeds the page an owner opens from the request email or bell to approve it; agents do not decide access requests",
+  "projectAccessRequests:decideProjectAccessRequest":
+    "Grants a person access to a project and can add them to the organization; owners decide in the app or from the email",
+  "directChatHistory/multiModelGroups:actOnCurrentMultiModelGroup":
+    "Group rename, pin, and archive are flag-gated Sessions rail actions. The public API works with individual sessions",
   "chatSessionPromote:findSimilarPlaygroundPrompt":
     "Drives the Playground's repeat-prompt tip; agents save a prompt as a test case directly instead of being nudged",
   "serverFeatureEvidence:getForServer":
@@ -77,6 +86,16 @@ export const NOT_EXPOSED: Readonly<Record<string, string>> = {
     "Organization security setting; agents see its effect when a credential delivery is refused",
   "credentials:setCredentialExportPolicy":
     "Organization security setting that controls where credentials can go; only admins change it, in the app",
+  "webClients:*":
+    "Claude web and ChatGPT web accounts, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
+  "webClientSuites:*":
+    "A suite's Claude web and ChatGPT web account choices, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
+  "webClientReconnect:*":
+    "Runs waiting for a Claude web or ChatGPT web sign-in, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
+  "customJudgePreviewAuth:listCustomJudgePreviewIterations":
+    "Past iterations to try a custom judge draft on, behind the evaluator-library flag; a v1 route follows with custom judge authoring",
+  "customJudgePreview:previewCustomJudge":
+    "Tries an unsaved custom judge draft on a past iteration, behind the evaluator-library flag; a v1 route follows with custom judge authoring",
 };
 
 /**

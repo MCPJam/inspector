@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 372" width="760" height="372" role="img" aria-label="What the user sees and the request path that produced it"><style>text{fill:#1f1e1d;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:13px}
+.sm{font-size:11.5px}
+.mono{font-family:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace}
+.sm.mono{font-size:10.8px}
+.h{font-weight:600}
+.i{font-style:italic;fill:#5e5d59}
+.big{font-size:34px;font-weight:600;font-family:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace}
+.b{fill:#faf9f5;stroke:#1f1e1d;stroke-width:1.4}
+.s{fill:#efede6;stroke:#1f1e1d;stroke-width:1.2}
+.dash{stroke-dasharray:5 4}
+.thick{stroke-width:2.6}
+.none{fill:none;stroke:#1f1e1d}
+.fill{fill:#1f1e1d;stroke:#1f1e1d}
+.ln{stroke:#1f1e1d;stroke-width:1.4;fill:none;marker-end:url(#ah)}
+.ln-plain{stroke:#1f1e1d;stroke-width:1.4;fill:none}
+.rule{stroke:#5e5d59;stroke-width:1.2;fill:none}
+.ahp{fill:#1f1e1d}
+.red{fill:#c62828;stroke:none}
+.rt{fill:#ffffff;font-size:12px;font-weight:600}
+.nb{fill:#1f1e1d}
+.nt{fill:#faf9f5;font-size:13px;font-weight:700}
+.lb{font-size:12.5px}
+.lb.mono{font-size:11.8px}
+</style><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahp"/></marker></defs><rect width="760" height="372" fill="#faf9f5"/><rect x="10" y="30" width="190" height="330" rx="14" class="b"/><text x="24" y="54" class="h" text-anchor="start">What the user sees</text><text x="24" y="71" class="sm i" text-anchor="start">Claude Desktop</text><rect x="60" y="79" width="132" height="26" rx="13" class="s"/><text x="126" y="96" class="sm" text-anchor="middle">What does note 7 say?</text><rect x="20" y="236" width="160" height="46" rx="13" class="b"/><text x="32" y="255" class="sm" text-anchor="start">Note 7 says:</text><text x="32" y="272" class="sm" text-anchor="start">“Buy oat milk.”</text><rect x="284" y="30" width="216" height="330" rx="8" class="b dash"/><text x="298" y="52" class="h" text-anchor="start">Client environment</text><rect x="300" y="66" width="170" height="58" rx="4" class="b"/><text x="312" y="88" class="h" text-anchor="start">Client</text><text x="312" y="106" class="sm" text-anchor="start">Claude Desktop</text><rect x="300" y="176" width="170" height="58" rx="4" class="b"/><text x="312" y="198" class="h" text-anchor="start">Harness</text><text x="312" y="216" class="sm" text-anchor="start">MCPJam or a native one</text><rect x="300" y="288" width="170" height="58" rx="4" class="b"/><text x="312" y="310" class="h" text-anchor="start">Model</text><text x="312" y="328" class="sm mono" text-anchor="start">claude-sonnet-5</text><rect x="620" y="176" width="132" height="58" rx="4" class="s"/><text x="632" y="198" class="h" text-anchor="start">Your MCP server</text><text x="632" y="216" class="sm mono" text-anchor="start">notes</text><line x1="192" y1="92" x2="298" y2="92" class="ln"/><circle cx="214" cy="74" r="11" class="nb"/><text x="214" y="78.5" class="nt" text-anchor="middle">1</text><text x="230" y="79" class="lb" text-anchor="start">send</text><line x1="360" y1="124" x2="360" y2="174" class="ln"/><circle cx="360" cy="149" r="11" class="nb"/><text x="360" y="153.5" class="nt" text-anchor="middle">2</text><text x="344" y="154" class="lb" text-anchor="end">prompt</text><line x1="420" y1="174" x2="420" y2="126" class="ln"/><circle cx="420" cy="149" r="11" class="nb"/><text x="420" y="153.5" class="nt" text-anchor="middle">7</text><text x="436" y="154" class="lb" text-anchor="start">answer</text><line x1="360" y1="234" x2="360" y2="286" class="ln"/><circle cx="360" cy="260" r="11" class="nb"/><text x="360" y="264.5" class="nt" text-anchor="middle">3</text><text x="344" y="265" class="lb" text-anchor="end">tools</text><line x1="420" y1="286" x2="420" y2="236" class="ln"/><circle cx="420" cy="260" r="11" class="nb"/><text x="420" y="264.5" class="nt" text-anchor="middle">4</text><text x="436" y="265" class="lb" text-anchor="start">call</text><line x1="470" y1="194" x2="618" y2="194" class="ln"/><circle cx="524" cy="176" r="11" class="nb"/><text x="524" y="180.5" class="nt" text-anchor="middle">5</text><text x="540" y="181" class="lb" text-anchor="start">read_note 7</text><line x1="620" y1="218" x2="472" y2="218" class="ln"/><circle cx="524" cy="237" r="11" class="nb"/><text x="524" y="241.5" class="nt" text-anchor="middle">6</text><text x="540" y="242" class="lb" text-anchor="start">note text</text><path d="M300,114 H222 V259 H182" class="ln"/><circle cx="222" cy="186" r="11" class="nb"/><text x="222" y="190.5" class="nt" text-anchor="middle">8</text><text x="238" y="191" class="lb" text-anchor="start">reply</text></svg>

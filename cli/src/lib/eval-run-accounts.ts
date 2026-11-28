@@ -74,7 +74,8 @@ export function runAccountLines(
   const servers = new Map<string, string[]>();
   for (const account of recordedAccounts(runs)) {
     const texts = servers.get(account.serverId) ?? [];
-    const text = accountText(account);
+    const cases = account.cases?.map(({ testCaseId, source }) => `${testCaseId} (${source})`);
+    const text = cases?.length ? `${accountText(account)} for ${cases.join(", ")}` : accountText(account);
     if (!texts.includes(text)) texts.push(text);
     servers.set(account.serverId, texts);
   }

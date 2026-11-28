@@ -19,7 +19,14 @@ export interface BrowserWorkspaceState {
    */
   revealSeq: number;
   revealConversationId: string | null;
+  /**
+   * The clients each chat's panel already opened by itself for. Kept with the
+   * panels, so a person's close holds across reloads and chat switches.
+   */
+  autoOpened: Record<string, string[]>;
   openBrowser: (conversationId: string) => void;
+  /** Opens the panel the first time a chat shows this client, never again. */
+  openBrowserOnce: (conversationId: string, client: string) => void;
   closeBrowser: (conversationId: string) => void;
   setExpanded: (conversationId: string, expanded: boolean) => void;
   setSize: (size: number) => void;
@@ -28,12 +35,13 @@ export interface BrowserWorkspaceState {
 
 export const useBrowserWorkspaceStore = create<BrowserWorkspaceState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       conversations: {},
       size: DEFAULT_BROWSER_PANEL_SIZE,
       collapsedRailForBrowser: false,
       revealSeq: 0,
       revealConversationId: null,
+      autoOpened: {},
       openBrowser: (conversationId) => {
         const id = useBrowserComparisonStore
           .getState()
@@ -52,6 +60,19 @@ export const useBrowserWorkspaceStore = create<BrowserWorkspaceState>()(
             revealConversationId: id,
           };
         });
+      },
+      openBrowserOnce: (conversationId, client) => {
+        if (get().autoOpened[conversationId]?.includes(client)) return;
+        set((state) => ({
+          autoOpened: {
+            ...state.autoOpened,
+            [conversationId]: [
+              ...(state.autoOpened[conversationId] ?? []),
+              client,
+            ],
+          },
+        }));
+        get().openBrowser(conversationId);
       },
       closeBrowser: (id) =>
         set((state) => {
@@ -104,6 +125,9 @@ export const useBrowserWorkspaceStore = create<BrowserWorkspaceState>()(
           Object.entries(state.conversations)
             .slice(-200)
             .map(([id, view]) => [id, { open: view.open, expanded: false }]),
+        ),
+        autoOpened: Object.fromEntries(
+          Object.entries(state.autoOpened).slice(-200),
         ),
       }),
     },

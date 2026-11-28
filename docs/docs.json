@@ -50,21 +50,29 @@
             "icon": "rocket",
             "pages": [
               "index",
-              "getting-started",
-              {
-                "group": "Choose where to run",
-                "pages": ["installation", "hosted/overview"]
-              },
-              "inspector/connecting-servers"
+              "installation",
+              "hosted/overview",
+              "inspector/connecting-servers",
+              "inspector/mcp-support"
             ]
           },
           {
             "group": "Test and debug",
             "icon": "bug",
             "pages": [
-              "inspector/playground",
+              {
+                "group": "Playground",
+                "pages": [
+                  "inspector/playground",
+                  "inspector/playground/test-widgets",
+                  "inspector/playground/compare-hosts",
+                  "inspector/playground/reference"
+                ]
+              },
+              "inspector/events",
               {
                 "group": "Test MCP Apps",
+                "icon": "app-window",
                 "pages": [
                   "guides/first-mcp-app",
                   "guides/first-chatgpt-app-react",
@@ -73,10 +81,12 @@
               },
               {
                 "group": "Check host compatibility",
+                "icon": "monitor-check",
                 "pages": ["inspector/host-compat", "inspector/host-templates"]
               },
               {
                 "group": "Test authentication",
+                "icon": "shield-check",
                 "pages": [
                   "inspector/guided-oauth",
                   "inspector/xaa-debugger",
@@ -84,30 +94,101 @@
                 ]
               },
               {
-                "group": "Inspect your server",
-                "pages": ["inspector/tools-prompts-resources", "inspector/debugging"]
+                "group": "Inspector",
+                "icon": "search",
+                "pages": [
+                  "inspector/tools-prompts-resources",
+                  "inspector/tools",
+                  "inspector/resources",
+                  "inspector/prompts",
+                  "inspector/tasks",
+                  "inspector/skills",
+                  "inspector/debugging"
+                ]
               }
             ]
           },
           {
             "group": "Evaluate",
             "icon": "flask-conical",
-            "pages": ["inspector/evals", "inspector/eval-test-users"]
+            "pages": [
+              "evaluate/overview",
+              "evaluate/run-your-first-eval",
+              "evaluate/how-evals-work",
+              {
+                "group": "Author cases",
+                "icon": "pencil",
+                "pages": ["evaluate/write-a-case", "evaluate/generate-cases"]
+              },
+              {
+                "group": "Run and review",
+                "icon": "list-checks",
+                "pages": [
+                  "evaluate/run-a-suite",
+                  "evaluate/what-a-run-can-access",
+                  "evaluate/read-results"
+                ]
+              },
+              {
+                "group": "Grade and ship",
+                "icon": "scale",
+                "pages": ["evaluate/configure-grading", "evaluate/run-evals-in-ci"]
+              },
+              {
+                "group": "Reference",
+                "icon": "book-open",
+                "pages": [
+                  "evaluate/reference/assertions",
+                  "evaluate/reference/suite-settings",
+                  "evaluate/reference/runs-and-results"
+                ]
+              },
+              "evaluate/troubleshooting",
+              "inspector/eval-test-users"
+            ]
+          },
+          {
+            "group": "Conformance",
+            "icon": "shield-check",
+            "pages": ["conformance/overview"]
+          },
+          {
+            "group": "Swarms",
+            "icon": "users-round",
+            "pages": [
+              "swarms/overview",
+              "swarms/run-your-first-swarm",
+              "swarms/read-results"
+            ]
+          },
+          {
+            "group": "User Testing",
+            "icon": "clipboard-list",
+            "pages": [
+              "user-testing/overview",
+              "user-testing/create-your-first-study",
+              "user-testing/read-results"
+            ]
           },
           {
             "group": "Configure",
             "icon": "settings",
             "pages": [
-              "inspector/clients",
+              {
+                "group": "Clients",
+                "pages": ["inspector/clients", "inspector/clients/reference"]
+              },
               {
                 "group": "Manage your workspace",
+                "icon": "users",
                 "pages": ["inspector/projects", "inspector/home"]
               },
               "inspector/protocol-versions",
-              "inspector/skills",
               {
                 "group": "Use with other tools",
+                "icon": "plug",
                 "pages": [
+                  "inspector/use-mcpjam-in-chatgpt",
                   "hosted/mcp-server",
                   "inspector/docs-server",
                   "inspector/launch-from-code"
@@ -115,7 +196,8 @@
               },
               {
                 "group": "Enterprise admin",
-                "pages": ["hosted/sso", "hosted/network"]
+                "icon": "building-2",
+                "pages": ["hosted/sso", "hosted/entra-id", "hosted/network"]
               },
               "inspector/telemetry-privacy"
             ]
@@ -259,6 +341,14 @@
     "dark": "/logo/mcp_jam_dark.png"
   },
   "redirects": [
+    {
+      "source": "/getting-started",
+      "destination": "/"
+    },
+    {
+      "source": "/inspector/evals",
+      "destination": "/evaluate/overview"
+    },
     {
       "source": "/hosted/claude-connector",
       "destination": "/hosted/mcp-server"
@@ -464,10 +554,6 @@
       "destination": "/inspector/skills"
     },
     {
-      "source": "/inspector/events",
-      "destination": "/cli/events"
-    },
-    {
       "source": "/inspector/workspaces",
       "destination": "/inspector/projects"
     },
@@ -481,7 +567,7 @@
     },
     {
       "source": "/inspector/test-cases",
-      "destination": "/inspector/evals"
+      "destination": "/evaluate/overview"
     },
     {
       "source": "/inspector/xaa-test-idp",
@@ -732,7 +818,7 @@
     "404": {
       "redirect": false,
       "title": "Lost in the inspector?",
-      "description": "Try the [getting started guide](/getting-started), the [CLI overview](/cli/overview), or the [SDK reference](/sdk/index). Related pages are listed below."
+      "description": "Try the [docs home](/), the [CLI overview](/cli/overview), or the [SDK reference](/sdk/index). Related pages are listed below."
     }
   }
 }

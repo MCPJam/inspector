@@ -7,6 +7,7 @@ import {
   type ResolveOrgModelConfigTarget,
   type ResolvedOrgModelConfig,
 } from "../../utils/org-model-config.js";
+import { bearerNow, type RunBearer } from "../../utils/run-bearer.js";
 
 /**
  * The organization config a run carries when the request brings its own model
@@ -52,7 +53,7 @@ export async function prepareClientKeyRun(
   request: Pick<ResolveOrgModelConfigAuth, "scenarioId" | "accessVersion"> & {
     modelApiKeys?: Record<string, string>;
     orgModelConfig?: ResolvedOrgModelConfig;
-    convexAuthToken?: string;
+    convexAuthToken?: RunBearer;
   },
   projectId: string | undefined,
   serverIds: string[],
@@ -67,7 +68,9 @@ export async function prepareClientKeyRun(
       ? await orgPolicyConfigForClientKeys(
           { projectId },
           {
-            bearerToken: request.convexAuthToken,
+            bearerToken: request.convexAuthToken
+              ? bearerNow(request.convexAuthToken)
+              : undefined,
             scenarioId: request.scenarioId,
             accessVersion: request.accessVersion,
             serverIds,

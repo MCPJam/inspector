@@ -28,6 +28,12 @@
  * -32602 without specifying an HTTP status.
  */
 
+import {
+  DiscoveryResultError,
+  discoveryErrorMessage,
+  discoveryFieldProblems,
+  requireCompleteDiscovery,
+} from "../../discovery-result.js";
 import type {
   MCPCheckSkipReason,
   MCPCheckId,
@@ -35,6 +41,13 @@ import type {
   RawHttpCheckContext,
 } from "../types.js";
 import { CHECK_ERAS } from "../types.js";
+import { gradeToolOutputSchemas } from "./tool-output-schema.js";
+import { runLegacyToolOutputSchemaCheck } from "./legacy-tool-output-schema.js";
+import {
+  SERVER_INFO_META_KEY,
+  isWellFormedIdentity,
+  readServerIdentity,
+} from "../server-identity.js";
 import {
   blockedResult,
   errorMessage,
@@ -51,6 +64,8 @@ import {
   MAX_TOOLS_LIST_PAGES,
   modernHeaders,
   modernRequestBody,
+  isHeaderMismatch,
+  mirroredToolCall,
   rawRequest,
   walkToolsList,
   type ToolsListWalk,
@@ -67,8 +82,8 @@ import {
   checkToolArgs,
 } from "../../conformance-tool-args.js";
 import { scanXMcpHeaderDeclarations } from "../../mcp-client-manager/mcp-header-mirror.js";
-import { DialectAwareJsonSchemaValidator } from "../../mcp-client-manager/dialect-aware-json-schema-validator.js";
 import {
+  compareAcknowledgedFilter,
   filterRequests,
   isSubscriptionNotificationMethod,
   observeListenStream,
@@ -384,6 +399,8 @@ async function modernProbe(
     name?: string;
     clientCapabilities?: Record<string, unknown>;
     logLevel?: string;
+    /** `Mcp-Param-*` headers for a `tools/call`. See {@link modernToolCall}. */
+    paramHeaders?: Record<string, string>;
     headerOverrides?: Record<string, string>;
     /**
      * SEP-2243 standard headers to leave OFF the request entirely. A header
@@ -419,6 +436,7 @@ async function modernProbe(
   return await rawRequest(ctx, {
     headers: {
       ...framed,
+      ...(options.paramHeaders ?? {}),
       ...(options.headerOverrides ?? {}),
     },
     body: modernRequestBody({
@@ -490,14 +508,21 @@ interface ModernRunState {
   missingResource?: Promise<{ uri: string; result: RawHttpResult }>;
   /** One raw `tools/list` walk, shared by every check that needs tool schemas. */
   toolsWalk?: Promise<ToolsListWalk>;
+  /**
+   * How many times the tools were listed again after a refused call. Once it
+   * is not zero, `toolsWalk` is newer than the client's own snapshot.
+   */
+  toolsRelisted: number;
 }
 
-function walkToolsOnce(
+/** One raw `tools/list` walk, recorded like every other probe. */
+function toolsWalk(
   ctx: RawHttpCheckContext,
-  state: ModernRunState
+  state: ModernRunState,
+  startId: number
 ): Promise<ToolsListWalk> {
-  state.toolsWalk ??= walkToolsList({
-    startId: 7960,
+  return walkToolsList({
+    startId,
     request: ({ id, cursor }) =>
       track(
         state,
@@ -508,7 +533,68 @@ function walkToolsOnce(
         })
       ),
   });
+}
+
+function walkToolsOnce(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<ToolsListWalk> {
+  state.toolsWalk ??= toolsWalk(ctx, state, 7960);
   return state.toolsWalk;
+}
+
+/** Added to a call's JSON-RPC id when it is sent a second time. */
+const RETRY_ID_OFFSET = 10_000;
+
+/**
+ * A normal `tools/call`, sent the way a conforming client sends it: with the
+ * `Mcp-Param-*` headers the tool's `inputSchema` asks for, and retried once
+ * after a fresh `tools/list` when the server refuses them (`-32020`).
+ *
+ * Every attempt is recorded, so callers do not `track` the result again.
+ * `attempts`, when given, receives each answer in order: the returned one is
+ * the last, and a check that must not miss anything the server said on the
+ * refused first try reads them all.
+ */
+async function modernToolCall(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState,
+  options: Parameters<typeof modernProbe>[1] & { name: string },
+  attempts?: RawHttpResult[]
+): Promise<RawHttpResult> {
+  const toolName = options.name;
+  return await mirroredToolCall({
+    args: options.params?.arguments,
+    inputSchema: () => toolInputSchema(ctx, state, toolName),
+    refreshInputSchema: async () => {
+      const walk = await toolsWalk(
+        ctx,
+        state,
+        7960 + RETRY_ID_OFFSET + state.toolsRelisted * 100
+      );
+      // Only a listing that was read to the end replaces the one the run
+      // already has. A walk that timed out throws above and never gets here; a
+      // cut-off or malformed one is used for this retry and then dropped, so
+      // later checks keep reading the good listing.
+      if (walk.termination === "complete" && !walk.malformedPage) {
+        state.toolsWalk = Promise.resolve(walk);
+        state.toolsRelisted += 1;
+      }
+      return walk.tools.find((entry) => entry.name === toolName)?.inputSchema;
+    },
+    send: async (paramHeaders, attempt) => {
+      const result = await track(
+        state,
+        modernProbe(ctx, {
+          ...options,
+          id: options.id + attempt * RETRY_ID_OFFSET,
+          paramHeaders,
+        })
+      );
+      attempts?.push(result);
+      return result;
+    },
+  });
 }
 
 /**
@@ -520,6 +606,21 @@ async function toolInputSchema(
   state: ModernRunState,
   toolName: string
 ): Promise<unknown> {
+  // A raw listing this run already read is newer than the client's snapshot,
+  // so it wins. Above all the one read again after a refused call: otherwise
+  // every later call would build its headers from the stale schema, be
+  // refused, and list the tools once more.
+  if (state.toolsWalk) {
+    try {
+      const walk = await state.toolsWalk;
+      const entry = walk.tools.find((tool) => tool.name === toolName);
+      if (entry) return entry.inputSchema;
+      // A complete fresh listing without the tool means the tool is gone.
+      if (state.toolsRelisted > 0) return undefined;
+    } catch {
+      // That walk failed. The client's snapshot below is the next best source.
+    }
+  }
   const listed = ctx.surface?.tools.find((tool) => tool.name === toolName);
   if (listed) return listed.inputSchema;
   try {
@@ -558,6 +659,17 @@ async function badArgsResult(
   });
 }
 
+/**
+ * The track's one `server/discover`. The runner sends this same request before
+ * a raw-only 2026 pin to learn whether the server refuses the pin, and hands
+ * the answer over in `ctx.discover`, so the run asks once.
+ */
+export function probeServerDiscover(
+  ctx: RawHttpCheckContext
+): Promise<RawHttpResult> {
+  return modernProbe(ctx, { id: 7001, method: "server/discover" });
+}
+
 async function discoverOnce(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -565,7 +677,9 @@ async function discoverOnce(
   if (!state.discover) {
     state.discover = await track(
       state,
-      modernProbe(ctx, { id: 7001, method: "server/discover" })
+      ctx.discover !== undefined
+        ? Promise.resolve(ctx.discover)
+        : probeServerDiscover(ctx)
     );
   }
   return state.discover;
@@ -583,7 +697,9 @@ async function track(
 function advertisedCapabilities(
   discover: RawHttpResult
 ): Record<string, unknown> {
-  const capabilities = jsonRpcResult(discover)?.capabilities;
+  const payload = jsonRpcResult(discover);
+  if (payload) requireCompleteDiscovery(payload);
+  const capabilities = payload?.capabilities;
   return capabilities !== null && typeof capabilities === "object"
     ? (capabilities as Record<string, unknown>)
     : {};
@@ -609,32 +725,6 @@ function cacheableListMethods(capabilities: Record<string, unknown>): string[] {
   return methods;
 }
 
-/**
- * Where a 2026 server states its identity.
- *
- * `DiscoverResult` has no `serverInfo` member — the 2026 encode seam stamps
- * identity into `_meta` on EVERY result instead (spec PR #3002), so demanding
- * a top-level `serverInfo` here failed every spec-correct server, including
- * ones built on the official server SDK. The top-level read is kept as a
- * lenient fallback: a server that also mirrors it there is not wrong, and a
- * conformance check should not punish the more informative answer.
- */
-const SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo";
-
-function readServerIdentity(
-  payload: Record<string, unknown>
-): Record<string, unknown> | undefined {
-  const meta = payload._meta as Record<string, unknown> | undefined;
-  const stamped = meta?.[SERVER_INFO_META_KEY];
-  if (stamped !== null && typeof stamped === "object") {
-    return stamped as Record<string, unknown>;
-  }
-  const topLevel = payload.serverInfo;
-  return topLevel !== null && typeof topLevel === "object"
-    ? (topLevel as Record<string, unknown>)
-    : undefined;
-}
-
 async function runServerDiscoverCheck(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -645,41 +735,25 @@ async function runServerDiscoverCheck(
   const payload = jsonRpcResult(result);
 
   if (result.status !== 200 || !payload) {
+    const rpcError = jsonRpcError(result);
     return failedResult(
       meta,
       Date.now() - startedAt,
-      `server/discover did not return a result (HTTP ${result.status})`,
+      discoveryErrorMessage(result.status, rpcError),
       {
         httpStatus: result.status,
-        jsonRpcCode: jsonRpcError(result)?.code,
+        jsonRpcCode: rpcError?.code,
       }
     );
   }
 
+  requireCompleteDiscovery(payload);
   const supportedVersions = payload.supportedVersions;
   const serverInfo = readServerIdentity(payload);
-  const problems: string[] = [];
-
-  if (
-    !Array.isArray(supportedVersions) ||
-    supportedVersions.length === 0 ||
-    supportedVersions.some((version) => typeof version !== "string")
-  ) {
-    problems.push("supportedVersions must be a non-empty array of strings");
-  }
-  if (
-    payload.capabilities === null ||
-    typeof payload.capabilities !== "object"
-  ) {
-    problems.push("capabilities must be an object");
-  }
+  const problems = discoveryFieldProblems(payload);
   // Identity is a SHOULD (spec PR #3002), not a member of the result: a
   // present-but-malformed stamp is a real defect, an absent one is not.
-  if (
-    serverInfo !== undefined &&
-    (typeof serverInfo.name !== "string" ||
-      typeof serverInfo.version !== "string")
-  ) {
+  if (serverInfo !== undefined && !isWellFormedIdentity(serverInfo)) {
     problems.push(
       `${SERVER_INFO_META_KEY} must carry a string name and a string version`
     );
@@ -718,6 +792,10 @@ async function collectCacheableResults(
     { method: "server/discover", result: discover },
   ];
 
+  // Check 23 still needs the raw discriminator when the discovery reply is invalid.
+  // Its capabilities cannot be used to select follow-up requests.
+  const type = jsonRpcResult(discover)?.resultType;
+  if (type !== undefined && type !== COMPLETE_RESULT_TYPE) return collected;
   let id = 7100;
   for (const method of cacheableListMethods(advertisedCapabilities(discover))) {
     collected.push({
@@ -744,6 +822,7 @@ function runResultTypeCheck(
     }
     const resultType = payload.resultType;
     observed[method] = resultType;
+    if (method === "server/discover") requireCompleteDiscovery(payload);
     if (typeof resultType !== "string" || resultType.length === 0) {
       missing.push(method);
     }
@@ -781,6 +860,7 @@ function runCacheHintsCheck(
     if (!payload) {
       continue;
     }
+    if (method === "server/discover") requireCompleteDiscovery(payload);
     observed[method] = {
       ttlMs: payload.ttlMs,
       cacheScope: payload.cacheScope,
@@ -1462,16 +1542,31 @@ async function runUndeclaredCapabilityCheck(
   // Declared capabilities are deliberately EMPTY: that is the condition under
   // test. A server that needs `elicitation` (or any other client capability) to
   // serve `input_required` must answer -32021 instead of asking anyway.
-  const result = await track(
-    state,
-    modernProbe(ctx, {
-      id: 7600,
-      method: "tools/call",
-      params: { name: probe.toolName, arguments: probe.arguments ?? {} },
-      name: probe.toolName,
-      clientCapabilities: {},
-    })
-  );
+  const result = await modernToolCall(ctx, state, {
+    id: 7600,
+    method: "tools/call",
+    params: { name: probe.toolName, arguments: probe.arguments ?? {} },
+    name: probe.toolName,
+    clientCapabilities: {},
+  });
+
+  // Still refused for its headers, after the retry: the request never
+  // reached the tool, so nothing here is about an undeclared capability.
+  // Grading it would fail the server with "expected -32021, got -32020".
+  if (isHeaderMismatch(result)) {
+    const mismatch = jsonRpcError(result);
+    return couldNotRunResult(
+      meta,
+      `The server refused the call to "${probe.toolName}" for its headers (JSON-RPC -32020${
+        mismatch?.message ? `: ${mismatch.message}` : ""
+      }), so the request never reached the tool and the undeclared-capability path was never exercised`,
+      {
+        httpStatus: result.status,
+        jsonRpcCode: mismatch?.code,
+        jsonRpcMessage: mismatch?.message,
+      }
+    );
+  }
 
   const payload = jsonRpcResult(result);
   if (payload?.resultType === "input_required") {
@@ -1723,7 +1818,9 @@ function alternatingCase(name: string): string {
  * The declared schema is validated with the same dialect-aware validator the
  * MCP client uses for tool inputs, so a tool declaring draft-07 (which
  * `zod-to-json-schema` emits by default) is judged under draft-07 rather than
- * rejected for not being 2020-12.
+ * rejected for not being 2020-12. A schema in any other dialect cannot be
+ * validated at all, so its result is reported as not checked instead of
+ * passing unseen.
  */
 async function runToolOutputSchemaCheck(
   ctx: RawHttpCheckContext,
@@ -1752,223 +1849,31 @@ async function runToolOutputSchemaCheck(
   }
 
   const { schemas: declared, complete } = await toolOutputSchemas(ctx, state);
-  if (fixtures.length === 0) {
-    // "No tool declares one" holds only over the whole listing: a walk cut
-    // short may have stopped before the tool that does.
-    return declared.size === 0 && complete
-      ? notApplicableResult(
-          meta,
-          "No tool declares an outputSchema, so there is no structured result to check"
-        )
-      : couldNotRunResult(
-          meta,
-          declared.size === 0
-            ? "The tools/list walk did not finish, so it could not show that no tool declares an outputSchema, and no tools/call fixture was configured"
-            : `${declared.size} tool(s) declare an outputSchema, but no tools/call fixture was configured: set fixtures.toolCalls to a tool that is safe to execute so its result can be checked against the schema`,
-          {
-            declaredOutputSchemas: [...declared.keys()],
-            ...(declared.size > 0 ? { missingInput: "toolCallProbe" } : {}),
-          }
-        );
-  }
-  const validator = new DialectAwareJsonSchemaValidator({
-    // The default handler console.warns per unknown dialect. A conformance run
-    // reports, it does not print.
-    onUnknownDialect: () => undefined,
-  });
-
-  const problems: string[] = [];
-  // `schemaBound` is the load-bearing field, not the prose: it records whether
-  // an output schema actually GRADED this result. Deriving that from the
-  // outcome text would make a reworded message silently change the verdict.
-  const graded: Array<{
-    tool: string;
-    outcome: string;
-    schemaBound: boolean;
-  }> = [];
-  /**
-   * Fixtures that never produced a gradeable result. These are reported as an
-   * UNEXERCISED requirement, not as a server violation — see the JSON-RPC-error
-   * branch below.
-   */
-  const unexercised: string[] = [];
-  /**
-   * Who a fixture that produced nothing gradeable points at: the caller's
-   * setup (no output schema on the tool, or arguments its own schema rejects)
-   * or the server (the tool failed on arguments that fit). Only a server-side
-   * miss keeps this check yellow at a cost; the rest is setup to change.
-   */
-  let serverMiss = false;
-  let badArgsMessage: string | undefined;
-  const classifyFailedCall = async (
-    toolName: string,
-    args: Record<string, unknown> | undefined,
-    httpStatus: number
-  ) => {
-    const badArgs = await badArgsResult(
-      ctx,
-      state,
-      meta,
-      toolName,
-      args,
-      "toolCallProbe",
-      httpStatus
-    );
-    if (badArgs) badArgsMessage ??= badArgs.error?.message;
-    else serverMiss = true;
-  };
-  let id = 7950;
-
-  for (const fixture of fixtures) {
-    const outputSchema = declared.get(fixture.toolName);
-    const result = await track(
-      state,
-      modernProbe(ctx, {
-        id: id++,
+  return await gradeToolOutputSchemas(meta, startedAt, {
+    fixtures,
+    declared,
+    complete,
+    callTool: (fixture, id) =>
+      modernToolCall(ctx, state, {
+        id,
         method: "tools/call",
         params: {
           name: fixture.toolName,
           arguments: fixture.arguments ?? {},
         },
         name: fixture.toolName,
-      })
-    );
-
-    if (outputSchema === undefined) {
-      // Still worth calling: the frame reaches the run-wide wire record, so
-      // `wire-schema-valid` grades it against `CallToolResult` — a result shape
-      // an unfixtured run never observes at all.
-      graded.push({
-        tool: fixture.toolName,
-        outcome: "no outputSchema declared; nothing to validate against",
-        schemaBound: false,
-      });
-      continue;
-    }
-
-    const payload = jsonRpcResult(result);
-    if (!payload) {
-      const error = jsonRpcError(result);
-      // NOT a server violation. A JSON-RPC error here means the call never
-      // produced a result to grade — and the likeliest cause is the FIXTURE:
-      // arguments the operator supplied that the tool's inputSchema rejects
-      // (`-32602`), a tool name that does not resolve (`-32601`), an auth
-      // scope the run lacks. Counting it as a `problem` would fail the check —
-      // "tool results do not honor their declared output schemas" — and brand
-      // the server nonconformant for correctly refusing a request this suite
-      // built badly. The requirement simply went untested, which is what
-      // `unexercised` reports; the `isError: true` branch below draws the same
-      // line for the tool-level case.
-      unexercised.push(
-        `${fixture.toolName} produced no result to validate (HTTP ${result.status}${
-          error ? `, JSON-RPC ${error.code}: ${error.message}` : ""
-        }); check the fixture's tool name and arguments against the tool's inputSchema`
-      );
-      await classifyFailedCall(fixture.toolName, fixture.arguments, result.status);
-      continue;
-    }
-    // An `isError: true` result reports a TOOL failure, which is a normal
-    // outcome the server is entitled to return — and the spec's own example of
-    // one carries no `structuredContent`. Grading it against the output schema
-    // would fail servers for correctly reporting that the weather API was down.
-    if (payload.isError === true) {
-      graded.push({
-        tool: fixture.toolName,
-        outcome: "tool reported isError: true; output schema does not bind",
-        schemaBound: false,
-      });
-      await classifyFailedCall(fixture.toolName, fixture.arguments, result.status);
-      continue;
-    }
-
-    const structured = payload.structuredContent;
-    if (structured === undefined) {
-      problems.push(
-        `${fixture.toolName} declares an outputSchema but returned no structuredContent`
-      );
-      continue;
-    }
-
-    const validate = validator.getValidator(
-      outputSchema as Parameters<typeof validator.getValidator>[0]
-    );
-    const outcome = validate(structured);
-    if (!outcome.valid) {
-      problems.push(
-        `${fixture.toolName} structuredContent does not conform to its declared outputSchema: ${
-          outcome.errorMessage ?? "validation failed"
-        }`
-      );
-      continue;
-    }
-    graded.push({
-      tool: fixture.toolName,
-      outcome: "structuredContent conforms",
-      schemaBound: true,
-    });
-  }
-
-  const withSchema = graded.filter((entry) => entry.schemaBound).length;
-  const details = {
-    graded,
-    problems,
-    fixtureCount: fixtures.length,
-    ...(unexercised.length > 0 ? { unexercised } : {}),
-  };
-
-  if (problems.length > 0) {
-    return failedResult(
-      meta,
-      Date.now() - startedAt,
-      `Tool results do not honor their declared output schemas: ${problems.join("; ")}`,
-      details
-    );
-  }
-
-  // Nothing was gradeable AND at least one fixture failed to execute: the
-  // requirement went untested for a reason that points at the fixture, so say
-  // so rather than reporting the generic never-bound message.
-  // Nothing gradeable, and nothing the server is to blame for: the fixtures
-  // picked tools with no output schema, or gave arguments their own schema
-  // rejects. That is setup to change, so it costs no point.
-  if (withSchema === 0 && !serverMiss) {
-    const text =
-      badArgsMessage ??
-      "Your test tools have no output schema, so there was nothing to check. Pick a tool that has one, then run again.";
-    return couldNotRunResult(
-      meta,
-      unexercised.length > 0
-        ? `No tool fixture produced a gradeable result: ${unexercised.join("; ")}`
-        : `None of the ${fixtures.length} configured tool fixture(s) produced a result bound by a declared outputSchema, so the requirement was never exercised (${graded
-            .map((entry) => `${entry.tool}: ${entry.outcome}`)
-            .join("; ")}). Their results still widened the wire-schema coverage.`,
-      { ...details, ...needsSetupDetails("toolCallProbe", text) }
-    );
-  }
-
-  if (withSchema === 0 && unexercised.length > 0) {
-    return couldNotRunResult(
-      meta,
-      `No tool fixture produced a gradeable result: ${unexercised.join("; ")}`,
-      details
-    );
-  }
-
-  if (withSchema === 0) {
-    // Every fixture ran and nothing was ever BOUND by an output schema —
-    // because none declared one, or because the ones that did reported
-    // `isError: true`, which the schema does not bind. A pass would claim the
-    // MUST was established when it was never exercised.
-    return couldNotRunResult(
-      meta,
-      `None of the ${fixtures.length} configured tool fixture(s) produced a result bound by a declared outputSchema, so the requirement was never exercised (${graded
-        .map((entry) => `${entry.tool}: ${entry.outcome}`)
-        .join("; ")}). Their results still widened the wire-schema coverage.`,
-      details
-    );
-  }
-
-  return passedResult(meta, Date.now() - startedAt, details);
+      }),
+    badArgs: (toolName, args, httpStatus) =>
+      badArgsResult(
+        ctx,
+        state,
+        meta,
+        toolName,
+        args,
+        "toolCallProbe",
+        httpStatus
+      ),
+  });
 }
 
 /**
@@ -2204,9 +2109,27 @@ async function captureLogProbe(
   state: ModernRunState,
   meta: CheckMeta,
   options: Parameters<typeof modernProbe>[1]
-): Promise<{ response: RawHttpResult } | { unavailable: MCPCheckResult }> {
+): Promise<
+  | { response: RawHttpResult; attempts: RawHttpResult[] }
+  | { unavailable: MCPCheckResult; attempts: RawHttpResult[] }
+> {
+  // A tool call may be sent twice (refused for its headers, then retried).
+  // `attempts` keeps every answer that came back, also when a later try
+  // throws; `response` is the last one.
+  const attempts: RawHttpResult[] = [];
   try {
-    return { response: await track(state, modernProbe(ctx, options)) };
+    if (options.method === "tools/call" && options.name !== undefined) {
+      const response = await modernToolCall(
+        ctx,
+        state,
+        { ...options, name: options.name },
+        attempts
+      );
+      return { response, attempts };
+    }
+    const response = await track(state, modernProbe(ctx, options));
+    attempts.push(response);
+    return { response, attempts };
   } catch (error) {
     return {
       unavailable: couldNotRunResult(
@@ -2214,6 +2137,7 @@ async function captureLogProbe(
         `Could not complete the logging probe: ${errorMessage(error)}`,
         { probedTool: options.name, requestedLogLevel: options.logLevel }
       ),
+      attempts,
     };
   }
 }
@@ -2275,9 +2199,11 @@ async function runLogLevelCheck(
         }
       : { id: 7900, method: "server/discover" }
   );
-  if ("unavailable" in silent) return silent.unavailable;
-
-  const unrequested = logRecords(silent.response);
+  // Every answer to the silent call counts, a refused first try included: a
+  // log on a request that asked for none is the violation, whether or not the
+  // request went on to succeed. So the logs are read before an unfinished
+  // retry can turn the check into "could not run".
+  const unrequested = silent.attempts.flatMap(logRecords);
   if (unrequested.length > 0) {
     return failedResult(
       meta,
@@ -2289,6 +2215,7 @@ async function runLogLevelCheck(
       }
     );
   }
+  if ("unavailable" in silent) return silent.unavailable;
 
   if (!probe) {
     return couldNotRunResult(
@@ -2594,12 +2521,19 @@ function subscriptionNotifications(observation: ListenObservation): Array<{
   );
 }
 
+/**
+ * What every subscription check reports about the stream. The acknowledged
+ * filter is compared with the requested one here, as a client SHOULD. A
+ * server may honor only part of the request, so a difference is reported and
+ * never fails a check.
+ */
 function observationDetails(
   observation: ListenObservation
 ): Record<string, unknown> {
   return {
     subscriptionId: observation.subscriptionId,
     requestedFilter: observation.requestedFilter,
+    ...compareAcknowledgedFilter(observation),
     messageCount: observation.messages.length,
     streamOutcome: observation.outcome,
     observedMs: observation.observedMs,
@@ -2657,9 +2591,6 @@ async function runSubscriptionAckOrderingCheck(
   return passedResult(meta, Date.now() - startedAt, {
     ...details,
     notificationCount: notifications.length,
-    acknowledgedFilter: (
-      observation.messages[ackIndex] as { params?: Record<string, unknown> }
-    ).params?.notifications,
   });
 }
 
@@ -2871,7 +2802,14 @@ async function runModernCheck(
     case "modern-resource-read-no-empty-contents":
       return await runResourceEmptyContentsCheck(ctx, state);
     case "modern-tool-output-schema-conformant":
-      return await runToolOutputSchemaCheck(ctx, state);
+      // The one check here that also runs on the 2025 revisions, with a probe
+      // that speaks their wire.
+      return ctx.config.era === "legacy"
+        ? await runLegacyToolOutputSchemaCheck(
+            ctx,
+            MODERN_CHECK_METADATA["modern-tool-output-schema-conformant"]
+          )
+        : await runToolOutputSchemaCheck(ctx, state);
     case "modern-logs-require-log-level":
       return await runLogLevelCheck(ctx, state);
     case "modern-no-session-id":
@@ -2976,7 +2914,15 @@ async function runXMcpHeaderDeclarationsCheck(
           ? ""
           : ` (note: the tools/list walk ended early — ${terminationReason(termination)} — so further tools were not scanned)`
       }`,
-      { violations, toolCount, termination, pagesRead }
+      // On failure the count includes the invalid tools, so it is larger than
+      // the tool list a conforming client keeps. The distinct key gets its own
+      // UI label so the two numbers do not look like they disagree.
+      {
+        violations,
+        toolCountIncludingInvalid: toolCount,
+        termination,
+        pagesRead,
+      }
     );
   }
 
@@ -3041,7 +2987,7 @@ export async function runModernChecks(
     return results;
   }
 
-  const state: ModernRunState = { observed: [] };
+  const state: ModernRunState = { observed: [], toolsRelisted: 0 };
   let cacheable: Array<{ method: string; result: RawHttpResult }> | undefined;
   const cacheableProbes = async () => {
     cacheable ??= await collectCacheableResults(ctx, state);
@@ -3077,6 +3023,10 @@ export async function runModernChecks(
       );
     } catch (error) {
       ctx.config.signal?.throwIfAborted();
+      if (error instanceof DiscoveryResultError && id !== "modern-result-type-present") {
+        results.push(couldNotRunResult(MODERN_CHECK_METADATA[id], error.message));
+        continue;
+      }
       results.push(
         failedResult(
           MODERN_CHECK_METADATA[id],

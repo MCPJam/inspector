@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { withoutStructuredContentRule } from "@mcpjam/sdk";
 import {
   harnessConnectionProfile,
   harnessConnectionFingerprint,
@@ -122,4 +123,35 @@ it("keeps unsupported model policies on the existing path", () => {
   expect(isEnhancedModelPolicy({ linkedResources: { text: true } })).toBe(
     false,
   );
+});
+
+it("gives a harness turn the same admission and fingerprint once the client rule is removed (KES-1007)", () => {
+  const codexCli = {};
+  const claudeCode = { directContent: { image: false } };
+  // With the rule left in, the strict profile schema would refuse native
+  // forwarding; harness turns remove it before any of this runs.
+  expect(
+    isEnhancedModelPolicy({
+      ...codexCli,
+      structuredContent: "preferred",
+    } as never),
+  ).toBe(false);
+  for (const policy of [codexCli, claudeCode]) {
+    const stripped = withoutStructuredContentRule({
+      ...policy,
+      structuredContent: "preferred",
+    } as never);
+    expect(isEnhancedModelPolicy(stripped)).toBe(
+      isEnhancedModelPolicy(Object.keys(policy).length ? policy : undefined),
+    );
+    expect(
+      harnessConnectionFingerprint(manager(ui), ["server"], stripped),
+    ).toBe(
+      harnessConnectionFingerprint(
+        manager(ui),
+        ["server"],
+        Object.keys(policy).length ? policy : undefined,
+      ),
+    );
+  }
 });

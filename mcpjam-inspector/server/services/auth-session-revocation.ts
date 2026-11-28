@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { ConvexHttpClient } from "convex/browser";
 import { decodeJwt } from "jose";
 import { getInspectorClientRuntimeConfig } from "../env.js";
+import {
+  ConvexHttpStatusError,
+  convexReadFetch,
+} from "../routes/v1/convex-read-errors.js";
 import { logger } from "../utils/logger.js";
 import { markSessionRevokedLocally } from "./revoked-session-cache.js";
 
@@ -10,10 +14,26 @@ export type SessionRevocationResult =
   | {
       revoked: false;
       reason:
-        "no_identity" | "no_session" | "not_configured" | "timeout" | "failed";
+        | "no_identity"
+        | "no_session"
+        | "token_refused"
+        | "not_configured"
+        | "timeout"
+        | "failed";
     };
 
 export const SESSION_REVOCATION_TIMEOUT_MS = 3_000;
+
+/**
+ * Convex's custom-JWT verifier also answers 401 `InvalidAuthHeader` when it
+ * cannot get the issuer's signing keys: the JWKS fetch failed, the key server
+ * answered non-200, or its body or Content-Type was unusable. The code is the
+ * one a bad token gets, so only these messages (convex-backend
+ * `crates/authentication`, `fetch_jwks` and its caller) mark an outage the
+ * same token can outlast.
+ */
+const SIGNING_KEY_LOOKUP_FAILURE =
+  /Could not fetch JWKS|Invalid JWKS response body|when fetching JWKS/;
 
 export interface SessionRevocationDeps {
   convexUrl?: string;
@@ -25,7 +45,9 @@ async function revokeViaConvex(
   convexUrl: string,
   token: string,
 ): Promise<unknown> {
-  const client = new ConvexHttpClient(convexUrl);
+  // Keeps the HTTP status that `ConvexHttpClient` would drop, so a refused
+  // token can be told apart from a failure worth retrying.
+  const client = new ConvexHttpClient(convexUrl, { fetch: convexReadFetch });
   client.setAuth(token);
   return await client.mutation("authSessions:revokeCurrentSession" as any, {});
 }
@@ -83,7 +105,19 @@ export async function revokeAuthKitSession(
       revoked: false,
       reason: outcome.reason === "no_identity" ? "no_identity" : "no_session",
     };
-  } catch {
+  } catch (error) {
+    // Convex answers 401 when it refuses the bearer itself (expired, malformed,
+    // or from no configured issuer) before running the mutation, and it gives
+    // the same token the same answer on every retry. A `cause` means the body
+    // never arrived (`convexReadFetch`), so nothing shows which 401 it was.
+    if (
+      error instanceof ConvexHttpStatusError &&
+      error.convexStatus === 401 &&
+      error.cause === undefined &&
+      !SIGNING_KEY_LOOKUP_FAILURE.test(error.message)
+    ) {
+      return { revoked: false, reason: "token_refused" };
+    }
     return { revoked: false, reason: "failed" };
   } finally {
     if (timer) clearTimeout(timer);
@@ -104,7 +138,10 @@ export async function revokeAuthKitSession(
  */
 export type SignOutRevocationResult =
   | { revoked: true }
-  | { revoked: false; reason: "no_identity" | "no_session" | "not_configured" }
+  | {
+      revoked: false;
+      reason: "no_identity" | "no_session" | "token_refused" | "not_configured";
+    }
   | {
       revoked: false;
       reason: "timeout" | "failed";

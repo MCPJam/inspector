@@ -65,6 +65,8 @@ export interface HarnessProxyPolicyBlock {
     result: {
       content: Array<{ type: "text"; text: string }>;
       _meta: Record<string, HarnessPolicyBlockMarker>;
+      /** Required by a 2026-07-28 client, ignored by earlier ones. */
+      resultType: "complete";
     };
   };
 }
@@ -131,6 +133,7 @@ export function evaluateHarnessProxyToolPolicy(args: {
           },
         ],
         _meta: { [HARNESS_POLICY_BLOCK_META_KEY]: marker },
+        resultType: "complete",
       },
     },
   };

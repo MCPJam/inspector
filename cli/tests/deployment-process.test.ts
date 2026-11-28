@@ -43,6 +43,7 @@ before(async () => {
   B = await startRecorder();
   A = await startRecorder({
     "GET /api/v1/me": (_request, response) => json(response, 200, ME),
+    "GET /api/v1/organizations": (_request, response) => json(response, 200, { items: [] }),
     "GET /moved/*": (_request, response) => {
       response.writeHead(307, { location: `${B.url}/api/v1/me` });
       response.end();
@@ -118,7 +119,10 @@ test("--api-url A with a key: A gets the key, nothing else is contacted", () =>
     assert.equal(run.exitCode, 0, run.stderr);
     assert.deepEqual(
       A.requests.map((request) => [request.path, request.headers.authorization]),
-      [["/api/v1/me", "Bearer sk_a"]],
+      [
+        ["/api/v1/me", "Bearer sk_a"],
+        ["/api/v1/organizations", "Bearer sk_a"],
+      ],
     );
     assert.deepEqual(B.requests, []);
     assert.deepEqual(await blockedAttempts(sandbox), []);
@@ -156,7 +160,7 @@ test("a saved login for B with MCPJAM_API_KEY and --api-url A: only the key, onl
     assert.equal(run.exitCode, 0, run.stderr);
     assert.deepEqual(
       A.requests.map((request) => request.headers.authorization),
-      ["Bearer sk_a"],
+      ["Bearer sk_a", "Bearer sk_a"],
     );
     assert.deepEqual(B.requests, []);
     assert.deepEqual(await blockedAttempts(sandbox), []);
@@ -202,6 +206,7 @@ test("cloud login --api-url A replaces a saved login for B; the sign-in provider
       "/api/cli/auth/config": "edge-secret",
       "/oauth/token": null,
       "/api/v1/me": "edge-secret",
+      "/api/v1/organizations": "edge-secret",
     });
     assert.deepEqual(B.requests, []);
     assert.deepEqual(await blockedAttempts(sandbox), []);

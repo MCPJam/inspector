@@ -1,0 +1,34 @@
+---
+title: "Read swarm results"
+description: "Read the findings, check whether sessions ran, and trace a missed goal back to a tool call or assistant response."
+icon: "chart-column"
+---
+
+Open a run from **Swarms → Overview**. The overview shows findings and session flow for the selected run. Click **Open full swarm** to inspect its tabs.
+
+| Tab | What to look for |
+| --- | --- |
+| **Findings** | Goal results and checks that failed across sessions. Open the sessions behind a finding to see the evidence. |
+| **Insights** | Patterns across conversations. Use **Session flow** to see how goals, behavior, outcomes, and sentiment relate. |
+| **Sessions** | Individual conversations and their reports, including chat, tool calls, and traces. |
+| **Run** | Progress for each persona and target. Open a session from the matrix to inspect it. |
+
+## Trace a missed goal
+
+<Steps>
+  <Step title="Check whether the session ran">
+    A session marked **Didn't run** produced no conversation to assess. Read its reason before drawing a conclusion about your server. For example, if a model was unavailable, fix or change the target and run again.
+
+    An **Inconclusive** goal result means the available evidence didn't settle whether the user reached the goal. Open the session report to see what was recorded.
+  </Step>
+  <Step title="Read the conversation">
+    In **Sessions**, pick an example behind the finding. Start with what the persona asked and how the assistant answered. In the task-board example, check whether the answer named the right board, included every blocked task, and called out unassigned items.
+  </Step>
+  <Step title="Check the trace">
+    Inspect the arguments and response for the relevant tool call. If the call queried the wrong board, look at how the tools and board names were presented to the model. If the response omitted assignees, inspect the server output. If the response contained the right data, check where the assistant's reply diverged.
+  </Step>
+</Steps>
+
+## Check a fix
+
+Rerun the goal against the same targets and test data after your change. If a failure is worth checking on every release, [write an eval case](/evaluate/write-a-case) with a representative prompt and the outcome you expect.

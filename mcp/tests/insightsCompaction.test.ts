@@ -4,7 +4,7 @@ import {
   MODEL_CONTRACT_JSON_CAP,
   MODEL_MAX_EVIDENCE_PER_FINDING,
   MODEL_MAX_FINDINGS,
-} from "../src/tools/platformTools.js";
+} from "@mcpjam/sdk/internal/mcp-surface";
 
 function finding(i: number, overrides: Record<string, unknown> = {}) {
   return {

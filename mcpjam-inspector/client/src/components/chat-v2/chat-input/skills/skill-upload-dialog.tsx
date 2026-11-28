@@ -15,6 +15,7 @@ import {
 } from "@/lib/apis/mcp-skills-api";
 import type { SkillResult } from "./skill-types";
 import { isValidSkillName } from "../../../../../../shared/skill-types";
+import { readSkillDocument } from "../../../../../../shared/skill-document";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { track } from "@/lib/analytics";
 
@@ -32,22 +33,25 @@ interface ParsedSkillInfo {
 }
 
 /**
- * Parse SKILL.md frontmatter to extract name and description
+ * Parse SKILL.md frontmatter to extract name and description. Parsed as YAML
+ * with the server's reader, so a quoted or folded value the server writes
+ * (`name: "123"`, a long description) reads back as the same string.
  */
 function parseSkillMdFrontmatter(content: string): ParsedSkillInfo | null {
-  const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
-  if (!frontmatterMatch) return null;
+  const { frontmatter } = readSkillDocument(content);
+  const name = frontmatter?.name;
+  const description = frontmatter?.description;
 
-  const frontmatter = frontmatterMatch[1];
-  const nameMatch = frontmatter.match(/^name:\s*(.+)$/m);
-  const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
+  // The server also rejects an empty description.
+  if (
+    typeof name !== "string" ||
+    typeof description !== "string" ||
+    !description
+  ) {
+    return null;
+  }
 
-  if (!nameMatch || !descMatch) return null;
-
-  return {
-    name: nameMatch[1].trim(),
-    description: descMatch[1].trim(),
-  };
+  return { name, description };
 }
 
 export function SkillUploadDialog({

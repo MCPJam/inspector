@@ -25,11 +25,18 @@ describe("streamCloseOutcome", () => {
     expect(streamCloseOutcome({ code: 4401 }).retry).toBe(true);
   });
 
-  it("does not retry a browser that is gone (4404)", () => {
+  it("does not retry a browser that is gone (4404), and says it is gone", () => {
     expect(streamCloseOutcome({ code: 4404 })).toEqual({
       retry: false,
+      gone: true,
       detail: "The browser on this computer is no longer running.",
     });
+  });
+
+  it("marks only 4404 as a gone browser", () => {
+    for (const code of [1001, 1006, 4401, 4503]) {
+      expect(streamCloseOutcome({ code }).gone).toBeUndefined();
+    }
   });
 
   it("shows the server's own reason rather than a generic line", () => {

@@ -1,5 +1,6 @@
 import { expect, type Page, type Route, test } from "@playwright/test";
 import {
+  FAKE_OAUTH_AUTH_CODE,
   startFakeOAuthMcpServer,
   startFakePlainMcpServer,
 } from "./fixtures/fake-oauth-mcp-server";
@@ -522,6 +523,110 @@ test.describe("OAuth Debugger e2e", () => {
 
       await advanceUntilConnectServer(page);
       expect(tokenRequests()).toHaveLength(1);
+    } finally {
+      await fakeOAuthServer.close();
+    }
+  });
+});
+
+// Clerk's sign-in page sets `Cross-Origin-Opener-Policy: same-origin`, so the
+// popup comes back with no `window.opener`, no window name, and reads as
+// closed to the app. Sign-in must still finish through the real callback page.
+test.describe("OAuth sign-in through a COOP authorization page", () => {
+  test("OAuth Debugger redeems the code", async ({ page }) => {
+    test.setTimeout(150_000);
+    const fakeOAuthServer = await startFakeOAuthMcpServer({
+      authorizePageCrossOriginOpenerPolicy: "same-origin",
+    });
+    const tokenRequests = () =>
+      fakeOAuthServer.requests.filter((request) => request.path === "/token");
+    await page.route("**/api/**/oauth/debug/proxy", fulfillDebugProxy);
+
+    try {
+      await page.goto("/__e2e/oauth-debugger");
+      await waitForHarnessReady(page);
+      await addOAuthServerThroughDebugger(page, fakeOAuthServer.serverUrl);
+
+      const authorizeButton = await advanceUntilAuthorize(page);
+      const popupPromise = page.waitForEvent("popup");
+      await authorizeButton.click();
+      const popup = await popupPromise;
+      const desktopHandoffs: string[] = [];
+      popup.on("framenavigated", (frame) => {
+        if (frame.url().startsWith("mcpjam:")) desktopHandoffs.push(frame.url());
+      });
+
+      await expect
+        .poll(() => tokenRequests().length, { timeout: 90_000 })
+        .toBe(1);
+      await advanceUntilConnectServer(page);
+      expect(desktopHandoffs).toEqual([]);
+    } finally {
+      await fakeOAuthServer.close();
+    }
+  });
+
+  test("conformance hands the code to the run", async ({ page }, testInfo) => {
+    // Hosted conformance needs a project context the harness doesn't provision;
+    // the callback page and popup handoff are the same code in both modes.
+    test.skip(testInfo.project.name === "hosted", "needs a hosted project");
+    test.setTimeout(150_000);
+    const fakeOAuthServer = await startFakeOAuthMcpServer({
+      authorizePageCrossOriginOpenerPolicy: "same-origin",
+      authorizationResponseIss: true,
+    });
+    const submitted: Array<{ code?: string; state?: string; iss?: string }> =
+      [];
+    const state = "conformance-e2e-state";
+
+    try {
+      await page.goto("/__e2e/oauth-debugger?surface=conformance");
+      const appOrigin = new URL(page.url()).origin;
+      const authorizationUrl = new URL(`${fakeOAuthServer.origin}/authorize`);
+      authorizationUrl.search = new URLSearchParams({
+        response_type: "code",
+        client_id: "conformance-e2e-client",
+        redirect_uri: `${appOrigin}/oauth/callback/debug`,
+        state,
+      }).toString();
+
+      await page.route(/\/api\/(mcp|web)\/conformance\//, async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        if (path.endsWith("/connection-check")) {
+          await route.fulfill({
+            json: { status: "ready", protocolVersion: "2026-07-28" },
+          });
+        } else if (path.endsWith("/oauth/start")) {
+          await route.fulfill({
+            json: {
+              phase: "authorization_needed",
+              sessionId: "conformance-e2e-session",
+              authorizationUrl: authorizationUrl.toString(),
+            },
+          });
+        } else if (path.endsWith("/oauth/authorize")) {
+          submitted.push(route.request().postDataJSON());
+          await route.fulfill({ json: { success: true } });
+        } else if (path.endsWith("/oauth/complete")) {
+          await route.fulfill({ json: { phase: "pending" } });
+        } else {
+          await route.fulfill({ json: { success: true } });
+        }
+      });
+
+      const popupPromise = page.waitForEvent("popup");
+      await page.getByRole("button", { name: "Run checks" }).click();
+      await popupPromise;
+
+      await expect.poll(() => submitted, { timeout: 90_000 }).toEqual([
+        expect.objectContaining({
+          sessionId: "conformance-e2e-session",
+          code: FAKE_OAUTH_AUTH_CODE,
+          state,
+          // RFC 9207: the runner needs it for the issuer check.
+          iss: fakeOAuthServer.origin,
+        }),
+      ]);
     } finally {
       await fakeOAuthServer.close();
     }

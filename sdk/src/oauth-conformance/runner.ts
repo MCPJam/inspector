@@ -12,6 +12,7 @@ import {
   getConformanceClientCredentialsDynamicRegistrationMetadata,
 } from "../oauth/client-identity.js";
 import { createOAuthStateMachine } from "../oauth/state-machines/factory.js";
+import { validateAuthorizationResponseIssuer } from "../oauth/state-machines/debug-oauth-2026-07-28.js";
 import { classifyUnauthenticatedProbe } from "../oauth/state-machines/shared/challenges.js";
 import { responseFailureFindingKey } from "../oauth/state-machines/shared/response-error.js";
 import { isLoopbackOAuthUrl } from "../oauth/ssrf-guard.js";
@@ -882,9 +883,25 @@ export class OAuthConformanceTest {
                     request: trackedRequest,
                   });
 
+            // Versions are ISO dates, so string order is release order.
+            if (this.config.protocolVersion >= "2026-07-28") {
+              // RFC 9207, all four cases, before the code goes anywhere near
+              // the token endpoint. Earlier versions don't require it.
+              const issCheck = validateAuthorizationResponseIssuer({
+                recordedIssuer:
+                  state.recordedIssuer ?? state.authorizationServerMetadata?.issuer,
+                returnedIss: authorizationResult.iss,
+                issParameterSupported:
+                  state.authorizationServerMetadata
+                    ?.authorization_response_iss_parameter_supported,
+              });
+              if (!issCheck.ok) throw new Error(issCheck.reason);
+            }
+
             updateState({
               currentStep: "received_authorization_code",
               authorizationCode: authorizationResult.code,
+              authorizationResponseIss: authorizationResult.iss,
               error: undefined,
             });
 

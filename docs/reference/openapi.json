@@ -1407,7 +1407,7 @@
         "operationId": "createEvalRun",
         "tags": ["Eval runs"],
         "summary": "Create an eval run (async)",
-        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.\n\nTo make the run readable as something more specific than `API` in the Runs table, send `x-mcpjam-launcher` (and `x-mcpjam-ci` from a CI job). Both are labels: `source` is stamped `api` either way.",
+        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nIf the suite is CI-owned (see `EvalSuiteDetail.managedBy`), these launches return `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"` before any server connects, even when they would leave the suite unchanged:\n\n- Inline `tests` without `suiteRerun: true`, in a project environment or not.\n- `refreshSnapshot` outside a project environment, on a rerun too.\n\nOther launches save nothing to the suite and run as usual. This route takes no `declaredSuiteId`, so the suite-file exception does not apply: a launch from the suite file is refused the same way if it is one of these.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.\n\nTo make the run readable as something more specific than `API` in the Runs table, send `x-mcpjam-launcher` (and `x-mcpjam-ci` from a CI job). Both are labels: `source` is stamped `api` either way.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -1500,6 +1500,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -2563,7 +2566,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Enable, repoint, or disable a suite's schedule",
-        "description": "A schedule fires exactly ONE run per interval, so an environment-based suite must pin exactly one of its attached environments. Omitting `environmentId` on a single-environment suite means that environment; omitting it on a multi-environment suite is a VALIDATION_ERROR. Disabling preserves the existing pin. Responds with the full updated suite.",
+        "description": "A schedule fires exactly ONE run per interval, so an environment-based suite must pin exactly one of its attached environments. Omitting `environmentId` on a single-environment suite means that environment; omitting it on a multi-environment suite is a VALIDATION_ERROR. Disabling preserves the existing pin. Responds with the full updated suite.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -3537,7 +3540,7 @@
         "operationId": "attachEvalSuiteEnvironment",
         "tags": ["Eval suites"],
         "summary": "Attach one environment to a suite (atomic append)",
-        "description": "APPEND one project environment to the suite's attachments, if it is not already there.\n\nDistinct from `PATCH /eval-suites/{suiteId}` with `environmentIds`, which REPLACES the whole list. Use this route to add one environment without detaching an environment that another caller attached at the same time.\n\nIdempotent: attaching an already-attached environment reports `attached: false` and changes nothing, which is what lets a retried launch converge instead of erroring. Subject to the same cap, membership and schedule-pin rules as the replace door: growing a single-environment suite to two is exactly the edit that strands an enabled unpinned schedule.",
+        "description": "APPEND one project environment to the suite's attachments, if it is not already there.\n\nDistinct from `PATCH /eval-suites/{suiteId}` with `environmentIds`, which REPLACES the whole list. Use this route to add one environment without detaching an environment that another caller attached at the same time.\n\nIdempotent: attaching an already-attached environment reports `attached: false` and changes nothing, which is what lets a retried launch converge instead of erroring. Subject to the same cap, membership and schedule-pin rules as `PATCH` with `environmentIds`: growing a single-environment suite to two is exactly the edit that strands an enabled unpinned schedule.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`, even for an environment it already has. This route takes no `declaredSuiteId`. To change a CI-owned suite's environments from its suite file, send the full list as `environmentIds` to `PATCH /eval-suites/{suiteId}` with `declaredSuiteId`. That call replaces the list instead of appending to it.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -3584,6 +3587,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -3966,7 +3972,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Update an eval suite's settings",
-        "description": "Partial update: omitted fields are left as they are. `environmentIds` is tri-state: a non-empty array sets/replaces, `null` clears (reverting the suite to legacy config), and `[]` is rejected rather than silently treated as a clear. Responds with the full updated suite.",
+        "description": "Partial update: omitted fields are left as they are. `environmentIds` is tri-state: a non-empty array sets/replaces, `null` clears (reverting the suite to legacy config), and `[]` is rejected rather than silently treated as a clear. Responds with the full updated suite.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`, even when the request would change nothing. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4032,7 +4038,7 @@
         "operationId": "deleteEvalSuite",
         "tags": ["Eval runs"],
         "summary": "Delete an eval suite",
-        "description": "Deletes the suite and its cases. Past runs are not deleted.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) can be deleted too. The next suite-file sync or SDK report creates it again.",
+        "description": "Deletes the suite and its cases. Past runs are not deleted.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) can be deleted too, so `declaredSuiteId` is accepted here but changes nothing. The next suite-file sync or SDK report creates the suite again.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4140,7 +4146,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Create an eval case",
-        "description": "Adds one case to the suite. Both `title` and a non-empty `steps` array are required: `steps` is optional on the shared case shape so PATCH can be partial, but a case persisted without executable steps could never run. When `models` is omitted the suite's configured model is used.",
+        "description": "Adds one case to the suite. Both `title` and a non-empty `steps` array are required: `steps` is optional on the shared case shape so PATCH can be partial, but a case saved without executable steps could never run. When `models` is omitted the suite's configured model is used.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4232,7 +4238,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Create several eval cases",
-        "description": "Adds up to 100 cases to the suite in one call: the bulk form of the single create, and the way to import a suite or convert a repo's test files without a round trip per case. Every entry needs a `title` and a non-empty `steps` array. Cases are validated together and reported individually: a `failed` entry does not roll back its committed siblings, so the response is `201` even when some entries were refused. Read `failed` rather than branching on the status alone. Send an `Idempotency-Key` header to make a retry land on the same rows.",
+        "description": "Adds up to 100 cases to the suite in one call: the bulk form of the single create, and the way to import a suite or convert a repo's test files without a round trip per case. Every entry needs a `title` and a non-empty `steps` array. Cases are validated together and reported individually: a `failed` entry does not roll back its committed siblings, so the response is `201` even when some entries were refused. Read `failed` rather than branching on the status alone. Send an `Idempotency-Key` header to make a retry land on the same rows.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4337,6 +4343,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "429": {
             "$ref": "#/components/responses/RateLimited"
           },
@@ -4357,7 +4366,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Generate eval cases from the suite's tools",
-        "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and persists them: the only edit route that connects to a server. Synchronous: connect, generate, persist, disconnect, respond.\n\nThe authoring model is on MCPJam: **no customer credits are consumed.** The call still counts against the organization's daily generation quota, and against MCPJam's own daily budget for generation, so it can be refused with `429 RATE_LIMITED` and a `Retry-After`. `details.canTopUp` is `false`: wait until `Retry-After` rather than topping up or retrying in a loop.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded BEFORE any case is persisted, so a replay reuses them instead of taking a second slice of the daily quota, and each case is persisted under a derived per-item key so the loop is resumable.",
+        "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and saves them to the suite. Synchronous: connect, generate, save, disconnect, respond.\n\nThe authoring model is on MCPJam: **no customer credits are consumed.** The call still counts against the organization's daily generation quota, and against MCPJam's own daily budget for generation, so it can be refused with `429 RATE_LIMITED` and a `Retry-After`. `details.canTopUp` is `false`: wait until `Retry-After` rather than topping up or retrying in a loop.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded BEFORE any case is saved, so a replay reuses them instead of taking a second slice of the daily quota, and each case is saved under a derived per-item key so the loop is resumable.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"` before connecting to any server. This route takes no `declaredSuiteId`, so a suite file cannot use it either.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4437,7 +4446,7 @@
         "operationId": "importEvalCases",
         "tags": ["Eval runs"],
         "summary": "Author eval cases from a document",
-        "description": "The sibling of `cases/generate`: generation invents cases from the suite's tools, import reads them out of something a person already wrote: a test plan, a spreadsheet of scenarios, a JSON export. MCPJam's own model turns the document into full cases (ordered steps, tool calls, assertions), so the caller does not have to guess the case shape. No format is declared: the model reads the document's shape itself, so Markdown, JSON, CSV and plain notes all work.\n\n**Spends the organization's credits**, unlike generation, which is on MCPJam. Pass an idempotency key so a retry replays the same job instead of authoring (and billing) the document twice.\n\nLike `cases/generate`, this discovers the suite's tools over a live MCP connection first, so the authored cases are grounded in tools the suite can actually call.\n\nAnswers `200` when the job finishes inside the wait window and `202` with a `jobId` when it does not. Poll the job, then commit it. A case the commit could not write comes back under `skipped`, with a `reviewUrl` that opens the app on exactly those drafts.",
+        "description": "The sibling of `cases/generate`: generation invents cases from the suite's tools, import reads them out of something a person already wrote: a test plan, a spreadsheet of scenarios, a JSON export. MCPJam's own model turns the document into full cases (ordered steps, tool calls, assertions), so the caller does not have to guess the case shape. No format is declared: the model reads the document's shape itself, so Markdown, JSON, CSV and plain notes all work.\n\n**Spends the organization's credits**, unlike generation, which is on MCPJam. Pass an idempotency key so a retry replays the same job instead of authoring (and billing) the document twice.\n\nLike `cases/generate`, this discovers the suite's tools over a live MCP connection first, so the authored cases are grounded in tools the suite can actually call.\n\nAnswers `200` when the job finishes inside the wait window and `202` with a `jobId` when it does not. Poll the job, then commit it. A case the commit could not write comes back under `skipped`, with a `reviewUrl` that opens the app on exactly those drafts.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"` before connecting to any server or spending credits. This route takes no `declaredSuiteId`, so a suite file cannot use it either.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -4579,7 +4588,7 @@
         "operationId": "commitEvalAuthoringJob",
         "tags": ["Eval runs"],
         "summary": "Write a finished authoring job's cases into the suite",
-        "description": "Writes the job's drafts into the suite. A draft carrying unresolved blocking issues or proposed additions is **skipped** rather than written, and comes back under `skipped` with a `reviewUrl` for finishing it in the app.\n\nA job whose `source` is `markdown` (the in-app upload) is not committable here and answers `404`: those drafts exist so a person decides on them, and an API commit would decide on their behalf.",
+        "description": "Writes the job's drafts into the suite. A draft carrying unresolved blocking issues or proposed additions is **skipped** rather than written, and comes back under `skipped` with a `reviewUrl` for finishing it in the app.\n\nA job whose `source` is `markdown` (the in-app upload) is not committable here and answers `404`: those drafts exist so a person decides on them, and an API commit would decide on their behalf.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this writes nothing: a suite created by SDK ingest returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`, and a job on a suite with a suite file answers `404`, like a missing job. Such a suite normally has no job to commit: `cases/generate` and `cases/import` refuse it with that `409` before a job starts.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -4721,7 +4730,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Update an eval case",
-        "description": "Partial update: omitted fields are left as they are. Supplying `steps` REPLACES the case's definition rather than merging into it. `matchOptions` and `checks` accept `null` to clear the case-level override and fall back to the suite's.",
+        "description": "Partial update: omitted fields are left as they are. Supplying `steps` REPLACES the case's definition rather than merging into it. `matchOptions` and `checks` accept `null` to clear the case-level override and fall back to the suite's.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4796,7 +4805,7 @@
         "operationId": "deleteEvalCase",
         "tags": ["Eval runs"],
         "summary": "Delete an eval case",
-        "description": "Removes the case from the suite. Past runs that executed it are not affected.\n\nA case in a CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses this with `409`; send the suite file's `suite.id` as `declaredSuiteId` to delete as the file.",
+        "description": "Removes the case from the suite. Past runs that executed it are not affected.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -7057,7 +7066,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Comma-separated source filter."
+            "description": "Comma-separated source types to export: `direct` (Playground), `scenario`, `eval`, `event` (background trigger runs) and `swarm`. Without it the export holds `direct`, `scenario`, `eval` and `event`; `swarm` is exported only when named, since one swarm run is many sessions. Until background trigger runs export under their own source type, a server-side rollout, they still match `direct` and not `event`. Under `x-mcpjam-api-vocabulary: 2`, `scenario` may also be named `study`. An unknown value is refused with a 400."
           },
           {
             "name": "includeContent",
@@ -12712,7 +12721,7 @@
         "name": "declaredSuiteId",
         "in": "query",
         "required": false,
-        "description": "The suite file's own `suite.id`, when this request is that file syncing itself. A CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`; naming the suite's own declared id is how the file writing itself is allowed through. Naming any other id refuses exactly as loudly as naming none, so it is not a capability. Omit it for an ordinary edit.\n\nA QUERY PARAMETER on every route that takes it, never a body field. An older deployment rejects an unknown body field with `400` but ignores an unknown query parameter.",
+        "description": "The suite file's own `suite.id`, when this request is that file syncing itself. A CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`; naming the suite's own declared id is how the file writing itself is allowed through. Naming any other id gets the same `409` as naming none, so it is not a capability. Omit it for an ordinary edit.\n\nSend it as a query parameter. Some routes also accept it as a body field, but an older deployment rejects an unknown body field with `400` and ignores an unknown query parameter.",
         "schema": {
           "type": "string",
           "maxLength": 128
@@ -14324,7 +14333,7 @@
       "EvalCaseCreateRequestV2": {
         "type": "object",
         "required": ["title", "steps"],
-        "description": "Create one case. `title` and a non-empty `steps` array are both required: a case persisted without executable steps could never run. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): `legacyIterations`/`runs` is the floor, `iterations`/`repetitions` the exact count, `assertions`/`checks`/`predicates` the rules; two spellings of one field is a `400`. A canonical client projects a GET into this body rather than echoing both spellings back.",
+        "description": "Create one case. `title` and a non-empty `steps` array are both required: a case saved without executable steps could never run. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): `legacyIterations`/`runs` is the floor, `iterations`/`repetitions` the exact count, `assertions`/`checks`/`predicates` the rules; two spellings of one field is a `400`. A canonical client projects a GET into this body rather than echoing both spellings back.",
         "properties": {
           "judge": {
             "type": "object",
@@ -14340,7 +14349,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id gets the same `409` as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "title": {
             "type": "string",
@@ -14551,7 +14560,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id gets the same `409` as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "title": {
             "type": "string",
@@ -14755,7 +14764,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id gets the same `409` as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "cases": {
             "type": "array",
@@ -14841,7 +14850,7 @@
           },
           "managedBy": {
             "type": "string",
-            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it (name, settings, environments, schedule, models, skills, execution config and cases) from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying, comparing and DELETING are unaffected. Deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
+            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it (name, settings, environments, schedule, models, skills, execution config and cases) from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nA run launch with inline `tests` or a snapshot refresh can get the same `409` (see `POST /eval-runs`). Running the suite as it is, replaying, comparing and deleting the whole suite are unaffected. Deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has.\n\nTo change a CI-owned suite, edit its suite file and run it again: the sync sends the file's `suite.id` as `declaredSuiteId` on the routes that take that parameter. A suite created by SDK ingest has no file, so it changes only through the SDK's reports. Either kind can be duplicated in the MCPJam app for an editable copy.\n\nDo not infer CI ownership from `declaredId`: a suite created by SDK ingest is CI-owned and has none.",
             "enum": ["ci", "app"]
           },
           "name": {
@@ -14947,7 +14956,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id gets the same `409` as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "name": {
             "type": "string",
@@ -15533,7 +15542,7 @@
           "title",
           "steps"
         ],
-        "description": "Create one case. `title` and a non-empty `steps` array are both required: a case persisted without executable steps could never run.",
+        "description": "Create one case. `title` and a non-empty `steps` array are both required: a case saved without executable steps could never run.",
         "properties": {
           "judge": {
             "type": "object",
@@ -15549,7 +15558,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id gets the same `409` as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "title": {
             "type": "string",
@@ -15700,7 +15709,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id gets the same `409` as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "cases": {
             "type": "array",
@@ -15827,7 +15836,7 @@
       },
       "EvalCaseGenerateRequest": {
         "type": "object",
-        "description": "AI-generate cases from the suite's server tools and persist them. The authoring model is on MCPJam: no customer credits are consumed; it counts against the organization's daily generation quota.",
+        "description": "AI-generate cases from the suite's server tools and save them to the suite. The authoring model is on MCPJam: no customer credits are consumed; it counts against the organization's daily generation quota.",
         "properties": {
           "mode": {
             "type": "string",
@@ -16151,6 +16160,12 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it.",
         "properties": {
+          "accounts": {
+            "type": ["array", "null"],
+            "minItems": 1,
+            "maxItems": 32,
+            "items": { "$ref": "#/components/schemas/EvalAccountSelection" }
+          },
           "judge": {
             "type": "object",
             "additionalProperties": false,
@@ -16165,7 +16180,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id gets the same `409` as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "title": {
             "type": "string",
@@ -17963,7 +17978,7 @@
           },
           "managedBy": {
             "type": "string",
-            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it (name, settings, environments, schedule, models, skills, execution config and cases) from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nRunning, replaying, comparing and DELETING are unaffected. Deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has. To change a CI-owned suite, either edit its file and send that file's `suite.id` as `declaredSuiteId` on the write, or duplicate the suite for an editable copy.\n\n`declaredId` alone is not this answer: a suite created by SDK ingest is CI-owned and has no declared id.",
+            "description": "Where this suite's configuration lives. `ci` means it is owned by a committed suite file or by MCPJam SDK ingest, and the platform REFUSES configuration writes to it (name, settings, environments, schedule, models, skills, execution config and cases) from this API and from the app alike, with `409 CONFLICT` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`.\n\nA run launch with inline `tests` or a snapshot refresh can get the same `409` (see `POST /eval-runs`). Running the suite as it is, replaying, comparing and deleting the whole suite are unaffected. Deleting a suite is not editing one, and it is the only cleanup an SDK-created suite has.\n\nTo change a CI-owned suite, edit its suite file and run it again: the sync sends the file's `suite.id` as `declaredSuiteId` on the routes that take that parameter. A suite created by SDK ingest has no file, so it changes only through the SDK's reports. Either kind can be duplicated in the MCPJam app for an editable copy.\n\nDo not infer CI ownership from `declaredId`: a suite created by SDK ingest is CI-owned and has none.",
             "enum": ["ci", "app"]
           },
           "name": {
@@ -18071,6 +18086,12 @@
           {
             "required": ["suiteName", "tests", "serverIds"],
             "properties": {
+          "accounts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": { "$ref": "#/components/schemas/EvalAccountSelection" }
+          },
               "tests": {
                 "minItems": 1
               }
@@ -18245,7 +18266,7 @@
           },
           "refreshSnapshot": {
             "type": "boolean",
-            "description": "**PERSISTS A SUITE MUTATION.** Re-derives and stores the suite's host-config snapshot from this request's server list, so future runs of the suite use it too. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target launches only: it is not accepted on `POST /eval-run-groups`, where last-writer-wins on a frozen snapshot is never what a fan-out means."
+            "description": "**Saves a change to the suite.** Updates the suite's stored server configuration from this request's server list, so later runs of the suite use it too. It does nothing on a project-environment launch, whose servers come from the environment. Without it, a rerun keeps the stored configuration, so servers you connect later don't change an existing suite. Single-suite launches only: `POST /eval-run-groups` doesn't accept it, because several runs would overwrite the same stored configuration."
           },
           "runGroupId": {
             "type": "string",
@@ -18322,6 +18343,12 @@
         "required": ["suiteId", "targets"],
         "description": "Launch one run per target under a single server-minted group id.\n\n`targets` fan out along ONE axis: every entry is an `environmentId`, or every entry is a `namedHostId`. A mixed list returns `400` with `details.reason: \"HETEROGENEOUS_TARGETS\"`: mixing them would have to answer whether a host runs inside an environment or beside it, and every answer to that is a cross product nobody asked for. Duplicates are deduplicated by id, preserving order.\n\nThe knobs below apply UNIFORMLY to every run in the group. `serverIds` and `refreshSnapshot` are deliberately absent: an environment supplies its own closed server set, a host derives one from its config, and last-writer-wins on a frozen suite snapshot is never what a fan-out means. Inline `tests` are absent for the same reason: a group runs a persisted suite.",
         "properties": {
+          "accounts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": { "$ref": "#/components/schemas/EvalAccountSelection" }
+          },
           "suiteId": {
             "type": "string",
             "description": "The suite every target runs."
@@ -22198,7 +22225,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id gets the same `409` as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "enabled": {
             "type": "boolean"
@@ -22221,10 +22248,16 @@
         "description": "Partial update of a suite's settings. Omitted fields are left as they are.",
         "additionalProperties": false,
         "properties": {
+          "accounts": {
+            "type": ["array", "null"],
+            "minItems": 1,
+            "maxItems": 32,
+            "items": { "$ref": "#/components/schemas/EvalAccountSelection" }
+          },
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through: the platform permits the write only when the id matches, so naming any other id gets the same `409` as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "name": {
             "type": "string",
@@ -23401,13 +23434,17 @@
             "type": ["boolean", "null"],
             "description": "Send `null` to clear this field back to absent."
           },
+          "runUnloadedToolCalls": {
+            "type": ["boolean", "null"],
+            "description": "Allow eligible MCP tools to run before loading when their arguments validate. Send null to use the default."
+          },
           "progressiveToolDiscovery": {
             "type": ["boolean", "null"],
             "description": "Send `null` to clear this field back to absent."
           },
           "harness": {
             "type": ["string", "null"],
-            "enum": ["claude-code", "codex", "copilot-cli", "cursor", "opencode", null],
+            "enum": ["claude-code", "codex", "copilot-cli", "cursor", "opencode", "claude-web", "chatgpt-web", null],
             "description": "Execution runtime selector. Send `null` to clear this field back to absent. Setting one requires access to that runtime; clearing never does."
           },
           "computer": {
@@ -24048,11 +24085,31 @@
           }
         }
       },
+      "EvalAccountSelection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["serverId", "accountId"],
+        "properties": {
+          "serverId": { "type": "string" },
+          "accountId": { "type": "string" }
+        }
+      },
       "EvalRunAccount": {
         "type": "object",
         "description": "One account an eval run used on one server, as it was when the run started. Holds no token.",
         "required": ["serverId", "name", "kind"],
         "properties": {
+          "cases": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["testCaseId", "source"],
+              "properties": {
+                "testCaseId": { "type": "string" },
+                "source": { "type": "string", "enum": ["case", "run", "suite", "default"] }
+              }
+            }
+          },
           "serverId": {
             "type": "string",
             "description": "The saved server, as `GET /projects/{projectId}/servers` lists it."
@@ -29218,6 +29275,62 @@
             "items": {
               "$ref": "#/components/schemas/BrowserScreenshot"
             }
+          },
+          "event": {
+            "$ref": "#/components/schemas/ChatSessionTraceEvent"
+          }
+        }
+      },
+      "ChatSessionTraceEvent": {
+        "type": "object",
+        "description": "The MCP event that started the turn. Present only on turns an event started: a background trigger run, or a Playground event turn.",
+        "required": [
+          "name",
+          "receivedAt",
+          "origin"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The event's name."
+          },
+          "eventId": {
+            "type": "string",
+            "description": "The server's id for the event."
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "When the server says the event occurred, exactly as it sent it."
+          },
+          "receivedAt": {
+            "type": "integer",
+            "description": "When MCPJam received the event, in epoch milliseconds like the turn's `startedAt`."
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "poll",
+              "push",
+              "webhook"
+            ],
+            "description": "The subscription's delivery mode. Absent when it is not known."
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "server",
+              "simulation",
+              "replay"
+            ],
+            "description": "`server` when the MCP server sent the event, `simulation` for a test event. `replay` is reserved."
+          },
+          "subscriptionId": {
+            "type": "string",
+            "description": "MCPJam's id for the event subscription."
+          },
+          "triggerId": {
+            "type": "string",
+            "description": "The background trigger that ran the turn. Present only on background trigger runs."
           }
         }
       },
@@ -33600,7 +33713,7 @@
         }
       },
       "Conflict": {
-        "description": "The resource is not in a state that accepts this write: a stale `expectedRevision`, a duplicate name, or an environment that cannot currently be launched. The request was well-formed; re-read the resource and retry.",
+        "description": "The resource is not in a state that accepts this write: a stale `expectedRevision`, a duplicate name, an environment that cannot currently be launched, or a CI-owned eval suite. The request was well-formed. For the first three, re-read the resource and retry. A CI-owned suite (see `EvalSuiteDetail.managedBy`) answers with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`, and retrying does not change that. Change the suite where it is defined (its suite file, or the SDK's reports for a suite the SDK created), or duplicate it in the MCPJam app to get an editable copy. Only operations that list a `declaredSuiteId` parameter accept a write from the suite file itself.",
         "content": {
           "application/json": {
             "schema": {

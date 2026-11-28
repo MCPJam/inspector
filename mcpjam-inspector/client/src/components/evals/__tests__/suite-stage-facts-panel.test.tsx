@@ -170,7 +170,7 @@ describe("SuiteStageFactsList", () => {
       targets: [],
     });
     expect(container.textContent).toContain("No run target yet");
-    fireEvent.click(getByText("Where it runs"));
+    fireEvent.click(getByText("Clients and models"));
     expect(onGoToWhereItRuns).toHaveBeenCalled();
   });
 

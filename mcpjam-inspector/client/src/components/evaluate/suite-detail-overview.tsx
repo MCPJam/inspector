@@ -29,6 +29,7 @@ import {
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
 import { SuiteRunsAsLine } from "./suite-runs-as";
 import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
+import { runsUsedSeveralAccounts } from "@/lib/evals/eval-run-accounts";
 import { GenerateCasesDialog } from "./generate-cases-dialog";
 import type { GenerateCasesConfig } from "@/lib/evals/eval-generation-config";
 import { EvalGenerationWorkspace } from "./eval-generation-workspace";
@@ -281,8 +282,9 @@ export function SuiteDetailOverview({
     listedRuns,
   );
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
-  // Recent runs gain "Ran as" and "Accounts" once a listed run recorded them.
-  const showAccounts = useEvalAccountSelectionEnabled() && runs.some((run) => run.accountsAtRun?.length);
+  // Recent runs gain "Account" once the listed runs used more than one.
+  const showAccounts =
+    useEvalAccountSelectionEnabled() && runsUsedSeveralAccounts(runs);
   // The new Suite page's Runs card: health above the strip, ⓘ on the metrics.
   const resultsPageEnabled = useSuiteResultsPageEnabled() === true;
   useSuitePageViewed({

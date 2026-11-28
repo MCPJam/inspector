@@ -111,6 +111,8 @@ export interface EventRunScope {
   environmentModelId?: string;
   /** The host config the run acts as; absent or null is MCPJam (built-in). */
   hostConfig?: Record<string, unknown> | null;
+  /** The environment the run resolved, which its turn records; absent without one. */
+  environmentRef?: { environmentId: string; name: string; revision: number };
 }
 
 export async function defaultResolveServers(args: {
@@ -159,6 +161,11 @@ export async function defaultResolveServers(args: {
   return {
     serverIds: environmentServerIds(resolved),
     serverNames: environmentServerNames(resolved),
+    environmentRef: {
+      environmentId: resolved.environmentRef.environmentId,
+      name: resolved.environmentRef.name,
+      revision: resolved.environmentRef.revision,
+    },
     ...(resolved.effectiveModelId ? { environmentModelId: resolved.effectiveModelId } : {}),
     hostConfig: await loadSubscriptionHostConfig({
       hostId,

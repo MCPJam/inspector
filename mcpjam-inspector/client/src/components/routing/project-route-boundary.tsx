@@ -5,6 +5,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { useAppRouteContext } from "@/lib/app-route-context";
 import { routePaths, useAppNavigate } from "@/lib/app-navigation";
 import type { ProjectRouteState } from "@/lib/project-route-state";
+import { RequestAccessAction } from "@/components/access-requests/request-access-action";
 
 /**
  * The gate on `/p/:projectId`.
@@ -36,7 +37,7 @@ export function ProjectRouteBoundary() {
   }
 
   if (state.status === "inaccessible") {
-    return <ProjectRouteInaccessible />;
+    return <ProjectRouteInaccessible projectId={state.requestedProjectId} />;
   }
 
   return <Outlet context={context} />;
@@ -49,8 +50,15 @@ export function ProjectRouteBoundary() {
  * redirecting to another project is how a user ends up acting on data they
  * never asked for, and keeping the URL means a reload after being granted
  * access just works.
+ *
+ * Asking for access does not break the single message: the request answers
+ * the same for a real, deleted or unknown id, so the screen stays identical.
  */
-export function ProjectRouteInaccessible() {
+export function ProjectRouteInaccessible({
+  projectId,
+}: {
+  projectId: string;
+}) {
   const navigate = useAppNavigate();
   return (
     <div
@@ -61,21 +69,24 @@ export function ProjectRouteInaccessible() {
       <div className="space-y-1">
         <p className="text-sm font-medium">This project isn&apos;t available</p>
         <p className="max-w-md text-sm text-muted-foreground">
-          It may have been deleted, or you may not have access to it. Pick a
-          project from the switcher to keep working.
+          It may have been deleted, or you may not have access to it. Ask
+          for access, or pick a project from the switcher to keep working.
         </p>
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        // `unscoped`: the way out of an unavailable project must not inherit
-        // that project, or this button navigates straight back into the state
-        // it is offering to escape.
-        onClick={() => navigate(routePaths.root, { unscoped: true })}
-      >
-        Go to your projects
-      </Button>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <RequestAccessAction projectId={projectId} />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          // `unscoped`: the way out of an unavailable project must not inherit
+          // that project, or this button navigates straight back into the state
+          // it is offering to escape.
+          onClick={() => navigate(routePaths.root, { unscoped: true })}
+        >
+          Go to your projects
+        </Button>
+      </div>
     </div>
   );
 }

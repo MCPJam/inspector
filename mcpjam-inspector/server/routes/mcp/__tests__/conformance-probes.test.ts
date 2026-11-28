@@ -237,7 +237,7 @@ describe("POST /api/mcp/conformance/tasks task tool", () => {
   });
   it.each([
     { unknown: { toolName: "job" } },
-    { "tasks-wire-resolvable": { toolName: "job" } },
+    { "tasks-invalid-task-id-rejected": { toolName: "job" } },
     { "tasks-inline-result": { toolName: "job", toolArguments: [] } },
   ])("rejects malformed task overrides", async (checkOverrides) => {
     expect((await postTasks({ checkOverrides })).status).toBe(400);

@@ -3,6 +3,7 @@ import { NetworkAccessError } from "./NetworkAccessError";
 import { AccessRequired } from "./AccessRequired";
 import {
   SessionTokenError,
+  isAccessLinkRequired,
   isSessionTokenHostDenied,
 } from "@/lib/session-token";
 
@@ -78,11 +79,17 @@ export function GenericBootstrapError() {
  * Decide what the session-token bootstrap catch should do with an init failure:
  * which screen to render, and whether to report the error.
  *
- * - Expected host-denial 403 (a self-hosted user reaching the inspector over the
- *   network): show `NetworkAccessError`, and do NOT report — these 403s were the
- *   bulk of the Sentry noise this feature set out to remove.
- * - Anything else (transport error, 5xx, malformed response): show the generic
- *   screen AND report, so a real regression isn't invisible.
+ * - The Inspector asking for the access link (401 `ACCESS_LINK_REQUIRED`): show
+ *   `AccessRequired`, and do NOT report.
+ * - Expected host-denial 403 `HOST_NOT_ALLOWED` (a self-hosted user reaching
+ *   the inspector over the network): show `NetworkAccessError`, and do NOT
+ *   report — these 403s were the bulk of the Sentry noise this feature set out
+ *   to remove.
+ * - Anything else (transport error, 5xx, malformed response, either code under
+ *   another status): show the generic
+ *   screen AND report, so a real regression isn't invisible. A
+ *   `SessionTokenError` reports its status and content type as `extra`, the
+ *   facts Sentry's strict boundary keeps, so the event names what answered.
  *
  * Extracted from `main.tsx` (which self-executes on import and so can't be
  * unit-tested) so this branch — the actual claim of BB-118 — is covered.
@@ -90,11 +97,9 @@ export function GenericBootstrapError() {
 export function resolveBootstrapErrorScreen(error: unknown): {
   report: boolean;
   element: ReactElement;
+  extra?: { httpStatus: number; contentType?: string };
 } {
-  if (
-    error instanceof SessionTokenError &&
-    error.code === "ACCESS_LINK_REQUIRED"
-  ) {
+  if (isAccessLinkRequired(error)) {
     return {
       report: false,
       element: <AccessRequired restarted={error.restarted} />,
@@ -103,5 +108,14 @@ export function resolveBootstrapErrorScreen(error: unknown): {
   if (isSessionTokenHostDenied(error)) {
     return { report: false, element: <NetworkAccessError /> };
   }
-  return { report: true, element: <GenericBootstrapError /> };
+  return {
+    report: true,
+    element: <GenericBootstrapError />,
+    ...(error instanceof SessionTokenError && {
+      extra: {
+        httpStatus: error.status,
+        ...(error.contentType && { contentType: error.contentType }),
+      },
+    }),
+  };
 }

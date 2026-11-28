@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "10.12.0",
+  "version": "11.0.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -27,6 +27,11 @@
       "import": "./dist/internal/network-proxy.js",
       "default": "./dist/internal/network-proxy.js"
     },
+    "./internal/mcp-surface": {
+      "types": "./dist/internal/mcp-surface.d.ts",
+      "import": "./dist/internal/mcp-surface.js",
+      "default": "./dist/internal/mcp-surface.js"
+    },
     "./internal/inspector": {
       "types": "./dist/internal/inspector.d.ts",
       "import": "./dist/internal/inspector.js",
@@ -46,6 +51,16 @@
       "types": "./dist/worker.d.ts",
       "import": "./dist/worker.js",
       "default": "./dist/worker.js"
+    },
+    "./mocks": {
+      "types": "./dist/mocks/index.d.ts",
+      "import": "./dist/mocks/index.js",
+      "default": "./dist/mocks/index.js"
+    },
+    "./mocks/definition": {
+      "types": "./dist/mocks/definition.d.ts",
+      "import": "./dist/mocks/definition.js",
+      "default": "./dist/mocks/definition.js"
     },
     "./operations": {
       "types": "./dist/operations.d.ts",
@@ -205,7 +220,6 @@
     "@eslint/js": "^10.0.1",
     "@modelcontextprotocol/node": "2.1.2",
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "@modelcontextprotocol/server": "2.3.1",
     "@modelcontextprotocol/server-everything": "^2026.8.31",
     "@sentry/cli": "^3.8.0",
     "@sentry/node": "10.75.0",
@@ -236,9 +250,10 @@
     "@ai-sdk/openai": "4.0.91",
     "@ai-sdk/xai": "5.0.20",
     "@cfworker/json-schema": "^4.1.1",
-    "@mcpjam/evaluators": "^0.6.0",
+    "@mcpjam/evaluators": "^0.8.0",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
+    "@modelcontextprotocol/server": "2.3.1",
     "@noble/hashes": "^2.4.0",
     "@openrouter/ai-sdk-provider": "^3.1.0",
     "@xmldom/xmldom": "^0.8.13",

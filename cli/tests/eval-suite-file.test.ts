@@ -190,6 +190,23 @@ cases:
         prompt: Refund the duplicate charge on invoice 4471.
 `;
 
+/** The same suite with a code evaluator, a setup script and grading settings. */
+const CODE_GRADING_SUITE_FILE = VALID_SUITE_FILE.replace(
+  "  validity: {}\n",
+  `  validity: {}
+  codeEvaluators:
+    - id: totals
+      fileName: check_totals.py
+      script: print(1)
+      role: required
+  scripts:
+    iterationSetup: echo seed
+  grading:
+    files:
+      - /home/user/report.json
+`
+);
+
 /**
  * The same suite, converted from an upstream runner rather than authored here.
  *
@@ -987,6 +1004,45 @@ describe("eval export", () => {
     });
   });
 
+  test("exports code evaluators, scripts and grading settings", async () => {
+    await withTempDir(async () => {
+      const evaluator = {
+        id: "totals",
+        fileName: "check_totals.py",
+        script: "print(1)\n",
+        role: "required",
+      };
+      const run = await runExport(
+        {
+          detail: {
+            settings: {
+              minimumAccuracy: 80,
+              matchOptions: null,
+              checks: [],
+              judge: { enabled: false, model: null },
+              codeEvaluators: [evaluator],
+              scripts: { runCleanup: "echo bye" },
+              grading: null,
+            },
+          },
+        },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const reloaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(reloaded.ok, true);
+      if (!reloaded.ok) return;
+      assert.deepEqual(reloaded.authored.defaults.codeEvaluators, [evaluator]);
+      assert.deepEqual(reloaded.authored.defaults.scripts, {
+        runCleanup: "echo bye",
+      });
+      assert.equal(reloaded.authored.defaults.grading, undefined);
+    });
+  });
+
   test("exports execution config, hosts, and one resolved environment", async () => {
     await withTempDir(async () => {
       const run = await runExport(
@@ -1667,6 +1723,8 @@ function validateVerdictPolicyDefaults(value: unknown): string | undefined {
 
 async function startFileRunFixture(options?: {
   existingCases?: Array<{ id: string; declaredId: string; title: string }>;
+  /** What the hosted suite already holds, reported in the sync's answer. */
+  storedSettings?: Record<string, unknown>;
   /**
    * Advertise eval vocabulary 2 from `GET /capabilities`. Omitted, the
    * fixture answers like a deployment that predates the negotiation: no
@@ -1851,7 +1909,7 @@ async function startFileRunFixture(options?: {
             executionConfig: { model: body.defaultConfig?.modelId ?? "m" },
             hosts,
             environmentIds: [],
-            settings: {},
+            settings: options?.storedSettings ?? {},
             schedule: {},
             createdAt: 1,
             updatedAt: 2,
@@ -2421,6 +2479,88 @@ describe("eval run --file", () => {
         assert.equal(fixture.fromFileBodies.length, 0);
         assert.equal(fixture.runBodies.length, 0);
         assert.match(run.stderr, /SUITE_FILE_INVALID/);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("code evaluators, scripts and grading settings sync only when the file declares them", async () => {
+    for (const [text, expected] of [
+      [
+        CODE_GRADING_SUITE_FILE,
+        {
+          codeEvaluators: [
+            {
+              id: "totals",
+              fileName: "check_totals.py",
+              script: "print(1)",
+              role: "required",
+            },
+          ],
+          scripts: { iterationSetup: "echo seed" },
+          grading: { files: ["/home/user/report.json"] },
+        },
+      ],
+      // Not even `null`: an Inspector older than this CLI refuses unknown keys.
+      [VALID_SUITE_FILE, {}],
+    ] as const) {
+      const fixture = await startFileRunFixture();
+      try {
+        await withTempDir(async (dir) => {
+          const file = path.join(dir, "suite.yaml");
+          await writeFile(file, text, "utf8");
+          const run = await captureProcessOutput(() =>
+            main(
+              runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+              { telemetry: telemetryDisabled }
+            )
+          );
+          assert.equal(run.result.exitCode, 0, run.stderr);
+          assert.equal(fixture.fromFileBodies.length, 1);
+          const synced = fixture.fromFileBodies[0] as Record<string, unknown>;
+          for (const key of ["codeEvaluators", "scripts", "grading"]) {
+            assert.deepEqual(
+              synced[key],
+              (expected as Record<string, unknown>)[key],
+              key
+            );
+          }
+        });
+      } finally {
+        await fixture.close();
+      }
+    }
+  });
+
+  test("a second sync clears what the file no longer declares, when the Inspector reports it", async () => {
+    const fixture = await startFileRunFixture({
+      storedSettings: {
+        codeEvaluators: [
+          { id: "old", fileName: "old.sh", script: "true", role: "advisory" },
+        ],
+        scripts: null,
+        grading: { network: "web" },
+      },
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.fromFileBodies.length, 2);
+        const cleared = fixture.fromFileBodies[1] as Record<string, unknown>;
+        assert.equal(cleared.declaredSuiteId, "s_billing");
+        assert.equal(cleared.codeEvaluators, null);
+        assert.equal(cleared.grading, null);
+        // Nothing stored, nothing to clear.
+        assert.equal("scripts" in cleared, false);
       });
     } finally {
       await fixture.close();

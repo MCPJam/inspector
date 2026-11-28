@@ -58,6 +58,18 @@ describe("createStreamingPinnedFetch", () => {
     );
   });
 
+  it("dials through `localFetch` outside hosted mode when given one", async () => {
+    const localFetch = vi.fn(async () => new Response("ok"));
+    const local = createStreamingPinnedFetch({ hosted: false, localFetch });
+
+    await local("http://127.0.0.1:1/mcp");
+
+    expect(localFetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:1/mcp",
+      expect.objectContaining({ headers: expect.any(Headers) }),
+    );
+  });
+
   it("refuses a literal link-local target as a blocked egress target", async () => {
     const guarded = createStreamingPinnedFetch({ hosted: true });
     await expect(

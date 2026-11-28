@@ -216,15 +216,25 @@ export class TaskOperations {
     taskId: string,
     task: Record<string, unknown>,
     /** Live rpc-log window, so the ack can be judged as it arrived. */
-    received: unknown[]
+    received: unknown[],
+    alreadyAnswered: Set<string>
   ): Promise<InputRequiredLeg> {
     const requested = isRecord(task.inputRequests)
       ? Object.keys(task.inputRequests)
       : [];
-    const responses = this.config.inputResponses;
+    const responses = Object.fromEntries(
+      Object.entries(this.config.inputResponses ?? {}).filter(
+        ([key]) => requested.includes(key) && !alreadyAnswered.has(key)
+      )
+    );
 
-    if (!responses || Object.keys(responses).length === 0) {
-      return { outcome: "no-responses-configured", requested };
+    if (Object.keys(responses).length === 0) {
+      return {
+        outcome: Object.keys(this.config.inputResponses ?? {}).length
+          ? "no-matching-responses"
+          : "no-responses-configured",
+        requested,
+      };
     }
 
     const answered = Object.keys(responses);
@@ -454,18 +464,34 @@ export class TaskOperations {
     serverId: string,
     wire: TasksWire,
     taskId: string,
-    options?: { stopOnInputRequired?: boolean }
+    options?: {
+      stopOnInputRequired?: boolean;
+      /**
+       * Called when the task is seen parked. `remainingMs` is what is left of
+       * the poll budget: whatever the callback does is paid for out of it.
+       * `false` stops on the parked task; `true` goes on polling; `"reread"`
+       * reads the task again at once (the one in hand is stale), even when
+       * the deadline has passed.
+       */
+      continueAfterInput?: (
+        task: Record<string, unknown>,
+        remainingMs: number
+      ) => Promise<boolean | "reread">;
+    }
   ): Promise<{
     task?: Record<string, unknown>;
     error?: unknown;
     /** Set when polling stopped because the task parked on `input_required`. */
     inputRequired?: boolean;
+    timedOut?: boolean;
   }> {
     const deadline = Date.now() + this.config.pollTimeoutMs;
     let last: Record<string, unknown> | undefined;
     let consecutiveInputRequired = 0;
+    let rereadNow = false;
 
-    while (Date.now() < deadline) {
+    while (rereadNow || Date.now() < deadline) {
+      rereadNow = false;
       this.config.signal?.throwIfAborted();
       try {
         const task =
@@ -502,7 +528,21 @@ export class TaskOperations {
       ) {
         consecutiveInputRequired += 1;
         if (consecutiveInputRequired >= PARKED_INPUT_REQUIRED_POLLS) {
-          return { task: last, inputRequired: true };
+          const next = await options.continueAfterInput?.(
+            last,
+            deadline - Date.now()
+          );
+          if (!next) return { task: last, inputRequired: true };
+          if (next === "reread") {
+            // The task in hand is from before the callback, and it has moved
+            // or will not: read it now, not a poll interval later, or a task
+            // that ended near the deadline is reported as never ending. If it
+            // is still parked, that read is enough to ask the callback again.
+            consecutiveInputRequired = PARKED_INPUT_REQUIRED_POLLS - 1;
+            rereadNow = true;
+            continue;
+          }
+          consecutiveInputRequired = 0;
         }
       } else {
         consecutiveInputRequired = 0;
@@ -523,7 +563,7 @@ export class TaskOperations {
       });
     }
 
-    return { task: last };
+    return { task: last, timedOut: true };
   }
 }
 

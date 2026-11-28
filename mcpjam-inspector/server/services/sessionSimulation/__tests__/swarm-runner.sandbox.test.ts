@@ -1380,6 +1380,20 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
+
+  it.each([
+    ["a pinned image", {}],
+    ["no pinned image", { builtInToolIds: [], computerEnvironment: undefined, computerUnavailableReason: undefined }],
+  ])("boots no box for a web client target with a computer and %s", async (_label, target) => {
+    // The vendor's app runs on the vendor's site, so nothing would run on it.
+    personaDrivesOneTurn();
+    await startJourneyRun(
+      baseOpts({ harness: "claude-web", modelId: "anthropic/claude-sonnet-4.5", ...target }),
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+    expect(turnOptions().harness).toBe("claude-web");
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
 });
 
 /**

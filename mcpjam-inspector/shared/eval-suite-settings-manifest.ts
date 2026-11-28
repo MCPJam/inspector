@@ -81,9 +81,9 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "minimumIterations",
-    // A FLOOR that raises a case's own count, not a default that replaces it.
+    // A FLOOR that raises a case's own count, not a default the case overrides.
     // The word "minimum" is the whole difference and is never dropped: a case
-    // at 7 resolves to 7 under a floor of 3 and to 3 under a default of 3.
+    // at 2 resolves to 3 under a floor of 3 and to 2 under a default of 3.
     label: EVAL_ITERATION_RULE_LABELS.caseCountWithFloor,
     api: "settings.minimumIterations",
   },
@@ -94,7 +94,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "environments",
-    label: "Where it runs",
+    label: "Clients and models",
     api: "environmentIds",
   },
   {

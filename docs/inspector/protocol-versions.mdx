@@ -16,8 +16,8 @@ The inspector can speak more than one version of the MCP protocol. By default (*
 There are three places to set a version, and they layer:
 
 1. **Client → MCP Protocol**: the _host default_ applied to every HTTP server attached to that Client that has no per-server override. Stdio servers always use Automatic.
-2. **Add Server modal → Connection overrides → Protocol version**: a _per-server override_ set at add time (available when adding a server to a shared project).
-3. **Server card → Edit → Advanced settings → Protocol version**: a _per-server override_ that wins over the host default.
+2. **Add Server modal → Connection overrides → Protocol version**: a _per-server override_ set at add time (available when adding a server to a project).
+3. **Server card → ⋮ → Configure → Connection overrides → Protocol version**: a _per-server override_ that wins over the host default.
 
 Use the host default when you want every HTTP server in a Client to speak the same version. Use per-server overrides when you're testing a mix, for example, a server pinned to 2025-11-25 alongside one you're upgrading to Latest.
 
@@ -32,7 +32,7 @@ Use the host default when you want every HTTP server in a Client to speak the sa
 | **2025-11-25**            | `2025-11-25`       | HTTP, SSE                                       | Pin to the 2025-11-25 stateful release. The initialize handshake offers only this version.                                                  |
 | **2025-06-18**            | `2025-06-18`       | HTTP, SSE                                       | Test against the June 2025 stable revision.                                                                                                 |
 | **2025-03-26**            | `2025-03-26`       | HTTP, SSE                                       | Test against the March 2025 stable revision.                                                                                                |
-| **Host default** _(per-server only)_ | n/a     | n/a                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
+| **Client default** _(per-server only)_ | n/a     | n/a                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
 
 **Automatic** is stored as the selection policy `"auto"`. It is not a wire literal and is never sent to the server. At connect time the SDK negotiates the era with the server rather than announcing a specific version up front. Picking any other option stores that exact version literal and pins the connection to that single revision.
 
@@ -42,7 +42,7 @@ When Automatic falls back to the legacy `initialize` handshake, it respects the 
 
 The 2026 RC applies the stateless model across transports. MCPJam's initial preview client is narrower: it currently supports the RC over Streamable HTTP POST. The per-server dropdown hides the RC option for STDIO and legacy SSE servers; if a host-level RC default reaches a non-HTTP server, the inspector fails the connection with a clear transport error instead of silently attempting the wrong protocol.
 
-When you pin a client to a version that none of its servers advertise, a warning appears below the dropdown:
+When you pin a client to a version that isn't in its own supported protocol versions, a warning appears below the dropdown:
 
 - **Stateless pin (e.g. `2026-07-28`) not advertised**: the warning notes that the pin requires servers that offer this revision and has no legacy fallback. The draft saves successfully, but sessions against servers that don't speak this revision will fail at connect time. Pick **Automatic** unless you are specifically testing that revision.
 - **Stateful pin (e.g. `2025-11-25`) not advertised**: the warning notes that saving will fail. Pick an advertised version, or add the version to `supportedProtocolVersions` in the JSON editor below.
@@ -78,9 +78,9 @@ You can set the per-server protocol version either when adding a server or when 
 
 ### At add time (shared projects)
 
-When adding a server to a shared project, the **Connection overrides** section of the Add Server modal includes a **Protocol version** picker. The 2026 RC option is only shown for HTTP servers.
+When adding a server to a project, the **Connection overrides** section of the Add Server modal includes a **Protocol version** picker. The 2026 RC option is only shown for HTTP servers.
 
-1. Click **Add server** in the **Servers** tab.
+1. Click **Add Server** in the **Servers** tab.
 2. Fill in the server details.
 3. Expand **Connection overrides**.
 4. Pick **Client default**, **Latest (2026-07-28)**, **2025-11-25**, or an earlier stable revision from the **Protocol version** dropdown.
@@ -91,9 +91,9 @@ The pin is applied once the server is created and the connection is established.
 ### After adding (edit flow)
 
 1. Go to the **Servers** tab.
-2. Click the three dots on the server card → **Edit** (or open **View server info** → **Edit**).
-3. Expand **Advanced settings**.
-4. Find **Protocol version** and pick **Host default**, **Latest (2026-07-28)**, **2025-11-25**, or an earlier stable revision.
+2. Click the three dots on the server card → **Configure**.
+3. Expand **Connection overrides**.
+4. Find **Protocol version** and pick **Client default**, **Latest (2026-07-28)**, **2025-11-25**, or an earlier stable revision.
 5. Save and reconnect the server.
 
 The per-server override is the more specific signal. It wins over whatever the Client's MCP Protocol tab says. Like the host default, it applies to HTTP servers only.
@@ -125,19 +125,17 @@ If your server already speaks `2026-07-28`, you mostly won't notice. A few thing
 ### What the inspector tells you
 
 - If your server doesn't speak `2026-07-28`, the connection fails with a message naming the server and the pinned version, for example, `MCP server "my-server" doesn't support MCP protocol version 2026-07-28, which this client is pinned to.` The error banner and any connect/reconnect toast include a **Change protocol version** button that opens the client's **MCP Protocol** tab directly. Set the version to **Automatic** there to let the inspector negotiate whatever the server supports, or pick a version the server advertises.
-- If your server is missing a capability the inspector needs for a request, you'll get `-32003 MissingRequiredClientCapability` back from your server. Surface those in the Activity log to confirm they reach you.
-- The **Activity** log (server card → **Activity**) is the source of truth: every request and response, success or error, lands there so you can verify headers and `_meta` content.
+- If your server is missing a capability the inspector needs for a request, you'll get `-32003 MissingRequiredClientCapability` back from your server. Check the JSON-RPC log to confirm they reach you.
+- The JSON-RPC log is the source of truth: every request and response, success or error, lands there so you can verify `_meta` content. See [Tracing & debugging](/inspector/debugging).
 
-### Not yet supported in the RC client
+### Limits of the RC client
 
-The 2026 RC client is a **preview**. A handful of pieces from the SEP family aren't wired up yet: if you try them, the inspector throws a labeled error instead of silently no-op'ing:
+The 2026 RC client is a **preview**. Two things work differently from the legacy client:
 
-- `subscriptions/listen` (long-lived notification stream)
-- Server-initiated requests via MRTR / `InputRequiredResult` for sampling and listRoots embedded in responses (elicitation via `input_required` is supported; see [Multi-round input](#multi-round-input-mcp-2026-07-28-input_required))
-- Resumption tokens
-- Automatic detection (HTTP and stdio) falls back to the legacy `initialize` handshake when `server/discover` is not available. An explicit 2026 pin remains exact and does not fall back.
+- **Sampling and roots.** The client never advertises either capability, so it rejects a `sampling/createMessage` or `roots/list` request that a server embeds in an `InputRequiredResult`. Elicitation via `input_required` is supported; see [Multi-round input](/inspector/tools#multi-round-input-mcp-2026-07-28-input_required).
+- **Automatic detection.** Over HTTP and stdio, automatic detection falls back to the legacy `initialize` handshake when `server/discover` is not available. An explicit 2026 pin remains exact and does not fall back.
 
-For everything else (`tools/list`, `tools/call`, `resources/*`, `prompts/*`, OAuth refresh, custom headers, progress notifications), the RC client behaves like the legacy one.
+For everything else (`tools/list`, `tools/call`, `resources/*`, `prompts/*`, resource subscriptions over `subscriptions/listen`, OAuth refresh, custom headers, progress notifications), the RC client behaves like the legacy one.
 
 ## Recommended testing flow
 
@@ -145,7 +143,7 @@ For everything else (`tools/list`, `tools/call`, `resources/*`, `prompts/*`, OAu
 2. Attach the HTTP server you're upgrading.
 3. Connect: confirm the server card shows the server info populated from `server/discover` (name, version, capabilities, instructions).
 4. Run a `tools/list` and a `tools/call` from the **Tools** tab.
-5. Watch the **Activity** log for the request `_meta` and the `MCP-Protocol-Version` header.
+5. Watch the JSON-RPC log for the request `_meta`.
 6. Try an unsupported version on a second test server to confirm your `-32004` error envelope looks right.
 7. Once your server is happy on Latest, keep one Client on **Automatic** (or pinned to **2025-11-25**) so you can flip between versions without rewriting settings.
 

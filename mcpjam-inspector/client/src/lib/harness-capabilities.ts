@@ -64,6 +64,8 @@ export const HARNESS_DISPLAY_NAME = {
   "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].displayName,
   cursor: HARNESS_DESCRIPTORS.cursor.displayName,
   opencode: HARNESS_DESCRIPTORS.opencode.displayName,
+  "claude-web": HARNESS_DESCRIPTORS["claude-web"].displayName,
+  "chatgpt-web": HARNESS_DESCRIPTORS["chatgpt-web"].displayName,
 };
 
 /** Behavior-tab controls whose value may not cross into a harness runtime. */
@@ -97,6 +99,8 @@ const HARNESS_LOOP_CONTROL_STATE = {
   "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].controls,
   cursor: HARNESS_DESCRIPTORS.cursor.controls,
   opencode: HARNESS_DESCRIPTORS.opencode.controls,
+  "claude-web": HARNESS_DESCRIPTORS["claude-web"].controls,
+  "chatgpt-web": HARNESS_DESCRIPTORS["chatgpt-web"].controls,
 };
 
 /**

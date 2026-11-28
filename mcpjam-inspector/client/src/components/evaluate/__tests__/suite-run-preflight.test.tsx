@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConvexError } from "convex/values";
 import {
@@ -10,10 +10,10 @@ import {
   preflightTargets,
   readEnvironmentResolutions,
   runPreflight,
-  RunPreflightNotices,
   scopePreflightToHosts,
   scopePreflightToEnvironments,
 } from "../suite-run-preflight";
+import { RunPreflightNotices } from "../run-preflight-notices";
 import { SuiteRunReviewContent } from "../suite-run-review";
 import { plannedPreflight } from "../suite-run-matrix";
 import type { EvalCase, EvalSuite } from "../../evals/types";
@@ -426,6 +426,54 @@ describe("RunPreflightNotices", () => {
     expect(
       screen.getByText(/if no organization model fits/),
     ).toBeInTheDocument();
+  });
+
+  it("gives each message its own notice", () => {
+    render(
+      <RunPreflightNotices
+        preflight={{
+          disconnected: ["linear"],
+          removed: [],
+          refused: [],
+          disabledProviders: ["ollama"],
+          serverName: (ref) => ref,
+          connect: vi.fn(),
+          manageModels: vi.fn(),
+        }}
+      />,
+    );
+    const notices = screen.getAllByTestId("preflight-notice");
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toHaveTextContent(/linear isn't connected/);
+    expect(notices[0]).toHaveTextContent("Connect");
+    expect(notices[1]).toHaveTextContent(/Ollama isn't enabled/);
+    expect(notices[1]).toHaveTextContent("Manage models");
+  });
+
+  it("sends an unset judge to suite settings, not AI providers", async () => {
+    const onEditSettings = vi.fn();
+    const manageModels = vi.fn();
+    render(
+      <RunPreflightNotices
+        onEditSettings={onEditSettings}
+        preflight={{
+          disconnected: [],
+          removed: [],
+          refused: [],
+          disabledProviders: [],
+          orgConfigProblems: [CHOOSE_ORG_JUDGE_MODEL],
+          serverName: (ref) => ref,
+          manageModels,
+        }}
+      />,
+    );
+    const notice = screen.getByTestId("preflight-notice");
+    expect(notice).not.toHaveTextContent("Manage AI providers");
+    await userEvent.click(
+      within(notice).getByRole("button", { name: "Open suite settings" }),
+    );
+    expect(onEditSettings).toHaveBeenCalledOnce();
+    expect(manageModels).not.toHaveBeenCalled();
   });
 
   it("links a disabled provider to the org's model settings", async () => {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const flags = vi.hoisted(() => ({ hostedBrowser: true }));
+const flags = vi.hoisted(() => ({ hostedBrowser: true, webClients: true }));
+const webClient = vi.hoisted(() => ({ vendor: undefined as "claude" | undefined }));
 const toolNotes = vi.hoisted(() => ({
   current: {} as Record<string, string>,
   projectId: undefined as string | null | undefined,
@@ -62,7 +63,28 @@ vi.mock("../BrowserProfilePicker", () => ({
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
   useFeatureFlagEnabled: (key: string) =>
-    key === "hosted-browser-enabled" ? flags.hostedBrowser : true,
+    key === "hosted-browser-enabled"
+      ? flags.hostedBrowser
+      : key === "web-clients-enabled"
+        ? flags.webClients
+        : true,
+}));
+// The tab asks only which web client a draft is.
+vi.mock("@/lib/web-accounts/clients", () => ({
+  webClientVendorOfHost: () => webClient.vendor,
+}));
+vi.mock("@/components/web-clients/WebAccountsSettings", () => ({
+  WebAccountsSettings: ({
+    vendor,
+    projectId,
+  }: {
+    vendor: string;
+    projectId: string;
+  }) => (
+    <p>
+      {vendor} accounts for {projectId}
+    </p>
+  ),
 }));
 // Harness native built-in tools (read-only). Returns a list only for a harness
 // host (non-null harnessId), mirroring the real catalog hook.
@@ -101,6 +123,32 @@ import { ComputerTab } from "../ComputerTab";
 describe("ToolsTab", () => {
   beforeEach(() => {
     flags.hostedBrowser = true;
+    flags.webClients = true;
+    webClient.vendor = undefined;
+  });
+
+  it("lists a web client's accounts on its Browser tab while the flag is on", () => {
+    webClient.vendor = "claude";
+    const { unmount } = render(
+      <BrowserTab
+        projectId="project-1"
+        hostId="host-1"
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("claude accounts for project-1")).toBeInTheDocument();
+    unmount();
+    flags.webClients = false;
+    render(
+      <BrowserTab
+        projectId="project-1"
+        hostId="host-1"
+        draft={emptyHostConfigInputV2()}
+        onDraftChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/accounts for/)).toBeNull();
   });
 
   it("enables Browser without a computer and edits its profile from Browser", () => {

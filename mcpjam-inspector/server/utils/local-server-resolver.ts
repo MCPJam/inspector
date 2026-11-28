@@ -130,6 +130,7 @@ import {
   WORKOS_API_KEY_FEATURE,
 } from "../services/service-credential.js";
 import { recordConnectionEffectiveAuth } from "./connection-effective-auth.js";
+import { dialMockOr, type MockAuthorizeEntry } from "./mock-servers.js";
 
 type LocalAuthorizeServerConfig =
   | {
@@ -144,6 +145,8 @@ type LocalAuthorizeServerConfig =
       hasHeaders?: boolean;
       timeout?: number;
       clientCapabilities?: unknown;
+      /** Present for a mock server's id: dial it in process, whatever the address says. */
+      mock?: MockAuthorizeEntry;
       useOAuth?: boolean;
       oauthScopes?: string[];
       clientId?: string;
@@ -1738,7 +1741,36 @@ export async function resolveLocalServerForConnect(
     xaaUnauthorizedHandler,
     xaaPolicy,
   });
-  return { config, authorizeResult: result, effectiveAuth };
+  // A mock's saved address is a placeholder: dial the mock route as this caller.
+  return {
+    config:
+      result.serverConfig.transportType === "http" && "url" in config
+        ? dialMockOr(
+            config as HttpServerConfig,
+            result,
+            {
+              timeoutMs: options?.timeoutMs ?? options?.defaults?.timeoutMs ?? 30_000,
+              clientCapabilities: options?.clientCapabilities ?? options?.defaults?.clientCapabilities,
+              initializePins: options?.defaults,
+            },
+            {
+              caller: {
+                authMethod: c.get("authMethod") as string | undefined,
+                workosUserId: c.get("workosUserId") as string | undefined,
+                mcpjamOrganizationId: c.get("mcpjamOrganizationId") as string | undefined,
+              },
+              bearerToken,
+              projectId,
+              reauthorize: () =>
+                authorizeServerLocal(c, bearerToken, projectId, serverId, undefined, {
+                  includeConnections: true,
+                }),
+            },
+          )
+        : config,
+    authorizeResult: result,
+    effectiveAuth,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@ import {
   type EvalSuiteSchemaVersion,
 } from "../src/contract/suite-file.js";
 import { MAX_INTENT_CHARS } from "../src/contract/stage-intent.js";
+import { authoredResultSchemaRoot } from "../src/predicates/types.js";
 
 const contractDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -175,6 +176,10 @@ export function buildEvalSuiteSchemaDocument(
   version: EvalSuiteSchemaVersion = EVAL_SUITE_SCHEMA_VERSION
 ): Record<string, unknown> {
   const dialect = DIALECTS.find((entry) => entry.version === version)!;
+  const { $schema: _schema, ...resultSchemaRoot } = z.toJSONSchema(
+    authoredResultSchemaRoot,
+    { target: "draft-2020-12", io: "input" }
+  );
   const generated = z.toJSONSchema(dialect.structural, {
     target: "draft-2020-12",
     io: "input",
@@ -185,6 +190,14 @@ export function buildEvalSuiteSchemaDocument(
       }
       if (isIntentStringNode(ctx)) {
         node.pattern = INTENT_TRIMMED_PATTERN;
+      }
+      const properties = node.properties as
+        | { type?: { const?: unknown }; schema?: object }
+        | undefined;
+      // Suite-file authoring can publish the exact root types. The worker
+      // fixture still mirrors the deployed backend's structurally wider schema.
+      if (properties?.type?.const === "toolResultMatchesSchema" && properties.schema) {
+        Object.assign(properties.schema, resultSchemaRoot);
       }
     },
   }) as Record<string, unknown>;

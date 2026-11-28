@@ -16,6 +16,7 @@
  * rebind.
  */
 import type { Context, Next } from "hono";
+import { isLocalEventsHookPost } from "@/shared/local-events-hooks";
 import { SERVER_PORT, parseAllowedHosts } from "../config.js";
 import { hostnameMatchesAllowlist } from "../utils/localhost-check.js";
 import { isActiveTunnelDomain } from "../services/tunnel-registry.js";
@@ -69,6 +70,7 @@ export async function localHostAllowlistMiddleware(
   c: Context,
   next: Next,
 ): Promise<Response | void> {
+  if (isLocalEventsHookPost(c.req.method, c.req.path)) return next();
   const host = c.req.header("Host");
   if (host === undefined || isAllowedLocalHost(host)) return next();
   return c.json(

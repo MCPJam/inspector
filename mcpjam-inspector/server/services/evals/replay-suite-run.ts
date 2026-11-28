@@ -1,10 +1,12 @@
 import { checkEvalExecutionAdmission, checkEvalHarnessAdmission, casesAssertingWidgetRender, failRunBeforeExecution } from "./harness-admission.js";
 import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import { harnessOfHostConfig } from "./harness-admission.js";
+import { explainEvalHarnessRefusal } from "./explain-harness-refusal.js";
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import type { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { managerAccountsAtRun } from "../../utils/mcp-connections.js";
+import { freezeEvalRunWebAccounts } from "../web-clients/web-client-run.js";
 import { runEvalSuiteWithAiSdk } from "../evals-runner.js";
 import {
   startSuiteRunWithRecorder,
@@ -38,6 +40,8 @@ import {
   type BuiltPinnedSkillSource,
 } from "./pinned-skill-source.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
+import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
+import { loadEvalRunAccountPlan, type EvalAccountPlan } from "./suite-account-choices.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -50,7 +54,7 @@ export type ExecuteSuiteReplayFromRunParams = {
   useCurrentSuiteConfig?: boolean;
   /**
    * A local replay's servers, authorized again for this run
-   * (`localReplayServers`), and the id each name the source run used now
+   * (`projectReplayServers`), and the id each name the source run used now
    * runs under. Absent, or answering `undefined`, the replay dials the stored
    * configs.
    */
@@ -58,12 +62,15 @@ export type ExecuteSuiteReplayFromRunParams = {
     projectId?: string;
     suiteId: string;
     replayConfig: ReplayConfig;
-    environment?: { servers?: unknown };
+    environment?: { servers?: unknown; serverBindings?: Array<{ serverName: string; projectServerId?: string }> };
+    plan?: EvalAccountPlan;
   }) => Promise<
     | {
         manager: MCPClientManager;
         serverIds: string[];
         serverBindings: Array<{ serverName: string; projectServerId: string }>;
+        managerForCase?: (caseId: string | undefined) => MCPClientManager;
+        close?: () => Promise<void>;
       }
     | undefined
   >;
@@ -112,12 +119,14 @@ export async function prepareSuiteReplayFromRun(
     { runId: sourceRunId },
   );
 
-  if (!replayMetadata?.hasServerReplayConfig) {
+  if (!replayMetadata?.hasServerReplayConfig && !replayMetadata?.hasPerCaseAccounts) {
     throw new Error("This run does not have stored replay config");
   }
 
-  const replayConfig = await fetchReplayConfig(sourceRunId, convexAuthToken);
-  if (!replayConfig || replayConfig.servers.length === 0) {
+  const replayConfig = replayMetadata.hasPerCaseAccounts
+    ? { runId: sourceRunId, suiteId: replayMetadata.suiteId, servers: [] }
+    : await fetchReplayConfig(sourceRunId, convexAuthToken);
+  if (!replayConfig || (!replayConfig.servers.length && !replayMetadata.hasPerCaseAccounts)) {
     throw new Error("No replay configuration found for this run");
   }
 
@@ -141,15 +150,26 @@ export async function prepareSuiteReplayFromRun(
   const replayOrgConfigTarget = replayProjectId
     ? { projectId: replayProjectId }
     : undefined;
+  const serverIds = (replayMetadata.environment?.serverBindings ?? [])
+    .flatMap(({ projectServerId }: { projectServerId?: string }) => projectServerId ? [projectServerId] : []);
+  const plan = replayMetadata.hasPerCaseAccounts ? await loadEvalRunAccountPlan(convexClient, {
+    suiteId: replayMetadata.suiteId, sourceRunId, serverIds,
+  }) : undefined;
   const opened = await params.openReplayServers?.({
     projectId: replayProjectId,
     suiteId: replayMetadata.suiteId,
     replayConfig,
     environment: replayMetadata.environment,
+    ...(plan ? { plan } : {}),
   });
+  if (replayMetadata.hasPerCaseAccounts && !opened?.managerForCase) {
+    await opened?.manager.disconnectAllServers();
+    throw new WebRouteError(409, ErrorCode.CONFLICT, "The recorded MCP accounts could not be opened. Reconnect them and retry the replay.");
+  }
   const replayServerIds =
     opened?.serverIds ?? replayConfig.servers.map((server) => server.serverId);
   const replayManager = opened?.manager ?? buildReplayManager(replayConfig);
+  const cleanup = opened?.close ?? (() => replayManager.disconnectAllServers());
   try {
     // Resolve org model config: prefer client-sent keys, fall back to org config.
     const clientKeyRun = await prepareClientKeyRun(
@@ -204,12 +224,13 @@ export async function prepareSuiteReplayFromRun(
       toolSnapshotDebug,
       // Only a manager authorized for this run knows the accounts it runs as.
       ...(opened ? { accountsAtRun: managerAccountsAtRun(replayManager) } : {}),
+      ...(plan ? { evalAccountPlan: plan } : {}),
     });
     if (deduped === true) {
       return {
         suiteId: replayMetadata.suiteId, runId, sourceRunId, recorder, deduped, status,
         execute: async () => { throw new Error(`Eval run ${runId} already has an executor. Read its existing result.`); },
-        cleanup: () => replayManager.disconnectAllServers(),
+        cleanup,
       };
     }
     const replayHostConfig =
@@ -227,13 +248,23 @@ export async function prepareSuiteReplayFromRun(
       widgetAssertingCaseTitles: casesAssertingWidgetRender(config.tests),
       projectId: replayMetadata.projectId ?? null,
     });
-    const refusal = !executionAdmission.ok ? executionAdmission.reason : !harnessAdmission.ok ? harnessAdmission.reason :
-      harnessToolPolicyLaunchRefusal({ hasToolPolicy: Boolean(replayToolPolicy), harness: harnessAdmission.harness,
+    const refusal = !executionAdmission.ok ? executionAdmission.reason
+      : !harnessAdmission.ok ? await explainEvalHarnessRefusal({
+        admission: harnessAdmission, bearer: convexAuthToken, projectId: replayMetadata.projectId ?? null })
+      : harnessToolPolicyLaunchRefusal({ hasToolPolicy: Boolean(replayToolPolicy), harness: harnessAdmission.harness,
         localExecution });
     if (refusal) {
       await failRunBeforeExecution(convexClient, recorder, runId, { reason: refusal });
       throw new Error(refusal);
     }
+    // A replay is a run like any other: a web client's freezes its web
+    // accounts before any turn.
+    await freezeEvalRunWebAccounts({
+      convexClient,
+      runId,
+      harness: harnessAdmission.harness,
+      failRun: (reason) => failRunBeforeExecution(convexClient, recorder, runId, { reason }),
+    });
     // Like an eval run, a replay whose frozen skill can't be fetched stops
     // here, before its first model call, rather than run without it.
     let frozenSkills: BuiltPinnedSkillSource;
@@ -319,6 +350,7 @@ export async function prepareSuiteReplayFromRun(
           convexHttpUrl,
           convexAuthToken,
           mcpClientManager: replayManager,
+          accountManagerForCase: opened?.managerForCase,
           recorder,
           suiteInjectOpenAiCompat,
           suiteHostConfig: replayHostConfig,
@@ -341,10 +373,10 @@ export async function prepareSuiteReplayFromRun(
           pinnedSkillSource: frozenSkills.pinnedSkillSource,
         });
       },
-      cleanup: () => replayManager.disconnectAllServers(),
+      cleanup,
     };
   } catch (error) {
-    await replayManager.disconnectAllServers();
+    await cleanup();
     throw error;
   }
 }

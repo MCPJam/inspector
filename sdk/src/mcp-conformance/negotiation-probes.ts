@@ -1,4 +1,10 @@
+import {
+  discoveryErrorMessage,
+  discoveryFieldProblems,
+} from "../discovery-result.js";
+import { MCP_ERROR_CODES } from "../mcp-client-manager/mcp-error-codes.js";
 import type { RawExchange } from "./raw-capture.js";
+import { jsonRpcError, jsonRpcResult, type RawHttpResult } from "./raw-http.js";
 import type { MCPCheckEra } from "./types.js";
 import type { WireObservationRecorder } from "./wire-observations.js";
 
@@ -14,6 +20,8 @@ import type { WireObservationRecorder } from "./wire-observations.js";
  * otherwise. A pinned run holds nothing.
  */
 export interface NegotiationProbeHold {
+  /** The most recent discovery reply, including during a pinned connection. */
+  readonly discovery?: RawHttpResult;
   /** True when the exchange was held instead of recorded. */
   hold(exchange: RawExchange): boolean;
   /** Record or drop what was held, then stop holding. */
@@ -26,11 +34,15 @@ export function createNegotiationProbeHold(
 ): NegotiationProbeHold {
   let active = autoNegotiated;
   let held: RawExchange[] = [];
+  let discovery: RawHttpResult | undefined;
   return {
+    get discovery() {
+      return discovery;
+    },
     hold(exchange) {
-      if (!active || requestMethod(exchange) !== "server/discover") {
-        return false;
-      }
+      if (requestMethod(exchange) !== "server/discover") return false;
+      discovery = { ...exchange.response, exchange };
+      if (!active) return false;
       held.push(exchange);
       return true;
     },
@@ -42,6 +54,25 @@ export function createNegotiationProbeHold(
       active = false;
     },
   };
+}
+
+/** A pinned client can report a failed discovery probe as a version refusal. */
+export function pinnedDiscoveryFailure(
+  reply: RawHttpResult | undefined,
+): string | undefined {
+  if (reply?.status !== 200) return undefined;
+  const rpcError = jsonRpcError(reply);
+  if (rpcError) {
+    return rpcError.code === MCP_ERROR_CODES.InternalError
+      ? discoveryErrorMessage(reply.status, rpcError)
+      : undefined;
+  }
+  const result = jsonRpcResult(reply);
+  if (!result) return undefined;
+  const problems = discoveryFieldProblems(result);
+  return problems.length
+    ? `server/discover result is incomplete: ${problems.join("; ")}`
+    : undefined;
 }
 
 function requestMethod(exchange: RawExchange): string | undefined {

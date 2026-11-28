@@ -26,6 +26,7 @@ import {
   runGuarded,
   startRecorder,
   type Recorder,
+  type Route,
   type Sandbox,
 } from "./support/deployment-fixtures.js";
 import { nodeHonorsEnvProxy } from "../src/lib/network-proxy.js";
@@ -35,6 +36,11 @@ const NODE_VERSION = execFileSync(NODE, ["-p", "process.versions.node"], {
   encoding: "utf8",
 }).trim();
 const ME = { id: "user_acme", email: "dev@acme.test", name: "Dev" };
+/** What `cloud whoami` asks a loopback MCPJam server for. */
+const accountRoutes: Record<string, Route> = {
+  "GET /api/v1/me": (_request, response) => json(response, 200, ME),
+  "GET /api/v1/organizations": (_request, response) => json(response, 200, { items: [] }),
+};
 
 const OPENSSL = (() => {
   try {
@@ -78,6 +84,7 @@ before(async () => {
         return json(response, 200, { version: "99.0.0" });
       }
       if (request.url === "/api/v1/me") return json(response, 200, ME);
+      if (request.url === "/api/v1/organizations") return json(response, 200, { items: [] });
       return json(response, 404, { code: "NOT_FOUND", message: "No fixture" });
     },
   );
@@ -102,10 +109,10 @@ before(async () => {
   });
   proxyPort = await listen(proxy);
 
-  local = await startRecorder({ "GET /api/v1/me": (_request, response) => json(response, 200, ME) });
+  local = await startRecorder(accountRoutes);
   // A loopback address outside the CLI's built-in direct list, so only
   // NO_PROXY can send it direct.
-  alias = await startRecorder({ "GET /api/v1/me": (_request, response) => json(response, 200, ME) }, "127.0.0.2");
+  alias = await startRecorder(accountRoutes, "127.0.0.2");
 });
 
 after(async () => {
@@ -199,14 +206,20 @@ test(`loopback and NO_PROXY connect directly on Node ${NODE_VERSION}`, { skip: !
     };
     const loopback = await cli(["cloud", "whoami", "--api-url", `${local.url}/api/v1`, "--api-key", "sk_acme"], env);
     assert.equal(loopback.exitCode, 0, loopback.stderr);
-    assert.deepEqual(local.requests.map((request) => request.path), ["/api/v1/me"]);
+    assert.deepEqual(
+      local.requests.map((request) => request.path),
+      ["/api/v1/me", "/api/v1/organizations"],
+    );
 
     const listed = await cli(
       ["cloud", "whoami", "--api-url", `${alias.url}/api/v1`, "--api-key", "sk_acme"],
       { ...env, NO_PROXY: "127.0.0.2" },
     );
     assert.equal(listed.exitCode, 0, listed.stderr);
-    assert.deepEqual(alias.requests.map((request) => request.path), ["/api/v1/me"]);
+    assert.deepEqual(
+      alias.requests.map((request) => request.path),
+      ["/api/v1/me", "/api/v1/organizations"],
+    );
 
     assert.deepEqual(proxied, [], "a direct destination went through the proxy");
     assert.deepEqual(await blockedAttempts(sandbox), []);

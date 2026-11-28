@@ -57,6 +57,15 @@ function createTestApp(): Hono {
     c.json({ fileId: "file_abc" }),
   );
 
+  // Web account routes: hosted ones verify their own bearer.
+  app.post("/api/web-clients/accounts/acc_1/sign-in", (c) =>
+    c.json({ ok: true }),
+  );
+  app.post("/api/web-clients/reconnect/req_1/handback", (c) =>
+    c.json({ ok: true }),
+  );
+  app.post("/api/web-clients/local-connectors", (c) => c.json({ ok: true }));
+
   // Non-API routes (HTML pages, etc.)
   app.get("/", (c) => c.html("<html>Home</html>"));
   app.get("/inspector", (c) => c.html("<html>Inspector</html>"));
@@ -248,6 +257,28 @@ describe("sessionAuthMiddleware", () => {
   });
 
   describe("unprotected prefixes", () => {
+    it("lets hosted web account routes check their own bearer", async () => {
+      const res = await app.request("/api/web-clients/accounts/acc_1/sign-in", {
+        method: "POST",
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("lets the handback route check its own bearer", async () => {
+      const res = await app.request(
+        "/api/web-clients/reconnect/req_1/handback",
+        { method: "POST" },
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("keeps the local Inspector's connector routes behind the session token", async () => {
+      const res = await app.request("/api/web-clients/local-connectors", {
+        method: "POST",
+      });
+      expect(res.status).toBe(401);
+    });
+
     it("allows /assets/ without token", async () => {
       const res = await app.request("/assets/main.js");
 
@@ -426,6 +457,15 @@ describe("scrubTokenFromUrl", () => {
       "<-- GET /bench/results/SENTINEL_hex?x=1",
       "<-- GET /bench/results/[redacted]?x=1",
     ],
+    [
+      "<-- POST /api/web-clients/local-connectors/SENTINEL_conn/turn",
+      "<-- POST /api/web-clients/local-connectors/[redacted]/turn",
+    ],
+    [
+      "--> DELETE /api/web-clients/local-connectors/SENTINEL_conn 204 1ms",
+      "--> DELETE /api/web-clients/local-connectors/[redacted] 204 1ms",
+    ],
+    ["<-- POST /mcp/SENTINEL_conn", "<-- POST /mcp/[redacted]"],
     [
       "<-- GET /files/a.png?X-Amz-Signature=SENTINEL_sig&X-Amz-Credential=SENTINEL_cred",
       "<-- GET /files/a.png?X-Amz-Signature=[redacted]&X-Amz-Credential=[redacted]",

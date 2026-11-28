@@ -1,3 +1,5 @@
+import { inspectorDiscoveryRunMetadata } from "./discovery-run-metadata";
+import type { WebClientRunContext } from "../services/web-clients/web-client-run.js";
 import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { finishPendingPersist } from "./completed-turn-finalization.js";
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
@@ -8,6 +10,7 @@ import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-ret
 import { withModelStepAdmissionRetry } from "./model-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import { unwrapToolOutputEnvelope } from "@/shared/tool-output-envelope";
 /**
  * MCPJam Stream Handler
@@ -55,6 +58,7 @@ import {
   readModelOutputImage,
   renameToolNamePart,
   renameToolNamesInMessages,
+  type ErrorOrigin,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -131,12 +135,8 @@ import {
 } from "./mcpjam-tool-helpers";
 import {
   commitNewlyLoaded,
-  gateToolsToActiveSubset,
-  lookupToolIdByModelName,
-  META_TOOL_SEARCH,
-  resolveActiveToolNames,
-  META_TOOL_NAMES,
-  shouldForceInitialToolSearch,
+  earlyToolInputError,
+  planDiscoveryStep,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@mcpjam/sdk";
@@ -647,6 +647,19 @@ export interface MCPJamEngineErrorEvent {
    * error and go through the normal describer.
    */
   normalized?: NormalizedError;
+  /**
+   * The origin the turn's failure reporter based its capture decision on
+   * (`RouteFailureReport.origin`, promotion included). Absent ⇒ not reported
+   * (an aborted turn, or an emitter that does not report), or classified from
+   * the message alone (the harness catch): a consumer must treat that as
+   * unrecorded.
+   */
+  reportedOrigin?: ErrorOrigin;
+  /**
+   * Whether that reporter sent this failure to Sentry
+   * (`RouteFailureReport.captured`). Absent ⇒ not reported.
+   */
+  reportedCaptured?: boolean;
 }
 
 /**
@@ -1050,6 +1063,8 @@ export interface MCPJamHandlerOptions {
     sessionIdx?: number;
   };
   authHeader?: string;
+  /** Web clients: the eval run's owner and frozen accounts (`webClientRunOfEvalRun`). */
+  webClientRun?: WebClientRunContext;
   scenarioId?: string;
   accessVersion?: number;
   projectId?: string;
@@ -1349,6 +1364,8 @@ export interface MCPJamHandlerOptions {
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
   }) => void;
+  /** The MCP event that started this turn, echoed on `turn_start` by both engines. */
+  eventAtTurn?: EventAtTurn;
   onLiveTextDelta?: (delta: string) => void;
   /**
    * Engine consolidation PR 5b-pre — fires from the chunk-processing
@@ -1521,7 +1538,6 @@ interface StepContext {
    */
   toolDefs: ToolDefinition[];
   /** Map from model-facing tool name → serialized def, for progressive mode. */
-  toolDefsByName: Map<string, ToolDefinition>;
   tools: ToolSet;
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
@@ -1666,18 +1682,6 @@ interface RejectedToolCall {
   toolCallId: string;
   toolName: string;
   errorText: string;
-}
-
-/**
- * The name a rejected call is recorded under in history. Usually the name the
- * model wrote; but a rejected call is exactly the one that may carry a name no
- * provider accepts (a model once called `<serverId>::read_me`), and the record
- * is replayed to the provider on the next step. Characters outside the
- * provider-safe set become `_` — the error result still quotes the original.
- */
-function historyNameForRejectedToolCall(toolName: string): string {
-  if (/^[a-zA-Z0-9_-]{1,64}$/.test(toolName)) return toolName;
-  return toolName.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64) || "unknown_tool";
 }
 
 /**
@@ -2522,6 +2526,8 @@ async function processStream(
   // The backend path this stream came from, so an error chunk's code can be
   // read per route (`credential_missing` on `/stream/org`).
   dispatchPath?: string,
+  validateCall?: (name: string, input: unknown) => Promise<string | undefined>,
+  loadRequired?: readonly string[],
 ): Promise<StreamResult> {
   const contentParts: PersistedAssistantPart[] = [];
   const toolInputErrors: string[] = [];
@@ -2627,7 +2633,7 @@ async function processStream(
             );
       }
 
-      const chunk = renameToolNamePart(
+      let chunk = renameToolNamePart(
         value.value as UIMessageChunk & {
           totalUsage?: {
             inputTokens?: number;
@@ -2639,6 +2645,13 @@ async function processStream(
         toolNameFromWire,
       );
 
+      if (chunk.type === "tool-input-error" && loadRequired?.includes(chunk.toolName)) {
+        chunk = {...chunk, errorText: "Load the tool with load_mcp_tools before calling it."};
+      }
+      if (chunk.type === "tool-input-available" && validateCall) {
+        const errorText = await validateCall(chunk.toolName, chunk.input);
+        if (errorText) chunk = { ...chunk, type: "tool-input-error", errorText };
+      }
       if (firstChunkAt === undefined) {
         firstChunkAt = Date.now();
       }
@@ -2747,7 +2760,7 @@ async function processStream(
                 : "the model's tool input failed schema validation";
             toolInputErrors.push(errorText);
             const rejectedInput = (chunk as { input?: unknown }).input;
-            const historyName = historyNameForRejectedToolCall(chunk.toolName);
+            const historyName = chunk.toolName;
             contentParts.push({
               type: "tool-call",
               toolCallId,
@@ -3254,6 +3267,7 @@ async function handlePendingApprovals(
   // The history came from the request body (MJ-008): each verified approval
   // runs its call once.
   singleUseApprovals?: boolean,
+  checkResumedCall?: (name: string, input: unknown) => Promise<string | undefined>,
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → tool call map,
   // and toolCallId → assistant message index map from assistant messages
@@ -3421,6 +3435,27 @@ async function handlePendingApprovals(
           deniedToolCallIds.add(toolCallId);
           unverifiedToolCallIds.add(toolCallId);
         }
+      }
+    }
+  }
+
+  if (checkResumedCall) {
+    for (const id of approvedToolCallIds) {
+      const call = toolCallById.get(id);
+      if (!call || existingResultIds.has(id)) continue;
+      const reason = await checkResumedCall(call.toolName, call.input);
+      if (!reason) continue;
+      approvedToolCallIds.delete(id);
+      deniedToolCallIds.add(id);
+      refusedApprovalReasons.set(id, reason);
+      const index = toolCallIdToAssistantIdx.get(id);
+      const assistant = index === undefined ? undefined : messageHistory[index];
+      if (assistant?.role === "assistant" && Array.isArray(assistant.content)) {
+        assistant.content = assistant.content.map((part) =>
+          part.type === "tool-call" && part.toolCallId === id
+            ? { ...part, providerOptions: markRejectedToolCallMetadata(part.providerOptions) }
+            : part
+        );
       }
     }
   }
@@ -3871,7 +3906,6 @@ async function processOneStep(ctx: StepContext): Promise<{
     writer,
     messageHistory,
     toolDefs,
-    toolDefsByName,
     tools,
     authHeader,
     scenarioId,
@@ -3907,70 +3941,25 @@ async function processOneStep(ctx: StepContext): Promise<{
     prepareAdvertisedTools,
   } = ctx;
 
-  // Pick the active tool subset for this step. In non-progressive mode
-  // (`progressivePlan` undefined or plan.enabled === false) this collapses
-  // to the full list and matches prior behavior. In progressive mode the
-  // model only sees meta-tools + loaded + pending-approval + newly-loaded —
-  // PLUS tools injected into the map after the catalog was built (e.g. the
-  // eval Computer Use tools, PR 14): they have no catalog toolId, so
-  // `load_mcp_tools` can never activate them and dropping them here would
-  // make them permanently invisible. Their per-step visibility stays
-  // governed by `prepareAdvertisedTools` below (parity with
-  // direct-chat-turn's `withInjectedTools`).
-  let activeToolDefs: ToolDefinition[] =
-    progressivePlan && progressivePlan.enabled && discoveryState
-      ? (() => {
-          const activeNames = resolveActiveToolNames(
-            progressivePlan,
-            discoveryState,
-          );
-          const cataloged = new Set(
-            progressivePlan.catalog.map((entry) => entry.modelName),
-          );
-          const seen = new Set(activeNames);
-          for (const def of toolDefs) {
-            if (!cataloged.has(def.name) && !seen.has(def.name)) {
-              activeNames.push(def.name);
-            }
-          }
-          return activeNames
-            .map((name) => toolDefsByName.get(name))
-            .filter((def): def is ToolDefinition => def !== undefined);
-        })()
-      : toolDefs;
+  const eligible = await applyPrepareAdvertisedTools({
+    defaultToolNames: toolDefs.map((def) => def.name),
+    stepIndex,
+    prepareAdvertisedTools,
+    onWarn: (message, meta) => logger.warn(`[mcpjam-stream-handler] ${message}`, meta),
+  });
+  const stepTools = planDiscoveryStep(eligible, progressivePlan, discoveryState);
+  const shown = new Set(stepTools.shown);
+  const callable = new Set(stepTools.callable);
+  const deferred = new Set(stepTools.hidden);
+  const activeToolDefs = toolDefs.filter((def) => shown.has(def.name));
+  const hiddenToolDefs = toolDefs.filter((def) => deferred.has(def.name));
 
-  // Browser-rendered MCP App eval PR 2: runtime-conditional advertised-tool
-  // narrowing. The hook receives the names that would otherwise be advertised
-  // this step (`defaultToolNames`) and returns the subset to keep, or
-  // `undefined` for no narrowing. Filtering against the resolved set means any
-  // returned name not already advertised is ignored (defense-in-depth), and a
-  // throw is logged + falls back to the default set so a buggy hook can't
-  // crash the loop. Applied here so both the request_payload trace snapshot
-  // and the Convex `/stream` request see the same narrowed set.
-  if (prepareAdvertisedTools) {
-    const advertised = new Set(
-      await applyPrepareAdvertisedTools({
-        defaultToolNames: activeToolDefs.map((def) => def.name),
-        stepIndex,
-        prepareAdvertisedTools,
-        onWarn: (message, meta) =>
-          logger.warn(`[mcpjam-stream-handler] ${message}`, meta),
-      }),
-    );
-    activeToolDefs = activeToolDefs.filter((def) => advertised.has(def.name));
-  }
-
-  const forcedToolChoice =
-    shouldForceInitialToolSearch(progressivePlan, discoveryState, stepIndex) &&
-    activeToolDefs.some((def) => def.name === META_TOOL_SEARCH)
-      ? { type: "tool" as const, toolName: META_TOOL_SEARCH }
-      : undefined;
   // The last allowed step answers instead of calling tools. A turn that ends on
   // tool results is one the browser's `shouldAutoResumeTurn` resumes, into a
   // turn with no steps left. Tools stay advertised because the history still
   // holds tool calls. A caller's own `toolChoice` in `extraBodyFields` (hosted
   // evals) still wins.
-  const toolChoice = isFinalStep ? ("none" as const) : forcedToolChoice;
+  const toolChoice = isFinalStep ? ("none" as const) : undefined;
 
   const { abortSignal } = ctx;
   if (abortSignal?.aborted) {
@@ -4085,9 +4074,10 @@ async function processOneStep(ctx: StepContext): Promise<{
   // MCP allows tool names (`cart.add`) that the providers behind the backend
   // reject, so the backend gets provider-safe aliases and `processStream`
   // restores the originals.
-  const wireToolNames = createToolNameAliases(
-    activeToolDefs.map((def) => def.name),
-  );
+  const wireToolNames = createToolNameAliases([
+    ...Object.keys(tools),
+    ...rejectedToolCallNames(scrubbedMessages),
+  ]);
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
@@ -4118,6 +4108,12 @@ async function processOneStep(ctx: StepContext): Promise<{
             ...def,
             name: wireToolNames.toWire(def.name),
           })),
+          ...(hiddenToolDefs.length ? {
+            hiddenTools: hiddenToolDefs.map((def) => {
+              const name = wireToolNames.toWire(def.name);
+              return { ...def, name, ...(name === def.name ? {} : { originalName: def.name }) };
+            }),
+          } : {}),
           ...(scenarioId ? { scenarioId } : {}),
           ...(scenarioId && Number.isFinite(accessVersion)
             ? { accessVersion }
@@ -4397,6 +4393,12 @@ async function processOneStep(ctx: StepContext): Promise<{
       promptIndex: traceTurn.promptIndex,
       stepIndex,
       normalized,
+      ...(backendReport
+        ? {
+            reportedOrigin: backendReport.origin,
+            reportedCaptured: backendReport.captured,
+          }
+        : {}),
       // A response is in hand, so this is unambiguously the model's leg —
       // no flag needed to know it.
       phase: "stream",
@@ -4427,6 +4429,12 @@ async function processOneStep(ctx: StepContext): Promise<{
     abortSignal,
     onToolCall,
     dispatchPath,
+    async (name, input) => {
+      if (stepTools.loadRequired.includes(name)) return "Load the tool with load_mcp_tools before calling it.";
+      if (!callable.has(name)) return "The tool is unavailable in this step.";
+      if (deferred.has(name)) return earlyToolInputError(tools[name], input);
+    },
+    stepTools.loadRequired,
   );
   const llmEndAbs = Date.now();
   traceTurn.turnUsage = mergeLiveChatTraceUsage(
@@ -4497,28 +4505,7 @@ async function processOneStep(ctx: StepContext): Promise<{
       stepIndex,
       spans: traceTurn.turnSpans,
     });
-    // Progressive mode: gate execution to the active subset. Visibility
-    // is already narrowed by `activeToolDefs`, but a model can still
-    // emit a remembered/hallucinated call to a non-active name; gating
-    // turns that into a structured error the model can recover from
-    // via `load_mcp_tools` instead of executing an ungated tool.
-    let executableTools = gateToolsToActiveSubset(
-      tracedTools as Record<string, unknown>,
-      progressivePlan,
-      () => discoveryState,
-    );
-    // advertise = ENFORCE: when prepareAdvertisedTools narrowed the advertised
-    // set (`activeToolDefs`), gate execution to it too so a remembered /
-    // hallucinated call to a hidden tool (e.g. `computer` before a widget
-    // renders) becomes a recoverable tool-error instead of executing.
-    if (prepareAdvertisedTools) {
-      const advertised = new Set(activeToolDefs.map((def) => def.name));
-      executableTools = gateToolsToAdvertisedSubset(
-        executableTools,
-        () => advertised,
-      );
-    }
-    return executableTools;
+    return gateToolsToAdvertisedSubset(tracedTools, () => callable);
   };
 
   // Check for unresolved tool calls and execute them
@@ -5038,6 +5025,12 @@ async function processOneStep(ctx: StepContext): Promise<{
         promptIndex: traceTurn.promptIndex,
         stepIndex,
         normalized: stepNormalized,
+        ...(stepReport
+          ? {
+              reportedOrigin: stepReport.origin,
+              reportedCaptured: stepReport.captured,
+            }
+          : {}),
         // The enclosing `try` opens on tool wrapping and execution, which is
         // reached only after the stream responded. Nothing pre-request can
         // land here.
@@ -5237,6 +5230,12 @@ async function processOneStep(ctx: StepContext): Promise<{
       promptIndex: traceTurn.promptIndex,
       stepIndex,
       normalized: emptyStepNormalized,
+      ...(emptyStepReport
+        ? {
+            reportedOrigin: emptyStepReport.origin,
+            reportedCaptured: emptyStepReport.captured,
+          }
+        : {}),
       // A response was streamed in full; only its content was missing. Never
       // `setup` — the model leg unambiguously ran.
       phase: "stream",
@@ -5419,45 +5418,11 @@ export async function runChatEngineLoop(
   // `toolDefs` is re-sent on every step and the executable map is re-read from
   // the live `tools` object, so replacing these two is the whole mechanism.
   let toolDefs = serializeToolsForConvex(tools);
-  let toolDefsByName = new Map<string, ToolDefinition>();
-  for (const def of toolDefs) {
-    toolDefsByName.set(def.name, def);
-  }
   // A tool that appears mid-turn arrives WITH its gate: `needsApproval` is
   // declared on the tool object itself, which is the one channel this engine
   // reads (see `toolCallNeedsApproval`).
   const messageHistory = [...messages];
 
-  // Seed the pending-approval set from history so resumed turns keep
-  // exposing the tool whose approval the user is about to answer. This is
-  // a no-op in non-progressive mode.
-  if (progressivePlan?.enabled && discoveryState) {
-    const resultIds = new Set<string>();
-    for (const msg of messageHistory) {
-      if (msg?.role !== "tool") continue;
-      for (const part of (msg as ToolModelMessage).content) {
-        if (part.type === "tool-result") resultIds.add(part.toolCallId);
-      }
-    }
-    for (const msg of messageHistory) {
-      if (msg?.role !== "assistant") continue;
-      const content = (msg as AssistantModelMessage).content;
-      if (!Array.isArray(content)) continue;
-      for (const part of content) {
-        if (
-          part.type === "tool-call" &&
-          !resultIds.has(part.toolCallId) &&
-          !META_TOOL_NAMES.includes(part.toolName)
-        ) {
-          const id = lookupToolIdByModelName(
-            progressivePlan.catalog,
-            part.toolName,
-          );
-          if (id) discoveryState.pendingApprovalToolIds.add(id);
-        }
-      }
-    }
-  }
   const usedToolCallIds = collectUsedToolCallIds(messageHistory);
   // Every call this request INHERITED rather than produced — the set that,
   // from a client-sent history, needs a verified approval before it runs.
@@ -5506,6 +5471,7 @@ export async function runChatEngineLoop(
     traceBaseMs: traceTurn.turnStartedAt,
     spans: traceTurn.turnSpans,
     onStepFinish,
+    ...(options.eventAtTurn ? { event: options.eventAtTurn } : {}),
   });
   const promptStepBaseIndex = getPromptAssistantStepBaseIndex(
     messageHistory,
@@ -5711,6 +5677,7 @@ export async function runChatEngineLoop(
           step: effectiveSteps(),
         });
       }
+      let resumedStep: ReturnType<typeof planDiscoveryStep> | undefined;
       await handlePendingApprovals(
         safeWriter,
         messageHistory,
@@ -5724,6 +5691,16 @@ export async function runChatEngineLoop(
         onToolResult,
         onToolCall,
         options.clientSuppliedHistory === true,
+        async (name, input) => {
+          resumedStep ??= planDiscoveryStep(await applyPrepareAdvertisedTools({
+            defaultToolNames: Object.keys(tools), stepIndex: effectiveSteps(),
+            prepareAdvertisedTools: options.prepareAdvertisedTools,
+            onWarn: (message, meta) => logger.warn(message, meta),
+          }), progressivePlan, discoveryState);
+          if (resumedStep.loadRequired.includes(name)) return "Load the tool with load_mcp_tools before calling it.";
+          if (!resumedStep.callable.includes(name)) return "The tool is unavailable in this step.";
+          if (resumedStep.hidden.includes(name)) return earlyToolInputError(tools[name], input);
+        },
       );
 
       // CLIENT-SENT HISTORY RUNS NOTHING THE SERVER DID NOT AUTHORIZE (MJ-008).
@@ -5861,8 +5838,7 @@ export async function runChatEngineLoop(
             writer: safeWriter,
             messageHistory,
             toolDefs,
-            toolDefsByName,
-            tools,
+                    tools,
             progressivePlan,
             discoveryState,
             authHeader: options.turnAuthorization ? await options.turnAuthorization.getAuthorization() : authHeader,
@@ -5963,7 +5939,6 @@ export async function runChatEngineLoop(
                 tools,
                 setToolDefs: (defs) => {
                   toolDefs = defs;
-                  toolDefsByName = new Map(defs.map((def) => [def.name, def]));
                 },
                 currentToolDefs: () => toolDefs,
               });
@@ -6125,6 +6100,8 @@ export async function runChatEngineLoop(
           rawText: errorText,
           promptIndex: traceTurn.promptIndex,
           normalized: loopNormalized,
+          reportedOrigin: loopReport.origin,
+          reportedCaptured: loopReport.captured,
           // The only one of this file's three emitters that can fire on
           // either side of the handover. See `modelInvoked`.
           phase: modelInvoked ? "stream" : "setup",
@@ -6160,6 +6137,7 @@ export async function runChatEngineLoop(
       if (runSucceeded && !aborted) {
         const trace: PersistedTurnTrace = {
           ...driver.buildPersistedTrace(),
+          ...inspectorDiscoveryRunMetadata(progressivePlan?.runUnloadedToolCalls),
           requestPayloads: capRequestPayloadsForPersist(
             traceTurn.recordedRequestPayloads,
           ),

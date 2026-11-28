@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 
 const queryMock = vi.fn();
 // ONE stable client, as `useConvex` really returns. A fresh object per render
@@ -96,6 +96,35 @@ describe("useSuiteCapabilities", () => {
     // A save that changes what someone may do next has to change the rows,
     // not leave them describing the suite as it was when the page loaded.
     await waitFor(() => expect(queryMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps ready capabilities during a same-suite revision refresh", async () => {
+    const capabilities = { suiteId: "suite-1", revisionNumber: 1 };
+    const refresh = Promise.withResolvers<unknown>();
+    queryMock
+      .mockResolvedValueOnce(capabilities)
+      .mockReturnValueOnce(refresh.promise)
+      .mockResolvedValueOnce(null);
+    const { result, rerender } = renderHook(
+      (revision: number) => useSuiteCapabilities("suite-1", revision),
+      { initialProps: 1 },
+    );
+    await waitFor(() => expect(result.current.capabilities).toBe(capabilities));
+
+    rerender(2);
+    expect(result.current).toEqual({ state: "ready", capabilities });
+
+    const updated = { ...capabilities, revisionNumber: 2 };
+    await act(async () => refresh.resolve(updated));
+    expect(result.current.capabilities).toBe(updated);
+
+    rerender(3);
+    await waitFor(() =>
+      expect(result.current).toEqual({
+        state: "unavailable",
+        capabilities: null,
+      }),
+    );
   });
 });
 

@@ -47,6 +47,16 @@ beta; they are listed [after the table](#held-tools).
 | `list_server_revisions` | List a saved MCP server's stored revisions, newest first: captures of its tools and server info, recorded whenever they change. | — |
 | `get_server_revision` | Read one stored revision of a saved MCP server: every tool's definition and the server info it reported. Fields listed in `droppedFields` were too large to store, so they are unknown, not absent. | — |
 | `diff_server_revisions` | Compare two stored revisions of a saved MCP server: tools added, removed and changed with old and new definitions, and server info changes with values. A field in `droppedFields` was not stored on that side, so a change to it is unknown. | — |
+| `create_mock_server` | Create a mock of a saved MCP server, or of nothing: a definition that states only what it changes, with the real server answering for the rest. Needs the `mock-servers-enabled` flag. | — |
+| `update_mock_server` | Save a new version of a mock from a whole definition or a JSON merge patch, against the head version you read. | — |
+| `get_mock_server` | Read a mock in bounded pages: a summary with a page of its changes, a page of names by kind (`search` narrows), one entry, or one field or path, with a long string in ordered chunks. Each page fits this server's response budget. | — |
+| `patch_mock_server` | Set or remove exactly one path of a mock against the head version you read, without sending the entry: for example one late tool's description. | — |
+| `refresh_mock_server` | Read a mock's real server again as the caller and preview what changed since the saved listing and which overrides no longer fit; `apply` saves the new listing as the next version. | — |
+| `open_mock_run` | Open a test run of a mock: a version pinned, with its own copy of the version's records, at an MCP URL of its own for 24 hours. Returns the run ID, version, URL, epoch and expiry. | — |
+| `reset_mock_run` | Restore a run's records to the version's seed. Returns a new URL at the next epoch; the old one is refused. | — |
+| `close_mock_run` | End a test run at once. Safe to repeat. | — |
+| `get_mock_forwarding_policy` | Read whether mock servers may call their real servers, for one mock or the project's workspace. | — |
+| `set_mock_forwarding_policy` | Allow or block mock servers calling their real servers for the workspace. Workspace admins only; an agent's request is held for a person to approve. | — |
 | `list_server_accounts` | List the accounts a saved MCP server signs in with: id, name, default, needs reconnecting, hosted-only. Never a token. | — |
 | `get_server_account` | Read one of a saved server's accounts by id or name. Never a token; another person's account answers not found. | — |
 | `delete_server_account` | Delete one of a saved server's accounts and ask its issuer to revoke the token. The default account is refused while other accounts exist. | — |

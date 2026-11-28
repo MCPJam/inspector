@@ -43,6 +43,20 @@ describe("shared authoring contract", () => {
     });
     expect(authoredCaseBlockedReason(checked)).toBeUndefined();
   });
+  it("rejects extra library evaluator tag keys in inline assertions", () => {
+    expect(
+      stepsSchema.safeParse([
+        {
+          id: "a",
+          kind: "assert",
+          assertion: {
+            type: "noToolErrors",
+            evaluator: { id: "example", version: 1, label: "Extra" },
+          },
+        },
+      ]).success
+    ).toBe(false);
+  });
   it("retains human evidence and revision-scoped review", () => {
     const draft = evalAuthoringDraftSchema.parse({
       version: 1,

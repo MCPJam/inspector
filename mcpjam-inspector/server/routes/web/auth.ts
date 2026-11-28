@@ -59,6 +59,7 @@ import type {
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { observeConnectionFetch } from "../../services/connection-failure-context.js";
+import { reportToolProgress } from "../../services/chat-turn/tool-notifications.js";
 import { hostedFeatureObserver } from "../../services/server-canvas/observation-recorders.js";
 import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
@@ -158,12 +159,15 @@ import {
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
+import { carryMockTransport, dialMockOr, type MockAuthorizeEntry, type MockDial } from "../../utils/mock-servers.js";
+import { observeMockAnswered } from "../../services/mock/answer-marks.js";
 import {
   deliveryContractHeaders,
   hostedCredentialDeliveryHeaders,
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
 } from "../../services/service-credential.js";
+import { bearerNow, type RunBearer } from "../../utils/run-bearer.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
@@ -309,6 +313,8 @@ export const toolsExecuteSchema = projectServerSchema
   .extend({
     toolName: z.string().min(1),
     parameters: z.record(z.string(), z.unknown()).default({}),
+    // Makes a retried write to a mock's records apply once (1 to 256 characters).
+    operationKey: z.string().min(1).max(256).optional(),
     taskOptions: taskOptionsSchema.optional(),
     // Extension wire: the client only declares that a task response is
     // acceptable; the server decides whether to create one.
@@ -572,6 +578,8 @@ export type ConvexAuthorizeResponse = {
     authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
     registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
     xaaClientAuth?: "none" | "private_key_jwt";
+    /** Present for a mock server's id: dial it in process, whatever its address says. */
+    mock?: MockAuthorizeEntry;
   };
   internalLogContext?: InternalLogContext;
 };
@@ -583,6 +591,8 @@ export type ClientSafeAuthorizeResponse = Omit<
 
 type AuthorizedServerConfigHolder = {
   serverConfig: ConvexAuthorizeResponse["serverConfig"];
+  /** For a mock's id, the grant. */
+  oauthAccessToken?: string | null;
 };
 
 export type ConvexBatchAuthorizeFailure = {
@@ -1266,6 +1276,8 @@ export function toHttpConfig(
    * function — is the reachability gate.
    */
   pluginRuntime?: PluginStdioHttpTarget,
+  /** The dialer's own auth context, for a mock's id; see `utils/mock-servers.ts`. */
+  mockDial?: MockDial,
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
     if (pluginRuntime) {
@@ -1352,7 +1364,7 @@ export function toHttpConfig(
     headers["Authorization"] = `Bearer ${oauthAccessToken}`;
   }
 
-  return {
+  const config: HttpServerConfig = {
     url: authResponse.serverConfig.url,
     capabilities: clientCapabilities,
     clientCapabilities: clientCapabilities,
@@ -1413,6 +1425,8 @@ export function toHttpConfig(
       ? { toolCallCancellation: initializePins.toolCallCancellation }
       : {}),
   };
+  // A mock's saved address is a placeholder: dial the mock route instead.
+  return dialMockOr(config, authResponse, { timeoutMs, clientCapabilities, initializePins }, mockDial);
 }
 
 export interface AuthorizedManagerResult {
@@ -1583,7 +1597,7 @@ export function callerOAuthTokenUnlessRefused(
 
 export async function createAuthorizedManager(
   caller: ManagerCallerContext,
-  bearerToken: string,
+  bearerToken: RunBearer,
   projectId: string,
   serverIds: string[],
   timeoutMs: number,
@@ -1788,6 +1802,13 @@ export async function createAuthorizedManager(
      * bench, simulations and other automated runs are MCPJam's own traffic.
      */
     observeFeatures?: boolean;
+    /**
+     * Leave out the card's progress handler. It replaces the SDK client's own
+     * progress dispatch, so a caller's per-call `onprogress` never fires on a
+     * manager that has it; a mock's forward needs that callback to pass a
+     * real tool's progress on.
+     */
+    ownsProgress?: boolean;
   },
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById =
@@ -1831,7 +1852,7 @@ export async function createAuthorizedManager(
         caller.setLogContext?.(partial);
       },
     },
-    bearerToken,
+    bearerNow(bearerToken),
     projectId,
     uniqueServerIds,
     {
@@ -1844,18 +1865,31 @@ export async function createAuthorizedManager(
       accessVersion: options?.accessVersion,
     },
   );
+  // A mock's dialer authorizes it again for a fresh grant.
+  const mockDialFor = (serverId: string): MockDial => ({
+    caller,
+    bearerToken: bearerNow(bearerToken),
+    projectId,
+    xaaIssuer: options?.xaaIssuer,
+    reauthorize: async () =>
+      (await authorizeBatch(caller, bearerNow(bearerToken), projectId, [serverId], {
+        accessScope: options?.accessScope,
+        scenarioId: options?.scenarioId,
+        accessVersion: options?.accessVersion,
+      })).results[serverId],
+  });
   // An uploaded account's token is read again when a refresh can't renew it
   // (`uploaded-account-recovery.ts`).
   const uploadedRecoveries = uploadedAccountRecoveries((id, connectionId) => {
     const connectionIds = { [id]: connectionId };
     return HOSTED_MODE
-      ? authorizeBatch(caller, bearerToken, projectId, [id], {
+      ? authorizeBatch(caller, bearerNow(bearerToken), projectId, [id], {
           connectionIds,
           accessScope: options?.accessScope,
           scenarioId: options?.scenarioId,
           accessVersion: options?.accessVersion,
         })
-      : authorizeBatchLocal(null, bearerToken, projectId, [id], undefined, {
+      : authorizeBatchLocal(null, bearerNow(bearerToken), projectId, [id], undefined, {
           connectionIds,
         });
   });
@@ -2261,7 +2295,7 @@ export async function createAuthorizedManager(
     try {
       recoveredOAuthTokens[recovery.serverId] =
         await refreshHostedOAuthAccessTokenWithLocalFallback(
-          bearerToken,
+          bearerNow(bearerToken),
           projectId,
           recovery.serverId,
           {
@@ -2396,7 +2430,7 @@ export async function createAuthorizedManager(
         // execution lands).
         if (auth.serverConfig.transportType !== "http" && !HOSTED_MODE) {
           const config = await resolveLocalStdioServerConfig(
-            bearerToken,
+            bearerNow(bearerToken),
             projectId,
             serverId,
             {
@@ -2458,7 +2492,7 @@ export async function createAuthorizedManager(
         ) {
           pluginRuntime =
             (await resolvePluginStdioHttpTarget({
-              bearerToken,
+              bearerToken: bearerNow(bearerToken),
               projectId,
               serverId,
               serverDisplayName: displayServerName,
@@ -2718,7 +2752,7 @@ export async function createAuthorizedManager(
           !hasNonEmptyStringRecord(auth.serverConfig.headers)
             ? await fetchRuntimeServerSecrets({
                 expectedTargetUrl: auth.serverConfig.url,
-                bearerToken,
+                bearerToken: bearerNow(bearerToken),
                 projectId,
                 serverId,
                 accessScope: options?.accessScope,
@@ -2800,6 +2834,7 @@ export async function createAuthorizedManager(
             connectOnUnauthorized,
             effectiveInitializePins,
             pluginRuntime,
+            mockDialFor(serverId),
           ),
         ] as const;
       } catch (error) {
@@ -2961,7 +2996,13 @@ export async function createAuthorizedManager(
           id,
           {
             ...connectionConfig,
-            baseFetch: observeConnectionFetch(withServerCheckSignal(fetchFn)),
+            // A mock dialed at its address marks its calls on a response header.
+            baseFetch: carryMockTransport(
+              config,
+              observeConnectionFetch(
+                observeMockAnswered(withServerCheckSignal(fetchFn)),
+              ),
+            ),
           },
         ],
       ];
@@ -3000,13 +3041,17 @@ export async function createAuthorizedManager(
       ? {
           featureObserver: hostedFeatureObserver(
             projectId,
-            bearerToken,
+            bearerNow(bearerToken),
             () => manager,
             authorizedUserId,
           ),
         }
       : {}),
     httpLogger: options?.httpLogger,
+    // Sends a progress token with each tool call, and hands what comes back to the call's card.
+    ...(options?.ownsProgress
+      ? {}
+      : { progressHandler: (event) => void reportToolProgress(event) }),
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     extensionRequestHandlers: options?.extensionRequestHandlers,
     // THE FIX FOR MJ-001. Every server in this batch carries a URL a caller

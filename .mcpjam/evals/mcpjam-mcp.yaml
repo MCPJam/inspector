@@ -34,7 +34,7 @@ defaults:
   provider: anthropic
   # Two, not one: a single iteration cannot tell a flaky case from a broken one.
   # Higher is better evidence and costs linearly — the flat tool list is ~114k
-  # input tokens per iteration, so 10 cases x 2 is already ~2.3M tokens a run.
+  # input tokens per iteration, so 18 enabled cases x 2 is ~4.1M tokens a run.
   iterations: 2
   passThreshold: 0.8
   validity: {}
@@ -61,6 +61,13 @@ cases:
         kind: assert
         assertion:
           type: finalAssistantMessageNonEmpty
+      # The address itself. Without this, "you are signed in" passes the case
+      # without the answer using what get_me returned.
+      - id: a4
+        kind: assert
+        assertion:
+          type: responseMatches
+          pattern: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
 
   # ---------------------------------------------------------------- projects
   - id: c_X4kTV6Ljo06YnlFz_cCmN
@@ -92,6 +99,14 @@ cases:
         assertion:
           type: tokenBudgetUnder
           tokens: 250000
+      # "The number only": one count, with any wording around it. Prose about
+      # the projects and no number fails, and so does a second number ("3
+      # projects, 1 archived"), on purpose: the prompt asks for one number.
+      - id: a5
+        kind: assert
+        assertion:
+          type: responseMatches
+          pattern: '^\D*\d+\D*$'
 
   # ----------------------------------------------------------------- servers
   - id: c_P9wFu8c43T7QLiAKvoxdl
@@ -116,6 +131,15 @@ cases:
         kind: assert
         assertion:
           type: finalAssistantMessageNonEmpty
+      # A tool mcpjam-docs really exposes, by name or by title, so an empty or
+      # wrong listing shows up. Advisory: mcpjam-docs is Mintlify's server, and
+      # a rename there must not fail the promotion gate.
+      - id: a4
+        kind: assert
+        assertion:
+          type: responseMatches
+          pattern: "search_mcp_jam_inspector|Search documentation"
+          role: advisory
 
   - id: c_3xbISG3MWoIp5PR0F80vE
     title: passes the named server through to the tool arguments
@@ -136,6 +160,164 @@ cases:
               server: mcpjam-docs
             argumentMatching: partial
       - id: a2
+        kind: assert
+        assertion:
+          type: finalAssistantMessageNonEmpty
+
+  # list_project_servers is one of the reads agents call most, and no other
+  # case names it.
+  - id: c_IssbXpYFvYQlF-OJrzZnl
+    title: lists the saved servers of a named project
+    intent: servers
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: >-
+          Which MCP servers are saved in the project 'MCPJam MCP dogfood'?
+          Name them.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: list_project_servers
+      - id: a2
+        kind: assert
+        assertion:
+          type: noToolErrors
+      - id: a3
+        kind: assert
+        assertion:
+          type: responseContains
+          needle: mcpjam-docs
+
+  # get_project_server takes only a server ID, while its siblings
+  # (list_server_tools, diagnose_server, call_server_tool) take a name, so an
+  # agent holding the name gets NOT_FOUND. The prompt names the tool so the
+  # case reaches it instead of answering from list_project_servers. a2 reads
+  # the tool's own result, so a recovery through another tool does not pass.
+  # Disabled until the tool accepts a name (MCPJam/inspector#6968): it fails
+  # every trial before that, and the promotion gate has few trials to spare.
+  - id: c_3qVcF5Lwkh6K-tt7CqWbv
+    title: reads one saved server's configuration by name
+    intent: servers
+    disabled: true
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: >-
+          Use get_project_server to read the saved server mcpjam-docs in the
+          project 'MCPJam MCP dogfood'. Give its URL and transport.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: get_project_server
+      - id: a2
+        kind: assert
+        assertion:
+          type: toolResultContains
+          toolName: get_project_server
+          needle: '"url"'
+          caseSensitive: true
+      - id: a3
+        kind: assert
+        assertion:
+          type: responseMatches
+          pattern: "https?://"
+
+  # Reads no other case reaches. mcpjam-docs exposes one resource, a skill
+  # document at mintlify://skills/mcpjam. The URI is Mintlify's, so a3 is
+  # advisory: a change on their side must not fail the promotion gate.
+  - id: c_4dQ4My9QT2hyDkQRRHSW7
+    title: lists the resources of a named server
+    intent: servers
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: >-
+          What resources does the saved server mcpjam-docs expose in the
+          project 'MCPJam MCP dogfood'? Give their URIs.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: list_server_resources
+      - id: a2
+        kind: assert
+        assertion:
+          type: noToolErrors
+      - id: a3
+        kind: assert
+        assertion:
+          type: responseContains
+          needle: mintlify://skills/mcpjam
+          role: advisory
+
+  # No server in the project serves Skills over MCP, so the honest answer is
+  # the tool's own refusal. It comes back as a result, not an error, and the
+  # case checks the agent reports it instead of inventing a skill. Both checks
+  # are advisory because they assume Mintlify's mcpjam-docs serves no skills;
+  # once it does, they would fail with no change on MCPJam's side. A gating
+  # version needs a fixture server MCPJam controls.
+  - id: c_gtcZefELgAzJhDMuVcxcZ
+    title: reports a skill that cannot be loaded instead of inventing one
+    intent: servers
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: >-
+          Load the skill at mintlify://skills/mcpjam from the saved server
+          mcpjam-docs in the project 'MCPJam MCP dogfood', and tell me what it
+          says.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: get_server_skill
+      - id: a2
+        kind: assert
+        assertion:
+          type: toolResultContains
+          toolName: get_server_skill
+          needle: extension_inactive
+          caseSensitive: true
+          role: advisory
+      - id: a3
+        kind: assert
+        assertion:
+          type: responseMatches
+          pattern: "[Rr]efus|not active|n't active|inactive|does(n't| not) (have|support|serve|declare)|[Cc]ould(n't| not) load|[Cc]an(not|'t) (be )?load"
+          role: advisory
+
+  # ------------------------------------------------------------- diagnostics
+  # diagnose_server is one of the tools agents call most, and it often fails
+  # in production. A probe normally takes a few seconds, so the latency
+  # ceiling catches a hang, not an ordinary probe.
+  - id: c_ZHx8Xdc52cW7lJFBFruDw
+    title: diagnoses a named server without a tool error
+    intent: diagnostics
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: >-
+          In the project 'MCPJam MCP dogfood', diagnose the saved server
+          mcpjam-docs and tell me whether it is healthy.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: diagnose_server
+      - id: a2
+        kind: assert
+        assertion:
+          type: noToolErrors
+      - id: a3
+        kind: assert
+        assertion:
+          type: toolLatencyUnder
+          toolName: diagnose_server
+          ms: 15000
+      - id: a4
         kind: assert
         assertion:
           type: finalAssistantMessageNonEmpty
@@ -195,6 +377,139 @@ cases:
           type: toolNeverCalled
           toolName: run_eval_case
       - id: a4
+        kind: assert
+        assertion:
+          type: finalAssistantMessageNonEmpty
+
+  # The case above accepts passRate from any read, so get_eval_run was never
+  # required. Asking WHY needs the run itself: only its decisionSummary says
+  # what decided the verdict. "Completed", because a run of this very suite
+  # is the most recent one while it executes, and a running run has no
+  # decisionSummary yet.
+  - id: c_ZSRhGresSxIuSaMw_jTHq
+    title: explains a past run's verdict from the run itself
+    intent: evals
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: >-
+          Why did the most recent completed eval run in the project 'MCPJam
+          MCP dogfood' pass or fail? Ignore runs still in progress, and do not
+          start anything new.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: get_eval_run
+      - id: a2
+        kind: assert
+        assertion:
+          type: toolResultContains
+          toolName: get_eval_run
+          needle: decisionSummary
+          caseSensitive: true
+      - id: a3
+        kind: assert
+        assertion:
+          type: noToolErrors
+      - id: a4
+        kind: assert
+        assertion:
+          type: toolNeverCalled
+          toolName: run_eval_suite
+      - id: a5
+        kind: assert
+        assertion:
+          type: toolNeverCalled
+          toolName: run_eval_case
+      - id: a6
+        kind: assert
+        assertion:
+          type: finalAssistantMessageNonEmpty
+
+  # The suite is named by prefix: the staging and production files name it
+  # differently, and the cases below the `cases:` line must match byte for
+  # byte. Both files set a pass threshold of 0.8.
+  - id: c_uSPEPbPO3z1viKuchTM7_
+    title: reads one eval suite's settings
+    intent: evals
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: >-
+          In the project 'MCPJam MCP dogfood', open the eval suite whose name
+          starts with 'mcpjam-mcp dogfood'. What pass threshold does it use?
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: get_eval_suite
+      - id: a2
+        kind: assert
+        assertion:
+          type: noToolErrors
+      - id: a3
+        kind: assert
+        assertion:
+          type: responseMatches
+          pattern: '80 ?%|0\.8\b|\b80\b'
+
+  # Disclosure is read-only and must not launch anything. A suite with
+  # several environments answers TARGET_REQUIRED, naming them, until the
+  # agent picks one.
+  - id: c_E1gBOPQYKWCBAB2d2k5JH
+    title: says where a run's content would go without starting one
+    intent: safety
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: >-
+          Before I run the eval suite whose name starts with 'mcpjam-mcp
+          dogfood' in the project 'MCPJam MCP dogfood', which outside services
+          would see its content? Do not start a run.
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: get_eval_run_disclosure
+      - id: a2
+        kind: assert
+        assertion:
+          type: toolNeverCalled
+          toolName: run_eval_suite
+      - id: a3
+        kind: assert
+        assertion:
+          type: responseMatches
+          pattern: "OpenRouter|Vercel|Convex"
+      - id: a4
+        kind: assert
+        assertion:
+          type: toolNeverCalled
+          toolName: run_eval_case
+
+  # -------------------------------------------------------------- environments
+  # The project lists no environments, even with archived ones included, while
+  # the dogfood suite runs on environments of its own. This pins only that
+  # the tool answers; what it should list is an open question.
+  - id: c_ZKDk563xWkg6sDz2z4vcb
+    title: lists the project's environments
+    intent: environments
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: >-
+          Which environments are set up in the project 'MCPJam MCP dogfood'?
+      - id: a1
+        kind: assert
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: list_project_environments
+      - id: a2
+        kind: assert
+        assertion:
+          type: noToolErrors
+      - id: a3
         kind: assert
         assertion:
           type: finalAssistantMessageNonEmpty
@@ -285,6 +600,64 @@ cases:
         assertion:
           type: finalAssistantMessageNonEmpty
 
+  # An error path. Nothing else here names something that does not exist, and
+  # unresolvable names are what sit behind the get_project_server 404s. The
+  # answer has to say the project is missing, not list another project's
+  # suites or create the one it could not find.
+  #
+  # a1 needs the absence phrase next to "project" (or the name's '7f3a'), so
+  # "I don't see any problems" does not count. list_eval_suites without a
+  # project falls back to the most recent one, so a5 requires a lookup that
+  # names the missing project and a6 that no lookup returned suites.
+  #
+  # The NOT_FOUND is the expected answer, so the suite's standard tool-error
+  # check is off here. The legacy verdict still fails any trial with a tool
+  # error, so a correct answer fails every trial. Disabled until the platform
+  # can mark an error as expected.
+  - id: c_HN6OkNOUMLM1qKTaZK6Ui
+    title: says a named project does not exist instead of guessing
+    intent: negative
+    disabled: true
+    suppressedSuiteStandardCheckIds: [response.errors]
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: List the eval suites in the project 'No Such Project 7f3a'.
+      - id: a1
+        kind: assert
+        assertion:
+          type: responseMatches
+          pattern: "((n't|[Nn]ot|[Uu]nable to)( be| seem to)? (found|find|exist|see)|[Nn]o match)[^.]{0,40}([Pp]roject|7f3a)|([Pp]roject|7f3a)[^.]{0,60}((n't|[Nn]ot|[Uu]nable to)( be| seem to)? (found|find|exist|see)|[Nn]o match)|[Nn]o (such )?project"
+      - id: a2
+        kind: assert
+        assertion:
+          type: toolNeverCalled
+          toolName: create_project
+      - id: a3
+        kind: assert
+        assertion:
+          type: toolErrorNamesInput
+          role: advisory
+      - id: a4
+        kind: assert
+        assertion:
+          type: noRepeatedIdenticalCall
+          role: advisory
+      - id: a5
+        kind: assert
+        assertion:
+          type: toolInputMatches
+          toolName: list_eval_suites
+          patterns: ["7f3a"]
+      - id: a6
+        kind: assert
+        assertion:
+          type: toolResultMatches
+          toolName: list_eval_suites
+          patterns: ['items\\?"\s*:\s*\[\s*\{']
+          min: 0
+          max: 0
+
   # Not `isNegativeTest`: looking around the account is fine; a write is not.
   - id: c_q2UiZhqG8pEF-BTbuBo87
     title: asks rather than guessing when the request names nothing
@@ -322,7 +695,8 @@ cases:
             get_eval_run_server_facts, get_eval_run_stage_analytics,
             get_eval_run_steps, get_eval_suite, get_goal, get_goal_run,
             get_goal_run_scorecard, get_host, get_journey, get_journey_run,
-            get_journey_run_scorecard, get_me, get_persona, get_plugin_version,
+            get_journey_run_scorecard, get_me, get_mock_forwarding_policy,
+            get_mock_server, get_persona, get_plugin_version,
             get_project_environment, get_project_environment_capabilities,
             get_project_server, get_project_server_connection_status,
             get_project_skill, get_readiness_report, get_readiness_run,

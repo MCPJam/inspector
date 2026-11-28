@@ -108,7 +108,7 @@ function legacyOnly() {
 const selection = {
   protocol: { checkIds: ["modern-server-discover"] as const, readinessIds: [] },
   apps: { checkIds: ["ui-resources-readable"] as const },
-  tasks: { checkIds: ["tasks-wire-resolvable"] as const, readinessIds: [] },
+  tasks: { checkIds: ["tasks-invalid-task-id-rejected"] as const, readinessIds: [] },
 };
 function options() {
   return {
