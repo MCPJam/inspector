@@ -548,6 +548,14 @@ export const ANALYTICS_EVENTS = {
   reconnect_server_clicked: { source: "client" },
   refresh_tools_clicked: { source: "client" },
   remove_server_clicked: { source: "client" },
+  // A hosted guest back after 30+ minutes away (`client/src/lib/returning-guest.ts`).
+  // visit_number, days_since_last_visit. The prompt events add prompt
+  // ("dialog" | "notice"), copy_variant and page; sign-up clicks reuse
+  // `sign_up_button_clicked` with location "returning_guest_dialog" or
+  // "returning_guest_notice".
+  returning_guest_detected: { source: "client" },
+  returning_guest_prompt_dismissed: { source: "client" },
+  returning_guest_prompt_shown: { source: "client" },
   run_all_cases_button_clicked: { source: "client" },
   run_selected_case_button_clicked: { source: "client" },
   save_api_key: { source: "client" },
