@@ -7,6 +7,7 @@
  * copy ("Run Claude Code on this machine?", the "This machine" chip).
  */
 import { harnessDisplayName } from "../../../../shared/harness-model-support.js";
+import type { LocalEvalVenueFix } from "../../../../shared/local-eval-venue.js";
 import { LOCAL_HARNESS_MANIFEST } from "./compatibility.js";
 import { localHarnessManifestsForDevelopment } from "./availability.js";
 import { localHarnessMemberRefusal, type LocalHarnessMemberRefusal } from "./readiness.js";
@@ -68,9 +69,6 @@ export function localVenueRefusalText(
   }
 }
 
-/** What a member can do before a run about a client that can't run here. */
-export type LocalVenueFix = "set-up" | "retry" | "choose-another";
-
 /**
  * The run sheet's text for a refusal, said before anything runs: what is
  * missing, and the one fix the sheet offers beside it. The launch's own
@@ -79,7 +77,7 @@ export type LocalVenueFix = "set-up" | "retry" | "choose-another";
 export function localVenueStatus(
   refusal: ExplainedLocalVenueRefusal,
   harnessId: SupportedLocalHarnessId,
-): { message: string; fix: LocalVenueFix } {
+): { message: string; fix: LocalEvalVenueFix } {
   const name = harnessDisplayName(harnessId);
   switch (refusal) {
     case "not-set-up":
@@ -104,6 +102,23 @@ export function localVenueStatus(
     case "turned-off":
       return { message: "Running clients locally is turned off in this Inspector.", fix: "choose-another" };
   }
+}
+
+/** Authorized here, but the runtime isn't installed yet: Set up installs or waits for it. */
+export function localRuntimeNotReadyStatus(
+  harnessId: SupportedLocalHarnessId,
+  installing: boolean,
+): { message: string; fix: LocalEvalVenueFix } {
+  const name = harnessDisplayName(harnessId);
+  return {
+    message: installing ? `${name} is still installing on this machine.` : `${name} isn't installed on this machine.`,
+    fix: "set-up",
+  };
+}
+
+/** Nothing narrower to say, such as no member identity: another client is the fix. */
+export function localVenueUnavailableStatus(harnessId: SupportedLocalHarnessId): { message: string; fix: LocalEvalVenueFix } {
+  return { message: `${harnessDisplayName(harnessId)} can't run evals on this machine for your account.`, fix: "choose-another" };
 }
 
 /**

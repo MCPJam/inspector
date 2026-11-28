@@ -9,6 +9,7 @@ import { freezeEvalRunWebAccounts } from "../../services/web-clients/web-client-
 import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
 import { explainEvalHarnessRefusal } from "../../services/evals/explain-harness-refusal.js";
+import { CODE_EVALUATORS_UNAVAILABLE } from "@/shared/local-eval-venue";
 import { singleCaseHarnessBoxRefusal } from "../../services/evals/needs-ephemeral-sandbox.js";
 import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
 import { listBaseServers, managerAccountsAtRun } from "../../utils/mcp-connections.js";
@@ -3739,7 +3740,7 @@ export async function prepareSingleCaseExecution(
       400,
       ErrorCode.VALIDATION_ERROR,
       codeGradingRefusal,
-      { reason: "EVAL_CODE_EVALUATORS_UNAVAILABLE" },
+      { reason: CODE_EVALUATORS_UNAVAILABLE },
     );
   }
 

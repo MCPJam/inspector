@@ -170,6 +170,14 @@ describe("prepareSingleCaseExecution — hosted harness admission", () => {
     expect(error.message).toMatch(/^Couldn't run Claude Code on this machine/);
   });
 
+  it("still refuses a tool policy this deployment can't seal once the harness is admitted", async () => {
+    // Cloud computers are configured, but the secret is too short to seal a policy.
+    process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "short";
+    const error = await refusal({ ...request({}), toolPolicy: { mode: "readOnly" } } as Parameters<typeof prepareSingleCaseExecution>[1]);
+    expect(error.details).toMatchObject({ reason: "TOOL_POLICY_UNSUPPORTED" });
+    expect(explainMock).not.toHaveBeenCalled();
+  });
+
   it("refuses a declared browser: the single-case box is only a terminal", async () => {
     const error = await refusal(
       request({

@@ -4,10 +4,12 @@ const mocks = vi.hoisted(() => ({
   member: vi.fn(),
   boxes: vi.fn(() => false),
   warn: vi.fn(),
+  install: vi.fn(),
 }));
 vi.mock("../run-resources.js", () => ({ decideLocalHarnessVenue: mocks.decide }));
 vi.mock("../readiness.js", () => ({ localHarnessMemberRefusal: mocks.member }));
 vi.mock("../../harness-box.js", () => ({ canProvisionHarnessBoxes: mocks.boxes }));
+vi.mock("../runtime-install.js", () => ({ readRuntimeInstallStatus: mocks.install }));
 vi.mock("../../../logger.js", () => ({ logger: { warn: mocks.warn } }));
 import { localEvalVenue } from "../eval-venue.js";
 import { localVenueStatus } from "../venue-refusal.js";
@@ -17,6 +19,7 @@ const ASK = { harnessId: "claude-code", bearer: "token", projectId: "project" } 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.boxes.mockReturnValue(false);
+  mocks.install.mockResolvedValue({ state: "ready", packVersion: "1", runtimeRoot: "/r", digest: "d" });
 });
 
 describe("where an eval runs, asked before launch", () => {
@@ -56,13 +59,42 @@ describe("where an eval runs, asked before launch", () => {
     });
   });
 
-  it("asks for a retry when the account can't be checked, and logs why", async () => {
+  it("asks for a retry only when the account check itself failed, and logs why", async () => {
     mocks.decide.mockRejectedValue(new Error("Local Claude Code authorization could not be verified."));
+    mocks.member.mockResolvedValue("rollout-unknown");
     await expect(localEvalVenue(ASK)).resolves.toMatchObject({ venue: "refused", refusal: "rollout-unknown", fix: "retry" });
     expect(mocks.warn).toHaveBeenCalledWith(
       "[local-harness] could not decide an eval's venue",
       expect.objectContaining({ harnessId: "claude-code" }),
     );
+  });
+
+  it.each(["flags-off", "not-rolled-out"] as const)(
+    "names a set-up member's %s refusal instead of a retry that can't help",
+    async (refusal) => {
+      // An authorization here and a rollout that says no: the account check throws.
+      mocks.decide.mockRejectedValue(new Error("Local Claude Code authorization could not be verified."));
+      mocks.member.mockResolvedValue(refusal);
+      await expect(localEvalVenue(ASK)).resolves.toMatchObject({ venue: "refused", refusal, fix: "choose-another" });
+    },
+  );
+
+  it("doesn't answer this machine until the runtime is installed", async () => {
+    mocks.decide.mockResolvedValue({ venue: "local", harnessId: "claude-code" });
+    mocks.install.mockResolvedValueOnce({ state: "downloading", packVersion: "1", percent: 40 });
+    await expect(localEvalVenue(ASK)).resolves.toEqual({
+      venue: "refused",
+      refusal: "installing",
+      message: "Claude Code is still installing on this machine.",
+      fix: "set-up",
+    });
+    mocks.install.mockResolvedValueOnce({ state: "failed", packVersion: "1", reason: "network", message: "download failed" });
+    await expect(localEvalVenue(ASK)).resolves.toEqual({
+      venue: "refused",
+      refusal: "not-installed",
+      message: "Claude Code isn't installed on this machine.",
+      fix: "set-up",
+    });
   });
 
   it("names no setup a sign-in can't provide", async () => {
