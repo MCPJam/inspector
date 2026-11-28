@@ -129,13 +129,13 @@ describe("ActiveServerSelector", () => {
       const trigger = screen.getByRole("button", { name: "Target server: one" });
       fireEvent.click(trigger);
       const options = screen.getByRole("dialog", { name: "Target server options" });
-      expect(within(options).getByRole("button", { name: /^one / })).toHaveAttribute(
+      expect(within(options).getByRole("button", { name: /^one\s*Connected/ })).toHaveAttribute(
         "aria-current",
         "true",
       );
-      expect(within(options).queryByRole("button", { name: /^local / })).toBeNull();
-      expect(within(options).queryByRole("button", { name: /^hidden / })).toBeNull();
-      fireEvent.click(within(options).getByRole("button", { name: /^two / }));
+      expect(within(options).queryByRole("button", { name: /^local/ })).toBeNull();
+      expect(within(options).queryByRole("button", { name: /^hidden/ })).toBeNull();
+      fireEvent.click(within(options).getByRole("button", { name: /^two\s*Connected/ }));
       expect(onServerChange).toHaveBeenCalledWith("two");
       expect(options).not.toBeInTheDocument();
 
