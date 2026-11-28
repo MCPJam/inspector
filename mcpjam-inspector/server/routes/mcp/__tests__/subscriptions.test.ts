@@ -504,3 +504,27 @@ describe("task-filtered notifications (extension wire, B2)", () => {
     expect(state.supportsTaskDeclaredListen).toBe(true);
   });
 });
+
+describe("SSE stream scope", () => {
+  it("delivers a manager's events only to streams opened under that manager", async () => {
+    const a = modernClient();
+    const b = modernClient();
+    const { app: appA } = appFor(a.client);
+    const { app: appB } = appFor(b.client);
+    await postDesired(appA, { toolsListChanged: true });
+    await postDesired(appB, { toolsListChanged: true });
+
+    // B's stream must skip A's graceful close and only see its own remote loss.
+    const events = await readEvents(appB, 2, async () => {
+      a.handles[0].settle("graceful");
+      await new Promise((r) => setTimeout(r, 10));
+      b.handles[0].settle("remote");
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    const streamEvents = events.filter((e) => e.type === "subscription_stream");
+    expect(streamEvents).toHaveLength(1);
+    if (streamEvents[0]?.type !== "subscription_stream") throw new Error("bad");
+    expect(streamEvents[0].stream.status).toBe("remote-closed");
+  });
+});
