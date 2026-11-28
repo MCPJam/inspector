@@ -164,7 +164,9 @@ import type {
   SuiteGatePolicyV1,
   SuiteGateReportV1,
 } from "@mcpjam/sdk/contract";
-import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
+import { checkEvalHarnessStaticAdmission, harnessOfHostConfig } from "../../services/evals/harness-admission.js";
+import { explainEvalHarnessRefusal } from "../../services/evals/explain-harness-refusal.js";
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
 import { rerunPreviewRefusal } from "../../services/evals/rerun-refusal.js";
 import {
@@ -5126,6 +5128,8 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     servers: Awaited<ReturnType<typeof resolveLaunchServers>>;
     hostConfig: Record<string, unknown>;
   }> = [];
+  // Whether each distinct harness runs on this machine, asked once per group.
+  const localVenues = new Map<string, Promise<boolean>>();
   for (const target of targets) {
     const servers = await resolveLaunchServers({
       convexAuthToken,
@@ -5161,17 +5165,25 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     // (and refuse one whose override fixes a host the harness can't run).
     const environmentModelOverride =
       servers.environmentLaunch?.modelId?.trim() || undefined;
+    // Judged in the venue this target's own launch will pick, so a harness
+    // that runs on this machine isn't refused as if it needed the cloud.
+    const harness = harnessOfHostConfig(hostConfig);
+    if (harness && !localVenues.has(harness)) {
+      localVenues.set(harness, shouldUseLocalHarness(harness, convexAuthToken, projectId, { scope: "unattended" }));
+    }
     const admission = checkEvalHarnessStaticAdmission({
       hostConfig: environmentModelOverride
         ? { ...hostConfig, modelId: environmentModelOverride }
         : hostConfig,
       serverIds: servers.serverIds,
+      localExecution: harness ? await localVenues.get(harness) : false,
     });
     if (!admission.ok) {
+      const reason = await explainEvalHarnessRefusal({ admission, bearer: convexAuthToken, projectId });
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        `${describeRunGroupTarget(target)}: ${admission.reason}`,
+        `${describeRunGroupTarget(target)}: ${reason}`,
         { reason: "HARNESS_UNAVAILABLE", harness: admission.harness },
       );
     }

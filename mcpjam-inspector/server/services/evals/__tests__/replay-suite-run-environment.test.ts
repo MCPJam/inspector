@@ -1,7 +1,8 @@
-const admission = vi.hoisted(() => ({ execution: vi.fn(() => ({ ok: true })), harness: vi.fn(() => ({ ok: true, harness: undefined })), policy: vi.fn(() => null), failed: vi.fn(async () => {}) }));
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+const admission = vi.hoisted(() => ({ execution: vi.fn(() => ({ ok: true })), harness: vi.fn(() => ({ ok: true, harness: undefined })), policy: vi.fn(() => null), failed: vi.fn(async () => {}), explain: vi.fn(async ({ admission }: { admission: { reason: string } }) => admission.reason) }));
+vi.mock("../explain-harness-refusal.js", () => ({ explainEvalHarnessRefusal: admission.explain }));
 vi.mock("../harness-admission.js", async (original) => ({ ...await original<typeof import("../harness-admission.js")>(), checkEvalExecutionAdmission: admission.execution, checkEvalHarnessAdmission: admission.harness, casesAssertingWidgetRender: () => [], failRunBeforeExecution: admission.failed }));
 vi.mock("../../../utils/harness/harness-proxy-policy-enforcement.js", () => ({ harnessToolPolicyLaunchRefusal: admission.policy }));
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { ConvexError } from "convex/values";
 
 // Replays use the frozen client and environment; old backends fail closed
@@ -131,6 +132,19 @@ it("the synchronous replay returns an adopted run without executing and closes i
   expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
   const manager = vi.mocked(buildReplayManager).mock.results.at(-1)?.value;
   expect(manager.disconnectAllServers).toHaveBeenCalledTimes(1);
+});
+
+it("fails a replay this machine can't run with why, not the cloud's refusal", async () => {
+  const refusal = { ok: false, harness: "claude-code", reason: "needs a cloud computer", kind: "computers-unconfigured" };
+  const explained = "Couldn't run Claude Code on this machine because it isn't set up for this project. Set it up in the Playground, then run the eval again.";
+  admission.harness.mockReturnValueOnce(refusal as never);
+  admission.explain.mockResolvedValueOnce(explained);
+  admission.failed.mockClear();
+  await expect(prepareSuiteReplayFromRun({ convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "source-run-1" }))
+    .rejects.toThrow(explained);
+  expect(admission.explain).toHaveBeenCalledWith({ admission: refusal, bearer: "token", projectId: "project-1" });
+  expect(admission.failed).toHaveBeenCalledWith(expect.anything(), expect.anything(), "replay-run-1", { reason: explained });
+  expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
 });
 
 describe("prepareSuiteReplayFromRun — the environment it cannot name", () => {

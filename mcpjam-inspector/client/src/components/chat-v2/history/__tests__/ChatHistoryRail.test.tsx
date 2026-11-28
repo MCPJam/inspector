@@ -115,6 +115,11 @@ vi.mock("@mcpjam/design-system/tooltip", () => ({
   TooltipContent: () => null,
 }));
 
+// One timestamp for every stub: a test that builds the same stub twice (once
+// to render, once to assert) must get equal objects, whichever millisecond
+// each call lands on.
+const STUB_NOW = Date.now();
+
 function sessionStub(
   id: string,
   overrides: Partial<ChatHistorySession> = {},
@@ -127,8 +132,8 @@ function sessionStub(
     directVisibility: "private",
     messageCount: 1,
     version: 1,
-    startedAt: Date.now(),
-    lastActivityAt: Date.now(),
+    startedAt: STUB_NOW,
+    lastActivityAt: STUB_NOW,
     isPinned: false,
     manualUnread: false,
     isUnread: false,

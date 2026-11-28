@@ -22,10 +22,9 @@ import type { LibraryModelRow } from "./evaluator-stage-rows";
 import { customizedCopy, withJudges } from "./custom-judges-model";
 
 /**
- * The judge config with these rubric-check questions. Adding turns rubric
- * checks back on if the author had turned them off, because adding asks for
- * questions to run; a switch that was never set already means on, so it
- * stays unset.
+ * The judge config with these rubric-check questions. The author's on/off
+ * switch is kept: adding to a suite that turned rubric checks off leaves them
+ * off, and the settings say the questions will not run.
  *
  * An emptied slot is kept as `rubricChecks: {}` while other judge config
  * remains: the backend copies any reserved slot a write leaves out from the
@@ -36,14 +35,8 @@ import { customizedCopy, withJudges } from "./custom-judges-model";
 function withQuestions(
   judgeConfig: EvalJudgeConfig | undefined,
   questions: RubricCheckQuestion[],
-  turnOn: boolean,
 ): EvalJudgeConfig | undefined {
-  const next = withRubricChecks(judgeConfig, {
-    ...(turnOn && judgeConfig?.rubricChecks?.enabled === false
-      ? { enabled: true }
-      : {}),
-    questions,
-  });
+  const next = withRubricChecks(judgeConfig, { questions });
   const { rubricChecks, ...rest } = next;
   const empty = !rubricChecks || Object.keys(rubricChecks).length === 0;
   return empty && Object.keys(rest).length === 0 ? undefined : next;
@@ -51,7 +44,7 @@ function withQuestions(
 
 /** The two lists one library edit writes. Absent means unchanged. */
 type ListsEdit = {
-  questions?: { list: RubricCheckQuestion[]; turnOn: boolean };
+  questions?: RubricCheckQuestion[];
   judges?: CustomJudge[];
 };
 
@@ -75,9 +68,7 @@ function withLibraryLists(
   edit: ListsEdit,
 ): EvalJudgeConfig | undefined {
   let next = judgeConfig;
-  if (edit.questions) {
-    next = withQuestions(next, edit.questions.list, edit.questions.turnOn);
-  }
+  if (edit.questions) next = withQuestions(next, edit.questions);
   if (edit.judges) next = withJudges(next, edit.judges);
   return next;
 }
@@ -129,13 +120,18 @@ export function librarySuiteEdits(
       const judgeEdit = judgesWithAdded(judges, addition.judges, judgeLimit);
       if (judgeEdit.refused !== undefined) return judgeEdit.refused;
       if (addition.checks.length) {
-        scope.onPredicatesChange((previous: Predicate[]) =>
-          withLibraryChecks(previous, addition.checks),
-        );
+        // A preset's checks reuse a matching assertion; ones written from
+        // scratch are appended as "Add assertion" would, role and all.
+        const fromPreset = addition.checks.filter((check) => check.evaluator);
+        const written = addition.checks.filter((check) => !check.evaluator);
+        scope.onPredicatesChange((previous: Predicate[]) => [
+          ...withLibraryChecks(previous, fromPreset),
+          ...written,
+        ]);
       }
       write({
         ...(addition.questions.length
-          ? { questions: { list: questionEdit.questions, turnOn: true } }
+          ? { questions: questionEdit.questions }
           : {}),
         ...(addition.judges.length ? { judges: judgeEdit.judges } : {}),
       });
@@ -148,12 +144,7 @@ export function librarySuiteEdits(
       const from = fromEvaluator(evaluatorId);
       write({
         ...(questions.some(from)
-          ? {
-              questions: {
-                list: questions.filter((q) => !from(q)),
-                turnOn: false,
-              },
-            }
+          ? { questions: questions.filter((q) => !from(q)) }
           : {}),
         ...(judges.some(from) ? { judges: judges.filter((j) => !from(j)) } : {}),
       });
@@ -169,7 +160,7 @@ export function librarySuiteEdits(
       const from = fromEvaluator(evaluatorId);
       write({
         ...(edit.entry.questions?.length || questions.some(from)
-          ? { questions: { list: edit.questions, turnOn: false } }
+          ? { questions: edit.questions }
           : {}),
         ...(edit.entry.judges?.length || judges.some(from)
           ? { judges: edit.judges }

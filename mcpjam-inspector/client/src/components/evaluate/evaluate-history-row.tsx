@@ -48,7 +48,7 @@ export function EvaluateHistoryHeader({
   showSuite?: boolean;
   /** Adds the untitled last column that holds each row's delete button. */
   showActions?: boolean;
-  /** Adds "Ran as" and "Accounts", for runs that recorded their accounts. */
+  /** Adds "Account", for runs that recorded their accounts. */
   showAccounts?: boolean;
   /** Text behind an ⓘ beside these column headers; absent renders none. */
   hints?: Partial<Record<HintedColumn, string>>;
@@ -64,7 +64,7 @@ export function EvaluateHistoryHeader({
           "Result",
           "Rate",
           "Platform",
-          ...(showAccounts ? ["Ran as", "Accounts"] : []),
+          ...(showAccounts ? ["Account"] : []),
           "Commit",
           "Date",
           "Latency",

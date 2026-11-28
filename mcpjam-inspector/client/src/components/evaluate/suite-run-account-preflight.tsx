@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
 import { Button } from "@mcpjam/design-system/button";
 import { buildProjectServerPath, navigateApp } from "@/lib/app-navigation";
+import { PreflightNotice } from "./preflight-notice";
 import type { RemoteServer } from "@/hooks/useProjects";
 import {
   serverNameFrom,
@@ -9,6 +10,7 @@ import {
 } from "@/hooks/use-suite-accounts";
 import {
   chosenAccountProblems,
+  hasAccountChoice,
   runsAsEntries,
   serverIdsForRefs,
   type AccountProblem,
@@ -29,10 +31,12 @@ export type AccountPreflight = {
   accountProblems?: AccountProblem[];
   /** The accounts the run will use for the person, on servers they choose for. */
   runsAs?: RunsAsEntry[];
+  /** Every server the run connects, by name, for the sheet's subheading. */
+  serverNames?: string[];
   /** Both, for only the servers these refs (ids or names) name. */
   accountsFor?: (
     refs: readonly string[],
-  ) => Pick<AccountPreflight, "accountProblems" | "runsAs" | "sharedServers" | "sharedServerName">;
+  ) => Pick<AccountPreflight, "accountProblems" | "runsAs" | "serverNames" | "sharedServers" | "sharedServerName">;
 };
 
 /**
@@ -77,8 +81,9 @@ export function useSuiteAccountPreflight({
     return {
       ...(accountProblems.length ? { accountProblems } : {}),
       runsAs: runsAsEntries({ ...view, servers: view.servers.filter((s) => ids.has(s.serverId)) }, serverName),
+      serverNames: [...ids].map(serverName),
       sharedServers: canChooseAccounts
-        ? view.servers.filter((s) => ids.has(s.serverId) && s.managed)
+        ? view.servers.filter((s) => ids.has(s.serverId) && s.managed && hasAccountChoice(s))
         : [],
       sharedServerName: serverName,
     };
@@ -129,7 +134,7 @@ export function scopeAccountPreflight<T extends AccountPreflight>(
 }
 
 /**
- * One line per chosen account the launch would refuse. Start stays off while
+ * One notice per chosen account the launch would refuse. Start stays off while
  * any is listed (`hasBlockingPreflight`): a run never swaps in an account
  * nobody chose.
  */
@@ -149,43 +154,46 @@ export function AccountPreflightNotices({
     <div className="space-y-2" data-testid="preflight-account-problems">
       {problems.map((problem) =>
         problem.kind === "needs_reconnect" ? (
-          <div
+          <PreflightNotice
             key={`reconnect:${problem.connectionId}`}
-            className="flex items-center gap-2"
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={disabled}
+                aria-label={`Reconnect ${problem.serverName} ${problem.accountName}`}
+                // The server's own page, where its Authorization tab lists the
+                // account and reconnects it.
+                onClick={() =>
+                  navigateApp(buildProjectServerPath(problem.serverId))
+                }
+              >
+                Reconnect
+              </Button>
+            }
           >
-            <p className="min-w-0 flex-1 text-destructive">
+            <p className="text-destructive">
               {problem.serverName} {problem.accountName} needs reconnect.
             </p>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={disabled}
-              aria-label={`Reconnect ${problem.serverName} ${problem.accountName}`}
-              // The server's own page, where its Authorization tab lists the
-              // account and reconnects it.
-              onClick={() =>
-                navigateApp(buildProjectServerPath(problem.serverId))
-              }
-            >
-              Reconnect
-            </Button>
-          </div>
+          </PreflightNotice>
         ) : (
-          <p key={`removed:${problem.serverId}`} className="text-destructive">
-            An account chosen for {problem.serverName} was removed. Choose again
-            in the suite's settings.{" "}
-            {onEditSettings ? (
-              <Button
-                variant="link"
-                size="sm"
-                className="h-auto p-0 text-xs"
-                disabled={disabled}
-                onClick={onEditSettings}
-              >
-                Open suite settings
-              </Button>
-            ) : null}
-          </p>
+          <PreflightNotice key={`removed:${problem.serverId}`}>
+            <p className="text-destructive">
+              An account chosen for {problem.serverName} was removed. Choose
+              again in the suite's settings.{" "}
+              {onEditSettings ? (
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-xs"
+                  disabled={disabled}
+                  onClick={onEditSettings}
+                >
+                  Open suite settings
+                </Button>
+              ) : null}
+            </p>
+          </PreflightNotice>
         ),
       )}
     </div>

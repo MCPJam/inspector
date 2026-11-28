@@ -6,6 +6,7 @@ import { Hammer, History, PanelLeftClose, Radio } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import { PlaygroundServerConnectButton } from "./PlaygroundServerConnectButton";
+import { getConnectionStatusMeta } from "@/components/connection/server-card-utils";
 import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
@@ -114,7 +115,6 @@ export function PlaygroundLeftRail({
                 previewedHostId={
                   comparePane ? comparePane.hostId : (previewedHostId ?? null)
                 }
-                serverNames={comparePane?.serverNames ?? null}
                 comparePane={comparePane}
                 projectId={projectId ?? null}
               />
@@ -189,13 +189,10 @@ function SessionsBody() {
 
 function ToolsBody({
   previewedHostId,
-  serverNames,
   comparePane,
   projectId,
 }: {
   previewedHostId: string | null;
-  /** A Compare pane's own servers, or null for every active server. */
-  serverNames: string[] | null;
   /** The selected Compare pane, whose environment (or none) the rail shows. */
   comparePane: ComparePaneOption | null;
   projectId: string | null;
@@ -211,12 +208,22 @@ function ToolsBody({
     },
     [scope],
   );
-  const activeServerNames = serverNames
-    ? serverNames.filter((name) => {
+  const paneServerNames = comparePane?.serverNames ?? null;
+  const activeServerNames = paneServerNames
+    ? paneServerNames.filter((name) => {
         const status = state.servers[name]?.connectionStatus;
         return status === "connected" || status === "connecting";
       })
     : state.activeServerNames;
+  const offlinePaneServers = Object.fromEntries(
+    (paneServerNames ?? []).flatMap((name) => {
+      const server = state.servers[name];
+      return server && server.connectionStatus !== "connected"
+        ? [[name, server] as const]
+        : [];
+    }),
+  );
+  const offlinePaneServerNames = Object.keys(offlinePaneServers);
   // The agent browser the previewed host attaches, if any: the six `browser_*`
   // tools plus whatever the page it has open offers. Resolved HERE, beside the
   // harness built-ins, and fed into both panes below for the same reason they
@@ -264,14 +271,12 @@ function ToolsBody({
       />
     );
   }
-  // The Playground is multi-server by nature: its active set mirrors the
-  // connected servers. Aggregate tools across ALL active servers whenever
-  // there's at least one — not only when there's more than one. Using `> 1`
-  // meant disconnecting down to a single server fell back to the single-
-  // server pane (keyed on the stale `serverName` pointer), so the remaining
-  // server's tools vanished. Only the zero-server case falls back to
-  // PlaygroundLeft for its empty/onboarding state.
-  if (activeServerNames.length >= 1 && pendingScope !== scope) {
+  // An explicitly assigned Compare server stays in the rail when its
+  // connection closes, so it can be reconnected without changing the pane.
+  if (
+    (activeServerNames.length > 0 || offlinePaneServerNames.length > 0) &&
+    pendingScope !== scope
+  ) {
     return (
       <MultiServerToolsPaneInner
         previewedHarnessId={previewedHarnessId}
@@ -279,6 +284,30 @@ function ToolsBody({
         builtinTools={harnessBuiltinTools}
         builtinToolsRunLocally={builtinToolsRunLocally}
         browserTools={browserTools}
+        serverConnectionControl={
+          offlinePaneServerNames.length > 0 ? (
+            <div className="space-y-2 px-3 pb-2 text-xs text-muted-foreground">
+              {offlinePaneServerNames.map((name) => (
+                <p key={name}>
+                  {name} ·{" "}
+                  {
+                    getConnectionStatusMeta(
+                      offlinePaneServers[name].connectionStatus,
+                    ).label
+                  }
+                </p>
+              ))}
+              {state.ensureServersReady ? (
+                <PlaygroundServerConnectButton
+                  key={scope}
+                  servers={offlinePaneServers}
+                  catalogKnown={state.areServersHydrated}
+                  ensureServersReady={state.ensureServersReady}
+                />
+              ) : null}
+            </div>
+          ) : undefined
+        }
       />
     );
   }

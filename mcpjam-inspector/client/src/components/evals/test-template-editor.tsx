@@ -12,8 +12,7 @@ import {
   useEvalToolMetadata,
 } from "@/lib/mcpjam-agent/eval-tool-metadata";
 import { DEFAULTS, EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
-import { CaseServerAccounts } from "./suite-accounts-row";
-import type { SharedEvalAccountSelection } from "@/lib/evals/eval-accounts";
+import { CaseAccountPicker } from "./shared-account-pickers";
 import {
   advancedConfigForUpdate,
   buildCaseSavePayload,
@@ -3225,14 +3224,6 @@ export function TestTemplateEditor({
     }
   }, []);
 
-  const [quickRunAccountDraft, setQuickRunAccountDraft] = useState<{
-    caseId: string;
-    accounts: SharedEvalAccountSelection[];
-  }>();
-  const quickRunAccounts = quickRunAccountDraft?.caseId === currentTestCase?._id
-    ? quickRunAccountDraft?.accounts ?? []
-    : [];
-
   const handleRunCompare = async (options?: {
     modelValues?: string[];
     sessionMode?: "new" | "reuse";
@@ -3531,7 +3522,6 @@ export function TestTemplateEditor({
       return;
     }
 
-    setQuickRunAccountDraft(undefined);
     const totalRequestedModels = runModelValues.length;
     const modelRequestGen: Record<string, number> = {};
     for (const { modelValue } of preparedRuns) {
@@ -3668,7 +3658,6 @@ export function TestTemplateEditor({
             await streamEvalTestCase(
               {
                 ...request.request,
-                ...(quickRunAccounts.length ? { runAccounts: quickRunAccounts } : {}),
                 compareRunId,
                 skipLastMessageRunUpdate: true,
               },
@@ -4314,25 +4303,6 @@ export function TestTemplateEditor({
   // (see `casePinnedOnly` below).
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      {suite && editForm && !isDraft && !checksPage ? (
-        <CaseServerAccounts
-          suite={suite}
-          projectId={projectId}
-          selections={editForm.accounts ?? currentTestCase?.accounts}
-          disabled={readOnly}
-          onChange={(accounts) => setEditForm((current) => current ? { ...current, accounts } : current)}
-        />
-      ) : null}
-      {suite && currentTestCase && editForm && !isDraft && !checksPage ? (
-        <CaseServerAccounts
-          suite={suite}
-          projectId={projectId}
-          oneOff={{ test: currentTestCase }}
-          selections={quickRunAccounts}
-          onChange={(accounts) => setQuickRunAccountDraft({ caseId: currentTestCase._id, accounts })}
-          disabled={readOnly || isRunningCompare}
-        />
-      ) : null}
       {simpleCaseEditorEnabled && editForm && evalAgent.change && (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2 text-xs">
           <span className="text-muted-foreground" aria-live="polite">
@@ -4533,6 +4503,16 @@ export function TestTemplateEditor({
                     </h2>
                   </button>
                 )}
+                {suite && editForm && !isDraft && !checksPage ? (
+                  <CaseAccountPicker
+                    suite={suite}
+                    projectId={projectId}
+                    selections={editForm.accounts ?? currentTestCase?.accounts}
+                    disabled={readOnly}
+                    onChange={(accounts) => setEditForm((current) => current ? { ...current, accounts } : current)}
+                    className="-ml-1.5 mt-1 space-y-1"
+                  />
+                ) : null}
                 {(currentTestCase as { lastSdkWriteAt?: number })
                   ?.lastSdkWriteAt != null ? (
                   <p className="mt-0.5 text-[11px] text-muted-foreground">

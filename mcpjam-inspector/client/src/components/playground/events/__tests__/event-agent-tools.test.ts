@@ -229,6 +229,50 @@ describe("mcpjam_subscribe_to_events", () => {
     });
   });
 
+  it("says a new watch is connecting until the server confirms it", async () => {
+    const pending = binding({
+      id: "binding-new",
+      subscription: {
+        ...binding().subscription!,
+        observedState: "pending",
+      },
+    });
+    runtime.add = vi.fn(async () => pending);
+    const result = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.subscribe,
+      subscribeInput,
+    );
+    expect(result.isError).toBeUndefined();
+    expect(payload(result).subscription.status).toBe("connecting");
+    expect(payload(result).message).toBe(
+      "Subscribed to flight.status_changed. It's connecting and switches to listening on its own. Once it's listening, new events start a turn here while this conversation is open in the Playground; an event that arrives during another turn is skipped.",
+    );
+  });
+
+  it("keeps saying connecting while the live feed is still opening", async () => {
+    runtime.feed = { status: "idle" } as EventAgentRuntime["feed"];
+    const result = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.subscribe,
+      subscribeInput,
+    );
+    expect(payload(result).subscription.status).toBe("connecting");
+    expect(payload(result).message).toContain("It's connecting");
+  });
+
+  it("keeps today's message for a repeat subscribe that is already listening", async () => {
+    const result = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.subscribe,
+      subscribeInput,
+    );
+    expect(payload(result).subscription.status).toBe("listening");
+    expect(payload(result).message).toBe(
+      "Subscribed to flight.status_changed. New events start a turn here while this conversation is open in the Playground; an event that arrives during another turn is skipped.",
+    );
+  });
+
   it("refuses params that miss the inputSchema before contacting the server", async () => {
     const result = await runEventAgentTool(
       runtime,
@@ -471,6 +515,28 @@ describe("managing subscriptions", () => {
         created_by: "agent",
       },
     ]);
+  });
+
+  it("lists a watch as connecting until the server confirms it", async () => {
+    runtime.bindings = [
+      binding({
+        subscription: { ...binding().subscription!, observedState: "pending" },
+      }),
+    ];
+    const pending = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.listSubscriptions,
+      {},
+    );
+    expect(payload(pending).subscriptions[0].status).toBe("connecting");
+    runtime.bindings = [binding()];
+    runtime.feed = { status: "idle" } as EventAgentRuntime["feed"];
+    const idle = await runEventAgentTool(
+      runtime,
+      EVENT_AGENT_TOOL_NAMES.listSubscriptions,
+      {},
+    );
+    expect(payload(idle).subscriptions[0].status).toBe("connecting");
   });
 
   it("pauses and resumes with is_enabled, through the pane's edit", async () => {

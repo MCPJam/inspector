@@ -389,10 +389,14 @@ async function subscribe(
     // The watch belongs to the conversation that made the call, or it fails.
     { title: call.title, fromAgent: true, agentScope: scope },
   );
-  return success({
-    subscription: describe(runtime, binding),
-    message: `Subscribed to ${resolved.event.name}. New events start a turn here while this conversation is open in the Playground; an event that arrives during another turn is skipped.`,
-  });
+  const subscription = describe(runtime, binding);
+  // The server confirms a new watch after this returns, so say it is on its way
+  // rather than leave the model to read "not listening yet" as a problem.
+  const message =
+    subscription.status === "connecting"
+      ? `Subscribed to ${resolved.event.name}. It's connecting and switches to listening on its own. Once it's listening, new events start a turn here while this conversation is open in the Playground; an event that arrives during another turn is skipped.`
+      : `Subscribed to ${resolved.event.name}. New events start a turn here while this conversation is open in the Playground; an event that arrives during another turn is skipped.`;
+  return success({ subscription, message });
 }
 
 function findBinding(runtime: EventAgentRuntime, id: string) {

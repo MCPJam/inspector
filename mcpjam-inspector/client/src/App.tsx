@@ -32,6 +32,7 @@ import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { AccountCreatedToast } from "./components/sidebar/sidebar-guest-signup-prompt";
 import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
+import { ReturningGuestDialog } from "./components/auth/returning-guest-prompt";
 import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
 import { LauncherProjectChoiceDialog } from "./components/connection/LauncherProjectChoiceDialog";
@@ -6816,6 +6817,7 @@ export default function App() {
             </Button>
           </DialogFooter>
         </TrialDecisionDialog>
+        <ReturningGuestDialog enabled={announcementsEnabled} />
       </SidebarProvider>
     </SettingsDraftProvider>
   );
