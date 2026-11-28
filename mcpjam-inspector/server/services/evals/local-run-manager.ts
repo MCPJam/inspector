@@ -14,7 +14,7 @@
  * nothing there to authorize.
  */
 import type { Context } from "hono";
-import { MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import type { ConvexHttpClient } from "convex/browser";
 import {
   inputAnswerResolverFor,
@@ -44,6 +44,7 @@ import { hostManagerArgs } from "../events/host-connection.js";
 import { resolveXaaIssuer } from "../xaa-mint.js";
 import { loadSuiteHostConfig } from "./compat-runtime.js";
 import {
+  buildEvalRunManager,
   connectReplayManagerServers,
   createConvexClient,
   type ReplayConfig,
@@ -236,7 +237,7 @@ function appConnections(
 ): LocalEvalRun {
   const app = c.mcpClientManager;
   registerInputAnswerConnection(app, async (answers, names) => {
-    const manager = new MCPClientManager();
+    const manager = buildEvalRunManager({});
     manager.setElicitationCallback(answers.elicitationCallback);
     registerInputAnswerResolver(manager, answers);
     try {
