@@ -13,8 +13,9 @@ that all point the same way:
 1. The committed protocol snapshot in `__fixtures__/schema/<version>/` describes
    **that** version. A range would let the box run a protocol the adapter was
    not written against.
-2. The tool-less model rows in the harness evidence table were measured against
-   that binary.
+2. The tool-less `gpt-5.6` rows were measured on Codex 0.149.x. A newer pin
+   does not inherit that verdict; those rows stay unmeasured until someone
+   captures them.
 3. The version participates in the bootstrap identity, so a bump forks existing
    sessions cleanly instead of resuming them onto a different runtime.
 

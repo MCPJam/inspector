@@ -694,11 +694,10 @@ export type HarnessRuntimeAdapter = HarnessRuntimeAdapterBase &
  * CLI version — see {@link modelSupportFor}.
  *
  * The Codex tool-less gate that used to live here (`gpt-5.6*` refused because
- * the pinned 0.149.x CLI resolves the line but equips it with NO tools) is
- * now the table's `codex <=0.149.x` row, with that measurement as its
- * evidence. A newer CLI reads that pair as `unknown` until someone measures
- * it, instead of silently
- * inheriting the old verdict.
+ * Codex 0.149.x resolves the line but equips it with NO tools) is now the
+ * table's `codex <=0.149.x` row, with that measurement as its evidence. A
+ * newer CLI reads that pair as `unknown` until someone measures it, instead
+ * of silently inheriting the old verdict.
  */
 
 /** The evidence-table verdict for `modelId` on `harnessId` at its pinned

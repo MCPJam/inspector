@@ -7,8 +7,8 @@ framework's own `harnessV1StreamPartSchema`.
 
 They are recordings, not hand-written mocks, and that distinction is the point:
 a hand-written fixture encodes what we BELIEVE codex sends, and agrees with the
-code for exactly as long as the belief holds. These were captured from the
-pinned 0.149.1 binary: inbound frames, with volatile ids left as recorded.
+code for exactly as long as the belief holds. These were captured from Codex 0.149.1, the pin when they were recorded:
+inbound frames, with volatile ids left as recorded.
 
 Server REQUESTS (the approval calls) are kept inline rather than filtered out,
 because their position in the stream is part of what the fixture pins: codex
