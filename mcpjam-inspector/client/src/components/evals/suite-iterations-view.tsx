@@ -3257,7 +3257,9 @@ export function SuiteIterationsView({
                       <CloudUnreachableNotice
                         data-testid="suite-eval-cloud-unreachable"
                         message={EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE}
-                        detail="Runs started here would fail their computer setup, so Run all stays off. Open the suite on MCPJam to run it."
+                        detail={HOSTED_MODE
+                          ? "Run all stays off until cloud sandboxes are reachable."
+                          : "Open the suite on MCPJam to run it. Run all is off here because local runs would fail their setup."}
                         {...(HOSTED_MODE ? {} : {
                           action: {
                             label: "Open on MCPJam",
