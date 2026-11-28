@@ -8,8 +8,6 @@ import type { HostListItem } from "@/hooks/useClients";
 import { getSupportLevel, isSupportField } from "./support-level";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
-export const CANIUSE_LAST_VERIFIED_DATE = "2026-08-14";
-
 export const PUBLIC_CAN_I_USE_INLINE_PRESET_IDS = [
   // Ranked order for the caniuse chip row. Grouped by vendor — the two
   // Anthropic siblings follow Claude, Codex follows ChatGPT — with VS Code and
@@ -180,11 +178,27 @@ export function clientCompareFieldsWithData(
   );
 }
 
-export const CANIUSE_CAPABILITIES: ReadonlyArray<CaniuseCapability> =
-  PUBLIC_CAN_I_USE_FIELDS.map((field) => ({
+export const CANIUSE_TASKS: CaniuseCapability = {
+  slug: "mcp-tasks",
+  field: {
+    id: "mcpTasks",
+    section: "protocol",
+    subsection: "Extensions",
+    label: "MCP Tasks",
+    path: "clientCapabilities.tasks",
+    description: "Run long-lived MCP operations and check their progress.",
+    kind: { kind: "string" },
+    read: () => undefined,
+  },
+};
+
+export const CANIUSE_CAPABILITIES: ReadonlyArray<CaniuseCapability> = [
+  ...PUBLIC_CAN_I_USE_FIELDS.map((field) => ({
     slug: slugForField(field),
     field,
-  }));
+  })),
+  CANIUSE_TASKS,
+];
 
 const capabilitiesBySlug = new Map<string, CaniuseCapability>();
 const capabilitiesByFieldId = new Map<string, CaniuseCapability>();
@@ -261,10 +275,8 @@ export function getCaniuseSupportLevel(
       field.id === "eventsDeliveryModes" ||
       // A catalog row reads `undefined` for an app or image value its probe
       // did not measure (see `untestedCatalogAppValue`), rather than the
-      // client style's default. The CSP subtype rows keep their own reading.
-      (field.id.startsWith("appsCap.") &&
-        !field.id.startsWith("appsCap.cspConnectDomains.") &&
-        !field.id.startsWith("appsCap.cspResourceDomains.")) ||
+      // client style's default. Missing resolved CSP subtypes are untested too.
+      field.id.startsWith("appsCap.") ||
       field.id.startsWith("modelVisibleMcpToolResults.") ||
       field.id.startsWith("mcpToolResultImageRendering")) &&
     field.read(config) === undefined

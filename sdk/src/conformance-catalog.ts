@@ -81,7 +81,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "protocol-invalid-method-error": {
     title: "Invalid Method Error",
     description:
-      "Server returns a valid JSON-RPC error for an unrecognized method name.",
+      "Server answers an unrecognized method name with the JSON-RPC Method not found error (-32601), and with HTTP 404 on 2026-07-28.",
   },
   "localhost-host-rebinding-rejected": {
     title: "Reject Evil Host Header",
@@ -96,10 +96,6 @@ export const PROTOCOL_CHECK_CATALOG = {
   "server-sse-polling-session": {
     title: "SSE Polling Session",
     description: "Server provides a streamable HTTP session id.",
-  },
-  "server-accepts-multiple-post-streams": {
-    title: "Multiple POST Streams",
-    description: "The server accepts multiple concurrent POST requests.",
   },
   "server-sse-streams-functional": {
     title: "Functional SSE Streams",
@@ -128,7 +124,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "modern-client-handshake": {
     title: "Modern Client Handshake",
     description:
-      "The official client negotiates the modern revision and receives the server identity and capabilities.",
+      "The official client negotiates the modern revision and receives the server's capabilities.",
   },
   "modern-server-discover": {
     title: "Modern Server Discovery",
@@ -285,16 +281,6 @@ export const APPS_CHECK_CATALOG = {
 
 /** Tasks suite. Keys follow `MCP_TASKS_CHECK_IDS` order. */
 export const TASKS_CHECK_CATALOG = {
-  "tasks-wire-resolvable": {
-    title: "Tasks Wire Resolvable",
-    description:
-      "The negotiated protocol version and advertised capabilities resolve to exactly one tasks wire.",
-  },
-  "tasks-declaration-hygiene": {
-    title: "Per-Version Declaration Hygiene",
-    description:
-      "Outgoing requests carry `params.task` only on the legacy wire and the tasks extension declaration only on the extension wire; a connection with no tasks wire sends neither.",
-  },
   "tasks-result-type-discipline": {
     title: "Result Type Discipline",
     description:
@@ -381,6 +367,11 @@ export const READINESS_CATALOG = {
   "readiness-protocol-version-header-required": {
     title: "Protocol Version Header Required",
     description: "A POST without the MCP-Protocol-Version header is rejected.",
+  },
+  "readiness-server-identity": {
+    title: "Server Identity",
+    description:
+      "Results carry the server's name and version, so a client can show which server answered.",
   },
   "readiness-tool-name-conventions": {
     title: "Tool Name Conventions",

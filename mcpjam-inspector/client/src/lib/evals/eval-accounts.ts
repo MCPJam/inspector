@@ -10,6 +10,8 @@ export type SuiteAccount = {
   needsReauth: boolean;
 };
 
+export type SharedEvalAccountSelection = { serverId: string; connectionId: string };
+
 /**
  * `accounts`: the person's own accounts, one or more of which they choose.
  * `shared`: the project's accounts on a server shared with the project, which
@@ -24,6 +26,8 @@ export type SuiteAccountsServer = {
   accounts: SuiteAccount[];
   /** The saved choice; `null` (or empty) runs with the default account. */
   chosen: string[] | null;
+  managed?: boolean;
+  suiteConnectionId?: string;
   xaaSubject?: string;
 };
 
@@ -53,6 +57,7 @@ export const SET_SUITE_ACCOUNT_SELECTION_MUTATION =
  * reported by {@link chosenAccountProblems} instead.
  */
 export function checkedAccountIds(server: SuiteAccountsServer): string[] {
+  if (server.managed && server.suiteConnectionId) return [server.suiteConnectionId];
   if (server.chosen?.length) {
     const listed = new Set(server.accounts.map((a) => a.connectionId));
     return server.chosen.filter((id) => listed.has(id));

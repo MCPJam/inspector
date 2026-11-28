@@ -4,6 +4,13 @@ Status: settled contracts for the implementation of [`mcp-events.md`](./mcp-even
 
 Draft pin: `modelcontextprotocol/experimental-ext-triggers-events` @ [`28ec35e`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md).
 
+## Events Beta compatibility
+
+- The `beta@c77b843` profile uses MCP `2026-07-28` with `capabilities.extensions["io.modelcontextprotocol/events"]` in `server/discover`. `draft@28ec35e` and the dated ChatGPT profiles use top-level `capabilities.events`.
+- Beta RPC results require `resultType: "complete"` on the wire. Its errors use `-32023` through `-32027`. Streamable HTTP requests named in the extension carry an encoded `Mcp-Name` and the annotated `Mcp-Param-*` arguments.
+- The Events tab requests catalog invalidations when the Beta server advertises `listChanged`. It refreshes on an acknowledged subscription and drops the watch on disconnect or a server change.
+- The saved-host policy key is `com.mcpjam/events`. [Events Beta specification](https://github.com/modelcontextprotocol/ext-events/blob/c77b84395eff0ae32f53b0516c2214fe276ed050/specification/beta/events/events.mdx)
+
 ## Where each contract lives in code
 
 | Contract | Inspector repo | Backend repo |
@@ -180,6 +187,9 @@ Convex `eventTriggers` rows (`projectId, environmentId, subscriptionId, name, in
 
 - Enqueue is one internal mutation for the whole batch. For each delivery it inserts at most one run per enabled trigger, keyed by `runKey`, and a repeat returns the existing run ids. The run's frozen input goes into `eventTriggerRunPayloads` (key `input`) in the same mutation, so the inbox may reclaim the entry once dispatch is acknowledged.
 - The executor claims with a lease, resolves the environment named in the snapshot, and connects its servers with `createAuthorizedManager` under the trigger owner's delegated bearer. It runs `runUnifiedAssistantTurn` with `sourceType: "event"`, `origin: "event"`, `streamSink: "none"`, `persistMode: "caller"` and `approvalMode: "auto-deny"`. Event data is passed as an untrusted context block, never as instructions.
+- The frozen input records the subscription's own delivery mode as `subscription.mode` (`poll | push | webhook`), separate from `event.origin`, which is `simulation` or `replay` for a test or replayed event. Inputs written before the field existed lack it.
+- Each run is persisted to its trigger's chat session with `sourceType: "direct"` and `origin: "event"`: `event` is a session origin, not a stored source type. Trace exports report such a session as source type `event` when the backend enables that mapping, and as `direct` otherwise; the private-session rule always reads the stored `direct`.
+- The run's turn records `eventAtTurn` (the event's name, id, timestamp, receive time, delivery mode when known, origin, subscription and trigger; never its data or `_meta`), the environment it resolved when the trigger or subscription names one, and an empty skill list, since event runs run no skills. A snapshot origin of `webhook`, `poll` or `push` records `origin: "server"` with that delivery mode; `simulation` and `replay` keep their origin and take `subscription.mode`; any other value records `server` with no delivery mode.
 - Approval policy is snapshotted with the run. `deny_writes` (the default) runs only tools every server marks `readOnlyHint: true`, and denies the rest before any effect. `auto_deny` runs write tools too, with the turn engine's `approvalMode: "auto-deny"`, so a tool that would need interactive approval is denied: nobody is watching.
 - Every tool call is journaled (`beginCall` / `finishCall`). A call that began and never finished is `tool_outcome_unknown`: the run parks with that reason instead of re-executing.
 - Ordering: one running run per `conversationKey` (`trigger:<triggerId>`), FIFO by `createdAt`.
@@ -190,11 +200,12 @@ Convex `eventTriggers` rows (`projectId, environmentId, subscriptionId, name, in
 | Point | Check |
 |---|---|
 | Register receiver (allocate slot) | inspector: project `member` for the subscription's project; admin token to the inbox |
-| Issue viewer token | inspector: project `member` now; token `{inboxId, projectId, userId, epoch, exp ≤ 10 min, scope: "feed:read"}` HMAC-signed with `EVENTS_INBOX_VIEWER_KEY` |
+| Issue viewer token | inspector: `eventSubscriptions:authorizeFeed` (read with the caller's bearer, so the backend's `requireEventsProjectMember` decides: org `member` or higher, never a guest or a benchmark or scoped GitHub bearer); token `{inboxId, projectId, userId, epoch, exp ≤ 10 min, scope: "feed:read"}` HMAC-signed with `EVENTS_INBOX_VIEWER_KEY` |
+| Read slot state | inspector: `eventSubscriptions:authorizeFeed`, and the subscription is in the project |
 | Refresh | keeper: Convex re-checks the owner is still a project member and the binding's server is still in the project before leasing; the keeper connects with the subscription's pinned OAuth connection (`connectionIds`), and a refusal parks it `paused_auth` |
 | Author a trigger (create, edit, enable) | Convex: the caller is the subscription's **owner**. A run acts with the owner's credentials, so no one else (a project admin included) decides what it does |
 | Stop a trigger (disable, remove) | Convex: the owner or a project admin; stopping runs nothing, and a run already in flight stops at its next checkpoint or tool call |
-| Simulate an event | inspector: project `member`, the subscription is in the project, and `eventSubscriptions:authorizeSimulation` (read with the caller's bearer) confirms the caller owns it; a simulated event runs the triggers with the owner's credentials |
+| Simulate an event | inspector: `eventSubscriptions:authorizeFeed`, the subscription is in the project, and `eventSubscriptions:authorizeSimulation` (read with the caller's bearer) confirms the caller owns it; a simulated event runs the triggers with the owner's credentials |
 | Dispatch a run | enqueue mutation: subscription not removed, trigger enabled, owner still a member |
 | Start a run | claim mutation: trigger enabled, subscription neither removed, paused nor terminated, owner still authorized (a refusal parks the subscription `paused_auth`), then the rate limit and spend cap |
 | Keep a run acting | `runs/checkpoint` and `runs/begin-call`: the claim's authority checks and the spend cap run again, before the step or tool call. A refusal ends the run `failed` with the reason and takes back its lease, so the executor gets `409 lease_lost` and stops |

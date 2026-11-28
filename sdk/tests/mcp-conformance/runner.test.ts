@@ -11,6 +11,12 @@ import { scoreFromProtocolResult } from "../../src/conformance-score.js";
 import { startConformanceMockServer } from "../mock-servers/conformance-mcp-server.js";
 
 describe("MCPConformanceTest", () => {
+  // The output-schema check is a legacy-era check too, but this mock server's
+  // tools declare no outputSchema, so it has nothing to grade here.
+  const OUTPUT_SCHEMA_CHECK = "modern-tool-output-schema-conformant";
+  const appliesToThisServer = (id: keyof typeof CHECK_ERAS) =>
+    CHECK_ERAS[id].includes("legacy") && id !== OUTPUT_SCHEMA_CHECK;
+
   it("passes the full conformance suite against the dedicated mock server", async () => {
     const mockServer = await startConformanceMockServer();
 
@@ -28,12 +34,17 @@ describe("MCPConformanceTest", () => {
       // the legacy era still passes exactly as it did before Phase 7, and the
       // modern-only checks are era-SKIPPED (never passed, never failed).
       for (const check of result.checks) {
-        const applies = CHECK_ERAS[check.id].includes("legacy");
+        const applies = appliesToThisServer(check.id);
         expect([check.id, check.status]).toEqual([
           check.id,
           applies ? "passed" : "skipped",
         ]);
       }
+      // The output-schema check runs on this revision, lists the tools, and
+      // finds that none declares an outputSchema.
+      expect(
+        result.checks.find((check) => check.id === OUTPUT_SCHEMA_CHECK),
+      ).toMatchObject({ status: "skipped", skipReason: "not-applicable" });
       // Readiness is advisory only: it never contributes to the verdict.
       expect(
         result.readiness.every((item) => item.severity === "warning"),
@@ -46,7 +57,7 @@ describe("MCPConformanceTest", () => {
       expect(result.categorySummary.prompts.passed).toBe(1);
       expect(result.categorySummary.resources.passed).toBe(1);
       expect(result.categorySummary.security.passed).toBe(2);
-      expect(result.categorySummary.transport.passed).toBe(7);
+      expect(result.categorySummary.transport.passed).toBe(6);
 
       // The run stamps WHICH questions it asked. Every check in today's pool is
       // scored by the frozen profile, so nothing is pending and the score is
@@ -66,8 +77,8 @@ describe("MCPConformanceTest", () => {
       expect(score.pending).toBe(0);
       // Nothing is pending, so every legacy-applicable check is scored,
       // `wire-schema-valid` included.
-      const legacyApplicable = result.checks.filter(
-        (check) => CHECK_ERAS[check.id].includes("legacy"),
+      const legacyApplicable = result.checks.filter((check) =>
+        appliesToThisServer(check.id),
       ).length;
       expect(score.applicable).toBe(legacyApplicable);
     } finally {
@@ -151,7 +162,6 @@ describe("MCPConformanceTest", () => {
         checkTimeout: 10_000,
         checkIds: [
           "server-sse-polling-session",
-          "server-accepts-multiple-post-streams",
           "server-sse-streams-functional",
         ],
       });
@@ -164,7 +174,6 @@ describe("MCPConformanceTest", () => {
       expect(result.passed).toBe(true);
       expect(statuses).toEqual({
         "server-sse-polling-session": "skipped",
-        "server-accepts-multiple-post-streams": "passed",
         "server-sse-streams-functional": "passed",
       });
     } finally {

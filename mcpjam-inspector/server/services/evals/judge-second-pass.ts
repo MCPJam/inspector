@@ -49,6 +49,7 @@
  * so a duplicate doorbell produces the same rows and the same reports.
  */
 
+import { CODE_SCORER_PREFIX } from "./sandbox-phases/code-score-family.js";
 import type {
   ResolvedScoreDefinition,
   StageEvidence,
@@ -84,11 +85,13 @@ import {
   buildHostedScoreContract,
   type HostedRubricChecksVerdictLike,
 } from "./score-rows.js";
+import type { HostedCustomJudgesVerdictLike } from "./custom-judge-rows.js";
 import {
   HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "./score-definitions.js";
 import { evaluateMultiTurnResults } from "./types.js";
+import { HOSTED_PLATFORM_GATE_SCORER_IDS } from "./platform-gate-rows.js";
 
 /** Iteration statuses that can still receive a derivation. */
 const DERIVABLE_STATUSES = new Set(["completed", "failed"]);
@@ -307,10 +310,23 @@ function readJudgeVerdict(
 export function readRubricChecksVerdict(
   metadata: Record<string, unknown> | undefined,
 ): HostedRubricChecksVerdictLike | undefined {
-  const verdict = metadata?.rubricChecksVerdict;
-  return typeof verdict === "object" && verdict !== null
-    ? (verdict as HostedRubricChecksVerdictLike)
-    : undefined;
+  return readStoredVerdict(metadata, "rubricChecksVerdict");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A server-written verdict object off iteration metadata, by key. Every
+ * field stays `unknown`; the row builders validate what they read.
+ */
+function readStoredVerdict(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, unknown> | undefined {
+  const verdict = metadata?.[key];
+  return isRecord(verdict) ? verdict : undefined;
 }
 
 /**
@@ -513,6 +529,8 @@ export function deriveIterationPayload(args: {
   attributionVerdict: MetadataAttributionVerdictMetadata | undefined;
   /** Goal-completion channel only: its advisory rows ride this job's write. */
   rubricChecksVerdict?: HostedRubricChecksVerdictLike;
+  /** Same channel and rule as `rubricChecksVerdict`. */
+  customJudgesVerdict?: HostedCustomJudgesVerdictLike;
 }): { stage: Record<string, unknown>; scores?: unknown[]; config?: unknown } {
   const { iteration, judgeVerdict, attributionVerdict } = args;
   const metadata = iteration.metadata ?? {};
@@ -617,7 +635,19 @@ export function deriveIterationPayload(args: {
   // definitions: the stored row orphaned under a new hash, and a definition
   // (the arguments scorer) with no row at all, which reads as an unresolved
   // gate at `enforce`.
-  const storedTools = storedToolScorerDefinitions(metadata.evaluationConfig);
+  const storedTools = storedScorerDefinitions(
+    metadata.evaluationConfig,
+    TOOL_SCORER_IDS,
+  );
+  // The platform rows (tool errors, iteration error, widget checks) are also
+  // first-pass rows this pass cannot regrade: carry their definitions as
+  // stored, for the same reason. None stored means the first pass declared
+  // none, and this pass declares none either.
+  const storedPlatformGates =
+    storedScorerDefinitions(
+      metadata.evaluationConfig,
+      HOSTED_PLATFORM_GATE_SCORER_IDS,
+    ) ?? [];
 
   const { scores, evaluationConfig: builtConfig } = buildHostedScoreContract({
     ...(predicateRows.length
@@ -669,12 +699,23 @@ export function deriveIterationPayload(args: {
     ...(args.rubricChecksVerdict
       ? { rubricChecksVerdict: args.rubricChecksVerdict }
       : {}),
+    ...(args.customJudgesVerdict
+      ? { customJudgesVerdict: args.customJudgesVerdict }
+      : {}),
   });
-  const evaluationConfig = storedTools?.length
-    ? buildEvaluationConfigSnapshot([
-        ...builtConfig.definitions,
-        ...storedTools,
-      ])
+  // EFTW-90: code evaluators ran once, in the first pass's grading box. Their
+  // rows stay as stored, so their definitions are carried the same way.
+  const storedCode =
+    storedScorerDefinitions(metadata.evaluationConfig, (id) =>
+      id.startsWith(CODE_SCORER_PREFIX),
+    ) ?? [];
+  const carried = [
+    ...(storedTools ?? []),
+    ...storedPlatformGates,
+    ...storedCode,
+  ];
+  const evaluationConfig = carried.length
+    ? buildEvaluationConfigSnapshot([...builtConfig.definitions, ...carried])
     : builtConfig;
   return scores.length > 0
     ? { stage, scores, config: evaluationConfig }
@@ -687,40 +728,45 @@ const TOOL_SCORER_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The `toolCalls:*` definitions the first pass stored, exactly as stored.
+ * The first pass's stored definitions for `scorerIds`, exactly as stored.
  *
  * `undefined` when there is no stored config to read, or one this build cannot
  * validate: the caller then falls back to declaring the scorer from the
- * authored case. An empty list is an answer — the first pass declared no
- * tool-call scorer — and is honoured as one.
+ * authored case. An empty list is an answer — the first pass declared none of
+ * these scorers — and is honoured as one.
  */
-function storedToolScorerDefinitions(
+function storedScorerDefinitions(
   evaluationConfig: unknown,
+  scorerIds: ReadonlySet<string> | ((scorerId: string) => boolean),
 ): ResolvedScoreDefinition[] | undefined {
+  const wanted =
+    typeof scorerIds === "function" ? scorerIds : (id: string) => scorerIds.has(id);
   const definitions = asRecord(evaluationConfig)?.definitions;
   if (!Array.isArray(definitions)) return undefined;
-  const tools: ResolvedScoreDefinition[] = [];
+  const found: ResolvedScoreDefinition[] = [];
   for (const value of definitions) {
     const scorerId = asRecord(value)?.scorerId;
-    if (typeof scorerId !== "string" || !TOOL_SCORER_IDS.has(scorerId)) {
+    if (typeof scorerId !== "string" || !wanted(scorerId)) {
       continue;
     }
     const parsed = resolvedScoreDefinitionSchema.safeParse(value);
     if (!parsed.success) return undefined;
-    tools.push(parsed.data);
+    found.push(parsed.data);
   }
-  return tools;
+  return found;
 }
 
 /**
- * Whether the FIRST pass declared `toolCalls:match` for this case.
+ * Whether the FIRST pass found expected calls for this case.
  *
- * It declares the scorer when the matcher's expected-call list is non-empty
- * (`hostedScoreDefinitionInputs`), so this asks the same matcher for that list,
- * over the turns the runner resolves. The list does not depend on which calls
+ * It declares `toolCalls:match` and `toolCalls:arguments` when the matcher's
+ * expected-call list is non-empty (`hostedScoreDefinitionInputs`), so this
+ * asks the same matcher for that list, over the turns the runner resolves. The list does not depend on which calls
  * were made, which is why none are passed: pinned turns and negative tests
  * contribute nothing, and every other turn's expectations count, not only the
- * first turn's.
+ * first turn's. A negative or capped case with no expected call declares
+ * `toolCalls:match` alone, from the `isNegativeTest` and `matchOptions` this
+ * pass forwards beside this answer.
  *
  * The raw `expectedToolCalls` this replaced is undefined on a steps-authored
  * case, whose expectations live in its steps. Reading it dropped the definition
@@ -911,15 +957,21 @@ export async function runJudgeSecondPass(
       !goalCompletionFailed
     ) {
       const rubricChecksVerdict = readRubricChecksVerdict(iteration.metadata);
+      const customJudgesVerdict = readStoredVerdict(
+        iteration.metadata,
+        "customJudgesVerdict",
+      );
       const { stage, scores, config } = deriveIterationPayload({
         iteration,
         mode,
         judgeVerdict,
         attributionVerdict: undefined,
         ...(rubricChecksVerdict ? { rubricChecksVerdict } : {}),
+        ...(customJudgesVerdict ? { customJudgesVerdict } : {}),
       });
-      if (Object.keys(stage).length > 0) {
-        const fields = stageFields(stage);
+      const hasStage = Object.keys(stage).length > 0;
+      if (hasStage || scores) {
+        const fields = hasStage ? stageFields(stage) : {};
         try {
           const result = await ports.applyDerivation(iteration.iterationId, {
             goalCompletionJobId,

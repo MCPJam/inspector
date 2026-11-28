@@ -1,10 +1,9 @@
 import { useState, useRef, useEffect } from "react";
-import { FlaskConical, Pin, MoreVertical, User } from "lucide-react";
+import { Pin, MoreVertical, Save, User } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { Input } from "@mcpjam/design-system/input";
@@ -28,17 +27,27 @@ import {
 } from "@/lib/scenario-client-style";
 import { CHAT_HISTORY_STRONG_BG_CLASS } from "./chat-history-theme";
 import { sessionEffortSuffix } from "@/components/connection/share-usage/session-client-model";
+import {
+  showSessionActionFailure,
+  showSessionActionSuccess,
+  type SessionRowAction,
+} from "./session-action-feedback";
 
-function formatChatHistoryModelLabel(
+export function formatChatHistoryModelLabel(
   session: ChatHistorySession,
+  /** Names for models the static list does not know, e.g. hosted ones. */
+  modelName?: (modelId: string) => string | undefined,
 ): string | null {
   const raw = session.modelId?.trim();
   if (!raw) return null;
   // Plus the effort the session's last turn ran at (" · High").
-  return `${getModelById(raw)?.name ?? raw}${sessionEffortSuffix(
+  return `${modelName?.(raw) ?? getModelById(raw)?.name ?? raw}${sessionEffortSuffix(
     session.modelSelection,
   )}`;
 }
+
+const ROW_ICON_BUTTON_CLASS =
+  "flex size-5 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 disabled:pointer-events-none disabled:opacity-50";
 
 function formatRelativeTime(timestamp: number): string {
   const now = Date.now();
@@ -88,6 +97,16 @@ interface ChatHistoryRowProps {
   onConvertToTestCase?: (session: ChatHistorySession) => void;
   /** Project list only: avatar for another member's shared thread. */
   projectThreadOwner?: ProjectThreadOwnerAvatar;
+  /** Replaces the title, e.g. a column row named by its model. */
+  titleOverride?: string;
+  /** Replaces the model label, e.g. a multi-model session's lineup. */
+  labelOverride?: string;
+  /** Multi-model sessions are not shared to a project. */
+  hideShare?: boolean;
+  /** Overrides "Archive" for rows that archive more than one chat. */
+  archiveLabel?: string;
+  /** A row that only opens its chat, e.g. a column of a multi-model session. */
+  hideMenu?: boolean;
   actions: {
     rename: (sessionId: string, customTitle: string) => Promise<void>;
     archive: (sessionId: string) => Promise<void>;
@@ -112,6 +131,11 @@ export function ChatHistoryRow({
   canConvertToTestCase = false,
   onConvertToTestCase,
   projectThreadOwner,
+  titleOverride,
+  labelOverride,
+  hideShare = false,
+  archiveLabel = "Archive",
+  hideMenu = false,
   actions,
 }: ChatHistoryRowProps) {
   const [relativeTime, setRelativeTime] = useState(
@@ -139,11 +163,12 @@ export function ChatHistoryRow({
   }, [isRenaming]);
 
   const title =
+    titleOverride ||
     session.customTitle ||
     session.firstMessagePreview.slice(0, 60) ||
     "Untitled chat";
 
-  const modelLabel = formatChatHistoryModelLabel(session);
+  const modelLabel = labelOverride ?? formatChatHistoryModelLabel(session);
 
   const ownerAvatarTooltip =
     projectThreadOwner?.status === "show"
@@ -197,11 +222,22 @@ export function ChatHistoryRow({
   };
 
   const runAction = async (
-    action: "archive" | "unarchive" | "pin" | "unpin" | "share" | "unshare",
+    action: SessionRowAction,
     operation: () => Promise<void>,
   ) => {
-    await operation();
+    try {
+      await operation();
+    } catch (error) {
+      showSessionActionFailure(action, error);
+      return;
+    }
     await onActionComplete?.({ action, session });
+    showSessionActionSuccess(action, {
+      undoArchive: async () => {
+        await actions.unarchive(session._id);
+        await onActionComplete?.({ action: "unarchive", session });
+      },
+    });
   };
 
   const handleClick = () => {
@@ -212,7 +248,8 @@ export function ChatHistoryRow({
     if (isStreaming || isActive || isRenaming) return;
     onPrefetch?.(session);
   };
-  const canManageProjectSharing = isAuthenticated && sharedThreadsEnabled;
+  const canManageProjectSharing =
+    isAuthenticated && sharedThreadsEnabled && !hideShare;
 
   if (isRenaming) {
     const renameField = (
@@ -245,7 +282,7 @@ export function ChatHistoryRow({
 
   const rowMain = (
     <div
-      className={`group relative flex min-w-0 w-full max-w-full items-center gap-1.5 overflow-hidden rounded-md py-1.5 pl-0 pr-2 text-xs cursor-pointer transition-colors has-[[data-slot=dropdown-menu-trigger][data-state=open]]:[&_.chat-history-time]:opacity-0 has-[[data-slot=dropdown-menu-trigger]:focus-visible]:[&_.chat-history-time]:opacity-0 ${
+      className={`group relative flex min-w-0 w-full max-w-full items-center gap-1.5 overflow-hidden rounded-md py-1.5 pl-0 pr-2 text-xs cursor-pointer transition-colors ${
         isActive
           ? CHAT_HISTORY_STRONG_BG_CLASS[hostStyleFamily]
           : "hover:bg-accent/50"
@@ -316,33 +353,47 @@ export function ChatHistoryRow({
                   type="button"
                   data-testid="chat-history-promote-to-test-case"
                   disabled={isStreaming}
-                  aria-label="Promote to test case"
-                  className="flex size-5 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                  aria-label="Save as test case"
+                  className={ROW_ICON_BUTTON_CLASS}
                   onClick={(e) => {
                     e.stopPropagation();
                     onConvertToTestCase(session);
                   }}
                 >
-                  <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+                  <Save className="h-3.5 w-3.5" aria-hidden />
                 </button>
               </span>
             </TooltipTrigger>
-            <TooltipContent side="right">Promote to test case</TooltipContent>
+            <TooltipContent side="right">Save as test case</TooltipContent>
           </Tooltip>
         ) : null}
-        <div className="relative flex h-4 w-8 shrink-0 items-center justify-end tabular-nums [@media(pointer:coarse)]:w-auto [@media(pointer:coarse)]:gap-1">
-          <span className="chat-history-time pointer-events-none text-[10px] text-muted-foreground transition-opacity [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:flex [@media(pointer:fine)]:items-center [@media(pointer:fine)]:justify-end [@media(pointer:fine)]:group-hover:opacity-0">
-            {relativeTime}
-          </span>
+        <span className="chat-history-time w-7 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">
+          {relativeTime}
+        </span>
+        {hideMenu ? null : (
           <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenuTrigger
               disabled={isStreaming}
-              className="flex items-center justify-end rounded p-0.5 outline-none transition-opacity hover:bg-accent data-[state=open]:pointer-events-auto data-[state=open]:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 [@media(pointer:fine)]:pointer-events-none [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:z-10 [@media(pointer:fine)]:opacity-0 [@media(pointer:fine)]:group-hover:pointer-events-auto [@media(pointer:fine)]:group-hover:opacity-100 [@media(pointer:coarse)]:pointer-events-auto [@media(pointer:coarse)]:opacity-100"
+              aria-label="Session actions"
+              className={ROW_ICON_BUTTON_CLASS}
               onClick={(e) => e.stopPropagation()}
             >
-              <MoreVertical className="h-3.5 w-3.5" />
+              <MoreVertical className="h-3.5 w-3.5" aria-hidden />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
+            <DropdownMenuContent
+              align="end"
+              className="w-52"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {canConvertToTestCase && onConvertToTestCase ? (
+                <>
+                  <DropdownMenuItem
+                    onClick={() => onConvertToTestCase(session)}
+                  >
+                    Save as test case
+                  </DropdownMenuItem>
+                </>
+              ) : null}
               <DropdownMenuItem
                 onClick={() => {
                   setRenameValue(session.customTitle || "");
@@ -363,7 +414,6 @@ export function ChatHistoryRow({
 
               {canManageProjectSharing && (
                 <>
-                  <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onClick={async () =>
                       session.directVisibility === "project"
@@ -377,12 +427,11 @@ export function ChatHistoryRow({
                   >
                     {session.directVisibility === "project"
                       ? "Unshare"
-                      : "Share to project"}
+                      : "Add to Shared Sessions"}
                   </DropdownMenuItem>
                 </>
               )}
 
-              <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={async () =>
                   session.status === "active"
@@ -394,11 +443,11 @@ export function ChatHistoryRow({
                       )
                 }
               >
-                {session.status === "active" ? "Archive" : "Unarchive"}
+                {session.status === "active" ? archiveLabel : "Unarchive"}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        </div>
+        )}
       </div>
     </div>
   );

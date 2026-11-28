@@ -66,6 +66,23 @@ describe.skipIf(!RUN)("browserd Chromium adapter — real browser", () => {
     const live = await driver.currentStateToken(undefined);
     expect(live?.urlHash).toBe(nav.stateToken?.urlHash);
   }, 60_000);
+
+  it("scopes text and a11y observations to a selector in Playwright's syntax", async () => {
+    const page = `data:text/html,${encodeURIComponent(
+      '<!doctype html><title>t</title><body><div role="dialog" aria-label="Add server">' +
+        "<p>Step 2 of 2</p><button>Add</button></div></body>",
+    )}`;
+    await driver.execute({ commandId: "n2", source: "chat", action: { kind: "navigate", url: page } });
+    const observe = (commandId: string, mode: "text" | "a11y", rootSelector: string) =>
+      driver.execute({ commandId, source: "chat", action: { kind: "observe", mode, rootSelector, filter: "all" } });
+
+    const step = await observe("t1", "text", 'role=dialog >> text="Step 2 of 2"');
+    expect((step.output as { text: string }).text).toBe("Step 2 of 2");
+    const tree = await observe("a1", "a11y", 'role=dialog[name="Add server"]');
+    expect((tree.output as { a11y: string }).a11y).toContain('button "Add"');
+    const missing = await observe("t2", "text", "role=alertdialog");
+    expect(missing.error).toMatch(/^unknown_selector: /);
+  }, 60_000);
 });
 
 /**

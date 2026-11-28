@@ -38,6 +38,13 @@ export class SwarmSetupError extends Error {
      * server sign-in failure as that, rather than as missing prerequisites.
      */
     cause?: unknown,
+    /**
+     * True when `cause` came from a step talking to the target's MCP servers.
+     * Only then does the cause's origin say whose problem it is: a refused
+     * connection from a Convex lookup or the model call classifies the same
+     * way and is still MCPJam's.
+     */
+    readonly fromTargetServer = false,
   ) {
     super("Prerequisites unavailable", { cause });
     this.name = "SwarmSetupError";
@@ -164,10 +171,17 @@ export async function runSwarmSetupTurn(args: {
   };
   const results = new Map<number, unknown>();
   let connection: Awaited<ReturnType<JourneyManagerFactory>> | undefined;
+  // Set while setup waits on the target's MCP servers, so a failure there can
+  // be told apart from one in the Convex lookups before it or the model call
+  // after it.
+  let reachingTargetServer = false;
+  const onConnecting = () => {
+    reachingTargetServer = true;
+  };
   try {
     deadline.signal.throwIfAborted();
     connection = await abortable(
-      args.managerFactory(args.target).then(async (built) => {
+      args.managerFactory(args.target, { onConnecting }).then(async (built) => {
         if (deadline.signal.aborted) {
           await built.dispose();
           throw deadline.signal.reason;
@@ -177,6 +191,7 @@ export async function runSwarmSetupTurn(args: {
       deadline.signal,
     );
     if (!connection) throw new Error("Target connection unavailable");
+    reachingTargetServer = true;
     const catalog = (
       await abortable(
         Promise.all(
@@ -228,6 +243,7 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
       ...policy.admittedReadTools,
       ...policy.admittedWriteTools,
     ]);
+    reachingTargetServer = false;
     const tools = createSetupToolGate({
       tools: Object.fromEntries(
         Object.entries(prepared.allTools).filter(([name]) => allowed.has(name)),
@@ -316,7 +332,12 @@ Set ready false when any required prerequisite is missing. If nothing needs crea
           message: error instanceof Error ? error.message : String(error),
         })
       : undefined;
-    throw new SwarmSetupError(setup, platformFailure, error);
+    throw new SwarmSetupError(
+      setup,
+      platformFailure,
+      error,
+      reachingTargetServer,
+    );
   } finally {
     setup.durationMs = Date.now() - setup.startedAt;
     deadline.dispose();

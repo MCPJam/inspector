@@ -301,6 +301,7 @@ function RehearsalState({
       {waiting ? (
         <ReviewerHandover
           key={waiting.id}
+          canAct={canAct}
           attempt={waiting}
           handover={handover}
           scope={scope}
@@ -353,12 +354,14 @@ export function ReviewerSection({
   values,
   onAnswer,
   steps = [],
+  resultsRunId,
 }: Scope & {
   step: DirectoryFlowStep;
   values: AnswerValues;
   onAnswer: (key: string, value: AnswerValues[string]) => void;
   /** The latest run's results, where the identity check's answer is. */
   steps?: readonly PlacedStep[];
+  resultsRunId?: string | null;
 }) {
   const scope = { projectId, submissionId };
   const credentials = useReviewerCredentials(scope);
@@ -368,7 +371,9 @@ export function ReviewerSection({
   const attempt = rehearsal.attempt ?? null;
   const here = Boolean(credentials.saved || savedHere);
   const signIn = rehearsalSignIn(here ? credentials.names : null, attempt);
-  const path = reviewerPathRows(attempt, steps);
+  const attemptRun = attempt?.state === "running" ? attempt.currentRunId : attempt?.runIds.at(-1);
+  const matchingSteps = !attempt || (attemptRun && attemptRun === resultsRunId) ? steps : [];
+  const path = reviewerPathRows(attempt, matchingSteps);
   const evidence = useRunRecording(path, attempt?.state === "running");
   const handover = handoverOf(attempt);
   const loading =
@@ -387,8 +392,7 @@ export function ReviewerSection({
         <span className="text-sm font-medium text-foreground">
           Reviewer path
         </span>
-        Tested as the reviewer, from a clean browser. Never on your own
-        connection.
+        Rehearse sign-in and check which account your server sees.
       </p>
       {loading ? (
         <p className="text-sm text-muted-foreground">
@@ -465,7 +469,7 @@ export function ReviewerPath({
 }: {
   flow: DirectoryFlow;
   step: DirectoryFlowStep;
-  view: Pick<SubmissionView, "id" | "projectId" | "steps">;
+  view: Pick<SubmissionView, "id" | "projectId" | "steps" | "resultsRunId">;
   session: Pick<DirectorySubmissionSession, "values" | "setAnswer">;
 }) {
   if (REVIEWER_STEPS[flow.id] !== step.id) return null;
@@ -477,6 +481,7 @@ export function ReviewerPath({
       submissionId={view.id}
       values={session.values}
       onAnswer={session.setAnswer}
+      resultsRunId={view.resultsRunId}
       steps={view.steps}
     />
   );

@@ -1226,6 +1226,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   // first tool execution), never at connect/list_tools.
   const bearer = await context.getBearerToken();
   if (!bearer.ok) {
+    context.onGuestMintFailed?.();
     return toolError(
       describeGuestMintFailure(bearer.failure),
       guestMintErrorContent(bearer.failure)
@@ -1240,8 +1241,8 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     // Declared on every eval-run launch this call may make, so a run started
     // by an agent reads as MCP rather than as the generic API badge every
     // hosted launch used to show. `client` names WHICH agent, when the request
-    // said; see `PlatformToolContext.callerUserAgent` on why it is the
-    // request's user-agent and not the `initialize` handshake's `clientInfo`.
+    // said: its own `clientInfo.name` when this request carries one, else its
+    // user-agent (see `PlatformToolContext.callerUserAgent`).
     //
     // Set on the CLIENT rather than on the operation's input, deliberately: an
     // operation's `inputSchema` is exposed verbatim as the MCP tool's own
@@ -1249,7 +1250,9 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     // choose its own badge.
     launcher: {
       kind: "mcp",
-      ...(context.callerUserAgent ? { client: context.callerUserAgent } : {}),
+      ...((context.callerClientName ?? context.callerUserAgent)
+        ? { client: context.callerClientName ?? context.callerUserAgent }
+        : {}),
     },
   });
 

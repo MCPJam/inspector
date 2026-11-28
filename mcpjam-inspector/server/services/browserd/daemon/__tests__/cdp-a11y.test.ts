@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   readAxForest,
   readAxTree,
@@ -213,6 +213,35 @@ describe("cdp-a11y — resolving a root selector", () => {
       "DOM.querySelector": { nodeId: 0 },
     });
     expect(await resolveBackendNodeId(cdp, "#gone")).toBeNull();
+  });
+
+  // What CDP answers a selector in Playwright's syntax, verbatim from Chromium.
+  const refused = new Error("Protocol error (DOM.querySelector): DOM Error while querying");
+
+  it("asks `otherwise` about a selector CDP refuses, and only then", async () => {
+    const otherwise = vi.fn(async () => 77);
+    const playwrightOnly = fakeCdp({
+      "DOM.getDocument": { root: { nodeId: 1 } },
+      "DOM.querySelector": refused,
+    });
+    expect(await resolveBackendNodeId(playwrightOnly.cdp, "role=dialog", otherwise)).toBe(77);
+    expect(otherwise).toHaveBeenCalledWith("role=dialog");
+    // CSS that matches nothing is CDP's answer; Playwright's engine, which
+    // also looks inside shadow roots, never gets a second say.
+    const unmatched = fakeCdp({
+      "DOM.getDocument": { root: { nodeId: 1 } },
+      "DOM.querySelector": { nodeId: 0 },
+    });
+    expect(await resolveBackendNodeId(unmatched.cdp, "#gone", otherwise)).toBeNull();
+    expect(otherwise).toHaveBeenCalledTimes(1);
+  });
+
+  it("matches nothing for a refused selector when there is no `otherwise`", async () => {
+    const { cdp } = fakeCdp({
+      "DOM.getDocument": { root: { nodeId: 1 } },
+      "DOM.querySelector": refused,
+    });
+    expect(await resolveBackendNodeId(cdp, "role=dialog")).toBeNull();
   });
 });
 

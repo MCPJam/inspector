@@ -74,7 +74,6 @@ afterEach(() => {
 
 describe.each([
   { name: "Events", Route: EventsRoute, tab: "events-tab" },
-  { name: "Triggers", Route: EventTriggersRoute, tab: "triggers-tab" },
 ])("$name rollout", ({ Route, tab }) => {
   it("waits on direct navigation and opens when the flag resolves true", () => {
     const { rerender } = render(<MemoryRouter><Route /></MemoryRouter>);
@@ -95,6 +94,27 @@ describe.each([
     expect(screen.queryByTestId(tab)).not.toBeInTheDocument();
   });
 
+  it("opens Playground from a caniuse link only when Events is unavailable", () => {
+    const link = () => (
+      <MemoryRouter initialEntries={["/events?fallback=playground"]}>
+        <Route />
+      </MemoryRouter>
+    );
+    const { rerender } = render(link());
+    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
+
+    state.flag = true;
+    rerender(link());
+    expect(screen.getByTestId(tab)).toBeInTheDocument();
+
+    state.flag = false;
+    rerender(link());
+    expect(screen.getByTestId("navigate")).toHaveAttribute(
+      "data-to",
+      routePaths.playground,
+    );
+  });
+
   it("closes an open workspace when the flag turns off", () => {
     state.flag = true;
     const { rerender } = render(<MemoryRouter><Route /></MemoryRouter>);
@@ -103,5 +123,18 @@ describe.each([
     rerender(<MemoryRouter><Route /></MemoryRouter>);
     expect(screen.queryByTestId(tab)).not.toBeInTheDocument();
     expect(screen.getByTestId("navigate")).toBeInTheDocument();
+  });
+});
+
+
+describe("legacy Triggers navigation", () => {
+  it("redirects into Playground Events and preserves the selected rule", () => {
+    state.flag = true;
+    render(<MemoryRouter initialEntries={["/triggers?triggerId=saved-rule"]}><EventTriggersRoute /></MemoryRouter>);
+    expect(screen.getByTestId("navigate")).toHaveAttribute("data-to", "/playground?panel=events&background=1&triggerId=saved-rule");
+  });
+  it("waits for rollout hydration before redirecting", () => {
+    render(<MemoryRouter><EventTriggersRoute /></MemoryRouter>);
+    expect(screen.queryByTestId("navigate")).not.toBeInTheDocument();
   });
 });

@@ -93,6 +93,13 @@ const PINNED_HOSTED_CRITERION_IDS: Record<string, string> = {
     "toolResultContains-e9027a7d0d3d",
   "toolResultMatchesSchema — object root":
     "toolResultMatchesSchema-bb67e721141b",
+  "toolResultMatchesSchema — each tool's declared output schema":
+    "toolResultMatchesSchema-3c92dbee53de",
+  "toolResultMatchesSchema — a boolean schema":
+    "toolResultMatchesSchema-38ab03f7e763",
+  // The library tag is policy, stripped like role: the same id as the
+  // untagged "noToolErrors — no fields beyond type".
+  "noToolErrors — added from a library evaluator": "noToolErrors-037586125822",
   "toolResultMatchesSchema — array root (legal under 2026-07-28)":
     "toolResultMatchesSchema-48c37c32583d",
   "toolResultSizeUnder — all tools": "toolResultSizeUnder-b2b683d7a85c",

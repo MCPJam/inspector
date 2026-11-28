@@ -2382,9 +2382,11 @@ iterations. Ten cases, nine always passing and one always failing, passes a 90%
 suite-wide bar and fails a 0.9 per-case one, so dividing a percentage by 100
 moves the bar for every suite with more than one case.
 
-The iteration flags differ the same way: `--min-iterations` RAISES a case's own
-count and `--iterations` REPLACES it, so a case configured for 7 runs 7 times
-under a floor of 3 and 3 times under a default of 3.
+The iteration flags differ the same way: `--min-iterations` is a floor that
+RAISES a case's own count, and `--iterations` is a default that applies only to
+cases that set no count of their own. A case set to 2 runs 3 times under a
+minimum of 3, and 2 times under a default of 3. A case set to 7 runs 7 times
+under either rule.
 
 Passing both flags of a pair is a usage error. The CLI and MCP read the suite's
 criterion first and refuse iteration fields that the suite does not use.

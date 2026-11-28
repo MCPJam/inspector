@@ -45,6 +45,12 @@ export type PreferencesState = {
    * Disabling it prevents new automatic connections and reconnections.
    */
   autoConnectServersEnabled: boolean;
+  /**
+   * When enabled (off by default), Playground, Evaluate, the OAuth/XAA
+   * debuggers and Swarms collapse the app sidebar to its icon rail on entry.
+   * Per-device; the Appearance settings page writes here.
+   */
+  autoCollapseSidebarEnabled: boolean;
   setThemeMode: (mode: ThemeMode) => void;
   setThemePreset: (preset: ThemePreset) => void;
   setHostStyle: (hostStyle: ScenarioHostStyle) => void;
@@ -53,6 +59,7 @@ export type PreferencesState = {
   ) => void;
   setChatUiOverride: (next: ChatUiOverride | undefined) => void;
   setAutoConnectServersEnabled: (next: boolean) => void;
+  setAutoCollapseSidebarEnabled: (next: boolean) => void;
 };
 
 export const THEME_MODE_KEY = "themeMode";
@@ -62,6 +69,7 @@ export const HOST_CAPABILITIES_OVERRIDE_KEY =
   "mcpjam-ui-playground-host-capabilities-override";
 export const CHAT_UI_OVERRIDE_KEY = "mcpjam-ui-playground-chat-ui-override";
 export const AUTO_CONNECT_SERVERS_KEY = "mcpjam-auto-connect-servers";
+export const AUTO_COLLAPSE_SIDEBAR_KEY = "mcpjam-auto-collapse-sidebar";
 
 function getStoredHostStyle(): ScenarioHostStyle {
   if (typeof window === "undefined") return DEFAULT_HOST_STYLE.id;
@@ -86,6 +94,16 @@ function getStoredAutoConnectServersEnabled(): boolean {
     return raw === "true";
   } catch (error) {
     console.warn("Failed to read persisted auto-connect setting:", error);
+    return false;
+  }
+}
+
+function getStoredAutoCollapseSidebarEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(AUTO_COLLAPSE_SIDEBAR_KEY) === "true";
+  } catch (error) {
+    console.warn("Failed to read persisted sidebar auto-collapse:", error);
     return false;
   }
 }
@@ -157,6 +175,8 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
         : getStoredChatUiOverride(),
     autoConnectServersEnabled:
       init?.autoConnectServersEnabled ?? getStoredAutoConnectServersEnabled(),
+    autoCollapseSidebarEnabled:
+      init?.autoCollapseSidebarEnabled ?? getStoredAutoCollapseSidebarEnabled(),
     setThemeMode: (mode) => {
       try {
         localStorage.setItem(THEME_MODE_KEY, mode);
@@ -231,5 +251,16 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
         console.warn("Failed to persist auto-connect setting:", error);
       }
       set({ autoConnectServersEnabled: next });
+    },
+    setAutoCollapseSidebarEnabled: (next) => {
+      try {
+        localStorage.setItem(
+          AUTO_COLLAPSE_SIDEBAR_KEY,
+          next ? "true" : "false",
+        );
+      } catch (error) {
+        console.warn("Failed to persist sidebar auto-collapse:", error);
+      }
+      set({ autoCollapseSidebarEnabled: next });
     },
   }));

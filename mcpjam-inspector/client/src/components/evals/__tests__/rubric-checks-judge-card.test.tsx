@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import {
   RUBRIC_CHECKS_GOAL_OFF_COPY,
   RubricChecksJudgeCard,
@@ -16,6 +17,14 @@ const judgesCapabilities = {
     calibration: "unavailable",
   },
 } as unknown as NonNullable<SuiteCapabilities["judges"]>;
+
+// The backend advertises yes/no by kind; its template version stays 1.
+const withYesNo = {
+  rubricChecks: {
+    ...judgesCapabilities.rubricChecks,
+    questionKinds: ["choice", "score", "yesno"],
+  },
+} as NonNullable<SuiteCapabilities["judges"]>;
 
 const criteria = [
   { id: "cites", label: "Cites a source" },
@@ -45,6 +54,35 @@ describe("RubricChecksJudgeCard", () => {
     // Wording edits churn the row identity, and the card says so.
     expect(screen.getByTestId("rubric-checks-identity-hint").textContent).toBe(
       RUBRIC_CHECK_QUESTION_IDENTITY_HINT,
+    );
+  });
+
+  it("offers Yes/no questions only where the deployment lists the kind", () => {
+    const { rerender } = render(
+      <RubricChecksJudgeCard
+        judgeConfig={undefined}
+        onJudgeConfigChange={vi.fn()}
+        judgesCapabilities={judgesCapabilities}
+        criteria={criteria}
+        goalJudgeOff={false}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Yes/no" }),
+    ).not.toBeInTheDocument();
+    const onChange = vi.fn();
+    rerender(
+      <RubricChecksJudgeCard
+        judgeConfig={undefined}
+        onJudgeConfigChange={onChange}
+        judgesCapabilities={withYesNo}
+        criteria={criteria}
+        goalJudgeOff={false}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Yes/no" }));
+    expect(onChange.mock.calls[0][0].rubricChecks.questions[0].kind).toBe(
+      "yesno",
     );
   });
 
@@ -170,5 +208,72 @@ describe("RubricChecksJudgeCard", () => {
     expect(onChange.mock.calls[0][0].rubricChecks.questions[0].pass).toEqual({
       anyOf: ["warm"],
     });
+  });
+});
+
+describe("RubricChecksJudgeCard yes/no and limits", () => {
+  const yesNo = (id: string, answer: "yes" | "no"): RubricCheckQuestion => ({
+    id,
+    kind: "yesno",
+    label: `Label ${id}`,
+    instructions: "Did the answer present a result no tool returned?",
+    pass: { answer },
+  });
+
+  function renderCard(questions: RubricCheckQuestion[]) {
+    return render(
+      <RubricChecksJudgeCard
+        judgeConfig={{ rubricChecks: { questions } }}
+        onJudgeConfigChange={vi.fn()}
+        judgesCapabilities={withYesNo}
+        criteria={[]}
+        goalJudgeOff={false}
+      />,
+    );
+  }
+
+  it("says an unsure answer counts as No when the question passes on No", () => {
+    renderCard([yesNo("invented", "no"), yesNo("warned", "yes")]);
+    expect(
+      screen.getByTestId("rubric-question-1-unsure-note"),
+    ).toHaveTextContent(
+      "An unsure answer counts as No, so this question passes when the grader can't tell.",
+    );
+    expect(
+      screen.queryByTestId("rubric-question-2-unsure-note"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("counts library questions toward the limit and says why Add is off", () => {
+    const library = {
+      ...yesNo("reports-tool-errors-reports-failures", "yes"),
+      evaluator: { id: "reports-tool-errors", version: 1 },
+    };
+    const own = Array.from({ length: 9 }, (_, i) => yesNo(`mine-${i}`, "yes"));
+    renderCard([library, ...own]);
+    expect(
+      screen.getByText(/including 1 from library evaluators/),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("rubric-checks-at-cap")).toHaveTextContent(
+      "All 10 questions are in use, 1 by library evaluators. Remove a question here or an evaluator above to add another.",
+    );
+    for (const name of ["Yes/no", "Choice", "Score"]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    // The library question is edited under its evaluator, not here.
+    expect(
+      screen.queryByDisplayValue("Label reports-tool-errors-reports-failures"),
+    ).toBeNull();
+  });
+
+  it("shows a kind from a newer backend by name, with no pass-line editor or error", () => {
+    // As the wire delivers it: this build's types do not know the kind.
+    const ranking: RubricCheckQuestion = JSON.parse(
+      JSON.stringify({ ...yesNo("rank", "yes"), kind: "ranking", pass: {} }),
+    );
+    renderCard([ranking]);
+    expect(screen.getByText("ranking")).toBeInTheDocument();
+    expect(screen.queryByText("Levels, lowest first.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

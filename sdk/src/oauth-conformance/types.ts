@@ -357,6 +357,8 @@ export type TrackedRequestFn = (
 
 export interface AuthorizationCodeResult {
   code: string;
+  /** RFC 9207 `iss` from the callback, when the authorization server sent one. */
+  iss?: string;
 }
 
 export interface ClientCredentialsResult {

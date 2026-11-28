@@ -28,16 +28,25 @@ import {
   type RawHttpCheckContext,
 } from "./types.js";
 import {
+  legacyInitialize,
+} from "./legacy-handshake.js";
+import {
+  SERVER_INFO_META_KEY,
+  isWellFormedIdentity,
+  readServerIdentityStamp,
+} from "./server-identity.js";
+import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   jsonRpcError,
   jsonRpcResult,
   legacyHeaders,
-  legacyInitialize,
   logRecords,
   rawHeadersProbe,
+  mirroredToolCall,
   modernHeaders,
   modernRequestBody,
   rawRequest,
+  walkToolsList,
 } from "./raw-http.js";
 
 /** Capabilities whose 2025-era mechanics were replaced in the 2026 revision. */
@@ -298,7 +307,13 @@ export async function collectClientAdvice(
 ): Promise<MCPReadinessOutcome[]> {
   const warnings: MCPReadinessOutcome[] = [];
 
-  if (adviceSelected(ctx.config, "readiness-tool-order-deterministic")) {
+  // The deterministic-order SHOULD first appears in 2026-07-28; the 2025 tools
+  // pages say nothing about order, so an older run gets no advice and no
+  // repeat listing.
+  if (
+    ctx.config.era === "modern" &&
+    adviceSelected(ctx.config, "readiness-tool-order-deterministic")
+  ) {
     try {
       // Bypass the cache: a cached first listing would make any server look
       // stable, and the advice can now be reported as met.
@@ -419,20 +434,41 @@ async function sessionTerminationAdvice(
     );
   }
 
-  const { result, sessionId } = await legacyInitialize(ctx);
+  const { result, sessionId, negotiatedVersion, versionStop, stop } =
+    await legacyInitialize(ctx);
   if (result.status < 200 || result.status >= 300 || !sessionId) {
     // No session to terminate — nothing to advise on.
     return undefined;
   }
-  const deleteResult = await rawRequest(ctx, {
+  // The version header carries the version the server answered, even one
+  // MCPJam does not speak: a server may refuse the one the run asked for, and
+  // a 400 to that would be MCPJam's mistake, not a termination problem.
+  const deleteRequest = rawRequest(ctx, {
     method: "DELETE",
     headers: legacyHeaders({
       protocolVersion:
-        ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
+        negotiatedVersion ??
+        versionStop?.answeredVersion ??
+        ctx.config.protocolVersion ??
+        DEFAULT_LEGACY_PROTOCOL_VERSION,
       sessionId,
     }),
     timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
   });
+  if (stop !== undefined) {
+    // The handshake did not end in a session on the run's version (another
+    // version, a refused `initialize`, or an `initialized` notification that
+    // never arrived), so the run grades nothing on this session. The DELETE
+    // still goes out, because ending the session is how a Streamable HTTP
+    // client disconnects, but its answer is not advice about this server.
+    try {
+      await deleteRequest;
+    } catch {
+      // Closing is all this DELETE is for here: a failure is no advice either.
+    }
+    return undefined;
+  }
+  const deleteResult = await deleteRequest;
   // The spec names exactly two answers: terminating the session, and 405 to
   // decline termination (MAY). It names no success code, so any 2xx counts as
   // terminated; every other answer is one the spec never offers.
@@ -522,6 +558,90 @@ async function protocolVersionHeaderAdvice(
 }
 
 /**
+ * What the Server Identity advice says about one `server/discover` result.
+ *
+ * `undefined` when it has nothing to say: an identity that is there but
+ * malformed is a defect Server Discover fails, so advising on it as well
+ * would report one thing twice.
+ */
+export function serverIdentityOutcome(
+  payload: Record<string, unknown>
+): MCPReadinessOutcome | undefined {
+  const identity = readServerIdentityStamp(payload);
+  if (identity === undefined) {
+    return warning(
+      "readiness-server-identity",
+      "SHOULD",
+      `The server did not say who it is: its server/discover result has no ${SERVER_INFO_META_KEY} in _meta. The spec says servers SHOULD include it in every result's _meta, unless configured not to, so a client can show and log which server answered`,
+      { metaKey: SERVER_INFO_META_KEY }
+    );
+  }
+  return isWellFormedIdentity(identity)
+    ? passed("readiness-server-identity", "SHOULD")
+    : undefined;
+}
+
+/**
+ * "Servers SHOULD include [`io.modelcontextprotocol/serverInfo`] in every
+ * result's `_meta`, unless specifically configured not to do so"
+ * (2026-07-28 basic/index.mdx:397-403). One result is read, the
+ * `server/discover` one: it is read-only, and it is the first thing a client
+ * sees of the server.
+ */
+async function serverIdentityAdvice(
+  ctx: RawHttpCheckContext
+): Promise<MCPReadinessOutcome | undefined> {
+  if (ctx.config.era !== "modern") {
+    // The 2025 revisions name the server in `InitializeResult.serverInfo`,
+    // which is required there. Nothing to advise.
+    return undefined;
+  }
+  const version = ctx.config.protocolVersion ?? "2026-07-28";
+  // The runner already asked on a raw-only pin; otherwise ask once here.
+  const result =
+    ctx.discover ??
+    (await rawRequest(ctx, {
+      headers: modernHeaders({
+        protocolVersion: version,
+        method: "server/discover",
+      }),
+      body: modernRequestBody({
+        id: 9402,
+        method: "server/discover",
+        protocolVersion: version,
+      }),
+      timeoutMs: Math.min(ctx.config.checkTimeout, 5_000),
+    }));
+  const payload = jsonRpcResult(result);
+  // No result to read (auth, an error, a refused pin) says nothing either way.
+  return payload === undefined ? undefined : serverIdentityOutcome(payload);
+}
+
+/** The `inputSchema` `toolName` declares in a `tools/list` read right now. */
+async function listedInputSchema(
+  ctx: RawHttpCheckContext,
+  toolName: string,
+  startId: number
+): Promise<unknown> {
+  const version = ctx.config.protocolVersion ?? "2026-07-28";
+  const walk = await walkToolsList({
+    startId,
+    request: ({ id, cursor }) =>
+      rawRequest(ctx, {
+        headers: modernHeaders({ protocolVersion: version, method: "tools/list" }),
+        body: modernRequestBody({
+          id,
+          method: "tools/list",
+          ...(cursor !== undefined ? { params: { cursor } } : {}),
+          protocolVersion: version,
+        }),
+        timeoutMs: ctx.config.checkTimeout,
+      }),
+  });
+  return walk.tools.find((entry) => entry.name === toolName)?.inputSchema;
+}
+
+/**
  * Log level filtering: call the operator's logging tool asking for logs at
  * `logProbe.level` (default `warning`) and look at what comes back.
  *
@@ -545,22 +665,34 @@ async function logLevelFilteringAdvice(
   }
   const level = probe.level ?? "warning";
   const version = ctx.config.protocolVersion ?? "2026-07-28";
-  const response = await rawRequest(ctx, {
-    headers: {
-      ...modernHeaders({
-        protocolVersion: version,
-        method: "tools/call",
-        name: probe.toolName,
+  // Sent as a conforming client sends it: with the `Mcp-Param-*` headers the
+  // tool asks for, and one retry after a fresh listing if they are refused.
+  const args = probe.arguments ?? {};
+  const response = await mirroredToolCall({
+    args,
+    inputSchema: async () =>
+      ctx.surface?.tools.find((tool) => tool.name === probe.toolName)
+        ?.inputSchema ?? (await listedInputSchema(ctx, probe.toolName, 9410)),
+    refreshInputSchema: () => listedInputSchema(ctx, probe.toolName, 9420),
+    send: (paramHeaders, attempt) =>
+      rawRequest(ctx, {
+        headers: {
+          ...modernHeaders({
+            protocolVersion: version,
+            method: "tools/call",
+            name: probe.toolName,
+          }),
+          ...paramHeaders,
+        },
+        body: modernRequestBody({
+          id: 9403 + attempt,
+          method: "tools/call",
+          params: { name: probe.toolName, arguments: args },
+          protocolVersion: version,
+          logLevel: level,
+        }),
+        timeoutMs: ctx.config.checkTimeout,
       }),
-    },
-    body: modernRequestBody({
-      id: 9403,
-      method: "tools/call",
-      params: { name: probe.toolName, arguments: probe.arguments ?? {} },
-      protocolVersion: version,
-      logLevel: level,
-    }),
-    timeoutMs: ctx.config.checkTimeout,
   });
 
   const result = jsonRpcResult(response);
@@ -620,6 +752,7 @@ export async function collectRawAdvice(
       "readiness-protocol-version-header-required",
       () => protocolVersionHeaderAdvice(ctx),
     ],
+    ["readiness-server-identity", () => serverIdentityAdvice(ctx)],
     ["readiness-log-level-filtering", () => logLevelFilteringAdvice(ctx)],
   ];
   // An advice left out never sends its probe, not just its result.

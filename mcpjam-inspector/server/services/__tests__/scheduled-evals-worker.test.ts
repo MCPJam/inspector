@@ -4,14 +4,29 @@ const prepareEvalRun = vi.fn();
 const loadSuiteHostConfig = vi.fn();
 const resolveEnvironmentForLaunch = vi.fn();
 const loadSuiteConnectionIdSets = vi.fn();
+const loadEvalRunAccountPlan = vi.fn().mockResolvedValue(null);
 
 vi.mock("../evals/compat-runtime.js", () => ({
   loadSuiteHostConfig: (...args: unknown[]) => loadSuiteHostConfig(...args),
 }));
+/** Follows renewals through `setAuth`, as `ConvexHttpClient` does. */
+class FakeConvexClient {
+  constructor(public bearer: string) {}
+  setAuth(token: string) {
+    this.bearer = token;
+  }
+}
+const setupClients: FakeConvexClient[] = [];
+
 vi.mock("../evals/route-helpers.js", () => ({
-  createConvexClient: (bearer: string) => ({ bearer }),
+  createConvexClient: (bearer: string) => {
+    const client = new FakeConvexClient(bearer);
+    setupClients.push(client);
+    return client;
+  },
 }));
 vi.mock("../evals/suite-account-choices.js", () => ({
+  loadEvalRunAccountPlan: (...args: unknown[]) => loadEvalRunAccountPlan(...args),
   loadSuiteConnectionIdSets: (...args: unknown[]) =>
     loadSuiteConnectionIdSets(...args),
 }));
@@ -51,6 +66,8 @@ import { platformFeeRefusalError } from "../evals/platform-fee-refusal";
 import { logger } from "../../utils/logger";
 import { serverDrain } from "../lifecycle/drain.js";
 import { createAuthorizedManager } from "../../routes/web/auth.js";
+import { getConvexBearerForDelegation } from "../../utils/v1-convex-token.js";
+import { bearerNow, type RunBearer } from "../../utils/run-bearer.js";
 
 const ENTERPRISE_POLICY_HOST = {
   mcpProfile: {
@@ -166,6 +183,95 @@ describe("executeClaimedRun setup failure", () => {
   });
 });
 
+describe("executeClaimedRun with the claim's job token", () => {
+  const T0 = 1_700_000_000_000;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let renewals: Array<Record<string, unknown>>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    renewals = [];
+    fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/renew")) {
+        renewals.push(JSON.parse(String(init.body)));
+        return Response.json({
+          ok: true,
+          credentials: { bearer: "job-token-2", bearerExpiresAt: T0 + 240_000 },
+        });
+      }
+      return Response.json({ ok: true });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(getConvexBearerForDelegation).mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    prepareEvalRun.mockReset();
+  });
+
+  const JOB_CLAIM = {
+    ...CLAIM,
+    leaseToken: "lease-1",
+    credentials: { bearer: "job-token-1", bearerExpiresAt: T0 + 120_000 },
+  };
+
+  it("runs on the claim's token, renews it while the run goes on, and stops renewing after", async () => {
+    let finish!: () => void;
+    let runBearer: RunBearer | undefined;
+    prepareEvalRun.mockImplementation(async (_manager, request) => {
+      runBearer = request.convexAuthToken;
+      return {
+        runId: "run-1",
+        suiteId: "suite-1",
+        execute: () => new Promise<void>((resolve) => (finish = resolve)),
+      };
+    });
+
+    const running = executeClaimedRun(JOB_CLAIM);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getConvexBearerForDelegation).not.toHaveBeenCalled();
+    expect(bearerNow(runBearer!)).toBe("job-token-1");
+    expect(vi.mocked(createAuthorizedManager).mock.calls.at(-1)?.[1]).toBe(
+      runBearer,
+    );
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(renewals).toEqual([{ triggerId: "trig-1", leaseToken: "lease-1" }]);
+    expect(bearerNow(runBearer!)).toBe("job-token-2");
+    expect(setupClients.at(-1)?.bearer).toBe("job-token-2");
+
+    finish();
+    await running;
+    const [completeUrl, init] = fetchMock.mock.calls.at(-1)!;
+    expect(completeUrl).toBe(
+      "https://convex.test/internal/v1/scheduled-eval-runs/complete",
+    );
+    expect(JSON.parse(String(init.body))).toMatchObject({ ok: true, runId: "run-1" });
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(renewals).toHaveLength(1);
+  });
+
+  it("mints the owner's token itself when the backend sends none", async () => {
+    prepareEvalRun.mockResolvedValue({
+      runId: "run-1",
+      suiteId: "suite-1",
+      execute: vi.fn().mockResolvedValue(undefined),
+    });
+    await executeClaimedRun(CLAIM);
+    expect(getConvexBearerForDelegation).toHaveBeenCalledWith(
+      "user_workos_1",
+      "org-1",
+    );
+    expect(prepareEvalRun.mock.calls[0][1].convexAuthToken).toBe("bearer");
+  });
+});
+
 describe("executeClaimedRun connection", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -198,13 +304,13 @@ describe("executeClaimedRun connection", () => {
     expect(connectOptions()).toMatchObject({ pluginComputerRuntime: false });
   });
 
-  it("runs on the schedule owner's saved accounts, read with the owner's bearer", async () => {
+  it("reads personal account preferences with the schedule owner's bearer", async () => {
     loadSuiteConnectionIdSets.mockResolvedValueOnce({ asana: ["dummy"] });
     await executeClaimedRun(CLAIM);
 
     expect(loadSuiteConnectionIdSets).toHaveBeenCalledWith(
       { bearer: "bearer" },
-      { suiteId: CLAIM.suiteId },
+      { suiteId: CLAIM.suiteId, serverIds: [] },
     );
     expect(connectOptions()).toMatchObject({
       connectionIdSets: { asana: ["dummy"] },
@@ -244,6 +350,11 @@ describe("executeClaimedRun connection", () => {
     loadSuiteHostConfig.mockResolvedValue(ENTERPRISE_POLICY_HOST);
 
     await executeClaimedRun({ ...CLAIM, environmentId: "env-1" });
+
+    expect(loadEvalRunAccountPlan).toHaveBeenCalledWith(
+      { bearer: "bearer" },
+      { suiteId: CLAIM.suiteId, serverIds: ["srv-1"] },
+    );
 
     expect(loadSuiteHostConfig).toHaveBeenCalledWith(
       { bearer: "bearer" },

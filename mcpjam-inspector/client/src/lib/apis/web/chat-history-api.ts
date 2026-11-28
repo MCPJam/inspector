@@ -1,9 +1,11 @@
+import type { ChatMultiModelColumn } from "@/shared/chat-v2";
 import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
 import { registerArtifactUrls } from "@/lib/artifact-urls";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import { WebApiError, requestIdOfResponse } from "./base";
 import type {
   McpToolResultImageRenderingPolicy,
@@ -37,6 +39,12 @@ export interface ChatHistorySession {
   /** The last turn's model selection, effort included; absent on older sessions. */
   modelSelection?: RequestedModelSelection | null;
   modelSource?: string;
+  /** Set when this chat is one column of a multi-model session. */
+  multiModel?: ChatMultiModelColumn & { removedAt?: number };
+  /** The saved client a client column ran in. */
+  hostId?: string;
+  /** The environment an environment column ran in. */
+  environmentId?: string;
   messageCount: number;
   version: number;
   startedAt: number;
@@ -58,6 +66,8 @@ export interface ChatHistoryListResponse {
   ok: boolean;
   personal: ChatHistorySession[];
   project: ChatHistorySession[];
+  /** Columns of the page's multi-model sessions that fell outside the page. */
+  multiModelSiblings?: ChatHistorySession[];
 }
 
 export interface ResumeConfig {
@@ -117,6 +127,8 @@ export interface ChatHistoryWidgetSnapshot {
 }
 
 export interface ChatHistoryTurnTrace {
+  runUnloadedToolCalls?: boolean;
+  engineVersion?: string;
   turnId: string;
   promptIndex: number;
   startedAt: number;
@@ -139,6 +151,8 @@ export interface ChatHistoryTurnTrace {
   pageToolsAtTurn?: MintedPageToolRecord[];
   /** Harness turns only: the MCP route the turn ran on, and why. */
   harnessMcpAtTurn?: HarnessMcpAtTurn;
+  /** The MCP event that started this turn; absent on every other turn. */
+  eventAtTurn?: EventAtTurn;
 }
 
 export interface ChatHistoryDetailResponse {
@@ -269,6 +283,7 @@ export async function listChatHistory(
     status: "active" | "archived";
     limit?: number;
     before?: number;
+    includeMultiModelSiblings?: boolean;
   },
   requestOptions?: ChatHistoryRequestOptions
 ): Promise<ChatHistoryListResponse> {
@@ -277,6 +292,8 @@ export async function listChatHistory(
   searchParams.set("status", params.status);
   if (params.limit) searchParams.set("limit", String(params.limit));
   if (params.before) searchParams.set("before", String(params.before));
+  if (params.includeMultiModelSiblings)
+    searchParams.set("includeMultiModelSiblings", "true");
 
   return webGet<ChatHistoryListResponse>(
     `/api/web/chat-history/list?${searchParams.toString()}`,
@@ -320,6 +337,56 @@ export async function getChatHistoryDetail(
   // older link to the same object reads through this one.
   registerArtifactUrls(detail);
   return detail;
+}
+
+/** Every saved column of a multi-model session, removed ones included. */
+export async function getMultiModelSessionGroup(
+  params: { groupId: string; projectId?: string },
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<{ ok: boolean; sessions: ChatHistorySession[] }> {
+  const searchParams = new URLSearchParams({ groupId: params.groupId });
+  if (params.projectId) searchParams.set("projectId", params.projectId);
+  return webGet(
+    `/api/web/chat-history/group?${searchParams.toString()}`,
+    requestOptions,
+  );
+}
+
+export type MultiModelGroupAction =
+  | "rename"
+  | "pin"
+  | "unpin"
+  | "archive"
+  | "unarchive";
+
+/** Rename, pin or archive every column of a multi-model session at once. */
+export async function chatHistoryGroupAction(
+  action: MultiModelGroupAction,
+  groupId: string,
+  title?: string,
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<{ ok: boolean }> {
+  return webPost<Record<string, unknown>, { ok: boolean }>(
+    "/api/web/chat-history/action",
+    {
+      action: `group-${action}`,
+      groupId,
+      ...(title !== undefined ? { title } : {}),
+    },
+    requestOptions,
+  );
+}
+
+/** A column left its multi-model session; it stays listed but never reopens. */
+export async function markMultiModelColumnRemoved(
+  chatSessionId: string,
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<{ ok: boolean }> {
+  return webPost<Record<string, unknown>, { ok: boolean }>(
+    "/api/web/chat-history/action",
+    { action: "multi-model-column-removed", chatSessionId },
+    requestOptions,
+  );
 }
 
 export async function chatHistoryAction(

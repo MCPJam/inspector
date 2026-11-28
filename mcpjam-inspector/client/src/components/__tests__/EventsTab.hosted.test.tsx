@@ -66,7 +66,8 @@ vi.mock("convex/react", () => ({
   useQuery: (_ref: unknown, args: unknown) =>
     args === "skip" ? undefined : hostedRows,
   useMutation: (ref: unknown) => {
-    if (!mutations.has(ref)) mutations.set(ref, vi.fn().mockResolvedValue({}));
+    if (!mutations.has(ref))
+      mutations.set(ref, vi.fn().mockResolvedValue(hostedRow));
     return mutations.get(ref);
   },
 }));
@@ -91,6 +92,9 @@ vi.mock("../ui/three-panel-layout", () => ({
 vi.mock("@/components/ui/json-editor", () => ({
   JsonEditor: (props: { value: unknown }) => (
     <div data-testid="json-editor">{JSON.stringify(props.value)}</div>
+  ),
+  ScrollableJsonView: (props: { value: unknown }) => (
+    <div data-testid="json-view">{JSON.stringify(props.value)}</div>
   ),
 }));
 
@@ -158,6 +162,20 @@ const hostedRow = {
   consecutiveFailures: 0,
 };
 
+async function openWorkspaceView(name: "Occurrences" | "Subscriptions") {
+  fireEvent.click(screen.getByRole("tab", { name: new RegExp(`^${name}`) }));
+  if (name === "Subscriptions") {
+    const list = await screen.findByTestId("subscription-list");
+    fireEvent.click(within(list).getAllByRole("button")[0]!);
+  }
+}
+
+function subscribeButton() {
+  return screen.getByRole("button", {
+    name: "Subscribe",
+  });
+}
+
 describe("EventsTab (hosted)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -212,6 +230,8 @@ describe("EventsTab (hosted)", () => {
       dispatchState: "acked",
       data: { title: "hi" },
     });
+    await openWorkspaceView("Occurrences");
+    fireEvent.click(await screen.findByTestId("select-occurrence-3"));
     const entry = await screen.findByTestId("feed-entry");
     expect(within(entry).getByText("evt_3")).toBeInTheDocument();
     expect(within(entry).getByText("acked")).toBeInTheDocument();
@@ -252,17 +272,27 @@ describe("EventsTab (hosted)", () => {
     );
 
     // The registry row for this server renders, labelled with its client.
+    await screen.findByTestId("events-activity");
+    await openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-sub_convex_1");
     expect(within(card).getByTestId("subscription-host")).toHaveTextContent(
       "ChatGPT",
     );
 
+    fireEvent.click(await screen.findByRole("tab", { name: /^Events/ }));
+    fireEvent.click(
+      within(await screen.findByTestId("event-types")).getByRole("button", {
+        name: /issue\.created/,
+      }),
+    );
     // Hosted webhooks need no acknowledgement: they use the public inbox.
     fireEvent.click(screen.getByRole("radio", { name: /Webhook/ }));
     expect(
-      screen.queryByRole("checkbox", { name: /local development receiver/ }),
+      screen.queryByRole("checkbox", {
+        name: /Allow plain HTTP for local development/,
+      }),
     ).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Subscribe/ }));
+    fireEvent.click(subscribeButton());
 
     const create = mutations.get(EVENT_SUBSCRIPTIONS_API.create)!;
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
@@ -281,7 +311,7 @@ describe("EventsTab (hosted)", () => {
     });
   });
 
-  it("subscribes as the active client, offering only the modes it receives", async () => {
+  it("subscribes as MCPJam (built-in) even when a client is active", async () => {
     render(
       <EventsTab
         serverConfig={serverConfig()}
@@ -292,42 +322,63 @@ describe("EventsTab (hosted)", () => {
       />,
     );
 
-    await screen.findByTestId("subscribe-form");
-    // ChatGPT receives webhooks only; the event's poll is struck through.
-    expect(screen.queryByRole("radio", { name: /Poll/ })).toBeNull();
-    expect(screen.getByRole("radio", { name: /Webhook/ })).toBeChecked();
-    fireEvent.click(screen.getByRole("button", { name: /Subscribe/ }));
+    // A project-wide hosted subscription never borrows a saved client's
+    // identity, and there is no picker to choose one.
+    await screen.findByTestId("event-types");
+    expect(screen.queryByLabelText("Events client")).toBeNull();
+    fireEvent.click(await screen.findByRole("tab", { name: /^Events/ }));
+    fireEvent.click(
+      within(await screen.findByTestId("event-types")).getByRole("button", {
+        name: /issue\.created/,
+      }),
+    );
+    // Built-in receives every mode the hosted runtime supports.
+    expect(screen.getByRole("radio", { name: /Poll/ })).toBeEnabled();
+    fireEvent.click(screen.getByRole("radio", { name: /Webhook/ }));
+    fireEvent.click(subscribeButton());
 
     const create = mutations.get(EVENT_SUBSCRIPTIONS_API.create)!;
     await waitFor(() =>
       expect(create).toHaveBeenCalledWith(
-        expect.objectContaining({ hostId: "host_chatgpt", mode: "webhook" }),
+        expect.objectContaining({ hostId: null, mode: "webhook" }),
       ),
     );
     expect(create.mock.calls[0]![0]).not.toHaveProperty("profile");
   });
 
-  it("keeps a client without Events support selected and explains why it can't subscribe", async () => {
+  it("keeps hosted push visibly unavailable, with the reason", async () => {
+    mockLoadEventsCatalog.mockResolvedValue({
+      events: [
+        {
+          name: "issue.created",
+          delivery: ["push", "poll"],
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+      support: { handshakeObserved: true, declared: true, listChanged: false },
+      protocolVersion: "2026-07-28",
+    });
     render(
       <EventsTab
         serverConfig={serverConfig()}
         serverName="github"
         projectId="proj_1"
-        activeHostId="host_claude"
-        activeHost={{ hostStyle: "claude" }}
       />,
     );
 
-    // The server's events are still all there to inspect.
-    expect(
-      await screen.findByRole("button", { name: /issue\.created/ }),
-    ).toBeInTheDocument();
-    expect(await screen.findByTestId("subscribe-blocked")).toHaveTextContent(
-      "Claude doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.",
+    fireEvent.click(await screen.findByRole("tab", { name: /^Events/ }));
+    fireEvent.click(
+      within(await screen.findByTestId("event-types")).getByRole("button", {
+        name: /issue\.created/,
+      }),
     );
-    expect(screen.getByRole("button", { name: /Subscribe/ })).toBeDisabled();
-    // Not swapped for another client behind the user's back.
-    expect(screen.getByLabelText("Events client")).toHaveTextContent("Claude");
+    expect(screen.getByRole("radio", { name: /Push/ })).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Hosted subscriptions can't use push yet. Use webhook or poll, or subscribe from the local app.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Poll/ })).toBeChecked();
   });
 
   it("pauses through setDesiredState and loads slot rejections", async () => {
@@ -351,6 +402,11 @@ describe("EventsTab (hosted)", () => {
       />,
     );
 
+    await screen.findByTestId("events-activity");
+    expect(
+      screen.queryByRole("button", { name: /Rejected deliveries/ }),
+    ).not.toBeInTheDocument();
+    await openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-sub_convex_1");
     fireEvent.click(within(card).getByRole("button", { name: /Pause/ }));
     const setState = mutations.get(EVENT_SUBSCRIPTIONS_API.setDesiredState)!;
@@ -367,6 +423,10 @@ describe("EventsTab (hosted)", () => {
         projectId: "proj_1",
         subscriptionId: "sub_convex_1",
       }),
+    );
+    await openWorkspaceView("Occurrences");
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Rejected deliveries/ }),
     );
     expect(await screen.findByText("stale_timestamp")).toBeInTheDocument();
   });

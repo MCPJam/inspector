@@ -32,6 +32,11 @@
  * many times did it call this" is one of the things an eval exists to measure.
  */
 
+import {
+  classifyToolFailurePart,
+  rejectedToolCallIds,
+} from "@mcpjam/evaluators/internal/eval-tool-execution";
+
 export type ProjectedToolCall = {
   toolName: string;
   arguments: unknown;
@@ -154,7 +159,63 @@ export function extractToolCallsFromConversation(
     }
   }
 
-  return toolsCalled;
+  const rejected = rejectedToolCallIds(params.messages);
+  return toolsCalled.filter((call) => !call.toolCallId || !rejected.has(call.toolCallId));
+}
+
+/** A call MCPJam refused before it reached a server. */
+export type RefusedToolCall = {
+  toolCallId: string;
+  toolName: string;
+  /** What the model sent: parsed arguments, or the raw text when it was not JSON. */
+  arguments: unknown;
+  /** The error text MCPJam returned to the model as this call's result. */
+  reason?: string;
+};
+
+/**
+ * The calls {@link extractToolCallsFromConversation} leaves out because the
+ * engine refused them before dispatch (an unknown tool name, or input the
+ * tool's schema rejected), in conversation order.
+ *
+ * Evidence for the reader, never an input to matching or scoring. Membership
+ * comes from the same engine mark the projection filters on, so the two lists
+ * cannot disagree about which calls ran. A trace without the mark (anything
+ * recorded before it existed) yields nothing.
+ */
+export function extractRefusedToolCalls(
+  messages: ReadonlyArray<unknown>,
+): RefusedToolCall[] {
+  const refused = rejectedToolCallIds(messages);
+  if (refused.size === 0) return [];
+  const calls = new Map<string, RefusedToolCall>();
+  const reasons = new Map<string, string>();
+  for (const rawMessage of messages) {
+    const msg = asRecord(rawMessage);
+    if (!msg || !Array.isArray(msg.content)) continue;
+    for (const rawPart of msg.content) {
+      const part = asRecord(rawPart);
+      const toolCallId = part ? readToolCallId(part) : undefined;
+      if (!part || !toolCallId || !refused.has(toolCallId)) continue;
+      if (part.type === "tool-call" && msg.role === "assistant") {
+        const toolName = readToolName(part);
+        if (toolName && !calls.has(toolCallId)) {
+          calls.set(toolCallId, {
+            toolCallId,
+            toolName,
+            arguments: part.input ?? part.args ?? {},
+          });
+        }
+      } else if (part.type === "tool-result" && !reasons.has(toolCallId)) {
+        const reason = classifyToolFailurePart(part)?.message;
+        if (reason) reasons.set(toolCallId, reason);
+      }
+    }
+  }
+  return [...calls.values()].map((call) => {
+    const reason = reasons.get(call.toolCallId);
+    return reason ? { ...call, reason } : call;
+  });
 }
 
 /**
