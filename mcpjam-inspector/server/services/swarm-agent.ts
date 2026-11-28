@@ -284,6 +284,7 @@ export interface SwarmPersonaNextTurnResponse {
   message: string;
   endSession: boolean;
   clickIndex?: number;
+  continueControls?: boolean;
 }
 
 /**
@@ -1177,6 +1178,7 @@ export async function swarmPersonaNextTurn(
     sessionIdx: number;
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>;
     appControls?: string[];
+    recentActions?: string[];
     clientAction?: import("./sessionSimulation/persona-client-driver.js").PersonaClientRequest;
     // Run abort signal. This call can PARK for up to LLM_TIMEOUT_MS (120s) in
     // an uncancellable place; forwarding the run's signal lets a shutdown/cancel
@@ -1191,6 +1193,7 @@ export async function swarmPersonaNextTurn(
     message?: string;
     endSession?: boolean;
     clickIndex?: number;
+    continueControls?: boolean;
     error?: string;
   }>(
     `${convexHttpUrl}/journey-execution/persona-next-turn`,
@@ -1205,6 +1208,7 @@ export async function swarmPersonaNextTurn(
       sessionIdx: args.sessionIdx,
       transcriptSoFar: args.transcriptSoFar,
       ...(args.appControls?.length ? { appControls: args.appControls } : {}),
+      ...(args.recentActions?.length ? { recentActions: args.recentActions } : {}),
       ...(args.clientAction ? { clientAction: args.clientAction } : {}),
     },
     LLM_TIMEOUT_MS,
@@ -1222,6 +1226,7 @@ export async function swarmPersonaNextTurn(
     message: data.message,
     endSession: data.endSession === true,
     ...(Number.isSafeInteger(data.clickIndex) ? { clickIndex: data.clickIndex } : {}),
+    ...(data.continueControls === true ? { continueControls: true } : {}),
   };
 }
 

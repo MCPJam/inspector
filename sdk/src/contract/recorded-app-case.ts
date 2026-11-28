@@ -10,7 +10,7 @@ export interface RecordedAppAction {
   action: string;
   actor?: "persona" | "model" | "scripted";
   ok?: boolean;
-  target?: { role: string; name: string };
+  target?: { role: string; name: string; scope?: "host" };
   followUps?: readonly string[];
   requiresModelFollowUp?: boolean;
 }
@@ -63,13 +63,17 @@ export function compileRecordedAppCase(input: {
     if (step.requiresModelFollowUp || step.followUps?.length) {
       throw new Error(`${label} sent a message that requires a model turn.`);
     }
+    const { scope, role, name } = step.target;
     clicks.push({
       id: `click-${step.stepIndex}`,
       kind: "interact",
       toolName: openingCall.toolName,
       action: {
         kind: "click",
-        target: { role: { ...step.target, exact: true } },
+        target: {
+          ...(scope ? { scope } : {}),
+          role: { role, name, exact: true },
+        },
       },
     });
   }

@@ -522,7 +522,8 @@ export interface SyntheticHostSessionAdapter {
   nextPersonaTurn(
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>,
     appControls?: string[],
-  ): Promise<{ message: string; endSession: boolean; clickIndex?: number }>;
+    recentActions?: string[],
+  ): Promise<{ message: string; endSession: boolean; clickIndex?: number; continueControls?: boolean }>;
   nextPersonaClientAction?(
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>,
     request: PersonaClientRequest,
@@ -1181,25 +1182,37 @@ export async function runSyntheticHostSession(
       turnDeadline?.dispose();
       turnDeadline = withDeadline(sessionSignal, budgets.turnTimeoutMs, "turn");
 
-      const controls =
-        enablePersonaAppClicks && turn > 0 ? await browser.listPersonaAppControls() : [];
-      const controlLabels = controls.map(({ role, name }) => `${role}: ${name}`.slice(0, 200));
-      const next = await withAdmissionRetry(
-        () => controlLabels.length
-          ? nextPersonaTurn(lastTranscript, controlLabels)
-          : nextPersonaTurn(lastTranscript),
-        admissionOptions,
-      );
-
-      if (next.clickIndex !== undefined) {
+      const recentActions: string[] = [];
+      let next: Awaited<ReturnType<typeof nextPersonaTurn>>;
+      do {
         turnDeadline.signal.throwIfAborted();
-        const control = controls[next.clickIndex];
-        if (!control) throw new Error("The persona selected an unavailable app control.");
-        const outcome = await browser.clickPersonaAppControl(control);
-        if (!outcome.ok) {
-          throw new Error(outcome.reason ?? "The persona could not click the app control.");
+        const controls = enablePersonaAppClicks && turn > 0
+          ? await browser.listPersonaAppControls() : [];
+        const controlLabels = controls.map(({ role, name, scope }) =>
+          `${scope === "host" ? "host " : ""}${role}: ${name}`.slice(0, 200)
+        );
+        next = await withAdmissionRetry(
+          () => controlLabels.length
+            ? recentActions.length
+              ? nextPersonaTurn(lastTranscript, controlLabels, [...recentActions])
+              : nextPersonaTurn(lastTranscript, controlLabels)
+            : nextPersonaTurn(lastTranscript),
+          admissionOptions,
+        );
+        if (next.clickIndex !== undefined) {
+          turnDeadline.signal.throwIfAborted();
+          const control = controls[next.clickIndex];
+          if (!control) throw new Error("The persona selected an unavailable app control.");
+          const outcome = await browser.clickPersonaAppControl(control);
+          if (!outcome.ok) {
+            throw new Error(outcome.reason ?? "The persona could not click the app control.");
+          }
+          recentActions.push(controlLabels[next.clickIndex]!);
         }
-      }
+        if (next.continueControls && (recentActions.length >= 5 || next.clickIndex === undefined)) {
+          throw new Error("The persona could not continue within its five-control turn limit.");
+        }
+      } while (next.continueControls);
 
       if (next.endSession) {
         if (turn === 0) {

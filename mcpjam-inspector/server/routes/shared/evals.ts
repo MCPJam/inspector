@@ -1633,6 +1633,7 @@ function toCaseBatchItem(
     expectedOutput?: string;
     intent?: string;
     steps?: TestStep[];
+    inputAnswers?: InputAnswer[];
     advancedConfig?: any;
     matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
     predicates?: import("@/shared/eval-matching").CasePredicates;
@@ -1655,6 +1656,9 @@ function toCaseBatchItem(
       ? { intent: testCaseData.intent }
       : {}),
     steps: sanitizeForConvexTransport(testCaseData.steps),
+    ...(testCaseData.inputAnswers !== undefined
+      ? { inputAnswers: testCaseData.inputAnswers }
+      : {}),
     advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
     matchOptions: testCaseData.matchOptions,
     predicates: testCaseData.predicates,
@@ -2199,6 +2203,9 @@ export async function authorEvalSuite(args: {
               advancedConfigChanged ||
               matchOptionsChanged ||
               predicatesChanged ||
+              (testCaseData.inputAnswers !== undefined &&
+                JSON.stringify(normalizeForComparison(testCaseData.inputAnswers)) !==
+                  JSON.stringify(normalizeForComparison(existingTestCase.inputAnswers))) ||
               (testCaseData.suppressedSuiteStandardCheckIds !== undefined &&
                 JSON.stringify(testCaseData.suppressedSuiteStandardCheckIds) !==
                   JSON.stringify(
@@ -2220,6 +2227,9 @@ export async function authorEvalSuite(args: {
                   ? { intent: testCaseData.intent }
                   : {}),
                 steps: sanitizeForConvexTransport(testCaseData.steps),
+                ...(testCaseData.inputAnswers !== undefined
+                  ? { inputAnswers: testCaseData.inputAnswers }
+                  : {}),
                 advancedConfig: sanitizeForConvexTransport(
                   testCaseData.advancedConfig,
                 ),

@@ -444,6 +444,11 @@
                       "type": "string",
                       "enum": ["approve", "deny"]
                     },
+                    "expectedQuestions": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 20
+                    },
                     "renderTimeoutMs": {
                       "type": "integer",
                       "exclusiveMinimum": 0,
@@ -474,6 +479,7 @@
                             "target": {
                               "type": "object",
                               "properties": {
+                                "scope": { "type": "string", "const": "host" },
                                 "role": {
                                   "type": "object",
                                   "properties": {
@@ -519,6 +525,7 @@
                             "target": {
                               "type": "object",
                               "properties": {
+                                "scope": { "type": "string", "const": "host" },
                                 "role": {
                                   "type": "object",
                                   "properties": {
@@ -642,6 +649,10 @@
                                 "target": {
                                   "type": "object",
                                   "properties": {
+                                    "scope": {
+                                      "type": "string",
+                                      "const": "host"
+                                    },
                                     "role": {
                                       "type": "object",
                                       "properties": {
@@ -696,6 +707,10 @@
                                 "target": {
                                   "type": "object",
                                   "properties": {
+                                    "scope": {
+                                      "type": "string",
+                                      "const": "host"
+                                    },
                                     "role": {
                                       "type": "object",
                                       "properties": {
@@ -750,6 +765,10 @@
                                 "target": {
                                   "type": "object",
                                   "properties": {
+                                    "scope": {
+                                      "type": "string",
+                                      "const": "host"
+                                    },
                                     "role": {
                                       "type": "object",
                                       "properties": {

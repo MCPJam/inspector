@@ -100,6 +100,7 @@ export const MAX_PROBE_ARGS_CHARS = 100_000;
  */
 export const elementLocatorSchema = z
   .object({
+    scope: z.literal("host").optional(),
     // ARIA role + optional accessible name — getByRole(role, { name, exact }).
     // `role` is the ARIA role string ("button"); `name` is separate.
     role: z
@@ -169,6 +170,8 @@ export const toolCallStepSchema = z
     arguments: toolCallArgumentsSchema,
     /** An explicit saved client decision for this call. A denial never sends it. */
     approval: z.enum(["approve", "deny"]).optional(),
+    /** Require this many form questions, answered in the case's reply order. */
+    expectedQuestions: z.number().int().min(1).max(20).optional(),
     /** Per-call render budget override (ms); harness default applies when absent. */
     renderTimeoutMs: z
       .number()

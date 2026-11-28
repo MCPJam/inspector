@@ -5126,6 +5126,7 @@ const stepInputSchema = z
         toolName: z.string().min(1),
         arguments: z.record(z.string(), z.any()),
         approval: z.enum(["approve", "deny"]).optional(),
+        expectedQuestions: z.number().int().min(1).max(20).optional(),
         renderTimeoutMs: z.number().int().positive().optional(),
       })
       .passthrough(),

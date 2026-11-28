@@ -16999,6 +16999,12 @@
             "enum": ["approve", "deny"],
             "description": "Saved client decision for a tool call. A denial records the decision without sending the call."
           },
+          "expectedQuestions": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "Require this many form questions from the tool, answered in saved reply order."
+          },
           "action": {
             "type": "object",
             "description": "Widget action (`kind: interact`).",
@@ -29567,7 +29573,8 @@
                   "required": ["role", "name"],
                   "properties": {
                     "role": { "type": "string" },
-                    "name": { "type": "string" }
+                    "name": { "type": "string" },
+                    "scope": { "type": "string", "enum": ["host"] }
                   }
                 },
                 "requiresModelFollowUp": { "type": "boolean" }

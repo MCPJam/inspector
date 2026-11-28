@@ -250,7 +250,7 @@ export const compileRecordedAppCaseOperation: PlatformOperation<
       actions: recording.actions,
       assertions: input.assertions,
     });
-    if (openingApproval) {
+    if (openingApproval || authored.length) {
       const [opening, ...steps] = testCase.steps;
       if (opening.kind !== "toolCall")
         throw operationInputError(
@@ -266,7 +266,11 @@ export const compileRecordedAppCaseOperation: PlatformOperation<
           arguments: {},
           approval: "deny" as const,
         })),
-        { ...opening, approval: "approve" },
+        {
+          ...opening,
+          ...(openingApproval ? { approval: "approve" as const } : {}),
+          ...(authored.length ? { expectedQuestions: authored.length } : {}),
+        },
         ...steps,
       ];
       if (testCase.steps.length > MAX_TEST_STEPS)

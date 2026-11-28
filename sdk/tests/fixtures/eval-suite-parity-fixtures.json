@@ -3248,6 +3248,99 @@
   "roundTrip": [
     {
       "__kind": "suiteFile",
+      "__label": "round trip — replay of saved approval, form question, and host control",
+      "__why": "Saved client actions and host-scoped locators survive canonicalization and import.",
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_client_actions",
+        "name": "Client action replay"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "forms"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "iterations": 1,
+        "passThreshold": 1,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_approved_form",
+          "title": "Open and leave the approved form",
+          "inputAnswers": [
+            {
+              "server": "forms",
+              "tool": "open_form",
+              "message": "Choose a size",
+              "action": "accept",
+              "content": {
+                "size": "small"
+              }
+            }
+          ],
+          "steps": [
+            {
+              "id": "deny-discard",
+              "kind": "toolCall",
+              "serverName": "forms",
+              "toolName": "discard_form",
+              "arguments": {},
+              "approval": "deny"
+            },
+            {
+              "id": "approve-open",
+              "kind": "toolCall",
+              "serverName": "forms",
+              "toolName": "open_form",
+              "arguments": {},
+              "approval": "approve",
+              "expectedQuestions": 1
+            },
+            {
+              "id": "back-to-chat",
+              "kind": "interact",
+              "toolName": "open_form",
+              "action": {
+                "kind": "click",
+                "target": {
+                  "scope": "host",
+                  "role": {
+                    "role": "button",
+                    "name": "Back to chat",
+                    "exact": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "check-host",
+              "kind": "assert",
+              "assertion": {
+                "kind": "elementVisible",
+                "toolName": "open_form",
+                "target": {
+                  "scope": "host",
+                  "role": {
+                    "role": "button",
+                    "name": "Show app",
+                    "exact": true
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
       "__label": "round trip — minimal",
       "__why": "Proves the canonical JSON form of a parsed file re-parses to the same value: no `.default()` materialized a field the author never wrote.",
       "schemaVersion": "1",

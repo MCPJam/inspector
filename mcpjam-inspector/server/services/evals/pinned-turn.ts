@@ -65,6 +65,7 @@ export interface RunPinnedTurnParams {
   /** Turn index, used to build a unique synthetic toolCallId. */
   promptIndex: number;
   toolPolicyGate?: ToolPolicyGate | null;
+  expectedQuestions?: number;
 }
 
 export interface PinnedTurnResult {
@@ -83,6 +84,7 @@ export interface PinnedTurnResult {
   toolError?: ToolErrorRecord;
   /** Fatal, iteration-level error (server not connected). */
   iterationError?: string;
+  setupFailure?: boolean;
   /** Human-readable one-line outcome for the synthesized assistant message. */
   summary: string;
 }
@@ -179,6 +181,7 @@ export async function runPinnedTurn(
     browser,
     promptIndex,
     toolPolicyGate,
+    expectedQuestions,
   } = params;
   const args = (pinned.arguments ?? {}) as Record<string, unknown>;
 
@@ -186,6 +189,7 @@ export async function runPinnedTurn(
     return {
       toolCall: null,
       iterationError: `${PINNED_SERVER_NOT_CONNECTED}: "${pinned.serverName}" is not connected in this run's environment`,
+      setupFailure: true,
       summary: `Pinned tool call skipped: server "${pinned.serverName}" not connected`,
     };
   }
@@ -242,9 +246,19 @@ export async function runPinnedTurn(
       };
     }
   }
+  const questionReplies: Array<number | undefined> = [];
   try {
     rawResult = await withToolCallScope(
-      { tool: pinned.toolName, serverId: resolvedServerKey },
+      {
+        tool: pinned.toolName,
+        serverId: resolvedServerKey,
+        ...(expectedQuestions !== undefined
+          ? { record: (exchange) => {
+              if (exchange.kind === "question")
+                questionReplies.push(exchange.mode === "form" ? exchange.replyIndex : undefined);
+            } }
+          : {}),
+      },
       () => mcpClientManager.executeTool(resolvedServerKey, pinned.toolName, args),
     );
     const isError =
@@ -288,7 +302,9 @@ export async function runPinnedTurn(
     }
   }
 
-  if (toolCallOk) {
+  const missingQuestions = expectedQuestions !== undefined &&
+    (questionReplies.length !== expectedQuestions || questionReplies.some((reply, index) => reply !== index));
+  if (toolCallOk && !missingQuestions) {
     await browser.renderPinnedToolResult({
       toolCallId,
       toolName: pinned.toolName,
@@ -322,6 +338,9 @@ export async function runPinnedTurn(
         : undefined),
     ...(toolError ? { toolResultIsError: true } : {}),
     ...(toolError ? { toolError } : {}),
+    ...(missingQuestions
+      ? { iterationError: `Expected ${expectedQuestions} form questions answered in saved reply order from "${pinned.toolName}". Observed ${questionReplies.length} questions.` }
+      : {}),
     summary,
   };
 }

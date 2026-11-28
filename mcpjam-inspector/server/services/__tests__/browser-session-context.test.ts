@@ -43,6 +43,7 @@ const harnessInstances: Array<{
   runScriptedStep: (...args: unknown[]) => unknown;
   getRecordingStartedAt: ReturnType<typeof vi.fn>;
   captureSnapshot: ReturnType<typeof vi.fn>;
+  visibleHostAppControl: ReturnType<typeof vi.fn>;
   captureLiveThumbnail?: ReturnType<typeof vi.fn>;
 }> = [];
 
@@ -64,6 +65,7 @@ vi.mock("../../utils/mcp-app-browser-harness", async () => {
         dispose: vi.fn().mockResolvedValue(undefined),
         executeAction: vi.fn(),
         captureSnapshot: vi.fn(),
+        visibleHostAppControl: vi.fn().mockResolvedValue(undefined),
         runScriptedStep: (...args: unknown[]) => runScriptedStepImpl(...args),
         // Recording-start origin for `videoOffsetMs`. Null (no recording) is
         // the default, matching a harness that never launched Chromium.
@@ -1017,6 +1019,17 @@ describe("createBrowserSessionContext — widget interaction checks", () => {
       elapsedMs: 1,
       ok: true,
     }]);
+
+    harness.visibleHostAppControl.mockResolvedValue("Show app");
+    const [showApp] = await ctx.listPersonaAppControls();
+    expect(showApp).toEqual({
+      toolCallId: "tc-1", role: "button", name: "Show app", scope: "host",
+    });
+    await ctx.clickPersonaAppControl(showApp!);
+    expect(ctx.browserInteractionSteps[1]).toMatchObject({
+      actor: "persona",
+      target: { role: "button", name: "Show app", scope: "host" },
+    });
   });
 
   it("forwards prior widget tool calls across separate unified steps (widgetToolCalled sees an earlier interact's call)", async () => {

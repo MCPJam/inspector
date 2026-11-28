@@ -987,6 +987,34 @@ describe.skipIf(!CHROMIUM_AVAILABLE)(
       }
     }, 45_000);
 
+    it("replays scoped host controls to leave and reopen the same app", async () => {
+      const h = makeHarness();
+      const toolCallId = "host-app";
+      const render = await h.renderWidget({
+        toolCallId, toolName: "show_form", serverId: "forms", html: scriptedHtml, keepMounted: true,
+      });
+      expect(render.status).toBe("rendered");
+      expect(await h.visibleHostAppControl()).toBe("Back to chat");
+
+      const hostTarget = (name: string) => ({
+        scope: "host" as const, role: { role: "button", name, exact: true },
+      });
+      expect(await h.runScriptedStep({
+        toolCallId, step: { kind: "click", target: hostTarget("Back to chat") },
+      })).toMatchObject({ ok: true });
+      expect(await h.runScriptedStep({
+        toolCallId,
+        step: { kind: "assert", assertion: { type: "elementVisible", target: hostTarget("Show app") } },
+      })).toMatchObject({ ok: true });
+      expect(await h.runScriptedStep({
+        toolCallId, step: { kind: "click", target: hostTarget("Show app") },
+      })).toMatchObject({ ok: true });
+      expect(await h.runScriptedStep({
+        toolCallId,
+        step: { kind: "assert", assertion: { type: "elementVisible", target: { role: { role: "button", name: "Save", exact: true } } } },
+      })).toMatchObject({ ok: true });
+    }, 30_000);
+
     it("fails an assertion on a missing element with a reason", async () => {
       const h = makeHarness();
       await h.renderWidget({

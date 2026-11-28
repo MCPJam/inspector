@@ -1532,6 +1532,16 @@ export class McpAppBrowserHarness {
 
   /* ---- scripted interaction steps (Widget interaction checks) ---- */
 
+  /** The workspace controls live in the trusted host document. */
+  async visibleHostAppControl(): Promise<string | undefined> {
+    if (!this.page || !this.getMountedWidgetId()) return;
+    const workspace = this.page.locator("#mcpjam-widget-root");
+    for (const name of ["Back to chat", "Show app"]) {
+      const control = workspace.getByRole("button", { name, exact: true });
+      if ((await control.count()) === 1 && (await control.isVisible())) return name;
+    }
+  }
+
   /**
    * The mounted widget's iframe content as a Playwright FrameLocator. Scripted
    * selectors resolve INSIDE this frame, not the host page. The widget is the
@@ -1545,7 +1555,9 @@ export class McpAppBrowserHarness {
   /** Build a Locator from a semantic locator bundle. Reference points are tried
    *  in priority order testId → role → text → css; `nth` disambiguates matches. */
   private resolveScriptedLocator(target: ElementLocator): Locator {
-    const frame = this.widgetFrame();
+    const frame = target.scope === "host"
+      ? this.page!.locator("#mcpjam-widget-root")
+      : this.widgetFrame();
     let loc: Locator;
     if (target.testId) {
       loc = frame.getByTestId(target.testId);
@@ -1647,6 +1659,15 @@ export class McpAppBrowserHarness {
     try {
       switch (step.kind) {
         case "click": {
+          if (step.target.scope === "host") {
+            const name = await this.visibleHostAppControl();
+            if (
+              !name || step.target.role?.role !== "button" ||
+              step.target.role.name !== name || !step.target.role.exact ||
+              step.target.css || step.target.text || step.target.testId ||
+              step.target.nth !== undefined || step.clickType && step.clickType !== "left"
+            ) throw new Error("The selected host control is unavailable.");
+          }
           const loc = this.resolveScriptedLocator(step.target);
           if (step.clickType === "double") await loc.dblclick({ timeout });
           else if (step.clickType === "right")
@@ -1655,6 +1676,7 @@ export class McpAppBrowserHarness {
           break;
         }
         case "type": {
+          if (step.target.scope === "host") throw new Error("Host controls do not accept text input.");
           const loc = this.resolveScriptedLocator(step.target);
           await loc.fill(step.text, { timeout });
           break;

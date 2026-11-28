@@ -21,7 +21,13 @@ export const recordedAppTraceSchema = z.object({
       action: z.string(),
       actor: z.enum(["persona", "model", "scripted"]).optional(),
       ok: z.boolean().optional(),
-      target: z.object({ role: z.string(), name: z.string() }).optional(),
+      target: z
+        .object({
+          role: z.string(),
+          name: z.string(),
+          scope: z.literal("host").optional(),
+        })
+        .optional(),
       requiresModelFollowUp: z.boolean(),
     })
   ),
@@ -52,7 +58,7 @@ export function projectRecordedAppTrace(evidence: {
     action: string;
     actor?: "persona" | "model" | "scripted";
     ok?: boolean;
-    target?: { role: string; name: string };
+    target?: { role: string; name: string; scope?: "host" };
     followUps?: readonly string[];
   }[];
   personaAppActions?: RecordedAppTrace["summary"];

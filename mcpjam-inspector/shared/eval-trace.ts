@@ -396,7 +396,7 @@ export type EvalTraceScriptedAssertion = {
 
 export type RunnerBrowserInteractionStep = {
   actor?: "model" | "persona" | "scripted";
-  target?: { role: string; name: string };
+  target?: { role: string; name: string; scope?: "host" };
   pluginWorkspace?: PluginWorkspaceRecording;
   toolCallId: string;
   stepIndex: number; // monotonic per (toolCallId), stamped by the runner

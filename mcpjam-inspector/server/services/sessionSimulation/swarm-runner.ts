@@ -1690,7 +1690,7 @@ async function runJourneyFanOut(
                 signal,
                 ...(sponsored ? { sponsored: true } : {}),
               })).message,
-            nextPersonaTurn: (transcriptSoFar, appControls) =>
+            nextPersonaTurn: (transcriptSoFar, appControls, recentActions) =>
               swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
                 projectId,
                 runId,
@@ -1699,6 +1699,7 @@ async function runJourneyFanOut(
                 sessionIdx: attemptSessionIdx,
                 transcriptSoFar,
                 ...(appControls?.length ? { appControls } : {}),
+                ...(recentActions?.length ? { recentActions } : {}),
                 // Forward the run-level stop (composed shutdown/cancel + spend-cap
                 // runStop) so a short-circuit aborts a parked persona fetch
                 // immediately and the session unwinds (instead of lingering up to

@@ -19,6 +19,7 @@ import {
   loadPinnedInputAnswers,
   withToolCallScope,
 } from "../input-answers.js";
+import { runPinnedTurn } from "../pinned-turn.js";
 
 const answers: InputAnswer[] = [
   {
@@ -264,7 +265,7 @@ const asking = resolvedMock({
 });
 
 describe("a 2026-07-28 question from a stateless mock", () => {
-  async function run(replies: InputAnswer[]) {
+  async function run(replies: InputAnswer[], expectedQuestions?: number) {
     const resolver = createInputAnswerResolver({ answers: replies });
     const deps = {
       resolve: vi.fn(async () => asking),
@@ -280,16 +281,31 @@ describe("a 2026-07-28 question from a stateless mock", () => {
       baseFetch: (input, init) =>
         serveMock(new Request(input as string, init), "mock1", door, deps),
     } as never);
-    const result = (await withToolCallScope({ tool: "cleanup" }, () =>
-      manager.executeTool("mock", "cleanup", { dir: "/tmp/x" }),
-    )) as { content: Array<{ text: string }> };
-    await manager.disconnectAllServers();
-    return { result, resolver };
+    try {
+      const pinned = await runPinnedTurn({
+        pinned: {
+          serverName: "files",
+          toolName: "cleanup",
+          arguments: { dir: "/tmp/x" },
+        },
+        resolvedServerKey: "mock",
+        mcpClientManager: manager,
+        browser: { renderPinnedToolResult: vi.fn() },
+        promptIndex: 0,
+        expectedQuestions,
+      });
+      return { result: pinned.toolResult, pinned, resolver };
+    } finally {
+      await manager.disconnectAllServers();
+    }
   }
 
   it("gives the reply the case set, matched on server, tool and message", async () => {
-    const { result, resolver } = await run(answers);
-    expect(result.content).toEqual([{ type: "text", text: "accept true" }]);
+    const { result, pinned, resolver } = await run(answers, 1);
+    expect(pinned.iterationError).toBeUndefined();
+    expect(result).toMatchObject({
+      content: [{ type: "text", text: "accept true" }],
+    });
     expect(resolver.exchanges).toEqual([
       expect.objectContaining({
         server: "files",
@@ -302,10 +318,11 @@ describe("a 2026-07-28 question from a stateless mock", () => {
   });
 
   it("declines when no reply was set and says so", async () => {
-    const { result, resolver } = await run([]);
-    expect(result.content).toEqual([
-      { type: "text", text: "decline {{steps.sure.content.sure}}" },
-    ]);
+    const { result, pinned, resolver } = await run([], 1);
+    expect(result).toMatchObject({
+      content: [{ type: "text", text: "decline {{steps.sure.content.sure}}" }],
+    });
+    expect(pinned.iterationError).toContain("Expected 1 form questions");
     expect(resolver.exchanges[0]).toMatchObject({
       action: "decline",
       note: expect.stringContaining("no reply was set"),

@@ -426,6 +426,11 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                       additionalProperties: {},
                     },
                     approval: { type: "string", enum: ["approve", "deny"] },
+                    expectedQuestions: {
+                      type: "integer",
+                      minimum: 1,
+                      maximum: 20,
+                    },
                     renderTimeoutMs: {
                       type: "integer",
                       exclusiveMinimum: 0,
@@ -456,6 +461,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                             target: {
                               type: "object",
                               properties: {
+                                scope: { type: "string", const: "host" },
                                 role: {
                                   type: "object",
                                   properties: {
@@ -498,6 +504,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                             target: {
                               type: "object",
                               properties: {
+                                scope: { type: "string", const: "host" },
                                 role: {
                                   type: "object",
                                   properties: {
@@ -606,6 +613,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                 target: {
                                   type: "object",
                                   properties: {
+                                    scope: { type: "string", const: "host" },
                                     role: {
                                       type: "object",
                                       properties: {
@@ -648,6 +656,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                 target: {
                                   type: "object",
                                   properties: {
+                                    scope: { type: "string", const: "host" },
                                     role: {
                                       type: "object",
                                       properties: {
@@ -687,6 +696,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                 target: {
                                   type: "object",
                                   properties: {
+                                    scope: { type: "string", const: "host" },
                                     role: {
                                       type: "object",
                                       properties: {

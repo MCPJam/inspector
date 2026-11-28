@@ -276,6 +276,7 @@ export interface PersonaAppControl {
   toolCallId: string;
   role: string;
   name: string;
+  scope?: "host";
 }
 
 export interface BrowserSessionContext {
@@ -1141,8 +1142,11 @@ export async function createBrowserSessionContext(
       const harness = widgetHarnessRef.current;
       const toolCallId = harness?.getMountedWidgetId();
       if (!harness || !toolCallId) return [];
+      const hostControl = await harness.visibleHostAppControl();
+      if (hostControl === "Show app")
+        return [{ toolCallId, role: "button", name: hostControl, scope: "host" }];
       const { elements } = await harness.captureSnapshot(toolCallId);
-      return elements
+      const controls: PersonaAppControl[] = elements
         .flatMap(({ role, ambiguous }) => {
           if (ambiguous || !role?.name || role.name.length > 200) return [];
           if (!["button", "link", "checkbox", "radio", "switch", "menuitem", "tab"].includes(role.role)) {
@@ -1150,13 +1154,18 @@ export async function createBrowserSessionContext(
           }
           return [{ toolCallId, role: role.role, name: role.name }];
         })
-        .slice(0, 20);
+        .slice(0, hostControl ? 19 : 20);
+      if (hostControl) {
+        controls.push({ toolCallId, role: "button", name: hostControl, scope: "host" });
+      }
+      return controls;
     },
-    async clickPersonaAppControl({ toolCallId, role, name }: PersonaAppControl) {
+    async clickPersonaAppControl({ toolCallId, role, name, scope }: PersonaAppControl) {
+      const hostTarget = scope ? { scope } : {};
       return replayWidgetScriptedStep(
         toolCallId,
-        { kind: "click", target: { role: { role, name, exact: true } } },
-        { role, name },
+        { kind: "click", target: { ...hostTarget, role: { role, name, exact: true } } },
+        { ...hostTarget, role, name },
       );
     },
     async replayInteractStep(
