@@ -61,6 +61,20 @@ describe("ErrorCard copy", () => {
     expect(copyMock.mock.calls[0][0]).toContain(error.rawMessage);
   });
 
+  it("labels the raw text with the caller's heading, in the panel and the copy", async () => {
+    const error = normalized();
+    render(<ErrorCard error={error} rawLabel="Script output" defaultOpen />);
+
+    expect(screen.getByText("Script output")).toBeInTheDocument();
+    expect(screen.queryByText("Raw error")).not.toBeInTheDocument();
+    fireEvent.click(copyButton());
+
+    await waitFor(() => expect(copyMock).toHaveBeenCalledTimes(1));
+    expect(copyMock.mock.calls[0][0]).toContain(
+      `Script output: ${error.rawMessage}`,
+    );
+  });
+
   it("confirms a copy that landed", async () => {
     render(<ErrorCard error={normalized()} />);
 

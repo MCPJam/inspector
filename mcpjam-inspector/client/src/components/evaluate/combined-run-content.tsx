@@ -46,6 +46,7 @@ import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import type { SingleRunContent } from "./evaluate-run-content";
 import { useCaseResultLinks } from "./run-result-pages/result-page-links";
+import { RunScriptNotices } from "../evals/code-grading/script-failure-cards";
 import {
   readRunView,
   rememberRunView,
@@ -78,6 +79,7 @@ export function CombinedRunContent({
   decisionSummaryEnabled,
   onEditCase,
   onEditEvaluator,
+  onEditScripts,
   onOpenIteration,
 }: Parameters<typeof SingleRunContent>[0] & { runs: EvalSuiteRunListItem[] }) {
   const [findingsRunId, setFindingsRunId] = useState(routeRun._id);
@@ -317,6 +319,17 @@ export function CombinedRunContent({
             headerVerdict={fullVerdict}
             explanation={null}
           />
+          {/* Each member ran its own scripts; filtered-out members stay hidden. */}
+          {selectedRuns.map((run) => (
+            <RunScriptNotices
+              key={run._id}
+              run={run}
+              {...(selectedRuns.length > 1
+                ? { label: findingRunLabel(run._id) }
+                : {})}
+              onEditScripts={onEditScripts}
+            />
+          ))}
           {findingsRun ? (
             <div data-testid="combined-run-findings">
               <SelectedRunFindings

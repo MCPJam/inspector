@@ -8,13 +8,17 @@ import {
   iterationLatencyP95,
 } from "../../evals/helpers";
 import { formatRunCaseLatencyMs } from "../../evals/run-case-groups";
-import { computeIterationResult } from "../../evals/pass-criteria";
 import {
   cellIterationOrder,
   resultCounts,
   type RunResultsMatrixData,
 } from "../run-results-matrix-model";
-import { outcomeDotTone, outcomeLabel, outcomeTextTone } from "./outcome";
+import {
+  iterationOutcome,
+  outcomeDotTone,
+  outcomeLabel,
+  outcomeTextTone,
+} from "./outcome";
 import { followLink } from "./result-page-links";
 
 export function CaseIterations({
@@ -102,7 +106,7 @@ export function CaseIterations({
             <span>Calls</span>
           </div>
           {sorted.map(({ item, index }) => {
-            const result = computeIterationResult(item);
+            const result = iterationOutcome(item);
             const row = (
               <>
                 <span className="flex min-w-0 items-center gap-1.5">

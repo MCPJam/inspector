@@ -383,6 +383,10 @@ export type EvalSuite = {
    * Absent on a backend that predates B2.
    */
   gatePolicy?: SuiteGatePolicyV1;
+  /** EFTW-90: scripts around runs and iterations, and the grading box. */
+  scripts?: import("./code-grading/code-grading-values").SuiteScripts;
+  grading?: import("./code-grading/code-grading-values").SuiteGrading;
+  codeEvaluators?: import("@mcpjam/sdk/contract").CodeEvaluatorInput[];
   _creationTime?: number; // Convex auto field
   tags?: string[];
   defaultConfig?: {
@@ -1072,6 +1076,10 @@ export type EvalSuiteRun = {
      */
     executionEngine?: string;
     executionVenue?: "hosted" | "local";
+    /** EFTW-90 fields as the run froze them; a replay runs these. */
+    scripts?: import("./code-grading/code-grading-values").SuiteScripts;
+    grading?: import("./code-grading/code-grading-values").SuiteGrading;
+    codeEvaluators?: import("@mcpjam/sdk/contract").CodeEvaluatorInput[];
     /**
      * This run is the REWRITE arm of a description experiment. The catalog
      * snapshot stays the original; this marker is the only record of the
@@ -1107,6 +1115,8 @@ export type EvalSuiteRun = {
     | "cancelled"
     | "timed_out";
   summary?: EvalSuiteRunSummary;
+  /** Run setup and cleanup outcomes, recorded by the runner (EFTW-90). */
+  scriptResults?: import("./code-grading/script-failures").RunScriptResults;
   /**
    * Server-stored per-run rollup (tokens, latency, cost, models, result
    * counts), written when the run goes terminal. Absent on runs that finished

@@ -6,9 +6,10 @@ import { Button } from "@mcpjam/design-system/button";
 import { hostSnapshotFromStyle } from "@/lib/host-snapshot";
 import type { IterationTab } from "@/lib/eval-route-types";
 import { runClientIdentity } from "../../evals/helpers";
-import { computeIterationResult } from "../../evals/pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 import { IterationDetails } from "../../evals/iteration-details";
+import { setupScriptFailures } from "../../evals/code-grading/script-failures";
+import { SetupFailedIteration } from "../../evals/code-grading/script-failure-cards";
 import type { TraceDetailPlacement } from "../../evals/use-trace-detail-direction";
 import { RunAccountsProvider } from "../../evals/run-accounts-context";
 import { useSelectedRun } from "../../evals/use-selected-run";
@@ -17,7 +18,7 @@ import { authoredForTrial } from "../case-scorecard/trial-authored";
 import type { RunResultsMatrixData } from "../run-results-matrix-model";
 import type { TrialChainDisplay } from "../case-scorecard/trial-chain-state";
 import { readRunExecutionEngine } from "../description-experiment-model";
-import { outcomeLabel } from "./outcome";
+import { iterationOutcome, outcomeLabel } from "./outcome";
 import { modeForTab, tabForMode } from "./iteration-tab";
 
 /**
@@ -32,6 +33,7 @@ export function IterationReport({
   chainDisplay = "settled",
   onRetryChain,
   onEditEvaluator,
+  onEditScripts,
   traceDetailPlacement,
   tab,
   onTabChange,
@@ -44,12 +46,24 @@ export function IterationReport({
   chainDisplay?: TrialChainDisplay;
   onRetryChain?: () => void;
   onEditEvaluator?: () => void;
+  /** Opens suite settings from a failed setup or cleanup script's card. */
+  onEditScripts?: () => void;
   traceDetailPlacement?: TraceDetailPlacement;
   tab?: IterationTab;
   onTabChange?: (tab: IterationTab) => void;
 }) {
-  const result = computeIterationResult(iteration);
+  const result = iterationOutcome(iteration);
   const fullRun = useSelectedRun(target.run.suiteId, target.run._id).run;
+  // The agent never ran: no transcript or scorecard to tab between.
+  const setupFailures = setupScriptFailures(iteration, fullRun);
+  if (setupFailures.length > 0) {
+    return (
+      <SetupFailedIteration
+        failures={setupFailures}
+        onEditScripts={onEditScripts}
+      />
+    );
+  }
   const authored = authoredForTrial({
     trial: { kind: "persisted", iteration, source: "route" },
     draft: { steps: [], toolsChoice: "unset" },
@@ -85,6 +99,7 @@ export function IterationReport({
           activeTab={onTabChange ? (modeForTab(tab) ?? "scorecard") : undefined}
           onTabChange={onTabChange && ((mode) => onTabChange(tabForMode(mode)))}
           trialVerdictWord={outcomeLabel(result)}
+          onEditScripts={onEditScripts}
           scorecard={{
             render: (context) => (
               <>

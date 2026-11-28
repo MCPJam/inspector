@@ -1736,6 +1736,10 @@ export function SuiteIterationsView({
   const handleBackToOverview = () => {
     navigation.toSuiteOverview(suite._id);
   };
+  // A failed setup or cleanup script's card leads to Setup and cleanup.
+  const editScripts = editingDisabled
+    ? undefined
+    : () => navigation.toSuiteEdit(suite._id);
 
   // ── The three rows that used to vanish ─────────────────────────────────
   //
@@ -2508,6 +2512,7 @@ export function SuiteIterationsView({
                           ? onEditTestCase(testCaseId)
                           : navigation.toTestEdit(suite._id, testCaseId)
                 }
+                onEditScripts={editScripts}
                 onCrumbsChange={onResultCrumbsChange}
               />
             ) : selectedRunId && selectedRunState.isLoading ? (
@@ -2631,6 +2636,7 @@ export function SuiteIterationsView({
                               }),
                           }
                         : {})}
+                      onEditScripts={editScripts}
                       fallbackBody={runDetailView}
                     />
                   ) : (

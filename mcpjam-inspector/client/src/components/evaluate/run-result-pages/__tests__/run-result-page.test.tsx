@@ -394,6 +394,21 @@ describe("RunResultPage", () => {
     renderPage({ caseKey: "refund" }, { onEditCase: undefined });
     expect(screen.queryByRole("button", { name: "Edit test case" })).toBeNull();
   });
+
+  it("chips a setup-failed iteration Setup failed, not its reported result", () => {
+    // The runner reports `passed: false` for an agent that never ran; that
+    // is no verdict, so the chip names the status.
+    renderPage(
+      { caseKey: "refund", iterationId: "it1" },
+      {
+        allIterations: [
+          iteration("it1", "one", { status: "setup_failed", result: "failed" }),
+        ],
+      },
+    );
+    expect(screen.getByText("Setup failed")).toBeVisible();
+    expect(screen.queryByText("Failed")).toBeNull();
+  });
 });
 
 describe("run grid cells", () => {

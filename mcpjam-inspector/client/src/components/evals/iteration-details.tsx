@@ -1,5 +1,5 @@
 import { describeEvalIterationError } from "@/lib/eval-iteration-error";
-import { ErrorCard } from "@/components/ui/error-card";
+import { IterationErrorCards } from "./code-grading/script-failure-cards";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import { useAction, useQuery } from "convex/react";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
@@ -275,6 +275,7 @@ export function IterationDetails({
   activeTab,
   onTabChange,
   executionEngine,
+  onEditScripts,
 }: {
   iteration: EvalIteration;
   /** undefined preserves ambient styling for existing chat callers. */
@@ -339,6 +340,8 @@ export function IterationDetails({
   onTabChange?: (mode: IterationReportMode) => void;
   /** The run's engine, when the host has the run; `harness:<id>` lists unmatched calls. */
   executionEngine?: string;
+  /** Opens suite settings from a failed setup or cleanup script's card. */
+  onEditScripts?: () => void;
 }) {
   const evaluatorLibraryEnabled = useEvaluatorLibraryEnabled();
   // The Scores list prints the same judge number the review panel hides.
@@ -1290,7 +1293,12 @@ export function IterationDetails({
           )}
         </div>
       ) : null}
-      {iterationError && <ErrorCard key={iteration._id} error={iterationError} />}
+      <IterationErrorCards
+        key={iteration._id}
+        iteration={iteration}
+        fallback={iterationError}
+        onEditScripts={onEditScripts}
+      />
 
       {!hasTrace && !scorecard && !isProbe && (
         <TranscriptEmptyState {...(iteration.status === "running" || iteration.status === "pending"
