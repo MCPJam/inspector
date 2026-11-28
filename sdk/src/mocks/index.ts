@@ -85,8 +85,8 @@ export type {
   MockTaskStore,
   MockTasks,
 } from "./mock-tasks.js";
-export { MODERN_REVISION } from "../server/revision.js";
-export { matchTemplate, templateVariables } from "../server/uri-template.js";
+export { MODERN_REVISION } from "./revision.js";
+export { matchTemplate, templateVariables } from "./uri-template.js";
 export { listMockSkills } from "./mock-skills.js";
 export {
   resolveMockPrompts,
