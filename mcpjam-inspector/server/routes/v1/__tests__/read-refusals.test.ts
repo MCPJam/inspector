@@ -169,6 +169,18 @@ const READ_FAMILIES: ReadFamily[] = [
     message: "Not found",
   },
   {
+    family: "swarm run",
+    module: "../swarm-run-reads.js",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/swarm-runs/sr_1",
+    message: "Swarm run not found",
+  },
+  {
+    family: "swarm run sessions",
+    module: "../swarm-run-reads.js",
+    path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/swarm-runs/sr_1/sessions",
+    message: "Swarm run not found",
+  },
+  {
     family: "plugins",
     module: "../plugins.js",
     path: "/api/v1/projects/projotherxxxxxxxxxxxxxxxxxxxxxxx/plugins",

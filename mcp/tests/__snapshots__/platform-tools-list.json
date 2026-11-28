@@ -1599,6 +1599,26 @@
     "spendNotice": false
   },
   {
+    "name": "get_swarm_run",
+    "annotations": {
+      "title": "Get one MCPJam swarm run",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "list_swarm_run_sessions",
+    "annotations": {
+      "title": "List the sessions of an MCPJam swarm run",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
     "name": "list_swarms",
     "annotations": {
       "title": "List MCPJam swarm containers",

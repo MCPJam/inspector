@@ -204,6 +204,10 @@ import {
   cancelEvalRunInsightsOperation,
   requestEvalRunInsightsOperation,
 } from "./eval-run-insights-operations.js";
+import {
+  getSwarmRunOperation,
+  listSwarmRunSessionsOperation,
+} from "./swarm-run-read-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -2553,6 +2557,7 @@ export * from "./directory-submission-handoff-operations.js";
 export * from "./directory-test-plan-operations.js";
 export * from "./directory-submission-eval-operations.js";
 export * from "./eval-run-insights-operations.js";
+export * from "./swarm-run-read-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -13145,7 +13150,7 @@ export const listGoalRunSessionsOperation: PlatformOperation<
   name: "list_goal_run_sessions",
   title: "List the sessions a goal run produced",
   description:
-    "The chat sessions a goal run produced — one per persona attempt against each target — with graded verdicts, check observations, readiness, goal scores and a first-message preview. `verdict` is the graded goal result; `outcome` is execution lifecycle. A broken execution may have met its goal. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
+    "The chat sessions a goal run produced — one per persona attempt against each target — with graded verdicts, check observations, readiness, goal scores and a first-message preview. `verdict` is the graded goal result; `outcome` is execution lifecycle. A broken execution may have met its goal. get_chat_session reads a session's transcript by the row's `id`.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((session) => ({
@@ -13876,7 +13881,7 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
   name: "list_journey_run_sessions",
   title: "List the sessions a journey run produced",
   description:
-    "The chat sessions a journey run produced — one per persona attempt against each target — with graded verdicts, check observations, readiness, goal scores and a first-message preview. `verdict` is the graded goal result; `outcome` is execution lifecycle. A broken execution may have met its goal. Transcript bodies are not on this API yet; use the returned `id` in the app to open a session.",
+    "The chat sessions a journey run produced — one per persona attempt against each target — with graded verdicts, check observations, readiness, goal scores and a first-message preview. `verdict` is the graded goal result; `outcome` is execution lifecycle. A broken execution may have met its goal. get_chat_session reads a session's transcript by the row's `id`.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
     result.items.map((session) => ({
@@ -19605,6 +19610,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listGoalRunSessionsOperation,
   launchGoalRunOperation,
   cancelGoalRunOperation,
+  getSwarmRunOperation,
+  listSwarmRunSessionsOperation,
   // Studies. The deprecated `*_scenario` and `*_user_testing_*` operations are
   // deliberately NOT here, for the same reason the `*_host` ones are not: every
   // registered surface partitions this list, so leaving them out is what

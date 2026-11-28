@@ -44,6 +44,7 @@ import traceDestinations from "./trace-destinations.js";
 import feedback from "./feedback.js";
 import swarms from "./swarms.js";
 import swarmInsights from "./swarm-insights.js";
+import swarmRunReads from "./swarm-run-reads.js";
 import swarmGenerateV1 from "./swarm-generate.js";
 import scenarios from "./scenarios.js";
 import studies from "./studies.js";
@@ -271,6 +272,8 @@ v1.route("/", swarms);
 // ungated (an empty result leaks nothing); REQUESTING wave insights spends
 // against the org's shared daily ledger.
 v1.route("/", swarmInsights);
+// One swarm run and its sessions. Reads; Convex checks project membership.
+v1.route("/", swarmRunReads);
 // Scenarios — publishing a project environment for user testing. WRITES, so
 // they live here rather than in the read-proxy catalog. Guest-DENIED by
 // default: no GUEST_ALLOWED_V1_RULES entry matches these, and the existing

@@ -185,6 +185,24 @@ const PAIRS: Readonly<Record<string, string>> = {
   SwarmRunInsights: "PlatformSwarmRunInsights",
   SwarmRunInsightsRequested: "PlatformSwarmRunInsightsRequested",
   SwarmRunInsightsCanceled: "PlatformSwarmRunInsightsCanceled",
+  SwarmOverviewSwarmRun: "PlatformSwarmOverviewSwarmRun",
+
+  // ── One swarm run, from `swarm-run-read-types.ts` ─────────────────────
+  //
+  // `SwarmRunSession` is unpaired: it is `GoalRunSession` with three fields
+  // required, written as `allOf`, so it has no properties of its own to compare.
+  SwarmRun: "PlatformSwarmRun",
+  SwarmRunTotals: "PlatformSwarmRunTotals",
+  SwarmRunSessionCounts: "PlatformSwarmRunSessionCounts",
+  SwarmRunGradingCounts: "PlatformSwarmRunGradingCounts",
+  SwarmRunGoalScoreCounts: "PlatformSwarmRunGoalScoreCounts",
+  SwarmRunGoalRun: "PlatformSwarmRunGoalRun",
+  SwarmRunGoalRunGrading: "PlatformSwarmRunGoalRunGrading",
+  SwarmRunLaunch: "PlatformSwarmRunLaunch",
+  SwarmRunLaunchGoal: "PlatformSwarmRunLaunchGoal",
+  SwarmRunLaunchError: "PlatformSwarmRunLaunchError",
+  RunLaunchFailures: "PlatformRunLaunchFailures",
+  RunLaunchFailureReason: "PlatformRunLaunchFailureReason",
 
   // ── A4: User testing ──────────────────────────────────────────────────
   //
@@ -322,7 +340,8 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
     TYPES_PATH,
     [TYPES_PATH, resolve(dirname(TYPES_PATH), "readiness-start-types.ts"),
       resolve(dirname(TYPES_PATH), "widget-session-types.ts"),
-      resolve(dirname(TYPES_PATH), "eval-run-account-types.ts")]
+      resolve(dirname(TYPES_PATH), "eval-run-account-types.ts"),
+      resolve(dirname(TYPES_PATH), "swarm-run-read-types.ts")]
       .map(path => readFileSync(path, "utf8"))
       .join("\n"),
     ts.ScriptTarget.Latest,

@@ -8950,6 +8950,133 @@
         }
       }
     },
+    "/projects/{projectId}/swarm-runs/{swarmRunId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/swarmRunId"
+        }
+      ],
+      "get": {
+        "operationId": "getSwarmRun",
+        "tags": ["Swarm runs"],
+        "summary": "Get a swarm run",
+        "description": "One swarm run: the goal runs launched together, with its state, session and grading counts for each goal run and in total, and the launch that started it.\n\nGrading continues after the sessions end, so `state` can be final while counts still change. Read `settled`: it is true only once the launch has finished and no goal run is waiting for grading.\n\n`sessions.errored` counts sessions whose execution broke. Sessions graded as failing are `grading.failedTrials`, a separate number.\n\n`include=launchFailures` adds `launchFailures`: why sessions never ran. It reads every attempt of every goal run, so leave it off when polling.",
+        "parameters": [
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "description": "`launchFailures` adds why sessions never ran. Off by default.",
+            "schema": {
+              "type": "string",
+              "enum": ["launchFailures"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The swarm run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwarmRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/swarm-runs/{swarmRunId}/sessions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/swarmRunId"
+        }
+      ],
+      "get": {
+        "operationId": "listSwarmRunSessions",
+        "tags": ["Swarm runs"],
+        "summary": "List a swarm run's sessions",
+        "description": "The sessions of every goal run in the swarm run, goal run by goal run and oldest first. Summaries, not transcripts: read a transcript through the chat-session routes using `id`.\n\nPages fill across goal runs, and `nextCursor` is present while sessions remain. Sessions can be added until the swarm run is `settled`; once it is, the pages return every session exactly once.\n\nA cursor this swarm run did not issue answers 400 with `details.code: \"INVALID_CURSOR\"`. Page again without one.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum sessions to return, 1-200. Defaults to 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque pagination cursor from a previous response's `nextCursor`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of sessions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwarmRunSessionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/environments/{environmentId}/study": {
       "parameters": [
         {
@@ -26636,6 +26763,13 @@
               "$ref": "#/components/schemas/SwarmOverviewRun"
             }
           },
+          "swarmRuns": {
+            "type": "array",
+            "description": "The same runs grouped by swarm run, each with its state. Absent from deployments that predate the grouping.",
+            "items": {
+              "$ref": "#/components/schemas/SwarmOverviewSwarmRun"
+            }
+          },
           "runsConsidered": {
             "type": "integer",
             "description": "How many runs the roll-up scanned. Bounded: this is not \"all runs ever\"."
@@ -26775,6 +26909,501 @@
           "force": {
             "type": "boolean",
             "description": "Regenerate over a swarm run that already has insights. OFF by default because it takes a SECOND slice of your organization's shared daily insight quota (no credits either way), and the common cause of a repeated request is a caller that did not poll."
+          }
+        }
+      },
+      "SwarmRun": {
+        "type": "object",
+        "description": "One swarm run: the goal runs launched together under one `swarmRunId`. Read `settled` before treating any count as final.",
+        "required": [
+          "swarmRunId",
+          "swarmId",
+          "swarmName",
+          "createdAt",
+          "state",
+          "settled",
+          "totals",
+          "runs",
+          "launch"
+        ],
+        "properties": {
+          "swarmRunId": {
+            "type": "string"
+          },
+          "swarmId": {
+            "type": ["string", "null"],
+            "description": "The swarm the goals were launched from, when one is known."
+          },
+          "swarmName": {
+            "type": ["string", "null"]
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "launching",
+              "running",
+              "stopping",
+              "stopped",
+              "issues",
+              "complete"
+            ],
+            "description": "The state the swarm run page shows. `launching`, `running` and `stopping` are not final."
+          },
+          "settled": {
+            "type": "boolean",
+            "description": "True once the state is final, the launch is no longer launching and no goal run is waiting for grading. Until then counts can still change."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/SwarmRunTotals"
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmRunGoalRun"
+            }
+          },
+          "launch": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SwarmRunLaunch"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The launch that started the swarm run. `null` for a swarm run that was not started as one launch."
+          },
+          "launchFailures": {
+            "type": "array",
+            "description": "Only the goal runs with sessions that never ran. Present only with `include=launchFailures`.",
+            "items": {
+              "$ref": "#/components/schemas/RunLaunchFailures"
+            }
+          }
+        }
+      },
+      "SwarmRunTotals": {
+        "type": "object",
+        "required": ["runs", "sessions", "grading", "goalScore"],
+        "properties": {
+          "runs": {
+            "type": "integer"
+          },
+          "sessions": {
+            "$ref": "#/components/schemas/SwarmRunSessionCounts"
+          },
+          "grading": {
+            "$ref": "#/components/schemas/SwarmRunGradingCounts"
+          },
+          "goalScore": {
+            "$ref": "#/components/schemas/SwarmRunGoalScoreCounts"
+          }
+        }
+      },
+      "SwarmRunSessionCounts": {
+        "type": "object",
+        "description": "How the sessions ran, summed from each goal run's stored summary.",
+        "required": ["total", "succeeded", "errored", "rateLimited", "pending"],
+        "properties": {
+          "total": {
+            "type": "integer"
+          },
+          "succeeded": {
+            "type": "integer"
+          },
+          "errored": {
+            "type": "integer",
+            "description": "Sessions whose execution broke. A session graded as failing is counted in grading, not here."
+          },
+          "rateLimited": {
+            "type": "integer"
+          },
+          "pending": {
+            "type": "integer"
+          }
+        }
+      },
+      "SwarmRunGradingCounts": {
+        "type": "object",
+        "description": "How the sessions were graded, summed over the goal runs.",
+        "required": [
+          "pendingSessions",
+          "passedTrials",
+          "failedTrials",
+          "runsDecided",
+          "runsPending",
+          "runsNotEstablished",
+          "runsIntegrityFailed"
+        ],
+        "properties": {
+          "pendingSessions": {
+            "type": "integer",
+            "description": "Sessions still waiting for a grade."
+          },
+          "passedTrials": {
+            "type": "integer"
+          },
+          "failedTrials": {
+            "type": "integer"
+          },
+          "runsDecided": {
+            "type": "integer"
+          },
+          "runsPending": {
+            "type": "integer"
+          },
+          "runsNotEstablished": {
+            "type": "integer"
+          },
+          "runsIntegrityFailed": {
+            "type": "integer"
+          }
+        }
+      },
+      "SwarmRunGoalScoreCounts": {
+        "type": "object",
+        "description": "The advisory goal judge's counts.",
+        "required": ["graded", "passed", "failed", "pending"],
+        "properties": {
+          "graded": {
+            "type": "integer"
+          },
+          "passed": {
+            "type": "integer"
+          },
+          "failed": {
+            "type": "integer"
+          },
+          "pending": {
+            "type": "integer"
+          }
+        }
+      },
+      "SwarmRunGoalRunGrading": {
+        "type": "object",
+        "description": "One goal run's grading. The counts are present once grading has them.",
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "decided",
+              "notEstablished",
+              "integrityFailed",
+              "none"
+            ]
+          },
+          "pendingSessions": {
+            "type": "integer"
+          },
+          "passedTrials": {
+            "type": "integer"
+          },
+          "failedTrials": {
+            "type": "integer"
+          },
+          "verdict": {
+            "type": "string"
+          }
+        }
+      },
+      "SwarmRunGoalRun": {
+        "type": "object",
+        "description": "One goal run in the swarm run.",
+        "required": [
+          "runId",
+          "goalId",
+          "goalName",
+          "status",
+          "cancelRequested",
+          "cleanupPending",
+          "iterations",
+          "environmentIds",
+          "createdAt",
+          "sessions",
+          "grading",
+          "goalScore"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "goalId": {
+            "type": "string"
+          },
+          "goalName": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "The goal run's status, as the goal run read reports it."
+          },
+          "cancelRequested": {
+            "type": "boolean"
+          },
+          "cleanupPending": {
+            "type": "boolean"
+          },
+          "iterations": {
+            "type": "integer",
+            "description": "Sessions per target."
+          },
+          "environmentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "sessions": {
+            "$ref": "#/components/schemas/SwarmRunSessionCounts"
+          },
+          "grading": {
+            "$ref": "#/components/schemas/SwarmRunGoalRunGrading"
+          },
+          "goalScore": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SwarmRunGoalScoreCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SwarmRunLaunchError": {
+        "type": "object",
+        "description": "Why a launch, or one goal of it, stopped.",
+        "required": ["message"],
+        "properties": {
+          "status": {
+            "type": "integer",
+            "description": "The HTTP status the start answered, when it had one."
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "SwarmRunLaunchGoal": {
+        "type": "object",
+        "description": "One goal of the launch, and how far it got.",
+        "required": ["goalId", "launchKey", "status"],
+        "properties": {
+          "goalId": {
+            "type": "string"
+          },
+          "iterations": {
+            "type": "integer",
+            "description": "Sessions per target, when the launch set it for this goal."
+          },
+          "environmentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expectedSponsored": {
+            "type": "integer"
+          },
+          "launchKey": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "starting", "started", "failed", "not_started"]
+          },
+          "runId": {
+            "type": "string",
+            "description": "The goal run, once it started."
+          },
+          "deduped": {
+            "type": "boolean",
+            "description": "True when a retried launch found the goal run already started."
+          },
+          "error": {
+            "$ref": "#/components/schemas/SwarmRunLaunchError"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the goal did not start, for `not_started`."
+          }
+        }
+      },
+      "SwarmRunLaunch": {
+        "type": "object",
+        "description": "The launch that started a swarm run, goal by goal.",
+        "required": [
+          "swarmRunId",
+          "swarmId",
+          "sourceSwarmRunId",
+          "state",
+          "createdAt",
+          "goals"
+        ],
+        "properties": {
+          "swarmRunId": {
+            "type": "string"
+          },
+          "swarmId": {
+            "type": ["string", "null"]
+          },
+          "sourceSwarmRunId": {
+            "type": ["string", "null"],
+            "description": "The swarm run this one ran again, if any."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "launching",
+              "launched",
+              "partial",
+              "stopped",
+              "interrupted",
+              "failed"
+            ]
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "finishedAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "stopReason": {
+            "$ref": "#/components/schemas/SwarmRunLaunchError"
+          },
+          "retryAfterAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
+          },
+          "goals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmRunLaunchGoal"
+            }
+          }
+        }
+      },
+      "RunLaunchFailureReason": {
+        "type": "object",
+        "required": ["errorCode", "errorMessage", "count"],
+        "properties": {
+          "errorCode": {
+            "type": ["string", "null"]
+          },
+          "errorMessage": {
+            "type": ["string", "null"]
+          },
+          "count": {
+            "type": "integer",
+            "description": "Sessions that never ran for this reason."
+          }
+        }
+      },
+      "RunLaunchFailures": {
+        "type": "object",
+        "description": "Why some of one goal run's sessions never ran.",
+        "required": ["runId", "sessionsNotRun", "sessionsTotal", "reasons"],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "sessionsNotRun": {
+            "type": "integer",
+            "description": "Sessions whose attempt ended without recording a single message."
+          },
+          "sessionsTotal": {
+            "type": "integer",
+            "description": "Every attempt the run planned."
+          },
+          "sessionsUnread": {
+            "type": "integer",
+            "description": "Attempts left unclassified because the read's budget ran out first. Not counted in `sessionsNotRun`."
+          },
+          "reasons": {
+            "type": "array",
+            "description": "Most common first, at most three.",
+            "items": {
+              "$ref": "#/components/schemas/RunLaunchFailureReason"
+            }
+          }
+        }
+      },
+      "SwarmRunSession": {
+        "description": "A goal run session that always names its goal run.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/GoalRunSession"
+          },
+          {
+            "type": "object",
+            "required": ["goalId", "runId", "outcome"]
+          }
+        ]
+      },
+      "SwarmRunSessionPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SwarmRunSession"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Present only when another page exists."
+          }
+        }
+      },
+      "SwarmOverviewSwarmRun": {
+        "type": "object",
+        "description": "One swarm run in the overview, with the state the swarm run page shows.",
+        "required": ["swarmRunId", "state", "settled", "runIds", "createdAt"],
+        "properties": {
+          "swarmRunId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "launching",
+              "running",
+              "stopping",
+              "stopped",
+              "issues",
+              "complete"
+            ]
+          },
+          "settled": {
+            "type": "boolean",
+            "description": "True once the state is final, the launch has finished and no goal run is waiting for grading."
+          },
+          "runIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Epoch milliseconds."
           }
         }
       },

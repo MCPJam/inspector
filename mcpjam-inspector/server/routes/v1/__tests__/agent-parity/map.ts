@@ -104,4 +104,4 @@ export const NOT_EXPOSED: Readonly<Record<string, string>> = {
  * move it into `COVERED` or `NOT_EXPOSED`, then delete it here and lower this
  * number. It never goes up.
  */
-export const BACKLOG_MAX = 319;
+export const BACKLOG_MAX = 318;

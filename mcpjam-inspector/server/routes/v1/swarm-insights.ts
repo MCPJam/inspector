@@ -46,6 +46,10 @@ import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
+import {
+  toOverviewSwarmRunDto,
+  type OverviewSwarmRunRow,
+} from "./swarm-run-dto.js";
 
 const swarmInsights = new Hono();
 
@@ -124,6 +128,8 @@ type OverviewRow = {
       environmentName?: string;
     }>;
   }>;
+  /** The runs grouped by swarm run. Absent from backends before the grouping. */
+  swarmRuns?: OverviewSwarmRunRow[];
   runsConsidered: number;
   goalCompletion: {
     gradedCount: number;
@@ -251,6 +257,9 @@ function toOverviewDto(row: OverviewRow) {
       })),
       createdAt: run.createdAt,
     })),
+    ...(row.swarmRuns
+      ? { swarmRuns: row.swarmRuns.map(toOverviewSwarmRunDto) }
+      : {}),
     runsConsidered: row.runsConsidered,
     goalCompletion: {
       gradedCount: row.goalCompletion.gradedCount,

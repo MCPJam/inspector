@@ -122,7 +122,6 @@
   "hosts:getLocalBrowserSettings",
   "journeyRuns:estimateJourneyRunCredits",
   "journeyRuns:getSwarmSessionMetrics",
-  "journeyRuns:listRunLaunchFailures",
   "journeyRuns:listRunningPersonaRefIds",
   "journeyRuns:listSessionsByPersona",
   "journeyRuns:listSessionsByProject",
