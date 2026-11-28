@@ -1,4 +1,4 @@
-import type { Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import { assertBearerToken, ErrorCode, WebRouteError } from "./errors.js";
 
@@ -29,14 +29,45 @@ export type OwnApiKeyRequest =
   | { method: "DELETE"; keyId: string };
 
 export type BackendApiKeysAnswer =
-  /** The backend's success body, to return as is. */
-  | { kind: "answered"; body: unknown }
+  /** The backend's success status and body, to return as they are. */
+  | { kind: "answered"; status: number; body: unknown }
   /** DELETE only: the key is not among the caller's own. */
   | { kind: "not_own_key" }
   /** The switch is off or the backend lacks the routes. */
   | { kind: "in_inspector" };
 
 const ERROR_CODES = new Set<string>(Object.values(ErrorCode));
+
+/**
+ * What Convex answers for a path it has no route for. Only this means the
+ * backend lacks the routes; any other 404 may come from something in between
+ * after a mint went through.
+ */
+const CONVEX_NO_ROUTE = /^No HttpAction routed for \//;
+
+/**
+ * Success statuses to restore, by request: `handleRoute` answers 200, and a
+ * backend that answered otherwise (a mint's 201) keeps its own.
+ */
+const answeredStatus = new WeakMap<Request, number>();
+
+/** The backend's body for the route to return, with its status kept. */
+export function backendAnswer(
+  c: Context,
+  answer: Extract<BackendApiKeysAnswer, { kind: "answered" }>,
+): unknown {
+  answeredStatus.set(c.req.raw, answer.status);
+  return answer.body;
+}
+
+/** Restores a backend answer's status after the route has answered 200. */
+export const keepBackendStatus: MiddlewareHandler = async (c, next) => {
+  await next();
+  const status = answeredStatus.get(c.req.raw);
+  if (status !== undefined && status !== 200 && c.res.status === 200) {
+    c.res = new Response(c.res.body, { status, headers: c.res.headers });
+  }
+};
 
 /** The backend's `{ code, message, details? }`, or null for any other body. */
 function readRefusal(body: unknown): {
@@ -107,20 +138,37 @@ export async function forwardOwnApiKeyRequest(
     });
   }
 
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (error) {
+    throw unavailable({
+      statusCode: response.status,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+  }
   let body: unknown;
   try {
-    body = await response.json();
+    body = text ? JSON.parse(text) : undefined;
   } catch {
     // Not JSON: Convex's own answer for an unknown path, or a proxy's page.
     body = undefined;
   }
-  if (response.ok && body !== undefined) return { kind: "answered", body };
+  if (response.ok && body !== undefined) {
+    return { kind: "answered", status: response.status, body };
+  }
   const refusal = readRefusal(body);
   if (!refusal) {
-    if (response.status === 404) return { kind: "in_inspector" };
+    if (response.status === 404 && CONVEX_NO_ROUTE.test(text)) {
+      return { kind: "in_inspector" };
+    }
     throw unavailable({ statusCode: response.status });
   }
-  if (request.method === "DELETE" && response.status === 404) {
+  if (
+    request.method === "DELETE" &&
+    response.status === 404 &&
+    refusal.code === ErrorCode.NOT_FOUND
+  ) {
     return { kind: "not_own_key" };
   }
   throw new WebRouteError(

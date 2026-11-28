@@ -69,7 +69,7 @@ function stubNetwork(backend: () => Response | Promise<Response>) {
         headers: new Headers(init?.headers),
         body: init?.body ? JSON.parse(String(init.body)) : undefined,
       });
-      if (url.startsWith(BACKEND)) return backend();
+      if (new URL(url).origin === BACKEND) return backend();
       return Response.json({ data: [], list_metadata: { after: null } });
     }),
   );
@@ -77,9 +77,9 @@ function stubNetwork(backend: () => Response | Promise<Response>) {
 }
 
 const backendCalls = (calls: Call[]) =>
-  calls.filter((call) => call.url.startsWith(BACKEND));
+  calls.filter((call) => new URL(call.url).origin === BACKEND);
 const workosCalls = (calls: Call[]) =>
-  calls.filter((call) => call.url.startsWith("https://api.workos.com"));
+  calls.filter((call) => new URL(call.url).origin === "https://api.workos.com");
 
 function request(
   app: ReturnType<typeof createWebTestApp>["app"],
@@ -267,6 +267,36 @@ describe("API keys through the backend", () => {
     expect(workosCalls(calls)[0].headers.get("authorization")).toBe(
       "Bearer sk_test_admin",
     );
+  });
+
+  it("never mints in the Inspector after a 404 that isn't Convex's missing route", async () => {
+    // A proxy's page or JSON, which can come after the backend has minted.
+    for (const notFound of [
+      () => new Response("<html>404 Not Found</html>", { status: 404 }),
+      () => Response.json({ error: "Not Found" }, { status: 404 }),
+    ]) {
+      const calls = stubNetwork(notFound);
+      const minted = await expectJson(
+        await request(app, "POST", undefined, {
+          name: "x",
+          organizationId: "org_convex_1",
+        }),
+      );
+      expect(minted.status).toBe(502);
+      expect(minted.data).toMatchObject({ code: "SERVER_UNREACHABLE" });
+      expect(workosCalls(calls)).toEqual([]);
+    }
+    expect(createWorkosKeyBinding).not.toHaveBeenCalled();
+  });
+
+  it("keeps the backend's success status", async () => {
+    stubNetwork(() => Response.json({ id: "api_key_1" }, { status: 201 }));
+    const created = await request(app, "POST", undefined, {
+      name: "x",
+      organizationId: "org_convex_1",
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toEqual({ id: "api_key_1" });
   });
 
   it("uses the in-Inspector path while the switch is off", async () => {

@@ -40,7 +40,11 @@ import {
   resolveApiKeyReadiness,
   ApiKeyReadinessError,
 } from "../../services/organizations.js";
-import { forwardOwnApiKeyRequest } from "./api-keys-backend.js";
+import {
+  backendAnswer,
+  forwardOwnApiKeyRequest,
+  keepBackendStatus,
+} from "./api-keys-backend.js";
 
 /**
  * `/api/web/api-keys/*` — WorkOS API Key management.
@@ -140,6 +144,8 @@ apiKeys.use("*", bearerAuthMiddleware);
 // MJ-012: the `/api/web` `*` limiter runs before this router sets `authMethod`,
 // so it cannot see a signed-in caller here. See routes/web/index.ts.
 apiKeys.use("*", passthroughRateLimitMiddleware);
+// A backend answer keeps its own status (a mint's 201) past `handleRoute`.
+apiKeys.use("*", keepBackendStatus);
 
 function getWorkOSRestKey(): string {
   const key = process.env.WORKOS_API_KEY;
@@ -487,7 +493,7 @@ apiKeys.post("/", async (c) =>
         ...(expiresInDays !== undefined ? { expiresInDays } : {}),
       },
     });
-    if (viaBackend.kind === "answered") return viaBackend.body;
+    if (viaBackend.kind === "answered") return backendAnswer(c, viaBackend);
 
     // Resolve the MCPJam (Convex) user id for the binding. The session bearer
     // carries the WorkOS user id (`sub`); the binding records the Convex user
@@ -1198,7 +1204,7 @@ apiKeys.get("/", async (c) => {
     const viaBackend = await forwardOwnApiKeyRequest(c, {
       method: "GET",
     });
-    if (viaBackend.kind === "answered") return viaBackend.body;
+    if (viaBackend.kind === "answered") return backendAnswer(c, viaBackend);
     // Deliberately NOT filtered by `session.organizationId`: a key is now
     // minted into whichever MCPJam org the caller selected in the dialog
     // (see POST above), which can differ from the WorkOS org the session
@@ -1304,7 +1310,7 @@ apiKeys.delete("/:id", async (c) =>
       method: "DELETE",
       keyId: id,
     });
-    if (viaBackend.kind === "answered") return viaBackend.body;
+    if (viaBackend.kind === "answered") return backendAnswer(c, viaBackend);
     // Not one of the caller's own keys: an owner or admin of the organization
     // it is bound to may still revoke it here, until the backend does that too.
     if (viaBackend.kind === "not_own_key") {
