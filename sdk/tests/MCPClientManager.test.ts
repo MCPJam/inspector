@@ -322,6 +322,8 @@ describe("MCPClientManager", () => {
         const result = await manager.executeTool("cwd-server", "cwd", {});
         expect(extractSingleText(result)).toBe(resolvedCwd);
       } finally {
+        // Windows refuses to remove a directory that a live process runs in.
+        await manager.disconnectServer("cwd-server");
         rmSync(cwd, { recursive: true, force: true });
       }
     }, 15000);

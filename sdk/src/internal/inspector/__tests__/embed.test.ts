@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { embedInspector, type EmbeddedInspector } from "../embed.js";
 import { choosePort, isPortFree } from "../ports.js";
 import { holdInspector, inspectorHoldersDir, otherInspectorHolders } from "../holders.js";
@@ -85,7 +85,6 @@ server.listen(port, "127.0.0.1", () => {
 `;
 
 let home: string;
-let previousHome: string | undefined;
 let script: string;
 let record: string;
 const launched: EmbeddedInspector[] = [];
@@ -122,8 +121,10 @@ function requests(): string[] {
 
 beforeEach(() => {
   home = mkdtempSync(path.join(os.tmpdir(), "mcpjam-embed-"));
-  previousHome = process.env.HOME;
-  process.env.HOME = home;
+  // os.homedir() reads USERPROFILE on Windows and HOME elsewhere. Setting both
+  // keeps this process and every MCPJam it starts out of the real profile.
+  vi.stubEnv("HOME", home);
+  vi.stubEnv("USERPROFILE", home);
   script = path.join(home, "fake-start.mjs");
   record = path.join(home, "record");
   writeFileSync(script, FAKE_START);
@@ -133,7 +134,7 @@ beforeEach(() => {
 afterEach(async () => {
   await Promise.all(launched.splice(0).map((inspector) => inspector.stop()));
   await Promise.all(servers.splice(0).map((s) => new Promise((r) => s.close(r))));
-  process.env.HOME = previousHome;
+  vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true });
 });
 
