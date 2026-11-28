@@ -210,9 +210,36 @@ function renderPanel(
 }
 
 describe("the observation view", () => {
+  it("caps problems at five and copies the expanded finding's own option", async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      problemsView: view({
+        problems: Array.from({ length: 7 }, (_, index) =>
+          problem({
+            id: `problem-${index}`,
+            options: [option({ change: `Investigate issue ${index}` })],
+          }),
+        ),
+      }),
+    });
+    const list = screen.getByRole("list", { name: "Findings" });
+    expect(list.children).toHaveLength(5);
+    await user.click(screen.getByRole("button", { name: "Show all 7 findings" }));
+    expect(list.children).toHaveLength(7);
+    await user.click(
+      within(screen.getAllByTestId("problem")[5]).getByRole("button", {
+        name: /Copy/,
+      }),
+    );
+    expect(clipboard.text).toContain("Investigate issue 6");
+    expect(clipboard.text).not.toContain("Investigate issue 0");
+    await user.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(list.children).toHaveLength(5);
+  });
+
   it("renders problems alone, never the flat list or generic advice", () => {
     renderPanel();
-    expect(screen.getByTestId("problems-carousel")).toBeVisible();
+    expect(screen.getByRole("list", { name: "Findings" })).toBeVisible();
     expect(screen.queryByText("Legacy flat finding")).toBeNull();
     expect(screen.queryByText(/Open the exemplar sessions/)).toBeNull();
     const lead = screen.getByTestId("problem-lead");
@@ -231,7 +258,7 @@ describe("the observation view", () => {
         "tool description · lookup_customer · not yet verified",
       ),
     ).toBeVisible();
-    expect(screen.getByTestId("problem-copy-prompt")).toHaveTextContent(
+    expect(within(lead).getByTestId("problem-copy-prompt")).toHaveTextContent(
       "Copy experiment prompt",
     );
   });
@@ -531,11 +558,13 @@ describe("problem details", () => {
     );
   });
 
-  it("also exposes the prompt when copying from the panel header fails", async () => {
+  it("also exposes the prompt when copying from the finding fails", async () => {
     clipboard.ok = false;
     const user = userEvent.setup();
     renderPanel();
-    await user.click(screen.getByTestId("problem-copy-prompt"));
+    await user.click(
+      within(screen.getByTestId("problem-lead")).getByTestId("problem-copy-prompt"),
+    );
     expect(await screen.findByTestId("problem-prompt-text")).toHaveTextContent(
       "Try an experiment on the MCP server",
     );
@@ -806,7 +835,7 @@ describe("buildOptionPrompt", () => {
 describe("problem view edge cases", () => {
   it("renders recorded problems even when the snapshot is missing", () => {
     renderPanel({ snapshot: null });
-    expect(screen.getByTestId("problems-carousel")).toBeVisible();
+    expect(screen.getByRole("list", { name: "Findings" })).toBeVisible();
   });
 
   it("shows decision criteria when an option has no hypothesis", () => {

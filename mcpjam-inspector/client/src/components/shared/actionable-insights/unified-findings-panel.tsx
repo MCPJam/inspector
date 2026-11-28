@@ -1,5 +1,5 @@
 /** Product findings view: a lead problem/fix, and evidence drawers. */
-import { useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -13,17 +13,9 @@ import {
   type UnifiedFindings,
 } from "@/lib/insights-envelope-api";
 import type { FindingPromptContext } from "./finding-prompts";
-import { CopyFindingPrompt } from "./finding-summary";
-import { CopyOptionPrompt } from "./problem-details";
 import { FindingText } from "./finding-text";
 import { mechanismCaveat } from "./finding-provenance";
-import {
-  FindingsAllSheet,
-  FindingsCarousel,
-  FindingsPager,
-  ProblemsCarousel,
-  useFindingsCarousel,
-} from "./findings-carousel";
+import { FindingsList, ProblemsList } from "./findings-list";
 import type { FindingEvidenceLocator } from "./finding-evidence";
 import type { AffectedIterationRow } from "./affected-iterations-list";
 import {
@@ -187,8 +179,6 @@ export function UnifiedFindingsPanel({
   fallback,
   problemsView,
 }: UnifiedFindingsPanelProps) {
-  const [allOpen, setAllOpen] = useState(false);
-  const seeAllTrigger = useRef<HTMLButtonElement>(null);
   // Ordering is a MEASURED fact (actionability, severity, affected count).
   // Whether a model happened to narrate a finding is not, and must not move
   // a bigger problem below a smaller one.
@@ -218,14 +208,8 @@ export function UnifiedFindingsPanel({
       ),
     [snapshot?.deterministicFindings, findings],
   );
-  const carousel = useFindingsCarousel();
   const problems = problemsView?.problems ?? null;
-  const currentProblem = problems?.[carousel.selected] ?? problems?.[0];
-  const current = problems
-    ? undefined
-    : (sorted[carousel.selected] ?? sorted[0]);
-  const hasCurrent = Boolean(problems ? currentProblem : current);
-  const itemCount = problems ? problems.length : sorted.length;
+  const hasCurrent = (problems ?? sorted).length > 0;
   const enrichment = snapshot?.enrichment;
   const discovery =
     mode === "ai" && enrichment?.status === "ready"
@@ -249,16 +233,6 @@ export function UnifiedFindingsPanel({
           {scopeControl}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <FindingsPager
-            selected={carousel.selected}
-            count={itemCount}
-            canPrev={carousel.canPrev}
-            canNext={carousel.canNext}
-            onPrev={carousel.scrollPrev}
-            onNext={carousel.scrollNext}
-            {...(problems ? {} : { onSeeAll: () => setAllOpen(true) })}
-            seeAllRef={seeAllTrigger}
-          />
           {analyze.pending ? (
             <span
               className="flex items-center gap-2 text-sm text-muted-foreground"
@@ -291,20 +265,6 @@ export function UnifiedFindingsPanel({
                 Uses AI credits
               </span>
             </span>
-          ) : null}
-          {currentProblem?.options[0] ? (
-            <CopyOptionPrompt
-              key={`${currentProblem.id}:${currentProblem.options[0].id}`}
-              problem={currentProblem}
-              option={currentProblem.options[0]}
-              context={context}
-            />
-          ) : current ? (
-            <CopyFindingPrompt
-              key={current.id}
-              finding={current}
-              context={context}
-            />
           ) : null}
         </div>
       </div>
@@ -460,13 +420,12 @@ export function UnifiedFindingsPanel({
         )
       ) : problems && problems.length > 0 ? (
         <div data-testid="unified-findings-list">
-          <ProblemsCarousel
+          <ProblemsList
             problems={problems}
             context={context}
             onOpenEvidence={onOpenEvidence}
             iterationRows={iterationRows}
             caveats={problemCaveats}
-            setApi={carousel.setApi}
           />
           <p className="mt-3 text-xs text-muted-foreground">
             Recommendations follow{" "}
@@ -475,7 +434,7 @@ export function UnifiedFindingsPanel({
         </div>
       ) : !problems && sorted.length > 0 ? (
         <div data-testid="unified-findings-list">
-          <FindingsCarousel
+          <FindingsList
             findings={sorted}
             provenanceById={provenanceById}
             view={mode}
@@ -483,7 +442,6 @@ export function UnifiedFindingsPanel({
             onOpenEvidence={onOpenEvidence}
             iterationRows={iterationRows}
             findingsById={findingsById}
-            setApi={carousel.setApi}
           />
         </div>
       ) : fallback !== undefined &&
@@ -532,17 +490,6 @@ export function UnifiedFindingsPanel({
           .
         </p>
       ) : null}
-      <FindingsAllSheet
-        open={allOpen}
-        onOpenChange={setAllOpen}
-        findings={sorted}
-        provenanceById={provenanceById}
-        view={mode}
-        onOpenEvidence={onOpenEvidence}
-        iterationRows={iterationRows}
-        findingsById={findingsById}
-        trigger={seeAllTrigger}
-      />
     </div>
   );
 }

@@ -267,82 +267,28 @@ describe("walkthrough findings layout", () => {
     ).toBeNull();
   });
 
-  it("pages every finding from one carousel in the findings header", () => {
+  it("shows five findings, expands the list, and collapses it", () => {
     renderPanel({
-      findings: [
-        finding(),
-        finding({
-          id: "second",
-          title: "Missing confirmation",
-          observed: "The final answer omitted the project name.",
-        }),
-        finding({
-          id: "third",
-          title: "Wrong host",
-          observed: "The model never sent a host.",
-        }),
-      ],
+      findings: Array.from({ length: 7 }, (_, index) =>
+        finding({ id: `finding-${index}`, observed: `Observed issue ${index}` }),
+      ),
     });
-    expect(
-      screen.getByTestId("unified-findings-carousel-index"),
-    ).toHaveTextContent("1 of 3");
-    expect(
-      screen.getByRole("button", { name: "Previous finding" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Next finding" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/more findings/i)).toBeNull();
-    expect(screen.getByTestId("unified-finding-lead")).toBeVisible();
-    expect(screen.getAllByTestId("unified-finding")).toHaveLength(2);
-    expect(screen.getByTestId("unified-findings-see-all")).toBeVisible();
+    const list = screen.getByRole("list", { name: "Findings" });
+    expect(list).not.toHaveAttribute("tabindex");
+    expect(list.className).not.toMatch(/overflow-y-auto|max-h-/);
+    expect(list.children).toHaveLength(5);
+    expect(screen.queryByText("Observed issue 6")).toBeNull();
+    const expand = screen.getByRole("button", { name: "Show all 7 findings" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(expand);
+    expect(list.children).toHaveLength(7);
+    expect(screen.getByText("Observed issue 6")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(list.children).toHaveLength(5);
+    expect(screen.queryByRole("button", { name: "Next finding" })).toBeNull();
   });
 
-  it("opens every finding as a stacked preview and drills into details", () => {
-    renderPanel({
-      findings: [
-        finding(),
-        finding({
-          id: "second",
-          title: "Missing confirmation",
-          observed: "The final answer omitted the project name.",
-          evidence: [
-            {
-              kind: "tool_error",
-              iterationId: "it_2",
-              excerpt: "No project name in the final answer.",
-            },
-          ],
-        }),
-      ],
-    });
-    fireEvent.click(screen.getByRole("button", { name: "See all" }));
-    const catalog = screen.getByRole("dialog", { name: "All findings" });
-    expect(catalog).toBeVisible();
-    const previews = within(catalog).getAllByTestId(
-      "unified-findings-all-preview",
-    );
-    expect(previews).toHaveLength(2);
-    expect(previews[1]).toHaveTextContent(
-      "The final answer omitted the project name.",
-    );
-    fireEvent.click(previews[1]);
-    const details = screen.getByRole("dialog", { name: "Finding details" });
-    expect(details).toBeVisible();
-    expect(
-      within(details).getByRole("heading", { name: "What broke" }),
-    ).toBeVisible();
-    expect(
-      within(details).getByRole("heading", { name: "How to fix" }),
-    ).toBeVisible();
-    expect(details).toHaveTextContent(
-      "The final answer omitted the project name.",
-    );
-    fireEvent.click(screen.getByTestId("unified-findings-all-back"));
-    expect(screen.getByRole("dialog", { name: "All findings" })).toBeVisible();
-  });
-
-  it("opens the evidence sheet from the current carousel slide", () => {
+  it("opens the evidence sheet from a finding in the list", () => {
     const second = finding({
       id: "second",
       title: "Missing confirmation",
@@ -356,12 +302,8 @@ describe("walkthrough findings layout", () => {
       ],
     });
     renderPanel({ findings: [finding(), second] });
-    expect(screen.getByTestId("unified-findings-see-all")).toBeVisible();
-    expect(screen.getByTestId("unified-findings-carousel")).toBeVisible();
-    expect(screen.getByRole("region", { name: "Findings" })).toBeVisible();
-    expect(
-      screen.getByTestId("unified-findings-carousel-index"),
-    ).toHaveTextContent("1 of 2");
+    expect(screen.getByRole("list", { name: "Findings" }).children).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
     const lead = screen.getByTestId("unified-finding-lead");
     expect(
       within(lead).getByRole("heading", { name: "What broke" }),
