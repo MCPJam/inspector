@@ -100,6 +100,7 @@ export function IterationReport({
           onTabChange={onTabChange && ((mode) => onTabChange(tabForMode(mode)))}
           trialVerdictWord={outcomeLabel(result)}
           onEditScripts={onEditScripts}
+          codeEvaluators={fullRun?.configSnapshot?.codeEvaluators}
           scorecard={{
             render: (context) => (
               <>
