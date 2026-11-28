@@ -8,7 +8,7 @@
  * confirmed the upload, so the terminal `updateTestIteration` names it only
  * then, and a backend without the feature never sees the field.
  *
- *   1. `POST /evals/grading-files/upload-url` → `{ uploadUrl, uploadGrantId }`
+ *   1. `requestGradingFilesUploadUrl` → `{ uploadUrl, uploadGrantId }`
  *      (any refusal, the 404 of an older backend included, means skip);
  *   2. the tar to `uploadUrl` → `{ storageId }`;
  *   3. the trusted receipt (`confirmUploadedObject`).
