@@ -23,7 +23,11 @@ describe("local Inspector discovery", () => {
     const cleanup = writeInspectorRuntime(6274, { home });
     cleanups.push(cleanup);
     const file = join(home, ".mcpjam/inspector/6274.json");
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits: Node reports 0o666 whatever was asked,
+    // and the file is private through the user profile ACL it inherits.
+    if (process.platform !== "win32") {
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    }
     expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({
       port: 6274,
       pid: process.pid,

@@ -798,7 +798,11 @@ describe("the durable ledger sink", () => {
       "session.json",
     );
     // These files hold a browsing history and the screenshots that go with it.
-    expect((await stat(file)).mode & 0o077).toBe(0);
+    // Windows has no POSIX mode bits: Node reports 0o666 whatever was asked,
+    // and the file is private through the user profile ACL it inherits.
+    if (process.platform !== "win32") {
+      expect((await stat(file)).mode & 0o077).toBe(0);
+    }
     expect(JSON.parse(await readFile(file, "utf8")).policy).toEqual(POLICY);
   });
 });

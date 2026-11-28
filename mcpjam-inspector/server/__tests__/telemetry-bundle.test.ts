@@ -18,13 +18,13 @@ module.exports = { accepted: telemetryActorId("abcdef0123456789"), rejected: tel
   };
   config.esbuildOptions?.(options, { format: "cjs" });
   const target = options.alias?.["@mcpjam/sdk/internal/telemetry"];
-  expect(target).toMatch(/\/sdk\/dist\/internal\/telemetry\.js$/);
+  expect(target).toMatch(/[\\/]sdk[\\/]dist[\\/]internal[\\/]telemetry\.js$/);
   if (!target) throw new Error("The telemetry subpath needs an explicit alias");
   // Exercise the alias with source so this test also runs before an SDK build.
   options.alias = {
     ...options.alias,
     "@mcpjam/sdk/internal/telemetry": target
-      .replace("/sdk/dist/", "/sdk/src/")
+      .replace(/([\\/])sdk[\\/]dist[\\/]/, "$1sdk$1src$1")
       .replace(/\.js$/, ".ts"),
   };
   const result = await build(options);

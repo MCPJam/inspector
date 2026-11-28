@@ -22,6 +22,7 @@
  *    files and credential stores regardless).
  */
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, rename, stat, chmod } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join, resolve, sep } from "node:path";
@@ -29,6 +30,7 @@ import { existsSync } from "node:fs";
 import { HOSTED_MODE, LOCAL_COMPUTER_ENABLED } from "../../config.js";
 import { logger } from "../logger.js";
 import { detectAuthUrls } from "./auth-urls.js";
+import { MSYS_COMMAND_ID_ENV, spawnMsysReaper } from "./msys-process-tree.js";
 import {
   DEFAULT_COMMAND_TIMEOUT_S,
   MAX_COMMAND_TIMEOUT_S,
@@ -49,6 +51,8 @@ export const LOCAL_ENGINE_SANDBOX_ID = "local-machine";
 const STREAM_COLLECT_CAP = 1_000_000;
 
 const SIGKILL_GRACE_MS = 2_000;
+/** From timeout or abort to a returned result, whatever still holds the pipes. */
+const TEARDOWN_DEADLINE_MS = SIGKILL_GRACE_MS + 3_000;
 
 /**
  * Environment ALLOWLIST for local commands and PTYs. Names only — values pass
@@ -234,43 +238,78 @@ export const localBashRunner: BashRunner = async ({
     throw new Error("No bash available on this machine.");
   }
   return await new Promise((resolvePromise, rejectPromise) => {
+    const windows = process.platform === "win32";
+    const commandEnv = buildLocalCommandEnv();
+    const commandId = randomUUID();
     const child = spawn(bashPath, ["-c", command], {
       ...(workdir ? { cwd: workdir } : {}),
-      env: buildLocalCommandEnv(),
+      env: windows
+        ? { ...commandEnv, [MSYS_COMMAND_ID_ENV]: commandId }
+        : commandEnv,
       stdio: ["ignore", "pipe", "pipe"],
-      detached: process.platform !== "win32",
+      detached: !windows,
     });
 
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let tornDown = false;
     let killTimer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined;
+    let deadlineTimer: NodeJS.Timeout | undefined;
 
-    const killTree = () => {
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (killTimer) clearTimeout(killTimer);
+      if (graceTimer) clearTimeout(graceTimer);
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+      signal?.removeEventListener("abort", onAbort);
+      fn();
+    };
+
+    // Timeout and abort share one teardown. `close` waits for every holder of
+    // the output pipes, and a descendant the kill could not reach keeps them
+    // open, so the deadline releases the streams and returns regardless.
+    // Terminating the spawned PID directly is the Windows fallback for a bash
+    // the reaper cannot see, such as a non-MSYS bash.exe, and for a reaper
+    // still running at the deadline.
+    const killRoot = () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+    };
+    const teardown = () => {
+      if (tornDown || settled) return;
+      tornDown = true;
+      deadlineTimer = setTimeout(() => {
+        if (windows) killRoot();
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        settle(() => resolvePromise({ stdout, stderr, exitCode: 124 }));
+      }, TEARDOWN_DEADLINE_MS);
+      deadlineTimer.unref?.();
+      if (windows) {
+        spawnMsysReaper(bashPath, commandId, commandEnv)
+          .once("exit", killRoot)
+          .once("error", killRoot);
+        return;
+      }
       try {
-        if (process.platform !== "win32" && child.pid) {
-          process.kill(-child.pid, "SIGTERM");
-        } else {
-          child.kill("SIGTERM");
-        }
+        if (child.pid) process.kill(-child.pid, "SIGTERM");
       } catch {}
       graceTimer = setTimeout(() => {
         try {
-          if (process.platform !== "win32" && child.pid) {
-            process.kill(-child.pid, "SIGKILL");
-          } else {
-            child.kill("SIGKILL");
-          }
+          if (child.pid) process.kill(-child.pid, "SIGKILL");
         } catch {}
       }, SIGKILL_GRACE_MS);
       graceTimer.unref?.();
     };
 
-    const onAbort = () => killTree();
+    const onAbort = () => teardown();
     signal?.addEventListener("abort", onAbort, { once: true });
 
-    killTimer = setTimeout(killTree, timeoutMs);
+    killTimer = setTimeout(teardown, timeoutMs);
     killTimer.unref?.();
 
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -286,24 +325,16 @@ export const localBashRunner: BashRunner = async ({
       }
     });
 
-    const settle = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      if (killTimer) clearTimeout(killTimer);
-      if (graceTimer) clearTimeout(graceTimer);
-      signal?.removeEventListener("abort", onAbort);
-      fn();
-    };
-
     child.on("error", (error) => settle(() => rejectPromise(error)));
     child.on("close", (code, sig) =>
       settle(() =>
         resolvePromise({
           stdout,
           stderr,
-          // A signal exit (timeout/abort kill) reports 124, the conventional
-          // timeout exit code, so the model sees a non-zero shell outcome.
-          exitCode: code ?? (sig ? 124 : 1),
+          // A timeout/abort kill reports 124, the conventional timeout exit
+          // code, so the model sees a non-zero shell outcome. Windows reports
+          // a killed MSYS bash as an ordinary exit code, not a signal.
+          exitCode: tornDown ? 124 : (code ?? (sig ? 124 : 1)),
         })
       )
     );

@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { parsePluginBundle } from "@mcpjam/sdk/plugin-bundle";
 import { PluginBundleCache } from "../bundle-cache.js";
@@ -98,7 +98,9 @@ describe("plugin stdio component (desktop)", () => {
 
     expect(reported.pluginRoot).toBe(materialized.root);
     expect(reported.scriptPath).toBe(join(materialized.root, "server", "index.js"));
-    expect(reported.dataFileArg).toBe(join(materialized.root, "data.txt"));
+    // The arg is the manifest's `${PLUGIN_ROOT}/data.txt` with the root put in,
+    // so on Windows it joins a backslashed root to a forward slash.
+    expect(normalize(reported.dataFileArg)).toBe(join(materialized.root, "data.txt"));
 
     await manager.disconnectServer("fixture-local");
     release();

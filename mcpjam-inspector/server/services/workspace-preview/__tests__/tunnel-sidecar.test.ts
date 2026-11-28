@@ -106,7 +106,9 @@ describe("workspace preview sidecar", () => {
     expect(out.split("\r\n")[0]).toBe("HTTP/1.1 502 Bad Gateway");
   });
 
-  it("keeps its state file private to the workspace user", () => {
+  // The sidecar runs in the Linux workspace; Windows has no POSIX mode bits
+  // to check, and Node reports 0o666 there whatever was asked.
+  it.skipIf(process.platform === "win32")("keeps its state file private to the workspace user", () => {
     expect(sidecar.stateMode).toBe(0o600);
   });
 });

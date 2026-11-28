@@ -11,12 +11,16 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { join } from "node:path";
 import {
   createProgressReader,
   createVideoRecorder,
   recorderArgs,
   FRAGMENT_SECONDS,
 } from "../video-recorder";
+
+/** A take under `/rec`, joined with the separator of the host running the test. */
+const rec = (name: string) => join("/rec", name);
 
 /** A stand-in for ffmpeg. */
 function fakeFfmpeg(over: { spawnThrows?: boolean } = {}) {
@@ -273,7 +277,7 @@ describe("a take's lifecycle", () => {
     const { recorder, ffmpeg } = build();
     expect(recorder.start({ id: "run-1", fps: 15 })).toEqual({ ok: true });
     expect(ffmpeg.spawned).toHaveLength(1);
-    expect(ffmpeg.spawned[0]!.args).toContain("/rec/run-1-b00t-1.mp4");
+    expect(ffmpeg.spawned[0]!.args).toContain(rec("run-1-b00t-1.mp4"));
     expect(recorder.status()).toMatchObject({
       active: true,
       id: "run-1",
@@ -309,7 +313,7 @@ describe("a take's lifecycle", () => {
     ffmpeg.latest().exit(0);
 
     expect(await stopping).toEqual({
-      path: "/rec/run-1-b00t-1.mp4",
+      path: rec("run-1-b00t-1.mp4"),
       bytes: 1_234,
       durationMs: 9_000,
       // AFTER decimation: the honest measure of how much the recording shows.
@@ -564,12 +568,12 @@ describe("each take writes its own file", () => {
     expect(recorder.start({ id: "run-1", fps: 15 })).toEqual({ ok: true });
 
     const paths = ffmpeg.spawned.map((s) => s.args[s.args.length - 1]);
-    expect(paths).toEqual(["/rec/run-1-b00t-1.mp4", "/rec/run-1-b00t-2.mp4"]);
+    expect(paths).toEqual([rec("run-1-b00t-1.mp4"), rec("run-1-b00t-2.mp4")]);
     expect(new Set(paths).size).toBe(2);
 
     releaseStat?.();
     // The first take still reports ITS file, not the one now being written.
-    expect((await stopping)?.path).toBe("/rec/run-1-b00t-1.mp4");
+    expect((await stopping)?.path).toBe(rec("run-1-b00t-1.mp4"));
   });
 
   it("does not reuse the previous BOOT's path when the counter resets", async () => {
@@ -586,8 +590,8 @@ describe("each take writes its own file", () => {
 
     const pathOf = (f: ReturnType<typeof fakeFfmpeg>) =>
       f.spawned[0]!.args[f.spawned[0]!.args.length - 1];
-    expect(pathOf(first.ffmpeg)).toBe("/rec/run-1-b00t-1.mp4");
-    expect(pathOf(second.ffmpeg)).toBe("/rec/run-1-b00t2-1.mp4");
+    expect(pathOf(first.ffmpeg)).toBe(rec("run-1-b00t-1.mp4"));
+    expect(pathOf(second.ffmpeg)).toBe(rec("run-1-b00t2-1.mp4"));
     expect(pathOf(first.ffmpeg)).not.toBe(pathOf(second.ffmpeg));
   });
 
@@ -621,7 +625,7 @@ describe("each take writes its own file", () => {
     ffmpeg.latest().exit(0);
 
     const result = await stopping;
-    expect(result?.path).toBe("/rec/run-1-b00t-1.mp4");
+    expect(result?.path).toBe(rec("run-1-b00t-1.mp4"));
     expect(ffmpeg.spawned[0]!.args).toContain(result!.path);
   });
 });

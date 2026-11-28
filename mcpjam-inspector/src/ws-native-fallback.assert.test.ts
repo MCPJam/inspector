@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolve } from "path";
+import { resolve, sep } from "path";
 import {
   assertWsNativeFallback,
   type ReadFsBits,
@@ -17,22 +17,26 @@ function fakeFs(
   files: Record<string, string>,
   overrides: Partial<ReadFsBits> = {},
 ): ReadFsBits {
-  const paths = Object.keys(files).map((p) => resolve(p));
-  const isDir = (p: string) => paths.some((f) => f.startsWith(p + "/"));
+  // Keyed by resolved path, which on Windows gains a drive and backslashes.
+  const tree = new Map(
+    Object.entries(files).map(([p, contents]) => [resolve(p), contents]),
+  );
+  const paths = [...tree.keys()];
+  const isDir = (p: string) => paths.some((f) => f.startsWith(p + sep));
 
   return {
-    existsSync: (p) => isDir(p) || paths.includes(resolve(p)),
+    existsSync: (p) => isDir(p) || tree.has(resolve(p)),
     readdirSync: (p) => {
-      const prefix = resolve(p) + "/";
+      const prefix = resolve(p) + sep;
       const names = new Set<string>();
       for (const f of paths) {
         if (!f.startsWith(prefix)) continue;
-        names.add(f.slice(prefix.length).split("/")[0]!);
+        names.add(f.slice(prefix.length).split(sep)[0]!);
       }
       return [...names];
     },
     statSync: (p) => ({ isDirectory: () => isDir(resolve(p)) }),
-    readFileSync: (p) => files[resolve(p)] ?? "",
+    readFileSync: (p) => tree.get(resolve(p)) ?? "",
     ...overrides,
   };
 }

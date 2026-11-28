@@ -92,6 +92,71 @@ describe("checkPluginLaunch", () => {
     });
   });
 
+  // PATHEXT shims are how Windows installs runtimes such as `uvx` and `npx`.
+  it.skipIf(process.platform !== "win32")(
+    "finds a runtime installed as a PATHEXT shim",
+    async () => {
+      const shims = path.join(base, "shims");
+      await mkdir(shims);
+      await writeFile(path.join(shims, "uvx.cmd"), "@echo off\r\n");
+      const shimmed = { command: "uvx", env: { PATH: shims }, workingDirectory: root };
+      expect(
+        await checkPluginLaunch(shimmed, { root, dataDir }, {
+          remote: false,
+          declaredCommand: "uvx",
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "finds a runtime in a quoted PATH entry",
+    async () => {
+      const shims = path.join(base, "runtime tools");
+      await mkdir(shims);
+      await writeFile(path.join(shims, "uvx.cmd"), "@echo off\r\n");
+      const quoted = {
+        command: "uvx",
+        env: { PATH: `"${shims}"` },
+        workingDirectory: root,
+      };
+      expect(
+        await checkPluginLaunch(quoted, { root, dataDir }, {
+          remote: false,
+          declaredCommand: "uvx",
+        }),
+      ).toBeNull();
+    },
+  );
+
+  // cross-spawn retries without a suffix and runs the file by its shebang.
+  it.skipIf(process.platform !== "win32")(
+    "finds an extensionless script on the PATH",
+    async () => {
+      const scripts = path.join(base, "scripts");
+      await mkdir(scripts);
+      await writeFile(path.join(scripts, "server"), "#!/usr/bin/env node\n");
+      const bare = {
+        command: "server",
+        env: { PATH: scripts },
+        workingDirectory: root,
+      };
+      expect(
+        await checkPluginLaunch(bare, { root, dataDir }, {
+          remote: false,
+          declaredCommand: "server",
+        }),
+      ).toBeNull();
+      expect(
+        await checkPluginLaunch(
+          { ...bare, command: "other-server" },
+          { root, dataDir },
+          { remote: false, declaredCommand: "other-server" },
+        ),
+      ).toEqual({ reason: "runtime_not_found", command: "other-server" });
+    },
+  );
+
   posixOnly("runs a bundle executable only once it is executable", async () => {
     const server = path.join(root, "bin", "server");
     await writeFile(server, "#!/bin/sh\n");

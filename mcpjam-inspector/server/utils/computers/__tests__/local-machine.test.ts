@@ -6,8 +6,9 @@ import {
   readFileSync,
   realpathSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join, normalize, sep } from "node:path";
 
 // Point the workspace root at a scratch dir — never the developer's real
 // ~/.mcpjam. homedir() is the only path input local-machine consumes.
@@ -25,9 +26,11 @@ import {
   isLocalComputerEngineAvailable,
   localBashRunner,
   resetLocalBashPathCacheForTests,
+  resolveLocalBashPath,
   runLocalComputerCommand,
   validateLocalProjectKey,
 } from "../local-machine.js";
+import { MSYS_COMMAND_ID_ENV } from "../msys-process-tree.js";
 
 afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });
@@ -155,6 +158,51 @@ describe("localBashRunner", () => {
     expect(result.exitCode).not.toBe(0);
   });
 
+  // Asks the MSYS bash whether a pid from `$!` is still running.
+  const msysPidAlive = (pid: string) =>
+    spawnSync(resolveLocalBashPath()!, ["-c", `kill -0 ${pid}`]).status === 0;
+
+  it.runIf(process.platform === "win32")(
+    "returns and ends a descendant that outlives the shell and holds its output",
+    async () => {
+      const started = Date.now();
+      const result = await localBashRunner({
+        sandboxId: "local-machine",
+        command: "sleep 60 & echo $!",
+        timeoutMs: 500,
+      });
+      expect(Date.now() - started).toBeLessThan(10_000);
+      expect(result.exitCode).toBe(124);
+      const pid = result.stdout.trim();
+      expect(pid).toMatch(/^\d+$/);
+      expect(msysPidAlive(pid)).toBe(false);
+    },
+    20_000,
+  );
+
+  it.runIf(process.platform === "win32")(
+    "returns at the deadline when a descendant escapes termination",
+    async () => {
+      // Scrubbing the command id hides this sleep from the reaper, the case
+      // where termination cannot reach a pipe holder.
+      const started = Date.now();
+      const result = await localBashRunner({
+        sandboxId: "local-machine",
+        command: `env -u ${MSYS_COMMAND_ID_ENV} sleep 60 & echo $!`,
+        timeoutMs: 500,
+      });
+      const pid = result.stdout.trim();
+      try {
+        expect(Date.now() - started).toBeLessThan(10_000);
+        expect(result.exitCode).toBe(124);
+        expect(msysPidAlive(pid)).toBe(true);
+      } finally {
+        spawnSync(resolveLocalBashPath()!, ["-c", `kill -9 ${pid}`]);
+      }
+    },
+    20_000,
+  );
+
   it("spawns with the sanitized env", async () => {
     process.env.MCPJAM_LOCAL_MACHINE_TEST_SECRET = "leak-me";
     try {
@@ -184,14 +232,15 @@ describe("runLocalComputerCommand", () => {
   it("runs in the project workspace dir and journals the command", async () => {
     const result = await runLocalComputerCommand({
       projectId: "proj1",
-      command: "pwd",
+      // Git Bash prints /d/... unless asked for the Windows form.
+      command: process.platform === "win32" ? "pwd -W" : "pwd",
       commandId: "cmd-1",
     });
     if ("error" in result) throw new Error(result.error);
     // Physical-path compare: the scratch tmpdir may sit behind a symlink
     // (macOS /var → /private/var), and the sanitized env has no $PWD, so
     // bash prints the resolved path.
-    expect(result.stdout.trim()).toBe(
+    expect(normalize(result.stdout.trim())).toBe(
       realpathSync(await getLocalComputerWorkspaceDir("proj1"))
     );
     await waitForJournalEntry("cmd-1");

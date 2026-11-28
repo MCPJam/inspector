@@ -26,11 +26,28 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SUPPORT_DIR = dirname(fileURLToPath(import.meta.url));
 const INSPECTOR_DIR = resolve(SUPPORT_DIR, "..", "..", "..");
-const GUARD = join(SUPPORT_DIR, "deny-network.mjs");
-/** By URL: the child runs from a scratch directory that cannot resolve it. */
+/**
+ * Both preloads by URL: `--import` takes a module specifier, so a bare Windows
+ * path reads as a `d:` URL scheme, and the child's scratch cwd cannot resolve
+ * a package name.
+ */
+const GUARD = pathToFileURL(join(SUPPORT_DIR, "deny-network.mjs")).href;
 const TSX_LOADER = pathToFileURL(
   createRequire(import.meta.url).resolve("tsx"),
 ).href;
+/**
+ * Windows cannot signal another process: `kill("SIGTERM")` there terminates
+ * the child outright and no shutdown handler runs. So on Windows the child
+ * hands a "SIGTERM" message from the IPC channel to its own SIGTERM listeners,
+ * the shutdown these tests prove. The channel is unref'd so it alone never
+ * keeps the child alive.
+ */
+const WINDOWS = process.platform === "win32";
+const STOP_TIMEOUT_MS = 15_000;
+const SIGTERM_RELAY = `data:text/javascript,${encodeURIComponent(
+  "process.on('message', (m) => { if (m === 'SIGTERM') process.emit('SIGTERM', 'SIGTERM'); });" +
+    " process.channel?.unref();",
+)}`;
 
 export interface NetworkAttempt {
   via: string;
@@ -130,11 +147,16 @@ export async function startGuardedServer(options: {
     [
       "--import",
       GUARD,
+      ...(WINDOWS ? ["--import", SIGTERM_RELAY] : []),
       "--import",
       TSX_LOADER,
       join(INSPECTOR_DIR, "server", "index.ts"),
     ],
-    { cwd: scratch, env, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      cwd: scratch,
+      env,
+      stdio: WINDOWS ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
+    },
   );
   child.stdout?.on("data", (chunk) => (output += chunk));
   child.stderr?.on("data", (chunk) => (output += chunk));
@@ -163,8 +185,19 @@ export async function startGuardedServer(options: {
         : [],
     output: () => output,
     async stop() {
-      if (child.exitCode === null) child.kill("SIGTERM");
+      if (child.exitCode === null) {
+        // A child already on its way out can drop the channel before
+        // `exitCode` is set; the callback takes that failure, which would
+        // otherwise be an unhandled `error` event, and ends the child.
+        if (!WINDOWS) child.kill("SIGTERM");
+        else if (!child.connected) child.kill();
+        else child.send("SIGTERM", (error) => error && child.kill());
+      }
+      // A shutdown that hangs fails the test on its exit code, not on the
+      // suite's timeout.
+      const timer = setTimeout(() => child.kill("SIGKILL"), STOP_TIMEOUT_MS);
       const code = await exited;
+      clearTimeout(timer);
       return code;
     },
   };

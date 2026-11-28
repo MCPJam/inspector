@@ -31,8 +31,16 @@ const DEFAULT_HEAP_SPACES: HeapSpaces = () => [
 async function loadVitals(
   heapSequence: number[],
   heapSpaces: HeapSpaces = DEFAULT_HEAP_SPACES,
+  /** Stands in for the `/dev/fd` listing, the sampler's only directory read. */
+  listFds?: () => string[],
 ) {
   vi.resetModules();
+  if (listFds) {
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.doMock("node:fs", () => ({
+      default: { ...actual, readdirSync: listFds },
+    }));
+  }
   let index = 0;
   vi.doMock("node:v8", () => ({
     default: {
@@ -54,6 +62,7 @@ afterEach(() => {
   setExtra.mockClear();
   event.mockClear();
   vi.doUnmock("node:v8");
+  vi.doUnmock("node:fs");
   vi.restoreAllMocks();
 });
 
@@ -256,11 +265,12 @@ describe("process vitals sampler", () => {
   // A socket or file leak can hold fds without moving the heap; without its own
   // trigger such a ramp would reach Axiom only on the 10-minute heartbeat.
   it("emits a row when the fd count moves by a step on a flat heap", async () => {
-    const { flushProcessVitals } = await loadVitals([500 * MB]);
     const fds = [30, 60, 94, 100];
     let call = 0;
-    vi.spyOn(fs, "readdirSync").mockImplementation(
-      () => Array.from({ length: fds[call++]! }, String) as never,
+    const { flushProcessVitals } = await loadVitals(
+      [500 * MB],
+      DEFAULT_HEAP_SPACES,
+      () => Array.from({ length: fds[call++]! }, String),
     );
 
     for (let i = 0; i < fds.length; i++) flushProcessVitals(i * 60_000);
@@ -274,11 +284,17 @@ describe("process vitals sampler", () => {
   // EMFILE arriving is the moment this gauge exists for, and it has no count to
   // step from; the listing failing is a step of its own.
   it("emits a row when the fd listing starts failing", async () => {
-    const { flushProcessVitals } = await loadVitals([500 * MB]);
+    // A listing that works first, which a real /dev/fd cannot give on Windows.
+    let listing = () => ["0", "1", "2"];
+    const { flushProcessVitals } = await loadVitals(
+      [500 * MB],
+      DEFAULT_HEAP_SPACES,
+      () => listing(),
+    );
     flushProcessVitals(0);
-    vi.spyOn(fs, "readdirSync").mockImplementation(() => {
+    listing = () => {
       throw Object.assign(new Error("too many open files"), { code: "EMFILE" });
-    });
+    };
 
     flushProcessVitals(60_000);
     flushProcessVitals(120_000);
