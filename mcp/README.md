@@ -160,6 +160,8 @@ beta; they are listed [after the table](#held-tools).
 | `send_chat_message` | Send one message to a project's MCP servers and get the reply plus the raw tool calls, per-call latency and token usage. SPENDS model credits. Send `browser: {policy: …}` initially and `browser: {}` on later browser turns. Pass the returned `sessionId` back to continue. Tools default to `read_only`; `toolMode=auto` may cause real side effects. `idempotencyKey` is required and must be stable across retries. | — |
 | `get_chat_session` | Read a session's metadata and a window of its raw messages, indexed by absolute transcript position — the same indices the trace spans reference. | — |
 | `get_chat_session_trace` | Read a session's per-turn spans: tool latency, token usage, transcript indices. Returns the latest turn by default; page older turns with `afterPromptIndex`, or pass `includeSpans=false` for summaries. | — |
+| `compile_recorded_app_case` | Compile a recorded persona interaction into eval steps and checks. | — |
+| `summarize_recorded_app_actions` | Count the app actions and client decisions recorded in goal-run sessions. | — |
 | `get_capabilities` | Your role, which betas this organization has, your plan's limits, and a `can` block of booleans. Ask this before planning work that authors, launches or publishes — the tool list is the same for every caller and cannot tell you a beta is off. | — |
 | `list_personas` | List the project's reusable synthetic characters — the cast Swarms goals run as. | — |
 | `get_persona` | Get one persona in full, including its behavioural notes. | — |

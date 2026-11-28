@@ -16,6 +16,7 @@
  * capture-before-teardown ordering is only correct if the CORE owns it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PersonaClientDriver } from "../persona-client-driver.js";
 import type { ModelMessage } from "ai";
 
 const runAssistantTurnMock = vi.fn();
@@ -361,6 +362,147 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
       );
     }
   );
+
+  it("lets a persona click the previous assistant turn's app before ending", async () => {
+    const context = buildFakeBrowserContext({ computerUse: true });
+    const control = { toolCallId: "app-call", role: "button", name: "Save" };
+    const clickPersonaAppControl = vi.fn().mockResolvedValue({ ok: true });
+    createBrowserSessionContextMock.mockReturnValue({
+      ...context,
+      listPersonaAppControls: vi.fn().mockResolvedValue([control]),
+      clickPersonaAppControl,
+    });
+    const args = baseAdapter();
+    args.nextPersonaTurn.mockReset()
+      .mockResolvedValueOnce({ message: "open the form", endSession: false })
+      .mockResolvedValueOnce({ message: "", endSession: true, clickIndex: 0 });
+    const result = await runSyntheticHostSession({
+      ...args,
+      enablePersonaAppClicks: true,
+    });
+    expect(result.outcome).toBe("succeeded");
+    expect(args.nextPersonaTurn).toHaveBeenLastCalledWith(
+      expect.any(Array), ["button: Save"],
+    );
+    expect(clickPersonaAppControl).toHaveBeenCalledExactlyOnceWith(control);
+    expect(context.dismissCarriedWidget).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes host controls after each persona click without another assistant turn", async () => {
+    const context = buildFakeBrowserContext({ computerUse: true });
+    const close = { toolCallId: "app-call", role: "button", name: "Back to chat", scope: "host" };
+    const reopen = { ...close, name: "Show app" };
+    const click = vi.fn().mockResolvedValue({ ok: true });
+    createBrowserSessionContextMock.mockReturnValue({
+      ...context,
+      listPersonaAppControls: vi.fn().mockResolvedValueOnce([close]).mockResolvedValueOnce([reopen]),
+      clickPersonaAppControl: click,
+    });
+    const args = baseAdapter();
+    args.nextPersonaTurn.mockReset()
+      .mockResolvedValueOnce({ message: "open the form", endSession: false })
+      .mockResolvedValueOnce({ message: "", clickIndex: 0, continueControls: true })
+      .mockResolvedValueOnce({ message: "", clickIndex: 0, endSession: true });
+    expect(await runSyntheticHostSession({ ...args, enablePersonaAppClicks: true }))
+      .toMatchObject({ outcome: "succeeded" });
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+    expect(click.mock.calls).toEqual([[close], [reopen]]);
+    expect(args.nextPersonaTurn).toHaveBeenLastCalledWith(
+      expect.any(Array), ["host button: Show app"], ["host button: Back to chat"],
+    );
+  });
+
+  it("continues after failed clicks and asks for a text reply at the limit", async () => {
+    const context = buildFakeBrowserContext({ computerUse: true });
+    const click = vi.fn().mockResolvedValue({ ok: false, reason: "control disappeared" });
+    createBrowserSessionContextMock.mockReturnValue({
+      ...context,
+      listPersonaAppControls: vi.fn().mockResolvedValue([
+        { toolCallId: "app-call", role: "button", name: "Save" },
+      ]),
+      clickPersonaAppControl: click,
+    });
+    const args = baseAdapter();
+    args.nextPersonaTurn.mockReset().mockResolvedValueOnce({
+      message: "open the form", endSession: false,
+    });
+    for (let i = 0; i < 5; i++) {
+      args.nextPersonaTurn.mockResolvedValueOnce({
+        message: "this text assumes the click worked", clickIndex: 0, endSession: false,
+      });
+    }
+    args.nextPersonaTurn.mockResolvedValue({
+      message: "the button disappeared", endSession: false,
+    });
+    expect(await runSyntheticHostSession({ ...args, maxTurns: 2, enablePersonaAppClicks: true }))
+      .toMatchObject({ outcome: "succeeded" });
+    expect(click).toHaveBeenCalledTimes(5);
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(2);
+    expect(args.nextPersonaTurn).toHaveBeenLastCalledWith(expect.any(Array), [],
+      Array(5).fill("Failed to click button: Save"),
+    );
+  });
+
+  it("fails when the final text-only decision asks for another click", async () => {
+    const context = buildFakeBrowserContext({ computerUse: true });
+    const control = { toolCallId: "app-call", role: "button", name: "Save" };
+    const click = vi.fn().mockResolvedValue({ ok: false });
+    createBrowserSessionContextMock.mockReturnValue({
+      ...context, listPersonaAppControls: vi.fn().mockResolvedValue([control]),
+      clickPersonaAppControl: click,
+    });
+    const args = baseAdapter();
+    args.nextPersonaTurn.mockReset()
+      .mockResolvedValueOnce({ message: "open the form", endSession: false })
+      .mockResolvedValue({ message: "", clickIndex: 0, continueControls: true, endSession: false });
+    expect(await runSyntheticHostSession({ ...args, enablePersonaAppClicks: true }))
+      .toMatchObject({ outcome: "failed", errorReason: "persona_empty_message" });
+    expect(click).toHaveBeenCalledTimes(5);
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps questions asked during the last click without starting another assistant turn", async () => {
+    const context = buildFakeBrowserContext({ computerUse: true });
+    const control = { toolCallId: "app-call", role: "button", name: "Save" };
+    let clientDriver: PersonaClientDriver | undefined;
+    createBrowserSessionContextMock.mockReturnValue({
+      ...context, listPersonaAppControls: vi.fn().mockResolvedValue([control]),
+      clickPersonaAppControl: () => {
+        const params = createBrowserSessionContextMock.mock.calls[0]![0];
+        void params.callWidgetTool("server-1", "open-form", {});
+        return { ok: true };
+      },
+    });
+    const args = baseAdapter();
+    args.nextPersonaTurn.mockReset()
+      .mockResolvedValueOnce({ message: "open the form", endSession: false })
+      .mockResolvedValueOnce({ message: "", endSession: true, clickIndex: 0 });
+    const enqueueClientActions = vi.fn();
+    expect(await runSyntheticHostSession({
+      ...args,
+      enablePersonaAppClicks: true,
+      managerFactory: async (driver) => {
+        clientDriver = driver;
+        const result = await args.managerFactory();
+        const executeTool = vi.fn(async () => {
+          await clientDriver?.elicitationCallback({
+            requestId: "ask", serverId: "server-1", message: "Confirm", schema: {},
+          });
+          return { content: [] };
+        });
+        return { ...result, manager: Object.assign(result.manager, { executeTool }) };
+      },
+      nextPersonaClientAction: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return '{"action":"decline"}';
+      },
+      browserArtifacts: { ...buildFakeOutbox(), enqueueClientActions },
+    })).toMatchObject({ outcome: "succeeded" });
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+    expect(enqueueClientActions).toHaveBeenCalledWith(0, [
+      expect.objectContaining({ kind: "question", outcome: "declined" }),
+    ]);
+  });
 
   it("rejects an empty persona message without calling the assistant", async () => {
     createBrowserSessionContextMock.mockReturnValue(

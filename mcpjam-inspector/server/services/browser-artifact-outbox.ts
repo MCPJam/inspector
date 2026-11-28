@@ -35,6 +35,7 @@
  * authorizes the session owner (the run launcher) instead.
  */
 
+import type { ClientActionReceipt } from "@mcpjam/sdk/contract";
 import { ConvexHttpClient } from "convex/browser";
 import type {
   BrowserInteractionStepPayload,
@@ -75,10 +76,11 @@ type WireBatch = {
   promptIndex: number;
   observations: WidgetRenderObservationPayload[];
   steps: BrowserInteractionStepPayload[];
+  clientActions: ClientActionReceipt[];
 };
 
 const hasRows = (batch: WireBatch): boolean =>
-  batch.observations.length > 0 || batch.steps.length > 0;
+  batch.observations.length > 0 || batch.steps.length > 0 || batch.clientActions.length > 0;
 
 export interface BrowserArtifactOutbox {
   /**
@@ -88,6 +90,7 @@ export interface BrowserArtifactOutbox {
    * somehow arrives without a `promptIndex` of its own.
    */
   take(browser: BrowserSessionContext, fallbackPromptIndex: number): void;
+  enqueueClientActions?(promptIndex: number, receipts: ClientActionReceipt[]): void;
   enqueueSteps(
     steps: RunnerBrowserInteractionStep[],
     fallbackPromptIndex: number,
@@ -211,7 +214,7 @@ export function createBrowserArtifactOutbox(args: {
   const wireBatch = (promptIndex: number): WireBatch => {
     const existing = wire.get(promptIndex);
     if (existing) return existing;
-    const created: WireBatch = { promptIndex, observations: [], steps: [] };
+    const created: WireBatch = { promptIndex, observations: [], steps: [], clientActions: [] };
     wire.set(promptIndex, created);
     return created;
   };
@@ -296,6 +299,9 @@ export function createBrowserArtifactOutbox(args: {
       return new Set([...raw.keys(), ...wire.keys()]).size;
     },
 
+    enqueueClientActions(promptIndex, receipts) {
+      if (receipts.length) wireBatch(promptIndex).clientActions.push(...receipts);
+    },
     enqueueSteps(steps, fallbackPromptIndex) {
       for (const step of steps)
         rawBucket(bucketOf(step.promptIndex, fallbackPromptIndex)).steps.push(
@@ -387,6 +393,7 @@ export function createBrowserArtifactOutbox(args: {
             MAX_OBSERVATIONS_PER_WRITE,
           );
           const steps = batch.steps.slice(0, MAX_STEPS_PER_WRITE);
+          const clientActions = batch.clientActions.slice();
           // Ride the staged video along on the first write of this flush — one
           // fewer round trip, and the attach is first-write-wins server-side.
           const carriesVideo =
@@ -407,6 +414,7 @@ export function createBrowserArtifactOutbox(args: {
                     ? { widgetRenderObservations: observations }
                     : {}),
                   ...(steps.length ? { browserInteractionSteps: steps } : {}),
+                  ...(clientActions.length ? { clientActions } : {}),
                   ...(carriesVideo
                     ? {
                         videoBlobId: stagedVideoBlobId,
@@ -448,6 +456,7 @@ export function createBrowserArtifactOutbox(args: {
 
           batch.observations.splice(0, observations.length);
           batch.steps.splice(0, steps.length);
+          batch.clientActions.splice(0, clientActions.length);
           if (carriesVideo) {
             videoAttached = true;
             stagedVideoBlobId = undefined;

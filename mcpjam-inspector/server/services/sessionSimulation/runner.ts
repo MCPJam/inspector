@@ -517,10 +517,13 @@ export interface SyntheticHostSessionAdapter {
   authHeader: string;
   managerFactory: SimulationManagerFactory;
   abortSignal?: AbortSignal;
-  /** Surface persona driver: choose a simulated user message. */
+  enablePersonaAppClicks?: boolean;
+  /** Surface persona driver: choose a simulated user message and optional app control. */
   nextPersonaTurn(
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>,
-  ): Promise<{ message: string; endSession: boolean }>;
+    appControls?: string[],
+    recentActions?: string[],
+  ): Promise<{ message: string; endSession: boolean; clickIndex?: number; continueControls?: boolean }>;
   nextPersonaClientAction?(
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>,
     request: PersonaClientRequest,
@@ -576,6 +579,7 @@ export async function runSyntheticHostSession(
     abortSignal,
     nextPersonaTurn,
     nextPersonaClientAction,
+    enablePersonaAppClicks,
     persist,
     onTurnPersisted,
     browserArtifacts,
@@ -725,6 +729,7 @@ export async function runSyntheticHostSession(
   // launches lazily on the first widget render, so sessions that never touch an
   // MCP App pay nothing.
   let browser: BrowserSessionContext | undefined;
+  const pendingWidgetCalls = new Set<Promise<unknown>>();
 
   // --- Terminal-path state -------------------------------------------------
   // Hoisted out of the try so the terminal path can persist a session row on
@@ -1127,6 +1132,22 @@ export async function runSyntheticHostSession(
       enableComputerUse: true,
       enableViewTools: true,
       mcpClientManager: manager,
+      ...(clientDriver && manager
+        ? {
+            callWidgetTool: async (serverId, toolName, args) => {
+              const signal = turnDeadline?.signal;
+              const call = clientDriver.withInvocation({ serverId, toolName }, () =>
+                manager!.executeTool(serverId, toolName, args, { signal }),
+              );
+              pendingWidgetCalls.add(call);
+              try {
+                return await call;
+              } finally {
+                pendingWidgetCalls.delete(call);
+              }
+            },
+          }
+        : {}),
       logScope: "sessionSimulation",
       hostCapabilities: runtime.hostCapabilities,
       // Live view: a frame per action, at CAPTURE time. Only wired when this
@@ -1178,10 +1199,51 @@ export async function runSyntheticHostSession(
       turnDeadline?.dispose();
       turnDeadline = withDeadline(sessionSignal, budgets.turnTimeoutMs, "turn");
 
-      const next = await withAdmissionRetry(
-        () => nextPersonaTurn(lastTranscript),
-        admissionOptions,
-      );
+      const recentActions: string[] = [];
+      let next: Awaited<ReturnType<typeof nextPersonaTurn>>;
+      for (;;) {
+        turnDeadline.signal.throwIfAborted();
+        const controls =
+          enablePersonaAppClicks && turn > 0 && recentActions.length < 5
+            ? await browser.listPersonaAppControls()
+            : [];
+        const controlLabels = controls.map(({ role, name, scope }) =>
+          `${scope === "host" ? "host " : ""}${role}: ${name}`.slice(0, 200)
+        );
+        next = await withAdmissionRetry(
+          () => {
+            if (recentActions.length) {
+              return nextPersonaTurn(lastTranscript, controlLabels, [...recentActions]);
+            }
+            return controlLabels.length
+              ? nextPersonaTurn(lastTranscript, controlLabels)
+              : nextPersonaTurn(lastTranscript);
+          },
+          admissionOptions,
+        );
+        if (next.clickIndex === undefined) break;
+        if (controls.length === 0) {
+          next = { message: "", endSession: false };
+          break;
+        }
+        turnDeadline.signal.throwIfAborted();
+        const control = controls[next.clickIndex];
+        const outcome = control && await browser.clickPersonaAppControl(control);
+        // The browser's visual settle window can end while an MCP call is
+        // still waiting on a persona decision. Finish those calls before a
+        // paired reply or end signal moves on from this click.
+        await Promise.allSettled(pendingWidgetCalls);
+        turnDeadline.signal.throwIfAborted();
+        recentActions.push(
+          outcome?.ok
+            ? controlLabels[next.clickIndex]!
+            : `Failed to click ${controlLabels[next.clickIndex] ?? "an unavailable control"}`.slice(0, 200),
+        );
+        if (outcome?.ok && !next.continueControls && (next.endSession || next.message.trim())) break;
+      }
+      if (recentActions.length && browserArtifacts?.enqueueClientActions) {
+        browserArtifacts.enqueueClientActions(lastPromptIndex, clientDriver?.takeReceipts() ?? []);
+      }
 
       if (next.endSession) {
         if (turn === 0) {
@@ -1249,8 +1311,8 @@ export async function runSyntheticHostSession(
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
             tools: {
-              ...(clientDriver && !harness && requireToolApproval
-                ? withPersonaToolApprovals(prepared.allTools, selectedServerIds, clientDriver)
+              ...(clientDriver && !harness
+                ? withPersonaToolApprovals(prepared.allTools, selectedServerIds, clientDriver, requireToolApproval)
                 : prepared.allTools),
               ...browser!.computerWidgetTools,
               ...browser!.viewTools,
@@ -1405,10 +1467,12 @@ export async function runSyntheticHostSession(
         return error.turn;
       });
 
+      // Keep a successfully rendered app available for the next persona decision.
+      // The start of the next assistant turn still dismisses the carried app.
       // Capture the execution deadline before persistence can consume more time.
       drainedTurnTimedOut = turnDeadline.firedClock() === "turn";
       if (!drainedTurnTimedOut) {
-        await browser.dismissCarriedWidget();
+        if (!enablePersonaAppClicks) await browser.dismissCarriedWidget();
         emit?.({ type: "turn_finish", turnIndex: turn });
       }
       // Track the first turn's modelSource for the per-session persist
@@ -1421,8 +1485,6 @@ export async function runSyntheticHostSession(
       messageHistory = updatedHistory;
       const assistantText = extractAssistantText(updatedHistory);
       lastTranscript.push({ role: "assistant", content: assistantText });
-      const clientActions = clientDriver?.takeReceipts();
-
       if (!turnTrace && !drainedTurnTimedOut) {
         if (failedTurn) throw failedTurn;
         // No-trace turns outside a timeout skip transcript persistence. Their
@@ -1443,6 +1505,8 @@ export async function runSyntheticHostSession(
         }
         continue;
       }
+
+      const clientActions = turnTrace ? clientDriver?.takeReceipts() : undefined;
 
       // Mirror chat-v2's per-turn persistence so the Trace tab and the
       // tool-snapshot/serverInspections fan-out work identically for
@@ -1719,6 +1783,7 @@ export async function runSyntheticHostSession(
   } finally {
     turnDeadline?.dispose();
     sessionDeadline.dispose();
+    browserArtifacts?.enqueueClientActions?.(lastPromptIndex, clientDriver?.takeReceipts() ?? []);
     // Tear down the browser harness (and its headless Chromium, if launched)
     // before the manager: the harness's widget bridge dispatches tools/call
     // through the manager, so it must die first.

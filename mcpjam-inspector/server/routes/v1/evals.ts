@@ -458,6 +458,7 @@ function withImplicitRenderAssertForSingleToolCall(
     return normalized;
   }
   const call = normalized[0]!;
+  if (call.approval === "deny") return normalized;
   return [
     call,
     {

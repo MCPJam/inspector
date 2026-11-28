@@ -1,3 +1,4 @@
+import { desanitizeFromConvexTransport } from "./convex-sanitize.js";
 import { viewToolEvidenceForStep } from "./view-tool-evidence.js";
 // Phase-4 PR2 (plan: please-do-a-sequential-fail-fast-verdict.md).
 //
@@ -55,6 +56,7 @@ export function buildLocalStepHandlers(
   async function drive(
     promptTurn: PromptTurn,
     turnOrdinal: number,
+    expectedQuestions?: number,
   ): Promise<StepEngineOutcome> {
     const messagesBefore = acc.conversationMessages.length;
     const spansBefore = acc.capturedSpans.length;
@@ -68,6 +70,7 @@ export function buildLocalStepHandlers(
       ...driverParams,
       promptIndex: turnOrdinal,
       promptTurn,
+      expectedQuestions,
       acc,
       sinks: buildSinks?.(turnOrdinal, promptTurn.prompt),
     });
@@ -195,10 +198,11 @@ export function buildLocalStepHandlers(
           pinnedToolCall: {
             serverName: step.serverName,
             toolName: step.toolName,
-            arguments: step.arguments,
+            arguments: desanitizeFromConvexTransport(step.arguments),
           },
         },
         turnOrdinal,
+        step.expectedQuestions,
       ),
     onFollowUp: ({ text, turnOrdinal }) =>
       driveTurn(
@@ -382,7 +386,7 @@ export function buildHostedStepHandlers(
     const pinned: PinnedToolCall = {
       serverName: step.serverName,
       toolName: step.toolName,
-      arguments: step.arguments,
+      arguments: desanitizeFromConvexTransport(step.arguments),
     };
     try {
       // Mirror the local pinned branch's pre-steps; the executor already
@@ -396,6 +400,7 @@ export function buildHostedStepHandlers(
         browser: ctx.browser,
         promptIndex: turnOrdinal,
         toolPolicyGate: ctx.toolPolicyGate,
+        expectedQuestions: step.expectedQuestions,
       });
       const accounting = buildPinnedTurnAccounting(pinned, result);
       // messageHistory invariant: append only a COMPLETE plain-TEXT
@@ -446,7 +451,7 @@ export function buildHostedStepHandlers(
         pinnedCall: accounting.evidence,
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         ...(accounting.iterationError
-          ? { iterationError: accounting.iterationError, setupFailure: true }
+          ? { iterationError: accounting.iterationError, setupFailure: result.setupFailure === true }
           : {}),
       };
     } catch (error) {

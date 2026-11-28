@@ -5874,6 +5874,9 @@ const runLocalIteration = async ({
       state: stepState,
       browser,
       handlers: stepHandlers,
+      onClientDecision: (span) => acc.capturedSpans.push(span),
+      resolveDeniedToolServer: (step) =>
+        resolvePinnedServerKey(step, environment, selectedServers, mcpClientManager),
       isAborted: localIsAborted,
       // PR5: per-step status → SSE (keyed by stepId for per-card ticking).
       ...(emit
@@ -7781,6 +7784,9 @@ const runHostedIterationWithBrowser = async (
       state: stepState,
       browser,
       handlers: hostedHandlers,
+      onClientDecision: (span) => capturedSpans.push(span),
+      resolveDeniedToolServer: (step) =>
+        resolvePinnedServerKey(step, environment, selectedServers, mcpClientManager),
       isAborted,
       ...(emit
         ? {

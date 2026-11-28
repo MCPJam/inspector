@@ -22,8 +22,11 @@ const harnessCatalog = {
 /** Existing bridge owns the only live iframe. Updating text never remounts its panel. */
 export function mountHarnessWorkspace(container: HTMLElement) {
   let panel: HTMLDivElement | null = null;
+  let appOpen = true;
+  let currentPresentation: HarnessPresentation = {};
   const root = createRoot(container);
-  function update(presentation: HarnessPresentation = {}) {
+  function update(presentation: HarnessPresentation = currentPresentation) {
+    currentPresentation = presentation;
     const messages = Array.isArray(presentation.messages)
       ? presentation.messages
           .slice(-100)
@@ -50,9 +53,14 @@ export function mountHarnessWorkspace(container: HTMLElement) {
             className="run-host-shell"
           >
             <RunHostWorkspace
-              appOpen
+              appOpen={appOpen}
               transcript={
                 <div className="run-conversation">
+                  {!appOpen && (
+                    <div data-app-host-chrome>
+                      <button type="button" onClick={() => openApp()}>Show app</button>
+                    </div>
+                  )}
                   <div className="run-transcript">
                     {messages.map((message, index) =>
                       message.role === "app" ? (
@@ -81,7 +89,7 @@ export function mountHarnessWorkspace(container: HTMLElement) {
                       App is displayed in the workspace.
                     </span>
                   </div>
-                  <div className="run-composer">
+                  <div className="run-composer" data-app-host-chrome>
                     <div
                       className={hostComposerClasses(
                         presentation.hostStyle,
@@ -103,7 +111,9 @@ export function mountHarnessWorkspace(container: HTMLElement) {
               }
               appPanel={
                 <div className="run-app-panel">
-                  <div className="run-app-heading">App</div>
+                  <div className="run-app-heading" data-app-host-chrome>
+                    <button type="button" onClick={closeApp}>Back to chat</button>
+                  </div>
                   <div
                     className="run-app-content"
                     ref={(element) => {
@@ -119,7 +129,15 @@ export function mountHarnessWorkspace(container: HTMLElement) {
       ),
     );
   }
+  function openApp(presentation?: HarnessPresentation) {
+    appOpen = true;
+    update(presentation);
+  }
+  function closeApp() {
+    appOpen = false;
+    update();
+  }
   update();
   if (!panel) throw new Error("Harness workspace did not mount");
-  return { panel: panel as HTMLDivElement, update };
+  return { panel: panel as HTMLDivElement, update, openApp };
 }

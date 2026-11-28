@@ -310,6 +310,8 @@ const PLAIN_TOOLS = [
   "observe_chat_session_browser",
   "get_chat_session",
   "get_chat_session_trace",
+  "compile_recorded_app_case",
+  "summarize_recorded_app_actions",
   // Swarms + user testing. No widget views yet: these are agent-oriented
   // payloads, and a half-designed panel is worse than the structured JSON.
   "get_capabilities",
@@ -627,6 +629,8 @@ describe("platform tool registration", () => {
       "send_chat_message",
       "get_chat_session",
       "get_chat_session_trace",
+      "compile_recorded_app_case",
+      "summarize_recorded_app_actions",
       "get_capabilities",
       "list_personas",
       "get_persona",

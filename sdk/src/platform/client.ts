@@ -1456,6 +1456,8 @@ export class PlatformApiClient extends MockServerClient {
       afterPromptIndex?: number;
       limit?: number;
       includeSpans?: boolean;
+      includeAppRecording?: boolean;
+      openingToolCallId?: string;
     },
     options?: RequestOptions
   ): Promise<PlatformChatSessionTrace> {
@@ -1468,6 +1470,8 @@ export class PlatformApiClient extends MockServerClient {
           turnId: params.turnId,
           afterPromptIndex: params.afterPromptIndex,
           limit: params.limit,
+          includeAppRecording: params.includeAppRecording === true ? "true" : undefined,
+          openingToolCallId: params.openingToolCallId,
           // Serialized explicitly: the query builder takes string|number, and
           // `false` is the value that MATTERS here (it selects the cheap
           // summary), so it must not be dropped as falsy.

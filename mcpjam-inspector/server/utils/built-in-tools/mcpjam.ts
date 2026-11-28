@@ -519,6 +519,10 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Reads back a session this toolset cannot create; the Sessions tab renders the transcript with its context.",
   get_chat_session_trace:
     "Paired with the read above; the Sessions tab renders the same spans in the trace viewer.",
+  compile_recorded_app_case:
+    "Uses stored goal-run transcripts. Available through the SDK, CLI and platform MCP.",
+  summarize_recorded_app_actions:
+    "Reads evidence from goal-run sessions outside this chat. Available through the SDK, CLI and platform MCP.",
   // Scenarios (user testing).
   publish_study:
     "The User Testing tab owns publishing, with the share link and access mode shown inline — a chat tool would hand back a link with none of that context.",

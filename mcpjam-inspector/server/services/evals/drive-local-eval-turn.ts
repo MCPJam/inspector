@@ -190,6 +190,7 @@ export type LocalModelCallSettled = {
 };
 
 export type DriveLocalEvalTurnParams = {
+  expectedQuestions?: number;
   promptIndex: number;
   promptTurn: PromptTurn;
   acc: LocalEvalTurnAcc;
@@ -293,6 +294,7 @@ export async function driveLocalEvalTurn(
       browser,
       promptIndex,
       toolPolicyGate,
+      expectedQuestions: params.expectedQuestions,
     });
     const accounting = buildPinnedTurnAccounting(pinned, pinnedResult);
     acc.conversationMessages.push(
@@ -309,7 +311,7 @@ export async function driveLocalEvalTurn(
     acc.pinnedToolErrors.push(...accounting.toolErrors);
     if (accounting.iterationError && !acc.iterationError) {
       acc.iterationError = accounting.iterationError;
-      acc.pinnedSetupFailure = true;
+      acc.pinnedSetupFailure = pinnedResult.setupFailure === true;
     }
     sinks?.onPinnedTurn?.({
       prompt: accounting.prompt,

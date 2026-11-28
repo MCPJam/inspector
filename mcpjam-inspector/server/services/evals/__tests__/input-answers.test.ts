@@ -66,6 +66,25 @@ describe("the resolver", () => {
     });
   });
 
+  it("consumes duplicate messages in saved order for each pinned invocation", async () => {
+    const resolver = createInputAnswerResolver({
+      answers: [
+        { tool: "cleanup", message: "Confirm", action: "accept", content: { confirmation: "first" } },
+        { tool: "cleanup", message: "Confirm", action: "accept", content: { confirmation: "second" } },
+      ],
+    });
+    const question = { requestId: "ask", serverId: "files", message: "Confirm", schema: {} };
+    await withInputAnswerResolverScope(resolver, async () => {
+      for (let call = 0; call < 2; call++) {
+        await withToolCallScope({ tool: "cleanup", serverId: "files", orderedAnswers: true }, async () => {
+          expect(await resolver.elicitationCallback(question)).toMatchObject({ content: { confirmation: "first" } });
+          expect(await resolver.elicitationCallback(question)).toMatchObject({ content: { confirmation: "second" } });
+          expect(await resolver.elicitationCallback(question)).toEqual({ action: "decline" });
+        });
+      }
+    });
+  });
+
   it("takes the tool from the operation on the 2026-07-28 collector, and the exchange is told to the call", async () => {
     const resolver = createInputAnswerResolver({ answers });
     resolver.useServerNames({ srv1: "files" });
@@ -262,7 +281,7 @@ const asking = resolvedMock({
 });
 
 describe("a 2026-07-28 question from a stateless mock", () => {
-  async function run(replies: InputAnswer[]) {
+  async function run(replies: InputAnswer[], expectedQuestions?: number) {
     const resolver = createInputAnswerResolver({ answers: replies });
     const deps = {
       resolve: vi.fn(async () => asking),
@@ -289,6 +308,7 @@ describe("a 2026-07-28 question from a stateless mock", () => {
         mcpClientManager: manager,
         browser: { renderPinnedToolResult: vi.fn() },
         promptIndex: 0,
+        expectedQuestions,
       });
       return { result: pinned.toolResult, pinned, resolver };
     } finally {
@@ -297,8 +317,8 @@ describe("a 2026-07-28 question from a stateless mock", () => {
   }
 
   it("gives the reply the case set, matched on server, tool and message", async () => {
-    const { result, resolver } = await run(answers);
-
+    const { result, pinned, resolver } = await run(answers, 1);
+    expect(pinned.iterationError).toBeUndefined();
     expect(result).toMatchObject({
       content: [{ type: "text", text: "accept true" }],
     });
@@ -314,10 +334,11 @@ describe("a 2026-07-28 question from a stateless mock", () => {
   });
 
   it("declines when no reply was set and says so", async () => {
-    const { result, resolver } = await run([]);
+    const { result, pinned, resolver } = await run([], 1);
     expect(result).toMatchObject({
       content: [{ type: "text", text: "decline {{steps.sure.content.sure}}" }],
     });
+    expect(pinned.iterationError).toContain("Expected 1 form questions");
     expect(resolver.exchanges[0]).toMatchObject({
       action: "decline",
       note: expect.stringContaining("no reply was set"),

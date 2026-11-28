@@ -1,3 +1,8 @@
+import {
+  clientActionReceiptSchema,
+  projectRecordedAppTrace,
+  type ClientActionReceipt,
+} from "@mcpjam/sdk/contract";
 import { registerChatSessionBrowserRoutes } from "./chat-session-browser-routes";
 import type { ModelReasoningEffort } from "@mcpjam/sdk";
 /**
@@ -53,6 +58,7 @@ import { v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { fetchJsonBlob } from "./blob-read.js";
 import { publicArtifactLink } from "./artifact-links.js";
+import { projectRecordedAppOpening } from "./recorded-app-opening.js";
 import { projectMessages } from "./chat-session-payloads.js";
 import { registerChatSessionTurnRoute } from "./chat-session-turn.js";
 
@@ -93,6 +99,7 @@ type SessionRow = {
   chatSessionId?: string;
   projectId?: string;
   origin?: string;
+  synthetic?: boolean;
   modelId?: string;
   version?: number;
   startedAt?: number;
@@ -132,6 +139,7 @@ type TurnTraceRow = {
   browserAtTurn?: { browserSessionId: string; bootId?: string; box?: unknown };
   /** The MCP event that started the turn; absent on every other turn. */
   eventAtTurn?: EventAtTurn;
+  clientActions?: ClientActionReceipt[];
 };
 
 /**
@@ -388,6 +396,8 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     intQuery(c, "limit", { min: 1, max: MAX_TRACE_TURNS }) ??
     DEFAULT_TRACE_TURNS;
   const includeSpans = boolQuery(c, "includeSpans") ?? true;
+  const includeAppRecording = boolQuery(c, "includeAppRecording") ?? false;
+  const openingToolCallId = c.req.query("openingToolCallId");
 
   let rows: TurnTraceRow[];
   try {
@@ -442,18 +452,38 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     screenshotUrl?: string;
     ts: number;
   };
+  const includeBrowserScreenshots = selected.some((row) => row.browserAtTurn);
+  const clientActions = new Map<string, ClientActionReceipt>();
+  if (includeAppRecording) {
+    for (const row of ordered) {
+      for (const receipt of row.clientActions ?? []) {
+        const parsed = clientActionReceiptSchema.safeParse(receipt);
+        if (parsed.success) clientActions.set(parsed.data.id, parsed.data);
+      }
+    }
+  }
   let artifacts: Artifact[] = [];
-  if (selected.some((row) => row.browserAtTurn)) {
+  let appRecording: ReturnType<typeof projectRecordedAppTrace>;
+  if (includeBrowserScreenshots || includeAppRecording) {
     const evidence = (await client.query(
       "chatSessions:getBrowserArtifacts" as never,
       { sessionId: session._id } as never,
-    )) as { browserInteractionSteps?: Artifact[] };
-    // Screenshot links only as signed `/web/artifact` links (MJ-005).
-    artifacts = (evidence?.browserInteractionSteps ?? []).map((step) => ({
-      ...step,
-      screenshotUrl: publicArtifactLink(step.screenshotUrl) ?? undefined,
-    }));
+    )) as Parameters<typeof projectRecordedAppTrace>[0] & {
+      browserInteractionSteps?: Artifact[];
+    };
+    if (includeAppRecording && evidence) appRecording = projectRecordedAppTrace(evidence);
+    if (includeBrowserScreenshots) {
+      artifacts = (evidence?.browserInteractionSteps ?? []).map((step: Artifact) => ({
+        ...step,
+        screenshotUrl: publicArtifactLink(step.screenshotUrl) ?? undefined,
+      }));
+    }
   }
+  const recordedAppOpening =
+    session.synthetic === true && openingToolCallId &&
+    appRecording?.apps.some((app) => app.toolCallId === openingToolCallId)
+      ? projectRecordedAppOpening((await loadTranscript(session)).messages, openingToolCallId)
+      : undefined;
   const turns = await Promise.all(
     selected.map(async (row) => {
       const screenshots = artifacts
@@ -533,6 +563,11 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     chatSessionId: session.chatSessionId,
     projectId: session.projectId ?? null,
     traceVersion: 1,
+    ...(appRecording ? { appRecording } : {}),
+    ...(recordedAppOpening ? { recordedAppOpening } : {}),
+    ...(clientActions.size
+      ? { clientActions: [...clientActions.values()].sort((left, right) => left.order - right.order) }
+      : {}),
     turnCount: ordered.length,
     turns,
     ...(ordered.length > 0

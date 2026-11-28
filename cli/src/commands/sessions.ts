@@ -1,3 +1,4 @@
+import { JsonInputContext } from "../lib/json-input.js";
 import { waitForSessionTurn } from "../lib/session-turn-retry.js";
 import {
   addBrowserFlags,
@@ -23,6 +24,8 @@ import { Option, type Command } from "commander";
 import {
   getChatSessionOperation,
   getChatSessionTraceOperation,
+  compileRecordedAppCaseOperation,
+  summarizeRecordedAppActionsOperation,
   listChatSessionsOperation,
   resolveProject,
   searchSessionsOperation,
@@ -372,6 +375,7 @@ export function registerSessionsCommands(program: Command): void {
         )
         .option("--limit <n>", "Turns to return (1-20). Defaults to 1.")
         .option("--no-spans", "Return per-turn summaries without span payloads")
+        .option("--app-recording", "Include recorded persona app actions")
     ),
     getChatSessionTraceOperation,
     (options: TraceOptions) => ({
@@ -386,8 +390,36 @@ export function registerSessionsCommands(program: Command): void {
       // absent, so only an explicit opt-out is forwarded — the route's own
       // default stays the source of truth for everyone else.
       includeSpans: options.spans === false ? false : undefined,
+      includeAppRecording: options.appRecording === true ? true : undefined,
     })
   );
+  bindOperation(
+    sessions
+      .command("compile-app-case")
+      .description("Compile recorded persona clicks into a model-free eval case")
+      .requiredOption("--json <input>", "Case inputs as JSON, @file, or - for stdin"),
+    compileRecordedAppCaseOperation,
+    (options: PlatformOptions & { json: string }) =>
+      validateOpInput(
+        compileRecordedAppCaseOperation,
+        new JsonInputContext().parseJsonInputRecord(options.json, "--json")
+      )
+  );
+
+  bindOperation(
+    addProjectOption(
+      sessions
+        .command("summarize-app-actions")
+        .description("Count persona app clicks and recording coverage across goal-run sessions")
+        .requiredOption("--session <id...>", "Goal-run session IDs")
+    ),
+    summarizeRecordedAppActionsOperation,
+    (options: PlatformOptions & { session: string[]; project?: string }) => ({
+      sessionIds: options.session,
+      project: options.project,
+    })
+  );
+
 }
 
 type SendOptions = BrowserOptions & {
@@ -428,6 +460,7 @@ type TraceOptions = PlatformOptions & {
   afterTurn?: string;
   limit?: string;
   spans?: boolean;
+  appRecording?: boolean;
 };
 
 /** Parse a float option, refusing a non-numeric value rather than dropping it. */

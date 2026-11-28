@@ -1,3 +1,5 @@
+import type { RecordedAppTrace } from "../contract/recorded-app-trace.js";
+import type { ClientActionReceipt } from "../contract/client-action-receipt.js";
 import type { PlatformReadinessStartBody } from "./readiness-start-types.js";
 export type {
   PlatformReadinessStartBody,
@@ -829,7 +831,16 @@ export interface PlatformChatSessionTraceEvent {
   triggerId?: string;
 }
 
+export interface RecordedAppOpening {
+  promptIndex: number;
+  toolCallIds: string[];
+  arguments?: Record<string, unknown>;
+}
+
 export interface PlatformChatSessionTrace {
+  recordedAppOpening?: RecordedAppOpening;
+  appRecording?: RecordedAppTrace;
+  clientActions?: ClientActionReceipt[];
   projectId?: string | null;
   chatSessionId?: string;
   sessionId: string;

@@ -32,6 +32,7 @@ import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 export interface ToolCallScope {
   tool: string;
   serverId?: string;
+  orderedAnswers?: boolean;
   record?: (exchange: InputExchange) => void;
 }
 
@@ -80,6 +81,7 @@ export function createInputAnswerResolver(
   const exchanges: InputExchange[] = [];
   let names: Record<string, string> = {};
   const activeCalls = new Set<ToolCallScope>();
+  const nextAnswerIndex = new WeakMap<ToolCallScope, number>();
 
   function activeCallFor(serverId: string | undefined): ToolCallScope | undefined {
     // A persistent transport can deliver a legacy request outside the call's
@@ -102,11 +104,14 @@ export function createInputAnswerResolver(
           question.serverId)
         : undefined;
     const tool = question.tool ?? scope?.tool;
-    const matched = question.mode === "url" ? undefined : matchInputAnswer(options.answers, {
+    const start = scope?.orderedAnswers ? nextAnswerIndex.get(scope) ?? 0 : 0;
+    const match = question.mode === "url" ? undefined : matchInputAnswer(options.answers.slice(start), {
       ...(server !== undefined && { server }),
       ...(tool !== undefined && { tool }),
       message: question.message,
     });
+    const matched = match && { answer: match.answer, index: start + match.index };
+    if (matched && scope?.orderedAnswers) nextAnswerIndex.set(scope, matched.index + 1);
     const reply = inputAnswerResult(matched?.answer);
     const exchange: InputExchange = {
       kind: "question",
