@@ -383,4 +383,20 @@ describe("JsonEditor", () => {
       );
     });
   });
+
+  it("marks the view and the edit surface as secret surfaces for replay", () => {
+    const props = {
+      height: "100%",
+      rawContent: '{"token":"t"}',
+      showToolbar: false,
+    };
+    const { container, rerender } = render(
+      <JsonEditor {...props} mode="edit" />,
+    );
+    expect(container.querySelector(".ph-no-capture[data-ph-no-capture]")).not.toBeNull();
+    rerender(<JsonEditor {...props} mode="view" />);
+    expect(container.querySelector(".ph-no-capture[data-ph-no-capture]")).not.toBeNull();
+    rerender(<JsonEditor {...props} mode="view" collapsible />);
+    expect(container.querySelector(".ph-no-capture[data-ph-no-capture]")).not.toBeNull();
+  });
 });

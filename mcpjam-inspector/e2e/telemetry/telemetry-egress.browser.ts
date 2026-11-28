@@ -218,12 +218,12 @@ test("share links on a normal page at full: text, href and iframe src", async ({
     sentryItems: ["event"],
     sentryFullSnapshot: true,
   });
-  // A member, at `full`: AuthKit resolved, and the replay still masks the
-  // page's words and records no console.
+  // A member, at `full`: AuthKit resolved, and the replay records the page's
+  // words but no console.
   expect(recorder.api).toContain("POST /user_management/authenticate");
 
   const replay = posthogReplayEvents(scan.decoded);
-  expect(recordedText(replay)).not.toContain(NORMAL_PAGE_TEXT);
+  expect(recordedText(replay)).toContain(NORMAL_PAGE_TEXT);
   expect(
     replay.some(
       (event) =>

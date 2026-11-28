@@ -66,6 +66,7 @@ export {
   lastSyncedPostHogClient,
   MASKED_BLOCK_SELECTOR,
   MASKED_SESSION_RECORDING_OPTIONS,
+  maskReplayTextFull,
   posthogPrivacyConfig,
   replayFramesToSend,
   SECRET_SURFACE_ATTRIBUTE,

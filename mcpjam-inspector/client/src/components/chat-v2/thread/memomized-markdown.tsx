@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { Streamdown, defaultUrlTransform, type UrlTransform } from "streamdown";
+import { cn } from "@/lib/utils";
 import { useChatMarkdownLinks } from "./chat-links";
 
 // Per-surface markdown rendering knobs for surfaces that inline content
@@ -113,11 +114,24 @@ const MemoizedMarkdownBlock = memo(
 MemoizedMarkdownBlock.displayName = "MemoizedMarkdownBlock";
 
 export const MemoizedMarkdown = memo(
-  ({ content, className }: { content: string; className?: string }) => {
+  ({
+    content,
+    className,
+    hideFromReplay = false,
+  }: {
+    content: string;
+    className?: string;
+    /** Mark each block a secret surface, so session replay masks its text. */
+    hideFromReplay?: boolean;
+  }) => {
     const blocks = useMemo(() => parseMarkdownIntoBlocks(content), [content]);
 
     return blocks.map((block, index) => (
-      <div className={className} key={`markdown-block_${index}`}>
+      <div
+        className={cn(className, hideFromReplay && "ph-no-capture")}
+        {...(hideFromReplay ? { "data-ph-no-capture": true } : {})}
+        key={`markdown-block_${index}`}
+      >
         <MemoizedMarkdownBlock content={block} />
       </div>
     ));
@@ -125,6 +139,7 @@ export const MemoizedMarkdown = memo(
   (prevProps, nextProps) => {
     if (prevProps.content !== nextProps.content) return false;
     if (prevProps.className !== nextProps.className) return false;
+    if (prevProps.hideFromReplay !== nextProps.hideFromReplay) return false;
     return true;
   },
 );

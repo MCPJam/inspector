@@ -106,11 +106,10 @@ describe("at `full`, on a normal page", () => {
       sentryItems: ["event"],
       sentryFullSnapshot: true,
     });
-    // The page was recorded, with its words masked.
+    // The page was recorded with its words, the share links scrubbed.
     const text = recordedText(posthogReplayEvents(scan.decoded));
-    expect(text).toContain("***** *****");
-    expect(text).not.toContain("Share link");
-    expect(text).not.toContain("app.mcpjam.com/results");
+    expect(text).toContain("Share link:");
+    expect(text).toContain("https://app.mcpjam.com/results/[redacted]");
     // Unpacked: both profiles turn posthog-js's per-event gzip off, so
     // the final relay can inspect stylesheet text rrweb masks nowhere. A
     // packed DOM event would drop its whole batch.

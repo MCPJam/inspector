@@ -298,7 +298,7 @@ describe("PosthogUtils", () => {
       expect(isCredentialBearingPath("/servers")).toBe(false);
     });
 
-    it("masks every input and every text node in the full profile", async () => {
+    it("masks every input, secret surfaces and credential URLs in the full profile", async () => {
       vi.resetModules();
       const { SESSION_RECORDING_OPTIONS } = await import("../PosthogUtils");
 
@@ -308,13 +308,20 @@ describe("PosthogUtils", () => {
       });
       expect(SESSION_RECORDING_OPTIONS.maskTextSelector).toBe("*");
       expect(SESSION_RECORDING_OPTIONS.maskTextFn("Hello there")).toBe(
-        "***** *****",
+        "Hello there",
+      );
+      const surface = document.createElement("div");
+      surface.setAttribute("data-ph-no-capture", "");
+      const inside = document.createElement("span");
+      surface.appendChild(inside);
+      expect(SESSION_RECORDING_OPTIONS.maskTextFn("sk-secret", inside)).toBe(
+        "*********",
       );
       expect(
         SESSION_RECORDING_OPTIONS.maskTextFn(
           "Share https://app.mcpjam.com/results/tok_123",
         ),
-      ).not.toMatch(/[^*\s]/);
+      ).not.toContain("tok_123");
     });
 
     it("does not read HOSTED_MODE at module import time", async () => {

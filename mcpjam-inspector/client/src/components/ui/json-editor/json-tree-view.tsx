@@ -35,8 +35,9 @@ export function JsonTreeView({
 
   return (
     <div
+      data-ph-no-capture
       className={cn(
-        "p-3 text-xs overflow-auto select-text cursor-text",
+        "ph-no-capture p-3 text-xs overflow-auto select-text cursor-text",
         className,
         // pl-7 must come after className to ensure space for collapse toggles
         "pl-7",

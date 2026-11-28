@@ -40,7 +40,7 @@ telemetry exit, at every level, and never recorded at all. See
 | -------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
 | `off`    | Nothing. No recorder runs.                                         | Unchanged on an `off` surface; masked when the backend answered `off` |
 | `masked` | Layout and interaction only (see [Masked profile](#masked-profile)) | Element text and attributes masked; names scrubbed from URLs |
-| `full`   | Layout and interaction, masked as at `masked`; network requests keep their path minus credentials | Unchanged                                            |
+| `full`   | Layout, interaction and interface text (`maskReplayTextFull`). Secret text is masked: annotated surfaces (chat messages, model replies and tool results among them), `pre`, `code`, `textarea`, `.font-mono` and editable text. Credential URLs are scrubbed. Inputs, media and attributes are masked as at `masked`; network requests keep their path minus credentials | Unchanged                                            |
 
 ## Who gets which level
 
@@ -467,10 +467,11 @@ monitor reports platform and version so those rows are told apart.
 
 ## Masking a secret
 
-PostHog replay masks every text node and input at every level. Secrets
-rendered as **text** still need an annotation for autocapture and Sentry
-Replay: OAuth access/refresh tokens in the flow diagram, the one-time API-key
-reveal, the SDK quickstart snippet.
+PostHog replay masks every input at every level, and every text node at
+`masked`. At `full` it also masks text inside `pre`, `code`, `textarea`,
+`.font-mono` and editable elements without an annotation
+(`SECRET_TEXT_SELECTOR`). Any other secret rendered as **text** needs the
+annotation, for PostHog replay at `full`, autocapture and Sentry Replay.
 
 There is **one** annotation for those, and it does double duty:
 
@@ -499,8 +500,22 @@ material.
 
 - `client/src/components/settings/api-keys/RevealOnceDialog.tsx`: the one-time
   `sk_…` reveal.
+- `client/src/components/connection/shared/TokenValue.tsx`: revealed OAuth and
+  bearer tokens on the Auth tab and in server info.
+- `client/src/components/ui/json-editor/`: every JSON view and editor
+  (`JsonTreeView`, `JsonEditorEdit`, `CodeMirrorJsonEditor`), which covers the
+  OAuth and XAA debuggers' info logs, tool results and imported configs.
+- `client/src/components/oauth/HTTPHistoryEntry.tsx`: the OAuth and XAA
+  debuggers' HTTP history, headers and bodies included.
+- `client/src/components/tracing/HttpExchangeDetails.tsx`: HTTP exchanges in
+  traces and the logger.
 - `client/src/components/evals/copyable-code-block.tsx`: the `sensitive` prop.
 - `client/src/components/billing/PaymentsHistorySection.tsx`: invoice links.
+- `client/src/components/chat-v2/thread/parts/text-part.tsx` (through
+  `MemoizedMarkdown`'s `hideFromReplay`): the text of user messages, model
+  replies and plain-text tool results in chat, the Playground and Ask MCPJam.
+- `client/src/components/chat-v2/thread/parts/tool-part.tsx`: a tool call's
+  error text. Tool names, headers and buttons around it stay recorded.
 
 ## Two recorders, one boundary
 

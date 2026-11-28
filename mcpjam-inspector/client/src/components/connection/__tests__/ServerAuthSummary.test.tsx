@@ -85,6 +85,10 @@ describe("ServerAuthSummary", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Reveal Token" }));
     expect(screen.getByText("secret-token")).toBeInTheDocument();
+    // A revealed token is a secret surface: replay masks its text.
+    expect(
+      screen.getByText("secret-token").closest("[data-ph-no-capture]"),
+    ).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Copy Token" }));
     await waitFor(() => expect(mockCopy).toHaveBeenCalledWith("secret-token"));
