@@ -72,14 +72,23 @@ export const APP_SURFACES = [
     // a note with ] and { and "quotes" and don't
     canonicalPath: "/a",
     routePatterns: ["a", "a/:x"], /* ] } */
+    title: "A screen",
+    userActivities: ["Open [the] list", "Close it"],
     agentTools: { kind: "none", reason: "has [brackets] and {braces}" },
+    showInAtlas: true,
   },
-  { id: "b", canonicalPath: "/b", routePatterns: ["b"] },
+  { id: "b", canonicalPath: "/b", routePatterns: ["b"], showInAtlas: false },
 ] as const satisfies readonly AppSurfaceManifest[];`);
-  assert.deepEqual(surfaces, [
-    { id: "a", canonicalPath: "/a", routePatterns: ["a", "a/:x"] },
-    { id: "b", canonicalPath: "/b", routePatterns: ["b"] },
-  ]);
+  const [a, b] = surfaces;
+  assert.deepEqual(
+    [a.id, a.canonicalPath, a.routePatterns, a.title, a.showInAtlas],
+    ["a", "/a", ["a", "a/:x"], "A screen", true],
+  );
+  assert.deepEqual(a.userActivities, ["Open [the] list", "Close it"]);
+  assert.deepEqual(
+    [b.id, b.canonicalPath, b.routePatterns, b.title, b.showInAtlas],
+    ["b", "/b", ["b"], "", false],
+  );
 });
 
 test("destinations drop the project prefix, query and hash, and ignore the root", () => {
