@@ -19,6 +19,7 @@ import type {
 import {
   buildResumeCommand,
   idempotencyKeyOfErrorDetails,
+  projectIdOfErrorDetails,
   resumeReadsStdin,
   suiteIdOfErrorDetails,
   type EvalRunLaunchOptions,
@@ -69,8 +70,9 @@ function namesTargets(options: EvalRunLaunchOptions): boolean {
  * share ONE resume: the same launch replayed under the same group key, which
  * the server turns into the same per-target run keys, so the targets that
  * started return their existing runs and only the refused ones launch. A
- * `--file -` launch replays on its suite by id (stdin was consumed), naming
- * the receipt's targets when the file, not a flag, had chosen them.
+ * `--file -` launch replays on its suite by id (stdin was consumed). The
+ * replay names the receipt's targets when `--all-targets` or the file, not a
+ * target flag, had chosen them, and the project and suite the launch resolved.
  */
 export function refusedTargetCreditBlocks(
   result: RunEvalSuiteResult,
@@ -82,10 +84,18 @@ export function refusedTargetCreditBlocks(
     return isCreditBlock(recovery) ? [{ target, recovery }] : [];
   });
   if (refused.length === 0) return [];
-  const fileChoseTargets = options.file === "-" && !namesTargets(options);
-  const replay: EvalRunLaunchOptions = fileChoseTargets
+  // The replay names the receipt's own targets when the launch did not name
+  // them itself: `--all-targets` would pick up a target attached since, or
+  // drop one detached since and turn the fan-out into a single run under a
+  // different key.
+  const receiptTargets =
+    options.allTargets === true ||
+    (options.file === "-" && !namesTargets(options));
+  const replay: EvalRunLaunchOptions = receiptTargets
     ? {
         ...options,
+        allTargets: false,
+        host: undefined,
         environment: result.targets.flatMap((target) =>
           !target.host && target.environment ? [target.environment.id] : [],
         ),
@@ -97,7 +107,9 @@ export function refusedTargetCreditBlocks(
   const resumeCommand = buildResumeCommand(replay, {
     idempotencyKey: options.idempotencyKey ?? result.idempotencyKey,
     suiteId: result.suite.id,
+    projectId: result.project.id,
   });
+  const pipeAgain = resumeReadsStdin(options, result.suite.id);
   return refused.map(({ target, recovery }) => {
     const targetId = target.environment?.id ?? target.host?.id ?? "";
     const name = target.host?.name || target.environment?.name;
@@ -105,6 +117,7 @@ export function refusedTargetCreditBlocks(
       target: name ? `${name} (${targetId})` : targetId,
       recovery,
       resumeCommand,
+      ...(pipeAgain ? { pipeAgain: true as const } : {}),
     };
   });
 }
@@ -126,6 +139,7 @@ export function refusedLaunchCreditBlock(
     resumeCommand: buildResumeCommand(options, {
       idempotencyKey: idempotencyKeyOfErrorDetails(details),
       suiteId,
+      projectId: projectIdOfErrorDetails(details),
     }),
     ...(resumeReadsStdin(options, suiteId) ? { pipeAgain: true as const } : {}),
   };

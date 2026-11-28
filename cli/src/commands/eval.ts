@@ -3803,8 +3803,12 @@ export function registerEvalCommands(program: Command): void {
         // launch with no `--case` runs every stored case, including the rows
         // the file disabled. Its resume names the cases this launch ran.
         let stdinRunCases: string[] | undefined;
+        // An approved launch replays from the file itself (approvals name its
+        // authored cases), so it keeps the file's own case choice.
         const replayOptions = () =>
-          stdinRunCases ? { ...options, case: stdinRunCases } : options;
+          stdinRunCases && !approvals
+            ? { ...options, case: stdinRunCases }
+            : options;
         let result: RunEvalSuiteResult;
         try {
           result = await runPlatformCommand(
@@ -4345,7 +4349,12 @@ export function registerEvalCommands(program: Command): void {
           ...refusedBlocks,
           ...completion.creditStops
             .filter((stop) => isCreditBlock(stop.recovery))
-            .map((stop) => stoppedRunCreditBlock(stop, options)),
+            .map((stop) =>
+              stoppedRunCreditBlock(stop, {
+                ...options,
+                project: result.project.id,
+              })
+            ),
         ];
         const code = worstOf([
           evalRunWaitExitCode({

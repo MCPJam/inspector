@@ -168,6 +168,26 @@ test("buildResumeCommand: a refused --file - launch names its suite by id", () =
   assert.equal(resumeReadsStdin({ file: "-" }, "suite_7"), false);
   assert.equal(resumeReadsStdin({ file: "-" }, undefined), true);
   assert.equal(resumeReadsStdin({ file: "a.yaml" }, undefined), false);
+  // Approvals name the file's authored cases, so only the file replays them.
+  assert.equal(
+    resumeReadsStdin({ file: "-", allowApproximated: ["c1"] }, "suite_7"),
+    true,
+  );
+});
+
+test("buildResumeCommand: an approved --file - launch replays from the file", () => {
+  const command = buildResumeCommand(
+    {
+      file: "-",
+      allowApproximated: ["refund"],
+      approvalReason: "Known gap",
+    },
+    { idempotencyKey: "k1", suiteId: "suite_7", projectId: "proj_1" },
+  );
+  assert.equal(
+    command,
+    "mcpjam cloud eval run --file - --project proj_1 --allow-approximated refund --approval-reason 'Known gap' --idempotency-key k1 --resume",
+  );
 });
 
 test("buildResumeCommand: --host folds into --client, repetitions into --iterations", () => {

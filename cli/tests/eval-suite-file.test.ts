@@ -2890,7 +2890,7 @@ describe("eval run --file", () => {
         .idempotencyKey;
       assert.equal(
         JSON.parse(run.stdout).resumeCommand,
-        `mcpjam cloud eval run --suite suite-file-1 --project Alpha --case row_c_refund --idempotency-key ${key} --resume`
+        `mcpjam cloud eval run --suite suite-file-1 --project proj-alpha --case row_c_refund --idempotency-key ${key} --resume`
       );
     } finally {
       await fixture.close();

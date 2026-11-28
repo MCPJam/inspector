@@ -65,7 +65,7 @@ function capture(): { text: () => string; write: (chunk: string) => boolean } {
   };
 }
 
-test("refused targets share one replay of the launch under its group key", () => {
+test("refused targets share one replay of the receipt's targets under its group key", () => {
   const blocks = refusedTargetCreditBlocks(
     receipt(
       [
@@ -89,7 +89,7 @@ test("refused targets share one replay of the launch under its group key", () =>
   assert.equal(blocks[0]!.target, "Prod (env_prod)");
   assert.equal(
     blocks[0]!.resumeCommand,
-    "mcpjam cloud eval run --file suite.json --all-targets --iterations 2 --wait --idempotency-key k1 --resume",
+    "mcpjam cloud eval run --file suite.json --project p1 --environment env_stg --environment env_prod --iterations 2 --wait --idempotency-key k1 --resume",
   );
 });
 
@@ -120,7 +120,7 @@ test("a --file - fan-out replays on its suite with the receipt's targets", () =>
   );
   assert.equal(blocks.length, 2);
   const command =
-    "mcpjam cloud eval run --suite s1 --client h1 --client h2 --client h3 --idempotency-key minted --resume";
+    "mcpjam cloud eval run --suite s1 --project p1 --client h1 --client h2 --client h3 --idempotency-key minted --resume";
   assert.deepEqual(
     blocks.map((block) => block.resumeCommand),
     [command, command],
@@ -153,6 +153,81 @@ test("a refused solo --file - launch names its suite, or says to pipe again", ()
   const out = capture();
   writeCreditBlocks("human", [unknown], false, out);
   assert.match(out.text(), /Pipe the same suite file to it again/);
+});
+
+test("a suite launched by name replays on the project and suite it resolved", () => {
+  const blocks = refusedTargetCreditBlocks(
+    receipt(
+      [
+        {
+          status: "started",
+          runId: "run_1",
+          runStatus: "running",
+          host: { id: "h1", name: "Claude" },
+        },
+        {
+          status: "failed",
+          host: { id: "h2", name: "GPT" },
+          error: { code: "FORBIDDEN", message: "Out", recovery: RECOVERY },
+        },
+      ],
+      { idempotencyKey: "k1" },
+    ),
+    { suite: "Smoke", client: ["Claude", "GPT"] },
+  );
+  assert.equal(
+    blocks[0]!.resumeCommand,
+    "mcpjam cloud eval run --suite s1 --project p1 --client Claude --client GPT --idempotency-key k1 --resume",
+  );
+});
+
+test("an approved --file - fan-out replays from the file, piped again", () => {
+  const blocks = refusedTargetCreditBlocks(
+    receipt(
+      [
+        {
+          status: "started",
+          runId: "run_1",
+          runStatus: "running",
+          host: { id: "h1", name: "Claude" },
+        },
+        {
+          status: "failed",
+          host: { id: "h2", name: "GPT" },
+          error: { code: "FORBIDDEN", message: "Out", recovery: RECOVERY },
+        },
+      ],
+      { idempotencyKey: "k1" },
+    ),
+    {
+      file: "-",
+      allowApproximated: ["refund"],
+      approvalReason: "Known gap",
+    },
+  );
+  assert.equal(
+    blocks[0]!.resumeCommand,
+    "mcpjam cloud eval run --file - --project p1 --client h1 --client h2 --allow-approximated refund --approval-reason 'Known gap' --idempotency-key k1 --resume",
+  );
+  assert.equal(blocks[0]!.pipeAgain, true);
+});
+
+test("a refused solo launch replays on the project and suite in its details", () => {
+  const block = refusedLaunchCreditBlock(
+    {
+      idempotencyKey: "k1",
+      resume: {
+        tool: "run_eval_suite",
+        arguments: { project: "proj_1", suite: "suite_1" },
+      },
+    },
+    RECOVERY,
+    { suite: "Smoke", project: "Acme" },
+  );
+  assert.equal(
+    block.resumeCommand,
+    "mcpjam cloud eval run --suite suite_1 --project proj_1 --idempotency-key k1 --resume",
+  );
 });
 
 test("a refused target with a wait, or another failure, is not a block", () => {

@@ -81,25 +81,49 @@ export function idempotencyKeyOfErrorDetails(
   return detailString(details, "idempotencyKey");
 }
 
-/**
- * The suite a refused `--file` launch had already written before credits
- * refused it, from the error's `details`, so its resume names the suite by id
- * instead of reading the file (or consumed stdin) again.
- */
-export function suiteIdOfErrorDetails(details: unknown): string | undefined {
-  return detailString(details, "suiteId");
+/** A field of the replay call the SDK put on a refusal's `details.resume`. */
+function resumeArgument(details: unknown, field: string): string | undefined {
+  const resume =
+    details && typeof details === "object"
+      ? (details as { resume?: { arguments?: unknown } }).resume
+      : undefined;
+  return detailString(resume?.arguments, field);
 }
 
 /**
- * True when the resume command still reads the suite from stdin: a refused
- * `--file -` launch whose suite id is unknown. The caller says the input must
- * be piped again, because the first launch consumed it.
+ * The suite a refused launch resolved before credits refused it, from the
+ * error's `details`: the suite a `--file` launch had already written, or the
+ * one the replay call names. Its resume names the suite by id instead of
+ * reading the file (or consumed stdin) or resolving a name again.
+ */
+export function suiteIdOfErrorDetails(details: unknown): string | undefined {
+  return detailString(details, "suiteId") ?? resumeArgument(details, "suite");
+}
+
+/** The project a refused launch resolved, from the replay call in `details`. */
+export function projectIdOfErrorDetails(details: unknown): string | undefined {
+  return resumeArgument(details, "project");
+}
+
+/**
+ * True when the resume command still reads the suite from stdin, which must be
+ * piped again because the first launch consumed it: a refused `--file -`
+ * launch whose suite id is unknown, or one that approved approximated cases.
+ * Approvals name the file's authored cases, so only a file run accepts them.
  */
 export function resumeReadsStdin(
-  options: Pick<EvalRunLaunchOptions, "file">,
+  options: Pick<
+    EvalRunLaunchOptions,
+    "file" | "allowApproximated" | "resumeFrom"
+  >,
   suiteId: string | undefined,
 ): boolean {
-  return options.file === "-" && suiteId === undefined;
+  if (options.file !== "-") return false;
+  if (suiteId === undefined) return true;
+  return (
+    options.resumeFrom === undefined &&
+    (options.allowApproximated?.length ?? 0) > 0
+  );
 }
 
 /** A plain token needs no quoting; anything else is single-quoted, safely. */
@@ -141,6 +165,7 @@ export function buildResumeCommand(
     sourceRunId?: string;
     idempotencyKey?: string;
     suiteId?: string;
+    projectId?: string;
   } = {},
 ): string {
   const argv: string[] = ["mcpjam", "cloud", "eval", "run"];
@@ -155,13 +180,19 @@ export function buildResumeCommand(
 
   // A stopped run already belongs to a suite, so its resume names that suite
   // by id: re-sending `--file` would re-upsert the cases first, and `--file -`
-  // would wait on stdin that was consumed by the first launch.
+  // would wait on stdin that was consumed by the first launch. A `--suite`
+  // launch names the suite and project it resolved, so funding the account
+  // cannot switch which suite a name resolves to.
   const bySuiteId =
-    resume.suiteId !== undefined && (resumesSource || options.file === "-");
+    resume.suiteId !== undefined &&
+    (resumesSource ||
+      options.file === undefined ||
+      (options.file === "-" && !resumeReadsStdin(options, resume.suiteId)));
   if (bySuiteId) push("--suite", resume.suiteId!);
   else if (options.file) push("--file", options.file);
   else if (options.suite) push("--suite", options.suite);
-  if (options.project) push("--project", options.project);
+  const project = resume.projectId ?? options.project;
+  if (project) push("--project", project);
 
   // The server picks a stopped run's cases and target itself, and refuses
   // `--case` beside a resume, so a resume names neither.

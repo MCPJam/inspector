@@ -6681,7 +6681,7 @@ test("eval run --wait exits 6 and replays the group for its credit-refused targe
     );
     assert.match(
       run.stdout,
-      /Resume: mcpjam cloud eval run --suite suite-1 --project proj-alpha --all-targets --wait --idempotency-key k1 --resume\n/
+      /Resume: mcpjam cloud eval run --suite suite-1 --project proj-alpha --client host-claude --client host-chatgpt --wait --idempotency-key k1 --resume\n/
     );
   } finally {
     process.exitCode = 0;
