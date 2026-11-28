@@ -83,6 +83,8 @@ export interface RunAssistantTurnOptions
 
   modelDefinition: ModelDefinition;
   systemPrompt: string;
+  /** See `MCPJamHandlerOptions.serverInstructions`. */
+  serverInstructions?: string;
   temperature?: number;
   /**
    * The reasoning effort this turn asked for (else the one on the selection in
@@ -496,6 +498,9 @@ function buildHandlerOptions(
     modelId: String(opts.modelDefinition.id),
     provider: opts.modelDefinition.provider,
     systemPrompt: opts.systemPrompt,
+    ...(opts.serverInstructions
+      ? { serverInstructions: opts.serverInstructions }
+      : {}),
     tools: opts.tools,
     mcpClientManager: opts.mcpClientManager,
     unavailableServerIds: opts.unavailableServerIds,

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { DEMOTED_SYSTEM_MESSAGE_LABEL } from "../../../utils/history-provenance";
 import {
   buildServerInstructions,
+  harnessServerInstructions,
+  withoutLegacyServerInstructions,
   type InstructionsSource,
 } from "../turn-instructions";
 
@@ -170,5 +173,60 @@ describe("buildServerInstructions", () => {
     expect(build()).not.toContain("ORIGINAL-7Q2");
     sent.srv = "ORIGINAL-7Q2";
     expect(build()).not.toContain("REPLACEMENT-4K9");
+  });
+});
+
+describe("harnessServerInstructions", () => {
+  it("hands a harness the section only where MCPJam's MCP client serves its tools", () => {
+    expect(harnessServerInstructions("host-tools", "SECTION")).toBe("SECTION");
+    expect(harnessServerInstructions("mcp-endpoint", "SECTION")).toBe("");
+    expect(harnessServerInstructions(undefined, "SECTION")).toBe("");
+    expect(harnessServerInstructions("host-tools", undefined)).toBe("");
+  });
+});
+
+describe("withoutLegacyServerInstructions", () => {
+  const legacy = {
+    id: "server-instruction-docs",
+    role: "system",
+    parts: [{ type: "text", text: "Server docs instructions: Search first." }],
+    metadata: { source: "server-instruction", serverName: "docs" },
+  };
+  const user = { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] };
+
+  it("drops the old per-server message, with or without its metadata", () => {
+    const { metadata: _dropped, ...hydrated } = legacy;
+    expect(withoutLegacyServerInstructions([legacy, user])).toEqual([user]);
+    expect(withoutLegacyServerInstructions([hydrated, user])).toEqual([user]);
+  });
+
+  it("drops it after the hosted route demoted it to a labelled user message", () => {
+    const demoted = {
+      id: "d1",
+      role: "user",
+      parts: [
+        { type: "text", text: DEMOTED_SYSTEM_MESSAGE_LABEL },
+        { type: "text", text: "Server docs instructions: Search first." },
+      ],
+    };
+    expect(withoutLegacyServerInstructions([demoted, user])).toEqual([user]);
+  });
+
+  it("keeps every other system message and anything that only looks similar", () => {
+    const kept = [
+      { id: "s1", role: "system", parts: [{ type: "text", text: "Be brief." }] },
+      {
+        id: "s2",
+        role: "system",
+        parts: [{ type: "text", text: "Note: Server docs instructions: quoted" }],
+      },
+      {
+        id: "u2",
+        role: "user",
+        parts: [{ type: "text", text: "Server docs instructions: in my own words" }],
+      },
+      user,
+    ];
+    expect(withoutLegacyServerInstructions(kept)).toEqual(kept);
   });
 });

@@ -192,6 +192,23 @@ afterEach(() => {
 });
 
 describe("drainAssistantTurn — model-aware dispatch", () => {
+  it("hands the hosted engine the servers' instructions for a harness turn", async () => {
+    const calls: unknown[] = [];
+    runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    await drainAssistantTurn(
+      baseArgs({
+        serverInstructions: "## docs\nSearch first.",
+      }) as Parameters<typeof drainAssistantTurn>[0],
+    );
+
+    expect(calls[0]).toMatchObject({
+      systemPrompt: "system",
+      serverInstructions: "## docs\nSearch first.",
+    });
+  });
+
   it("routes MCPJam-provided models through the hosted engine on the default /stream endpoint", async () => {
     const calls: unknown[] = [];
     runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));

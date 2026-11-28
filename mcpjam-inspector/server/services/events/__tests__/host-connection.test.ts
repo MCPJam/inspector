@@ -12,7 +12,12 @@ import { executeClaimedEventRun, type EventExecutorDeps } from "../executor.js";
 import { hostManagerArgs } from "../host-connection.js";
 
 const authorizeMock = vi.hoisted(() => ({ createAuthorizedManager: vi.fn() }));
-vi.mock("../../../routes/web/auth.js", () => authorizeMock);
+vi.mock("../../../routes/web/auth.js", async (importOriginal) => ({
+  buildServerNamesById: (
+    await importOriginal<typeof import("../../../routes/web/auth.js")>()
+  ).buildServerNamesById,
+  ...authorizeMock,
+}));
 const hostConfigMock = vi.hoisted(() => ({ fetchHostRuntimeConfig: vi.fn() }));
 vi.mock("../../../utils/host-runtime-config.js", () => hostConfigMock);
 const environmentMock = vi.hoisted(() => ({ resolveEnvironmentForLaunch: vi.fn() }));

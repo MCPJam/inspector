@@ -69,6 +69,7 @@ function browserWithoutWidgets(): BrowserSessionContext {
 const PREPARED: PrepareChatV2Result = {
   allTools: {},
   enhancedSystemPrompt: "sys",
+  serverInstructions: "# MCP Server Instructions\n\n## srv\nSearch first.",
   resolvedTemperature: undefined,
   scrubMessages: (messages) => messages,
   progressivePlan: {
@@ -136,6 +137,8 @@ const COMMON = {
   messages: [{ role: "user", content: "hello" }],
   modelDefinition: { id: "anthropic/m", provider: "anthropic" },
   systemPrompt: "sys",
+  // The prepared section rides every engine; a harness uses it on host tools.
+  serverInstructions: PREPARED.serverInstructions,
   tools: expect.any(Object),
   selectedServerIds: ["srv"],
   mcpClientManager: manager,

@@ -267,6 +267,7 @@ import {
   withServedSkills,
   withServerSkillTools,
 } from "./harness-server-skills.js";
+import { harnessServerInstructions } from "../../services/environments/turn-instructions.js";
 import {
   COMMAND_GATE_PERMISSION_MODE,
   commandGateTurn,
@@ -590,6 +591,8 @@ export function harnessRuntimeFingerprint(parts: {
   permissionMode: string;
   /** Session instructions retain the skill catalog they start with. */
   serverSkillCatalog?: string;
+  /** And the servers' instructions they start with, when MCPJam added them. */
+  serverInstructions?: string;
   /**
    * INS-7: the plugin versions materialized for this turn. A resumed session
    * keeps whatever plugin runtime was delivered when it was CREATED, so an
@@ -745,6 +748,9 @@ export function harnessRuntimeFingerprint(parts: {
     ...(parts.credential ? [`credential:${parts.credential}`] : []),
     ...(parts.serverSkillCatalog
       ? [JSON.stringify(["server-skill-catalog", parts.serverSkillCatalog])]
+      : []),
+    ...(parts.serverInstructions
+      ? [JSON.stringify(["server-instructions", parts.serverInstructions])]
       : []),
   ].join("");
   let h = 0x811c9dc5;
@@ -2050,8 +2056,13 @@ export async function runHarnessTurn(
         messages,
         signal: abortSignal,
       });
+      // The servers' instructions, where MCPJam's MCP client serves the tools.
+      const serverInstructions = harnessServerInstructions(
+        turnMcpPlan?.delivery,
+        options.serverInstructions,
+      );
       const instructions =
-        `${systemPrompt ?? ""}${serverSkills?.promptSection ?? ""}` ||
+        `${[systemPrompt, serverInstructions].filter(Boolean).join("\n\n")}${serverSkills?.promptSection ?? ""}` ||
         undefined;
       const permissionMode: HarnessV1PermissionMode =
         harnessExecutionTarget != null
@@ -2102,6 +2113,7 @@ export async function runHarnessTurn(
         unavailableServerIds: options.unavailableServerIds,
         permissionMode,
         serverSkillCatalog: serverSkills?.promptSection,
+        ...(serverInstructions ? { serverInstructions } : {}),
         // INS-7: fold the plugin runtime in, so a version upgrade / bundle
         // change forks the session instead of resuming onto a sandbox that
         // still holds the previously delivered plugin material.

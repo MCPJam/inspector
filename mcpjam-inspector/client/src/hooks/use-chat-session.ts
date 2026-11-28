@@ -2031,14 +2031,6 @@ function mergePreviewSpansIntoLiveEnvelope(
 }
 
 function isTransientMessage(message: UIMessage): boolean {
-  if (
-    message.role === "system" &&
-    (message as { metadata?: { source?: string } }).metadata?.source ===
-      "server-instruction"
-  ) {
-    return true;
-  }
-
   return message.id?.startsWith("widget-state-") ?? false;
 }
 

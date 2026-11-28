@@ -74,7 +74,6 @@ interface MultiModelChatCardProps {
   effort?: CompareCardEffortProps;
   comparisonSummaries: MultiModelCardSummary[];
   selectedServers: string[];
-  selectedServerInstructions: Record<string, string>;
   broadcastRequest: BroadcastChatTurnRequest | null;
   stopRequestId: number;
   placeholder: string;
@@ -107,7 +106,6 @@ export function MultiModelChatCard({
   effort,
   comparisonSummaries,
   selectedServers,
-  selectedServerInstructions,
   broadcastRequest,
   stopRequestId,
   placeholder,
@@ -336,35 +334,6 @@ export function MultiModelChatCard({
     setTraceViewMode("chat");
     setRevealedInChat(false);
   }, [chatSessionId]);
-
-  useEffect(() => {
-    setMessages((previous) => {
-      const filtered = previous.filter(
-        (message) =>
-          !(
-            message.role === "system" &&
-            (message as { metadata?: { source?: string } })?.metadata
-              ?.source === "server-instruction"
-          )
-      );
-
-      const instructionMessages = Object.entries(selectedServerInstructions)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([serverName, instruction]) => ({
-          id: `server-instruction-${serverName}`,
-          role: "system" as const,
-          parts: [
-            {
-              type: "text" as const,
-              text: `Server ${serverName} instructions: ${instruction}`,
-            },
-          ],
-          metadata: { source: "server-instruction", serverName },
-        }));
-
-      return [...instructionMessages, ...filtered];
-    });
-  }, [selectedServerInstructions, setMessages]);
 
   const handleWidgetStateChange = useCallback(
     (toolCallId: string, state: unknown) => {

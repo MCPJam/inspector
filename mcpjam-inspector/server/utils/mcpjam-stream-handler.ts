@@ -973,6 +973,12 @@ export interface MCPJamHandlerOptions {
    */
   provider?: string;
   systemPrompt: string;
+  /**
+   * The selected servers' instructions, as `prepareChatV2` built them. A
+   * harness turn adds them to its instructions where MCPJam's MCP client
+   * serves its tools; MCPJam's own engine already has them in `systemPrompt`.
+   */
+  serverInstructions?: string;
   temperature?: number;
   /**
    * The reasoning effort this turn asked for. Read by `runHarnessTurn`, which

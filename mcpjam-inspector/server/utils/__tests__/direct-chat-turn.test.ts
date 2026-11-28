@@ -145,6 +145,25 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     };
   }
 
+  it("hands the model the servers' instructions once, in the system prompt every step reuses", async () => {
+    const marker = "MARKER-D5: search before you answer.";
+    let engine: { system?: unknown; messages?: unknown } = {};
+    streamTextMock.mockImplementationOnce((options: typeof engine) => {
+      engine = options;
+      return defaultStreamTextReturn();
+    });
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as never,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hello" } as never],
+      systemPrompt: `Base.\n\n# MCP Server Instructions\n\n## docs\n${marker}`,
+      tools: {} as never,
+    });
+    await consumeDirectChatTurnHeadless(handle);
+    expect(String(engine.system).split(marker)).toHaveLength(2);
+    expect(JSON.stringify(engine.messages)).not.toContain(marker);
+  });
+
   it("returns a fully assembled result in headless mode (no UI writer)", async () => {
     streamTextMock.mockReturnValueOnce(
       defaultStreamTextReturn({

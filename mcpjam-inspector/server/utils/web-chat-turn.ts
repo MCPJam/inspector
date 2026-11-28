@@ -162,6 +162,7 @@ import {
 } from "@/shared/scope-step-up";
 import type { ChatMultiModelColumn, ChatRewind } from "@/shared/chat-v2";
 import { buildServerNamesById } from "./../routes/web/auth.js";
+import { withoutLegacyServerInstructions } from "../services/environments/turn-instructions.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
@@ -859,7 +860,7 @@ export async function streamChatTurn(
   // Convert UI messages to ModelMessage[] up front so prepareChatV2 can
   // replay prior `load_mcp_tools` calls into discovery state.
   let modelMessages = await convertToMcpjamModelMessages(
-    uiMessagesForTurn as never,
+    withoutLegacyServerInstructions(uiMessagesForTurn) as never,
     {
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       // Browser-sent history can replay already-resolved media, but must not
@@ -959,6 +960,7 @@ export async function streamChatTurn(
   const {
     allTools: preparedTools,
     enhancedSystemPrompt,
+    serverInstructions,
     resolvedTemperature,
     scrubMessages,
     progressivePlan,
@@ -1885,6 +1887,7 @@ export async function streamChatTurn(
       sourceType: persist.sourceType,
       messages: scrubbedMessages,
       systemPrompt: effectiveEnhancedSystemPrompt,
+      serverInstructions,
       temperature: resolvedTemperature,
       ...(prepare.reasoningEffort !== undefined
         ? { reasoningEffort: prepare.reasoningEffort }
@@ -1998,6 +2001,7 @@ export async function streamChatTurn(
     ...(persist.hostId ? { hostId: persist.hostId } : {}),
     sourceType: persist.sourceType,
     systemPrompt: executionSystemPrompt,
+    serverInstructions,
     temperature: resolvedTemperature,
     // Hosted `/stream`: the top-level body field. Harness: the typed field its
     // adapter's declared efforts gate (refused, never dropped).

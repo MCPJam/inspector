@@ -189,7 +189,6 @@ function Harness({
             model={model}
             comparisonSummaries={Object.values(summaries)}
             selectedServers={[]}
-            selectedServerInstructions={{}}
             broadcastRequest={broadcastRequest}
             stopRequestId={stopRequestId}
             placeholder="Message"

@@ -23,6 +23,20 @@ describe("harnessRuntimeFingerprint", () => {
     permissionMode: "allow-all",
   };
 
+  it("forks when the servers' instructions in retained instructions change", () => {
+    const first = { ...base, serverInstructions: "## docs\nSearch first." };
+    expect(harnessRuntimeFingerprint(first)).toBe(
+      harnessRuntimeFingerprint({ ...first }),
+    );
+    expect(harnessRuntimeFingerprint(first)).not.toBe(
+      harnessRuntimeFingerprint({ ...first, serverInstructions: "## docs\nAsk first." }),
+    );
+    // A turn without instructions hashes as every turn did before they existed.
+    expect(harnessRuntimeFingerprint({ ...base, serverInstructions: "" })).toBe(
+      harnessRuntimeFingerprint(base),
+    );
+  });
+
   it("forks when the server skill catalog in retained instructions changes", () => {
     const first = { ...base, serverSkillCatalog: "**docs/lookup**" };
     expect(harnessRuntimeFingerprint(first)).not.toBe(

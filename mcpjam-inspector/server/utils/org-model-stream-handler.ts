@@ -119,6 +119,8 @@ export interface OrgModelHandlerOptions {
   sourceType?: string;
   messages: ModelMessage[];
   systemPrompt: string;
+  /** See `MCPJamHandlerOptions.serverInstructions`. */
+  serverInstructions?: string;
   temperature?: number;
   /**
    * The reasoning effort for this turn. Sent to `/stream/org` as the top-level
@@ -977,6 +979,9 @@ export async function handleHostedOrgChatModel(
     chatSessionId: options.chatSessionId,
     sourceType: options.sourceType,
     systemPrompt: options.systemPrompt,
+    ...(options.serverInstructions
+      ? { serverInstructions: options.serverInstructions }
+      : {}),
     temperature: options.temperature,
     ...(options.reasoningEffort !== undefined
       ? { reasoningEffort: options.reasoningEffort }

@@ -1217,6 +1217,7 @@ export async function runSyntheticHostSession(
             // sourced instead of hardcoding every journey turn as "scenario".
             sourceType: persist.sourceType,
             systemPrompt: prepared.enhancedSystemPrompt,
+            serverInstructions: prepared.serverInstructions,
             temperature: prepared.resolvedTemperature,
             ...(maxSteps !== undefined ? { maxSteps } : {}),
             ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
@@ -2358,6 +2359,9 @@ export async function drainAssistantTurn(
     messages: args.messages,
     modelDefinition: turnModelDefinition,
     systemPrompt: args.systemPrompt,
+    ...(args.serverInstructions
+      ? { serverInstructions: args.serverInstructions }
+      : {}),
     agentLoop: args.agentLoop,
     respectToolVisibility: args.respectToolVisibility,
     tasks: args.tasks,

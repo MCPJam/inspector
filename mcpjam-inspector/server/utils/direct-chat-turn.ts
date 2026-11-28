@@ -746,10 +746,9 @@ export function runDirectChatTurn(
     result = streamText({
     model: providerReadyModel(llmModel, messageHistory, () => discoveryStep?.shown),
     messages: messageHistory,
-    // AI SDK 7 rejects system messages in `messages` by default. The history
-    // carries them on purpose: MCP server instructions reach the model as
-    // system messages (ChatTabV2's `server-instruction` parts). Same opt-in
-    // the backend's /stream routes use.
+    // AI SDK 7 rejects system messages in `messages` by default. A saved
+    // conversation can still carry them, so accept them as the backend's
+    // /stream routes do. Server instructions travel in `system` instead.
     allowSystemInMessages: true,
     ...(temperature !== undefined ? { temperature } : {}),
     system: providerSystemPrompt,

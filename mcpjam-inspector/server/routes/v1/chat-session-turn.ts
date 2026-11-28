@@ -1921,6 +1921,7 @@ async function handleTurn(c: Context): Promise<Response> {
         prepared.enhancedSystemPrompt,
         browserRefusal,
       ),
+      serverInstructions: prepared.serverInstructions,
       tools,
       ...(builtInTools ? { builtInTools } : {}),
       mcpClientManager: manager,

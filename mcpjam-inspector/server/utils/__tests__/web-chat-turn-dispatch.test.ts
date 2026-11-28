@@ -377,6 +377,61 @@ describe("streamWebChatTurn model dispatch", () => {
     expect(handlers.hostedOrg).not.toHaveBeenCalled();
   });
 
+  describe("the servers' instructions", () => {
+    const SECTION = "# MCP Server Instructions\n\n## docs\nSearch first.";
+    const preparedWithInstructions = async () =>
+      vi
+        .mocked((await import("../chat-v2-orchestration.js")).prepareChatV2)
+        .mockResolvedValueOnce({
+        allTools: {},
+        enhancedSystemPrompt: "",
+        serverInstructions: SECTION,
+        resolvedTemperature: undefined,
+        scrubMessages: (m: unknown[]) => m,
+      } as never);
+
+    it("ride the MCPJam-hosted hand-off, where a harness turn uses them", async () => {
+      await preparedWithInstructions();
+      await streamWebChatTurn(
+        args({ id: "gpt-5-nano", provider: "openai" }) as never,
+      );
+      expect(handlers.mcpjamFree.mock.calls[0]?.[0]).toMatchObject({
+        serverInstructions: SECTION,
+      });
+    });
+
+    it("ride the organization-key hand-off too", async () => {
+      await preparedWithInstructions();
+      await streamWebChatTurn(
+        args({ id: "gpt-5-nano", provider: "openai", hosted: false }, null) as never,
+      );
+      expect(handlers.hostedOrg.mock.calls[0]?.[0]).toMatchObject({
+        serverInstructions: SECTION,
+      });
+    });
+
+    it("leave the old per-server instruction messages out of the model's history", async () => {
+      const convert = vi.mocked(
+        (await import("../mcp-tool-result-model-output.js"))
+          .convertToMcpjamModelMessages,
+      );
+      convert.mockClear();
+      const legacy = {
+        id: "server-instruction-docs",
+        role: "system",
+        parts: [{ type: "text", text: "Server docs instructions: Search first." }],
+        metadata: { source: "server-instruction", serverName: "docs" },
+      };
+      const user = { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] };
+      await streamWebChatTurn(
+        args({ id: "gpt-5-nano", provider: "openai" }, "claude-code", {
+          uiMessages: [legacy, user],
+        }) as never,
+      );
+      expect(convert.mock.calls[0]?.[0]).toEqual([user]);
+    });
+  });
+
   it("routes a BARE MCPJam-hosted id + provider to the MCPJam path (harness runs)", async () => {
     await streamWebChatTurn(
       args({ id: "gpt-5-nano", provider: "openai" }) as never,

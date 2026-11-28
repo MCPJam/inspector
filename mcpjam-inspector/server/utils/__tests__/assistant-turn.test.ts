@@ -380,6 +380,38 @@ describe("runAssistantTurn", () => {
    * `checkHarnessRuntimeAvailable`, but `sessionSimulation/runner.ts` drives
    * turns straight through here.
    */
+  describe("the servers' instructions", () => {
+    it("reach the harness turn beside its system prompt", async () => {
+      global.fetch = vi.fn();
+      runHarnessTurnMock.mockResolvedValue({ messageHistory: [], aborted: false });
+      await runAssistantTurn({
+        messages: [{ role: "user", content: "Hi." }] as never,
+        modelDefinition: {
+          id: "cursor/auto",
+          provider: "cursor",
+          name: "Cursor Auto",
+        } as ModelDefinition,
+        systemPrompt: "You are helpful",
+        serverInstructions: "## docs\nSearch first.",
+        tools: {},
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as never,
+        authContext: { kind: "user_bearer", token: "Bearer test-token" },
+        sourceType: "swarm",
+        origin: "scenario",
+        approvalMode: "auto-deny",
+        streamSink: "none",
+        persistMode: "caller",
+        harness: "cursor",
+      });
+      expect(runHarnessTurnMock.mock.calls[0]?.[0]).toMatchObject({
+        systemPrompt: "You are helpful",
+        serverInstructions: "## docs\nSearch first.",
+      });
+    });
+  });
+
   describe("external-account harness dispatch", () => {
     const turn = (modelDefinition: ModelDefinition, harness: string) =>
       runAssistantTurn({

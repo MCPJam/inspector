@@ -25,7 +25,13 @@ const {
   finalizeUsageMock,
   captureServerEventMock,
   acquireBoxMock,
+  prepareChatV2Mock,
 } = vi.hoisted(() => ({
+  prepareChatV2Mock: vi.fn(async (_options: Record<string, unknown>) => ({
+    allTools: {},
+    enhancedSystemPrompt: "system",
+    serverInstructions: "## docs\nSearch first.",
+  })),
   queryMock: vi.fn(),
   mutationMock: vi.fn(),
   fetchHostRuntimeConfigMock: vi.fn(),
@@ -71,7 +77,7 @@ vi.mock("../../../utils/org-model-config.js", () => ({
   }),
 }));
 vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
-  prepareChatV2: async () => ({ allTools: {}, enhancedSystemPrompt: "system" }),
+  prepareChatV2: (options: Record<string, unknown>) => prepareChatV2Mock(options),
 }));
 vi.mock("../../../utils/resolve-turn-runtime.js", () => ({
   resolveTurnRuntime: async () => ({
@@ -417,5 +423,35 @@ describe("the harness turn's closing event", () => {
       .map(([, , properties]) => properties);
     expect(acquiredIn).toBeGreaterThanOrEqual(25);
     expect(event.box_wake_ms).toBeGreaterThanOrEqual(Math.floor(acquiredIn));
+  });
+});
+
+describe("the servers' instructions on a harness turn", () => {
+  it("are prepared for the harness and handed to its turn", async () => {
+    const response = await send(firstTurn());
+    expect(response.status).toBe(200);
+    expect(prepareChatV2Mock.mock.calls.at(-1)?.[0]).toMatchObject({
+      harness: "claude-code",
+    });
+    expect(runUnifiedAssistantTurnMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      serverInstructions: "## docs\nSearch first.",
+    });
+  });
+
+  it("refuse a turn whose tool names the harness would merge, as web chat does", async () => {
+    const { HarnessToolNameCollisionError } = await import(
+      "../../../utils/harness/harness-tool-names.js"
+    );
+    prepareChatV2Mock.mockRejectedValueOnce(
+      new HarnessToolNameCollisionError([
+        { serverId: "srv", toolNames: ["a.b", "a_b"] },
+      ]),
+    );
+    const response = await send(firstTurn());
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toContain("gives them the same name");
+    expect(runUnifiedAssistantTurnMock).not.toHaveBeenCalled();
   });
 });

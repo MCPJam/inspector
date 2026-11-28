@@ -852,6 +852,7 @@ export async function driveHostedEvalTurn(
             browser.browserInteractionSteps,
           )
         : prepared.enhancedSystemPrompt,
+      serverInstructions: prepared.serverInstructions,
       ...(prepared.resolvedTemperature != null
         ? { temperature: prepared.resolvedTemperature }
         : {}),

@@ -24,6 +24,8 @@ const harnessState = vi.hoisted(() => ({
   >,
   createRuntime: vi.fn(() => ({ harnessId: "claude-code" })),
   stream: vi.fn(),
+  /** The options the turn constructed `HarnessAgent` with. */
+  agent: undefined as Record<string, unknown> | undefined,
   session: {
     sessionId: "session-1",
     stop: vi.fn(async () => ({})),
@@ -35,6 +37,9 @@ const adapterDelivery = vi.hoisted(() => ({ value: "harness" }));
 
 vi.mock("@ai-sdk/harness/agent", () => ({
   HarnessAgent: class {
+    constructor(options: Record<string, unknown>) {
+      harnessState.agent = options;
+    }
     createSession = vi.fn(async () => harnessState.session);
     stream = vi.fn(async (args: Record<string, unknown>) => {
       harnessState.stream(args);
@@ -300,6 +305,7 @@ beforeEach(() => {
   loggerSpy.info.mockClear();
   discovery.calls.length = 0;
   claims.length = 0;
+  harnessState.agent = undefined;
   harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
 });
 afterEach(() => {
@@ -655,5 +661,77 @@ describe("a forwarded chat turn on its lane", () => {
     expect(loggerSpy.error).not.toHaveBeenCalled();
     expect(forwardingRefresh).toHaveBeenCalled();
     expect(forwardingRefresh.mock.calls.at(-1)![3]).toEqual({ sessionStable: stable });
+  });
+});
+
+describe("the servers' instructions", () => {
+  const MARKER = "MARKER-3Z: search before you answer.";
+  const SECTION = `# MCP Server Instructions\n\n## srv-a\n${MARKER}`;
+  const instructions = () => String(harnessState.agent?.instructions ?? "");
+  const count = (text: string) => text.split(MARKER).length - 1;
+
+  it.each(["forwarded-native", "forwarded-bridge", "native-proxy"] as const)(
+    "stay out of a %s turn, whose own MCP client gets the handshake",
+    async (route) => {
+      await runHarnessTurn(
+        { ...admit(route), serverInstructions: SECTION } as never,
+        "none",
+      );
+      expect(harnessState.agent).toBeDefined();
+      expect(count(instructions())).toBe(0);
+    },
+  );
+
+  it("join a host-tools turn once, after its system prompt", async () => {
+    await runHarnessTurn(
+      { ...admit("host-tools"), serverInstructions: SECTION } as never,
+      "none",
+    );
+    expect(count(instructions())).toBe(1);
+    expect(instructions().startsWith(`Use tools.\n\n${SECTION}`)).toBe(true);
+  });
+
+  it("join a turn that routes between accounts on MCPJam's MCP client", async () => {
+    const options = enrolled({ serverInstructions: SECTION });
+    setManagerConnections(
+      options.mcpClientManager as never,
+      {
+        "srv-a": [{ key: "srv-a::work" }, { key: "srv-a::personal" }],
+      } as never,
+    );
+    await runHarnessTurn(options as never, "none");
+    expect(count(instructions())).toBe(1);
+  });
+
+  it("leave a host-tools turn's instructions and fingerprint as they were without them", async () => {
+    await runHarnessTurn(admit("host-tools") as never, "none");
+    const before = { text: instructions(), fingerprint: claims.at(-1)?.runtimeFingerprint };
+    await runHarnessTurn(
+      { ...admit("host-tools"), serverInstructions: "" } as never,
+      "none",
+    );
+    expect(instructions()).toBe(before.text);
+    expect(claims.at(-1)?.runtimeFingerprint).toBe(before.fingerprint);
+  });
+
+  it("fork the harness session when they change", async () => {
+    await runHarnessTurn(
+      { ...admit("host-tools"), serverInstructions: SECTION } as never,
+      "none",
+    );
+    await runHarnessTurn(
+      { ...admit("host-tools"), serverInstructions: SECTION } as never,
+      "none",
+    );
+    await runHarnessTurn(
+      {
+        ...admit("host-tools"),
+        serverInstructions: SECTION.replace(MARKER, "MARKER-9Y: edited."),
+      } as never,
+      "none",
+    );
+    const [first, same, edited] = claims.map((claim) => claim.runtimeFingerprint);
+    expect(same).toBe(first);
+    expect(edited).not.toBe(first);
   });
 });

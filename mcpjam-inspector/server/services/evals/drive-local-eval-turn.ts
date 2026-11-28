@@ -419,6 +419,7 @@ export async function driveLocalEvalTurn(
           browser.browserInteractionSteps
         )
       : prepared.enhancedSystemPrompt ?? "",
+    serverInstructions: prepared.serverInstructions,
     ...(prepared.resolvedTemperature == null
       ? {}
       : { temperature: prepared.resolvedTemperature }),
