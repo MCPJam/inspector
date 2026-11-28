@@ -30,6 +30,8 @@ export interface LifecycleServerOptions {
     | "accepted-with-body"
     | "ok-200"
     | "ok-200-json"
+    | "http-400"
+    | "http-503"
     | "unreachable";
   /** Answer `tools/list` (and `ping`) as an event stream instead of JSON. */
   sse?: boolean;
@@ -149,6 +151,8 @@ export function createLifecycleServer(
 
     if (method === "notifications/initialized") {
       if (options.initialized === "unreachable") throw new Unreachable();
+      if (options.initialized === "http-400") return { status: 400 };
+      if (options.initialized === "http-503") return { status: 503 };
       if (session !== undefined) ready.add(session);
       stateless += 1;
       if (options.initialized === "accepted-with-body") {

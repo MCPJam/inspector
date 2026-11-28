@@ -262,6 +262,33 @@ describe("Notification POST Accepted grades the handshake's notification", () =>
     expect(count(log, READY)).toBe(1);
   });
 
+  it.each(LEGACY_VERSIONS)(
+    "could not verify acceptance after an HTTP 400 refusal on %s",
+    async (protocolVersion) => {
+      const log: LifecycleLog = [];
+      const ctx = context({ initialized: "http-400" }, log, { protocolVersion });
+      const check = byId(await runTransportChecks(ctx, new Set([ID])), ID);
+
+      expect(check).toMatchObject({
+        status: "skipped",
+        skipReason: "could-not-run",
+        details: { status: 400 },
+        error: { message: expect.stringContaining("got HTTP 400") },
+      });
+      expect(count(log, READY)).toBe(1);
+    }
+  );
+
+  it("could not verify acceptance after an HTTP 503 refusal", async () => {
+    const check = await run({ initialized: "http-503" });
+
+    expect(check).toMatchObject({
+      status: "skipped",
+      skipReason: "could-not-run",
+      details: { status: 503 },
+    });
+  });
+
   it("fails a 202 that carries a body", async () => {
     const check = await run({ initialized: "accepted-with-body" });
 

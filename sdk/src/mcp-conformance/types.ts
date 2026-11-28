@@ -46,10 +46,10 @@ export const MCP_CHECK_IDS = [
   "server-sse-polling-session",
   "server-sse-streams-functional",
   // Streamable HTTP transport MUSTs stated verbatim by the 2025 revisions:
-  // a notification-only POST answers `202 Accepted` with no body, a GET either
-  // opens an SSE stream or answers 405, and a minted session id contains only
-  // visible ASCII (0x21–0x7E). All three mechanics were removed by 2026-07-28,
-  // so they are legacy-only.
+  // an accepted notification-only POST answers `202 Accepted` with no body,
+  // a refusal answers with an HTTP error, a GET opens an SSE stream or answers
+  // 405, and a minted session id contains only visible ASCII (0x21–0x7E).
+  // These checks use 2025 transport mechanics and only run on those revisions.
   "notification-post-accepted",
   "get-stream-or-405",
   "session-id-visible-ascii",

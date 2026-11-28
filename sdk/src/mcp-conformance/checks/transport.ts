@@ -52,7 +52,7 @@ export const TRANSPORT_CHECK_METADATA = {
     category: "transport",
     title: "Notification POST Accepted",
     description:
-      "A POST carrying only a JSON-RPC notification is answered with HTTP 202 Accepted and no body.",
+      "An accepted notification-only POST returns HTTP 202 Accepted with no body. An HTTP error leaves acceptance unverified.",
   },
   "get-stream-or-405": {
     id: "get-stream-or-405",
@@ -702,42 +702,43 @@ export async function runTransportChecks(
       }
     }
     if (selectedCheckIds.has("notification-post-accepted")) {
-      // The notification under test is the one the handshake already sent.
-      // `notifications/initialized` is the one notification every client
-      // sends, so "cannot accept" has no legitimate reading here, and a second
-      // copy would be a notification no conforming client sends.
+      const check = TRANSPORT_CHECK_METADATA["notification-post-accepted"];
       const { response, durationMs } = initialized;
-      const hasBody = response.bodyText !== "";
-      results.push(
-        // A body that could not be read to completion leaves the "no body"
-        // half of the requirement unestablished. Certifying a pass off a
-        // broken read would claim a fact the run never observed, and failing
-        // would blame the server for our own truncated read.
-        response.bodyError !== undefined
-          ? couldNotRunResult(
-              TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-              `Response body could not be read to completion (${response.bodyError}), so "202 Accepted with no body" could not be confirmed`,
-              { status: response.status },
-            )
-          : response.status === 202 && !hasBody
-          ? passedResult(
-              TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-              durationMs,
-              { status: response.status },
-            )
-          : failedResult(
-              TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-              durationMs,
-              response.status === 202
-                ? "Server answered a notification-only POST with HTTP 202 but included a body; the requirement is 202 Accepted with no body"
-                : `Expected HTTP 202 Accepted with no body for a notification-only POST, got HTTP ${response.status}`,
-              {
-                status: response.status,
-                contentType: response.headers["content-type"] ?? "",
-                bodyPreview: response.bodyText.slice(0, 200),
-              },
-            ),
-      );
+      const { status, bodyText, bodyError } = response;
+      if (status >= 400 && status < 600) {
+        results.push(
+          couldNotRunResult(
+            check,
+            `The notification POST got HTTP ${status}. The spec allows an HTTP error when the server cannot accept the notification, so this run could not verify the empty 202 response.`,
+            { status },
+          ),
+        );
+      } else if (bodyError !== undefined) {
+        results.push(
+          couldNotRunResult(
+            check,
+            `Response body could not be read to completion (${bodyError}), so "202 Accepted with no body" could not be confirmed`,
+            { status },
+          ),
+        );
+      } else if (status === 202 && bodyText === "") {
+        results.push(passedResult(check, durationMs, { status }));
+      } else {
+        results.push(
+          failedResult(
+            check,
+            durationMs,
+            status === 202
+              ? "Server answered a notification-only POST with HTTP 202 but included a body. An accepted notification requires 202 Accepted with no body."
+              : `Expected HTTP 202 Accepted with no body or an HTTP error for a notification-only POST, got HTTP ${status}`,
+            {
+              status,
+              contentType: response.headers["content-type"] ?? "",
+              bodyPreview: bodyText.slice(0, 200),
+            },
+          ),
+        );
+      }
     }
 
     if (selectedCheckIds.has("get-stream-or-405")) {
