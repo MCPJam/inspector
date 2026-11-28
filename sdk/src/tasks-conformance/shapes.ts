@@ -56,12 +56,15 @@ export function validateTaskTtlShape(
       violations.push("extension task pollIntervalMs must be a number");
     }
   } else {
-    // 2025-11-25 `Task.ttl: number | null`: null is "unlimited" retention.
-    if (
-      task.ttl !== undefined &&
-      task.ttl !== null &&
-      typeof task.ttl !== "number"
-    ) {
+    // 2025-11-25 `Task.ttl: number | null`, and required (schema.json lists it
+    // in `required`): null is "unlimited" retention, absent is not allowed.
+    if (task.ttl === undefined) {
+      violations.push(
+        task.ttlMs !== undefined
+          ? "legacy task ttl is required (a number, or null for unlimited); this task carries the extension wire's ttlMs instead"
+          : "legacy task ttl is required (a number, or null for unlimited)"
+      );
+    } else if (task.ttl !== null && typeof task.ttl !== "number") {
       violations.push("legacy task ttl must be a number or null");
     }
     if (

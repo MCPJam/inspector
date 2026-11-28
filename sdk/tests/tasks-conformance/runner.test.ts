@@ -516,7 +516,7 @@ describe("shape validators", () => {
     ).toEqual({ violations: [], warnings: [] });
   });
 
-  it("enforces era-native ttl fields; the other era's field is not judged", () => {
+  it("enforces era-native ttl fields; the other era's field neither fails nor stands in", () => {
     expect(validateTaskTtlShape("extension", { ttlMs: null })).toEqual({
       violations: [],
       warnings: [],
@@ -544,10 +544,15 @@ describe("shape validators", () => {
         "legacy task ttl must be a number or null",
       ]);
     }
-    expect(validateTaskTtlShape("legacy", { ttlMs: 5 })).toEqual({
-      violations: [],
-      warnings: [],
-    });
+    // `ttl` is required on the 2025-11-25 `Task` (schema.json lists it in
+    // `required`). A task without it fails; the other wire's `ttlMs` does not
+    // stand in for it, and is named so the report says what was sent instead.
+    expect(validateTaskTtlShape("legacy", {}).violations).toEqual([
+      "legacy task ttl is required (a number, or null for unlimited)",
+    ]);
+    expect(validateTaskTtlShape("legacy", { ttlMs: 5 }).violations).toEqual([
+      "legacy task ttl is required (a number, or null for unlimited); this task carries the extension wire's ttlMs instead",
+    ]);
   });
 });
 
