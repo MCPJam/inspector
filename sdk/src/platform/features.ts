@@ -209,6 +209,8 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   undismiss_swarm_finding: "sandboxes",
   get_swarm_run_insights: "sandboxes",
   request_swarm_run_insights: "sandboxes",
+  get_swarm_run: "sandboxes",
+  list_swarm_run_sessions: "sandboxes",
   publish_study: "sandboxes",
   list_study_sessions: "sandboxes",
   get_study_session: "sandboxes",

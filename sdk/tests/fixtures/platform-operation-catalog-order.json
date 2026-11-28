@@ -151,6 +151,8 @@
   "list_goal_run_sessions",
   "launch_goal_run",
   "cancel_goal_run",
+  "get_swarm_run",
+  "list_swarm_run_sessions",
   "publish_study",
   "unpublish_study",
   "list_clients",

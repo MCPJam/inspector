@@ -61,6 +61,7 @@ import type {
   BrowserAgentResult,
 } from "./browser-agent-contract.js";
 import type { PlatformBrowserToolPolicy } from "./browser-policy.js";
+import type { PlatformSwarmOverviewSwarmRun } from "./swarm-run-read-types.js";
 import type { ExecutionRecord } from "../host-config/execution-record.js";
 import type {
   ModelReasoningEffort,
@@ -5055,6 +5056,11 @@ export interface PlatformSwarmOverviewRun {
 /** Project-wide roll-up across recent runs. */
 export interface PlatformSwarmOverview {
   runs: PlatformSwarmOverviewRun[];
+  /**
+   * The same runs grouped by swarm run, each with its state. Absent from
+   * servers that predate the grouping.
+   */
+  swarmRuns?: PlatformSwarmOverviewSwarmRun[];
   runsConsidered: number;
   goalCompletion: {
     gradedCount: number;

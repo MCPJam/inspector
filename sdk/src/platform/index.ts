@@ -175,6 +175,8 @@ export * from "./eval-run-insights-operations.js";
 export * from "./mock-operations.js";
 export * from "./mock-run-operations.js";
 export type * from "./mock-types.js";
+export * from "./swarm-run-read-operations.js";
+export type * from "./swarm-run-read-types.js";
 
 export {
   computeRunTargets,

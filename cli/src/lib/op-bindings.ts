@@ -142,6 +142,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   create_swarm: { command: "cloud swarms create" },
   update_swarm: { command: "cloud swarms update" },
   archive_swarm: { command: "cloud swarms archive" },
+  get_swarm_run: { command: "cloud swarms status" },
+  list_swarm_run_sessions: { command: "cloud swarms sessions" },
 
   // ── Capabilities ────────────────────────────────────────────────────────
   // Nested under projects: the answer is project-scoped (role, org betas,

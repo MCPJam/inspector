@@ -93,6 +93,8 @@ const CLOSED_WORLD_OPERATIONS: ReadonlySet<string> = new Set([
   "dismiss_swarm_finding",
   "undismiss_swarm_finding",
   "get_swarm_run_insights",
+  "get_swarm_run",
+  "list_swarm_run_sessions",
   "list_study_sessions",
   "get_study_session",
   "get_study_metrics",

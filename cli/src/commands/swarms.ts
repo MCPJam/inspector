@@ -40,8 +40,10 @@ import {
   getSwarmOperation,
   getSwarmOverviewOperation,
   getSwarmRunInsightsOperation,
+  getSwarmRunOperation,
   listPersonasOperation,
   listSwarmFindingsOperation,
+  listSwarmRunSessionsOperation,
   listSwarmsOperation,
   requestSwarmRunInsightsOperation,
   undismissSwarmFindingOperation,
@@ -64,6 +66,7 @@ const SESSIONS_BOUNDS = { min: 1, max: 100 };
 const TURNS_BOUNDS = { min: 1, max: 200 };
 const JOURNEY_COUNT_BOUNDS = { min: 1, max: 5 };
 const PERSONA_COUNT_BOUNDS = { min: 1, max: 12 };
+const PAGE_BOUNDS = { min: 1, max: 200 };
 
 /**
  * The grounding half of a generation request, validated and normalized.
@@ -875,5 +878,52 @@ export function registerSwarmAuthoringCommands(
       project: options.project,
       swarm: options.swarm,
     })
+  );
+
+  bindOperation(
+    addProjectOption(
+      swarms
+        .command("status")
+        .description(
+          "Show one swarm run: its state, session and grading counts, goal runs and launch. Grading continues after the sessions end, so the counts are final once `settled` is true."
+        )
+        .argument("<swarm-run>", "Swarm run ID (the swarmRunId on a goal run)")
+        .option(
+          "--launch-failures",
+          "Also show why sessions never ran. It reads every attempt, so leave it off when polling."
+        )
+    ),
+    getSwarmRunOperation,
+    (options: ProjectOptions & { launchFailures?: boolean }, id = "") => ({
+      project: options.project,
+      swarmRun: id,
+      ...(options.launchFailures ? { includeLaunchFailures: true } : {}),
+    })
+  );
+
+  bindOperation(
+    addProjectOption(
+      swarms
+        .command("sessions")
+        .description(
+          "List a swarm run's sessions, goal run by goal run. Pass nextCursor back as --cursor for the next page; the list is complete once the swarm run is settled."
+        )
+        .argument("<swarm-run>", "Swarm run ID")
+        .option("--cursor <cursor>", "Page cursor from a previous response")
+        .option("--limit <n>", "Sessions per page (1-200)")
+    ),
+    listSwarmRunSessionsOperation,
+    (
+      options: ProjectOptions & { cursor?: string; limit?: string },
+      swarmRun = ""
+    ) => {
+      const limit = parseIntegerOption(options.limit, "--limit", PAGE_BOUNDS);
+      return {
+        project: options.project,
+        swarmRun,
+        ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      };
+    }
   );
 }

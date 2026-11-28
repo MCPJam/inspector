@@ -515,6 +515,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "requestSwarmRunInsights",
   "delete /projects/{projectId}/swarm-runs/{swarmRunId}/insights":
     "cancelSwarmRunInsights",
+  // One swarm run, and its sessions across its goal runs.
+  "get /projects/{projectId}/swarm-runs/{swarmRunId}": "getSwarmRun",
+  "get /projects/{projectId}/swarm-runs/{swarmRunId}/sessions":
+    "listSwarmRunSessions",
   // The DEPRECATED `/waves` aliases, each on its own client method calling
   // its own old route.
   "get /projects/{projectId}/waves/{waveId}/insights": "getWaveInsights",

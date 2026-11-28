@@ -254,7 +254,7 @@ type JourneyRunRow = {
   createdAt: number;
 };
 
-type JourneySessionRow = {
+export type JourneySessionRow = {
   criteria?: {
     status: "pending" | "completed" | "failed";
     generation: number;
@@ -381,7 +381,7 @@ function toGoalRunDto(row: JourneyRunRow, surface: Surface) {
   };
 }
 
-function toGoalSessionDto(
+export function toGoalSessionDto(
   row: JourneySessionRow,
   surface: Surface,
   outcome?: string | null,

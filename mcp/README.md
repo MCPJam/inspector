@@ -181,6 +181,8 @@ beta; they are listed [after the table](#held-tools).
 | `list_goal_run_sessions` | List the chat sessions a goal run produced, with readiness, goal scores and a first-message preview. | — |
 | `launch_goal_run` | Launch a goal run and return immediately with its id. Spends model credits across the whole fan-out; pass an idempotency key. | — |
 | `cancel_goal_run` | Stop a running goal run, settling its in-flight and pending sessions. | — |
+| `get_swarm_run` | Get one swarm run: its state, session and grading counts per goal run, and the launch that started it. Counts are final once `settled` is true. | — |
+| `list_swarm_run_sessions` | List the sessions of every goal run in a swarm run, oldest first. The list is complete once the swarm run is settled. | — |
 | `list_swarms` | List swarm containers — the groups goals are authored under, holding their shared execution config. | — |
 | `get_swarm` | Get one swarm container: its name, defaults and fan-out. | — |
 | `create_swarm` | Create a container to author goals under. Runs nothing. | — |

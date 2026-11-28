@@ -260,6 +260,8 @@ describe("workspace tool catalog", () => {
       "list_goal_runs",
       "get_goal_run",
       "list_goal_run_sessions",
+      "get_swarm_run",
+      "list_swarm_run_sessions",
       "list_swarms",
       "get_swarm",
       "create_swarm",

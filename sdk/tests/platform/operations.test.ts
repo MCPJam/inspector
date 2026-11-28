@@ -2591,6 +2591,8 @@ describe("operation catalog consistency", () => {
     list_goal_run_sessions: { run: "r" },
     launch_goal_run: { goalId: "j" },
     cancel_goal_run: { run: "r" },
+    get_swarm_run: { swarmRun: "sr" },
+    list_swarm_run_sessions: { swarmRun: "sr" },
     publish_study: { environment: "e" },
     unpublish_study: { environment: "e" },
     get_capabilities: {},

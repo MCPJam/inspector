@@ -187,6 +187,7 @@ import {
   updateSwarmOperation,
   listGoalRunsOperation,
   getGoalRunOperation,
+  getSwarmRunOperation,
   launchGoalRunOperation,
   cancelGoalRunOperation,
   getSwarmOverviewOperation,
@@ -2477,6 +2478,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   {
+    operation: getSwarmRunOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_swarm_run` reads one swarm run, the goal runs launched together. Its `state` turns final before grading ends, so call its counts final only once `settled` is true. `sessions.errored` (execution broke) and `grading.failedTrials` (graded as failing) are separate numbers; never add them.",
+    ],
+  },
+  {
     operation: getSwarmOverviewOperation,
     tier: "direct",
     promptNotes: [
@@ -2935,6 +2943,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // the CLI and MCP, where the caller is asking for them explicitly.
   list_goal_run_sessions:
     "Session bodies are conversations; reading them is not a turn concern. Available on REST/CLI/MCP.",
+  list_swarm_run_sessions:
+    "The sessions of every goal run in a swarm run, with first-message previews: conversations, not a turn concern. Available on REST/CLI/MCP.",
   // User testing: session listings and transcripts. PRIVACY, not risk — real
   // visitors' conversations, and a chat surface that can page them is a
   // transcript reader. Mirrors the `list_chat_sessions` precedent below.
