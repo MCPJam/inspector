@@ -42,7 +42,15 @@ test("shellQuoteArg: spaces and JSON are single-quoted, quotes escaped", () => {
     shellQuoteArg('{"toolCallOrder":"exact"}'),
     `'{"toolCallOrder":"exact"}'`,
   );
-  assert.equal(shellQuoteArg("it's"), "'it'\\''s'");
+  assert.equal(shellQuoteArg("it's $HOME"), "'it'\\''s $HOME'");
+});
+
+test("shellQuoteArg: an apostrophe, a comma and an @ parse in PowerShell too", () => {
+  // PowerShell rejects the POSIX '\'' escape, and reads a bare `a,b` as an
+  // array and a leading `@` as splatting.
+  assert.equal(shellQuoteArg("Sam's report"), `"Sam's report"`);
+  assert.equal(shellQuoteArg("a,b"), "'a,b'");
+  assert.equal(shellQuoteArg("@team"), "'@team'");
 });
 
 // ---------------------------------------------------------------------------

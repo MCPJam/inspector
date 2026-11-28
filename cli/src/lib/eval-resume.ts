@@ -126,11 +126,26 @@ export function resumeReadsStdin(
   );
 }
 
-/** A plain token needs no quoting; anything else is single-quoted, safely. */
-const SAFE_TOKEN = /^[A-Za-z0-9._:/@=+,-]+$/;
+/**
+ * A token that POSIX shells and PowerShell both read as written. `,` and `@`
+ * stay out: PowerShell reads them as array and splatting syntax.
+ */
+const SAFE_TOKEN = /^[A-Za-z0-9._:/=+-]+$/;
 
+/** What a double-quoted string expands in a POSIX shell or PowerShell. */
+const EXPANDS_IN_DOUBLE_QUOTES = /["$`\\!]/;
+
+/**
+ * Quote one argument so the printed command pastes into bash, zsh or
+ * PowerShell. Single quotes read the same in all of them until the value holds
+ * an apostrophe, which each escapes differently, so such a value is
+ * double-quoted when nothing in it would expand.
+ */
 export function shellQuoteArg(arg: string): string {
   if (SAFE_TOKEN.test(arg)) return arg;
+  if (arg.includes("'") && !EXPANDS_IN_DOUBLE_QUOTES.test(arg)) {
+    return `"${arg}"`;
+  }
   return `'${arg.replace(/'/g, "'\\''")}'`;
 }
 
