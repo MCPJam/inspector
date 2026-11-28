@@ -337,6 +337,24 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagVariantKey: () => undefined,
 }));
 
+// The experiment's decision; null runs the real hook.
+const mockFirstRunDecision = vi.hoisted(() => ({
+  value: null as "pending" | "onboarding" | "checklist" | null,
+}));
+vi.mock("@/hooks/use-first-run-onboarding-experiment", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("@/hooks/use-first-run-onboarding-experiment")
+    >();
+  return {
+    ...actual,
+    useFirstRunOnboardingExperiment: (candidate: boolean) => {
+      const real = actual.useFirstRunOnboardingExperiment(candidate);
+      return mockFirstRunDecision.value ?? real;
+    },
+  };
+});
+
 // Pass-through, so a test can see which context the shell resolved replay for.
 vi.mock("@/lib/session-privacy", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/session-privacy")>();
@@ -639,6 +657,7 @@ describe("App hosted OAuth callback handling", () => {
     mockPosthogState.reset();
     mockUseFeatureFlagEnabled.mockReset();
     mockUseFeatureFlagEnabled.mockReturnValue(false);
+    mockFirstRunDecision.value = null;
     mockUseQuery.mockReset();
     mockUseQuery.mockImplementation((ref: string) =>
       ref === "users:getCurrentUser" ? existingConvexUser : undefined,
@@ -3856,6 +3875,70 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(window.location.pathname).toBe("/");
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
+  });
+
+  function renderFirstRunEligibleGuest() {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    return render(<App />);
+  }
+
+  it("skips first-run onboarding for the experiment's checklist arm", async () => {
+    mockFirstRunDecision.value = "checklist";
+
+    renderFirstRunEligibleGuest();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
+      expect(
+        JSON.parse(
+          localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+        ),
+      ).toEqual({ status: "dismissed" });
+    });
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("holds first-run onboarding while the experiment's decision is pending", async () => {
+    mockFirstRunDecision.value = "pending";
+
+    renderFirstRunEligibleGuest();
+
+    await screen.findByTestId("home-tab");
+    expect(
+      screen.queryByRole("heading", { name: "Welcome to MCPJam" }),
+    ).not.toBeInTheDocument();
+    expect(
+      localStorage.getItem("mcp-first-run-server-choice-state"),
+    ).toBeNull();
+  });
+
+  it("lets a user who already saw onboarding finish it in the checklist arm", async () => {
+    mockFirstRunDecision.value = "onboarding";
+    const view = renderFirstRunEligibleGuest();
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    await waitFor(() => {
+      expect(
+        JSON.parse(
+          localStorage.getItem("mcp-first-run-server-choice-state") ?? "{}",
+        ),
+      ).toEqual(expect.objectContaining({ shownAt: expect.any(Number) }));
+    });
+    view.unmount();
+
+    mockFirstRunDecision.value = "checklist";
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Connect to your MCP server" });
   });
 
   it("shows Welcome once and resumes at server choice after a refresh", async () => {

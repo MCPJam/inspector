@@ -180,6 +180,7 @@ import {
 import { hasDebuggerHeaderServers } from "./lib/debugger-header-servers";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { useFirstRunOnboardingExperiment } from "./hooks/use-first-run-onboarding-experiment";
 import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
 import { useSessionPrivacy } from "./hooks/useSessionPrivacy";
 import {
@@ -6013,7 +6014,7 @@ export default function App() {
     requestedFirstRunProjectId === null ||
     (projectRouteState.status === "ready" &&
       projectRouteState.projectId === requestedFirstRunProjectId);
-  const shouldRouteToFirstRunOnboarding =
+  const isFirstRunOnboardingAllowedHere =
     !isMcpOAuthCallback &&
     !isOAuthCallback &&
     !isDebugCallback &&
@@ -6032,16 +6033,36 @@ export default function App() {
         !isLoadingRemoteProjects &&
         areServersHydrated &&
         !!activeProjectId &&
-        activeProjectId !== "none")) &&
+        activeProjectId !== "none"));
+  const isFirstRunChoiceEligible = isFirstRunServerChoiceEligible(
+    hasAnyFirstRunBlockingProjectServers && !isFirstRunConnectionActive,
+    activeTab,
+    initialFirstRunServerChoiceState,
+    !!workOsUser,
+    isNewSignedInAccount,
+  );
+  // Only a user about to see onboarding for the first time enters the
+  // experiment. One who already saw it, or is mid-connection, finishes it.
+  const isFirstRunExperimentCandidate =
+    isFirstRunOnboardingAllowedHere &&
+    isFirstRunChoiceEligible &&
+    !firstRunOverlaySessionStarted &&
+    !isFirstRunConnectionActive &&
+    !skipFirstRunWelcome &&
+    !firstRunOverlayDismissed;
+  const firstRunOnboardingDecision = useFirstRunOnboardingExperiment(
+    isFirstRunExperimentCandidate,
+  );
+  const isFirstRunExperimentPending =
+    isFirstRunExperimentCandidate && firstRunOnboardingDecision === "pending";
+  const shouldSkipFirstRunOnboardingForChecklist =
+    isFirstRunExperimentCandidate && firstRunOnboardingDecision === "checklist";
+  const shouldRouteToFirstRunOnboarding =
+    isFirstRunOnboardingAllowedHere &&
     (firstRunOverlaySessionStarted ||
       isFirstRunConnectionActive ||
-      isFirstRunServerChoiceEligible(
-        hasAnyFirstRunBlockingProjectServers && !isFirstRunConnectionActive,
-        activeTab,
-        initialFirstRunServerChoiceState,
-        !!workOsUser,
-        isNewSignedInAccount,
-      ));
+      (isFirstRunChoiceEligible &&
+        (skipFirstRunWelcome || firstRunOnboardingDecision === "onboarding")));
   const shouldRouteToFirstRunHome =
     shouldRouteToFirstRunOnboarding &&
     !firstRunOverlayDismissed &&
@@ -6092,6 +6113,21 @@ export default function App() {
       navigateApp(routePaths.home);
     }
   }, [shouldRouteToFirstRunHome]);
+
+  // The experiment's checklist arm: the same end state as "set up later", so
+  // the user stays on (or is sent to) Home, where the setup checklist is.
+  useLayoutEffect(() => {
+    if (!shouldSkipFirstRunOnboardingForChecklist) return;
+    markFirstRunServerChoiceDismissed();
+    setFirstRunOverlayDismissed(true);
+    if (activeTab !== "home" && !hasProjectScopedFirstRunDestination) {
+      navigateApp(routePaths.home);
+    }
+  }, [
+    shouldSkipFirstRunOnboardingForChecklist,
+    activeTab,
+    hasProjectScopedFirstRunDestination,
+  ]);
 
   const isProjectRecoveryReady =
     isFeedbackMember === true &&
@@ -6660,6 +6696,7 @@ export default function App() {
         activeProjectId !== "none")) &&
     !shouldShowBillingHandoffOverlay &&
     !(shouldRouteToFirstRunOnboarding && !firstRunOverlayDismissed) &&
+    !isFirstRunExperimentPending &&
     !shouldSuspendFirstRunBackgroundConnections &&
     !isOpeningFirstRunPlayground &&
     firstRunPlaygroundPrompt === null &&
