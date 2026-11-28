@@ -64,6 +64,22 @@ describe("authorizeBatchLocal actor metadata parsing", () => {
     expect(result.results.server).not.toHaveProperty("internalLogContext");
   });
 
+  it("sends an exchanged API key's token instead of acting-as", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ results: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+    await authorizeBatchLocal(context, "", "project-1", [], {
+      workosUserId: "user_1",
+      mcpjamOrganizationId: "org_1",
+      exchangedBearer: "exchanged-jwt",
+    });
+    const init = (fetchMock.mock.calls[0] as unknown[])[1] as {
+      headers: Record<string, string>;
+    };
+    expect(init.headers.Authorization).toBe("Bearer exchanged-jwt");
+    expect(init.headers).not.toHaveProperty("x-mcpjam-acting-as");
+    expect(init.headers).not.toHaveProperty("x-mcpjam-acting-in-org");
+  });
+
   it.each([
     [true, true],
     [false, false],

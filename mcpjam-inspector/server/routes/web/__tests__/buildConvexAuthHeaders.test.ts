@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { Context } from "hono";
 import { buildConvexAuthHeaders, callerContextFromHono } from "../auth.js";
+import { orgBoundActingAs } from "../../../utils/org-bound-credential.js";
 
 const SERVICE_TOKEN = "svc-token-test";
 const ORIGINAL_ENV = process.env.INSPECTOR_SERVICE_TOKEN;
@@ -63,6 +64,96 @@ describe("buildConvexAuthHeaders — WorkOS API key exchange", () => {
     expect(() => buildConvexAuthHeaders(callerContextFromHono(c), "sk_x")).toThrow(
       /mcpjamOrganizationId/,
     );
+  });
+});
+
+describe("buildConvexAuthHeaders — an exchanged API key (MCPJAM_TOKEN_EXCHANGE)", () => {
+  it("sends the backend's token for the key instead of acting-as", () => {
+    const expiresAt = Date.now() + 600_000;
+    const c = fakeContext({
+      authMethod: "workos_api_key",
+      workosUserId: "workos|user_42",
+      mcpjamOrganizationId: "org_42",
+      exchangedConvexBearer: { token: "exchanged-jwt", expiresAt },
+    });
+
+    const caller = callerContextFromHono(c);
+    expect(caller.exchangedBearer).toBe("exchanged-jwt");
+    expect(caller.exchangedBearerExpiresAt).toBe(expiresAt);
+    const headers = buildConvexAuthHeaders(
+      caller,
+      "sk_should_not_be_forwarded",
+    );
+
+    expect(headers["Authorization"]).toBe("Bearer exchanged-jwt");
+    expect(headers["x-mcpjam-acting-as"]).toBeUndefined();
+    expect(headers["x-mcpjam-acting-in-org"]).toBeUndefined();
+    expect(JSON.stringify(headers)).not.toContain(SERVICE_TOKEN);
+    expect(JSON.stringify(headers)).not.toContain("sk_should_not_be_forwarded");
+  });
+
+  it("takes acting-as again once the token has under 30 seconds left", () => {
+    const caller = callerContextFromHono(
+      fakeContext({
+        authMethod: "workos_api_key",
+        workosUserId: "workos|user_42",
+        mcpjamOrganizationId: "org_42",
+        exchangedConvexBearer: {
+          token: "exchanged-jwt",
+          expiresAt: Date.now() + 29_000,
+        },
+      }),
+    );
+    const headers = buildConvexAuthHeaders(caller, "");
+    expect(headers["Authorization"]).toBe(`Bearer ${SERVICE_TOKEN}`);
+    expect(headers["x-mcpjam-acting-as"]).toBe("workos|user_42");
+    expect(headers["x-mcpjam-acting-in-org"]).toBe("org_42");
+    expect(orgBoundActingAs(caller)).toEqual({
+      workosUserId: "workos|user_42",
+      mcpjamOrganizationId: "org_42",
+    });
+  });
+
+  it("keeps acting-as for a caller synthesized without one (harness routes)", () => {
+    const headers = buildConvexAuthHeaders(
+      {
+        authMethod: "workos_api_key",
+        workosUserId: "workos|user_42",
+        mcpjamOrganizationId: "org_42",
+      },
+      "",
+    );
+    expect(headers["Authorization"]).toBe(`Bearer ${SERVICE_TOKEN}`);
+    expect(headers["x-mcpjam-acting-as"]).toBe("workos|user_42");
+  });
+
+  it("names the exchanged token in the acting identity the reveal and local authorize use", () => {
+    expect(
+      orgBoundActingAs({
+        authMethod: "workos_api_key",
+        workosUserId: "workos|user_42",
+        mcpjamOrganizationId: "org_42",
+        exchangedBearer: "exchanged-jwt",
+        exchangedBearerExpiresAt: Date.now() + 600_000,
+      }),
+    ).toEqual({
+      workosUserId: "workos|user_42",
+      mcpjamOrganizationId: "org_42",
+      exchangedBearer: "exchanged-jwt",
+    });
+    expect(
+      orgBoundActingAs({
+        authMethod: "workos_api_key",
+        workosUserId: "workos|user_42",
+        mcpjamOrganizationId: "org_42",
+      }),
+    ).toEqual({
+      workosUserId: "workos|user_42",
+      mcpjamOrganizationId: "org_42",
+    });
+    expect(
+      orgBoundActingAs({ authMethod: "authkit_jwt", exchangedBearer: "x" }),
+    ).toBeUndefined();
   });
 });
 

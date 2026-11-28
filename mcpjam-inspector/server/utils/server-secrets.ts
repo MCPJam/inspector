@@ -255,6 +255,8 @@ export async function fetchRuntimeServerSecrets(args: {
   workosApiKeyActingAs?: {
     workosUserId: string;
     mcpjamOrganizationId: string;
+    /** The backend's token for an exchanged key; replaces acting-as. */
+    exchangedBearer?: string;
   };
 }): Promise<ServerSecretsResult> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -274,9 +276,11 @@ export async function fetchRuntimeServerSecrets(args: {
     : undefined;
   // Resolved BEFORE the request's try: a missing credential is the
   // hosted-only answer, not a failure to reach the reveal service (502).
-  const actingAsServiceToken = args.workosApiKeyActingAs
-    ? requireServiceCredential(WORKOS_API_KEY_FEATURE)
-    : undefined;
+  const exchangedBearer = args.workosApiKeyActingAs?.exchangedBearer;
+  const actingAsServiceToken =
+    args.workosApiKeyActingAs && !exchangedBearer
+      ? requireServiceCredential(WORKOS_API_KEY_FEATURE)
+      : undefined;
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
@@ -291,7 +295,9 @@ export async function fetchRuntimeServerSecrets(args: {
         ? { [INSPECTOR_SERVICE_TOKEN_HEADER]: scenarioServiceToken }
         : {}),
     };
-    if (args.workosApiKeyActingAs && actingAsServiceToken) {
+    if (exchangedBearer) {
+      headers["Authorization"] = `Bearer ${exchangedBearer}`;
+    } else if (args.workosApiKeyActingAs && actingAsServiceToken) {
       headers["Authorization"] = `Bearer ${actingAsServiceToken}`;
       headers["x-mcpjam-acting-as"] = args.workosApiKeyActingAs.workosUserId;
       headers["x-mcpjam-acting-in-org"] =

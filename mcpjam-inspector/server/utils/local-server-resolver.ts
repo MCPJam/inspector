@@ -280,6 +280,8 @@ export interface WorkosApiKeyActingAs {
   /** WorkOS user id (Convex `externalId`), NOT the Convex user `_id`. */
   workosUserId: string;
   mcpjamOrganizationId: string;
+  /** The backend's token for an exchanged key; replaces acting-as. */
+  exchangedBearer?: string;
 }
 
 /**
@@ -327,7 +329,9 @@ export async function authorizeBatchLocal(
     "Content-Type": "application/json",
     ...deliveryContractHeaders(HOSTED_MODE),
   };
-  if (workosApiKeyActingAs) {
+  if (workosApiKeyActingAs?.exchangedBearer) {
+    headers["Authorization"] = `Bearer ${workosApiKeyActingAs.exchangedBearer}`;
+  } else if (workosApiKeyActingAs) {
     // Only reachable for a validated `sk_…` key, which itself needs the
     // credential (see bearer-auth), so absence here is the hosted-only case.
     const serviceToken = requireServiceCredential(WORKOS_API_KEY_FEATURE);

@@ -36,6 +36,7 @@ import {
   type AgentAttribution,
 } from "./agent-attribution.js";
 import { assertSessionServable } from "../middleware/session-revocation.js";
+import { usableExchangedBearer } from "./org-bound-credential.js";
 import {
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
@@ -248,6 +249,15 @@ export async function getConvexBearerForRequest(c: Context): Promise<string> {
   if (!usesDelegatedToken(c)) {
     return assertBearerToken(c);
   }
+  // An `sk_` key the backend exchanged (`MCPJAM_TOKEN_EXCHANGE`): its token,
+  // not one minted with acting-as, while it has life left. A request kept
+  // past that (a durable continuation) mints as it would with the switch off.
+  const exchanged = getRequestLocal(c, "exchangedConvexBearer");
+  const exchangedBearer = usableExchangedBearer({
+    exchangedBearer: exchanged?.token,
+    exchangedBearerExpiresAt: exchanged?.expiresAt,
+  });
+  if (exchangedBearer) return exchangedBearer;
   const { workosUserId, organizationId } = delegationContext(c);
   return getConvexBearerForDelegation(
     workosUserId,
