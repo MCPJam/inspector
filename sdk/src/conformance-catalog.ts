@@ -190,8 +190,9 @@ export const PROTOCOL_CHECK_CATALOG = {
       "A server that needs an undeclared client capability for input_required answers JSON-RPC -32021.",
   },
   "modern-no-session-id": {
-    title: "No Session Id Minted",
-    description: "A modern server never mints an Mcp-Session-Id.",
+    title: "Sessionless Exchange",
+    description:
+      "A modern request is served without a session. A session id the server sends anyway is reported as advice.",
   },
   "modern-removed-methods-not-found": {
     title: "Removed Methods Rejected",
@@ -372,6 +373,11 @@ export const READINESS_CATALOG = {
     title: "Server Identity",
     description:
       "Results carry the server's name and version, so a client can show which server answered.",
+  },
+  "readiness-no-session-id": {
+    title: "No Session Id",
+    description:
+      "A 2026-07-28 server sends no Mcp-Session-Id: that revision has no protocol-level sessions.",
   },
   "readiness-tool-name-conventions": {
     title: "Tool Name Conventions",

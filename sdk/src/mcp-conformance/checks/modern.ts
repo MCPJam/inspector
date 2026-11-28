@@ -326,8 +326,9 @@ const MODERN_CHECK_METADATA = {
   "modern-no-session-id": {
     id: "modern-no-session-id",
     category: "transport",
-    title: "No Session Id Minted",
-    description: "A modern server never mints an Mcp-Session-Id.",
+    title: "Sessionless Exchange",
+    description:
+      "A modern request is served without a session. A session id the server sends anyway is reported as advice.",
   },
   "modern-subscription-ack-precedes-notifications": {
     id: "modern-subscription-ack-precedes-notifications",
@@ -2295,21 +2296,17 @@ async function runNoSessionIdCheck(
     await discoverOnce(ctx, state);
   }
 
-  const offenders = state.observed
+  // A session id on a modern response is reported, never failed. 2026-07-28
+  // removed protocol-level sessions, and what it says about a server that still
+  // sends one is a SHOULD: "An `Mcp-Session-Id` header on a request: ignore
+  // it, and do not mint or echo session IDs" (streamable-http.mdx:686-692). The
+  // No Session Id advice says so; this check keeps only what it can show.
+  const sessionIds = state.observed
     .filter((result) => result.headers["mcp-session-id"] !== undefined)
     .map((result) => ({
       status: result.status,
       sessionId: result.headers["mcp-session-id"],
     }));
-
-  if (offenders.length > 0) {
-    return failedResult(
-      meta,
-      Date.now() - startedAt,
-      "Server minted an Mcp-Session-Id on a modern response; the 2026 era is sessionless",
-      { offenders, inspectedResponses: state.observed.length }
-    );
-  }
 
   // A header this run never gave the server a chance to send is not evidence
   // the server declines to send it.
@@ -2322,10 +2319,7 @@ async function runNoSessionIdCheck(
   // the servers doing worst were the ones it flattered most.
   //
   // The bar is one response that actually carried a JSON-RPC result: at that
-  // point the server has completed an exchange it could have attached a
-  // session to, and its silence is a choice. The failing branch above is
-  // deliberately NOT gated on this — a session id on a 401 is still a session
-  // id, and still a violation.
+  // point the server has completed an exchange without a session.
   // Any 2xx carrying a JSON-RPC `result` member, not `status === 200` alone:
   // the question here is only "did an exchange complete", and a server that
   // answers a result on some other 2xx has still processed the call and could
@@ -2351,6 +2345,7 @@ async function runNoSessionIdCheck(
         inspectedResponses: state.observed.length,
         succeededResponses: 0,
         ...(allUnauthorized ? { httpStatus: 401 } : {}),
+        ...(sessionIds.length > 0 ? { sessionIds } : {}),
       }
     );
   }
@@ -2358,6 +2353,8 @@ async function runNoSessionIdCheck(
   return passedResult(meta, Date.now() - startedAt, {
     inspectedResponses: state.observed.length,
     succeededResponses: succeeded,
+    // Visible in the report without costing the point.
+    ...(sessionIds.length > 0 ? { sessionIds } : {}),
   });
 }
 

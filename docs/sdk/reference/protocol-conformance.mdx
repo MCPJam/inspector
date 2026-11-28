@@ -252,6 +252,7 @@ Current readiness checks:
 
 - `readiness-session-termination`: on 2025-era runs, fires when a session-termination `DELETE` returns anything other than a 2xx or HTTP 405. On 2026-era runs, fires when `GET` or `DELETE` traffic from an older client is not answered with HTTP 405 (the 2026 backward-compat `SHOULD`).
 - `readiness-server-identity`: 2026-07-28 runs only. Reads one `server/discover` result and fires when it carries no `io.modelcontextprotocol/serverInfo` in `_meta`. The spec says servers SHOULD include it in every result unless configured not to, and types the field optional, so a server without it is advised and never failed. A malformed one fails `modern-server-discover` instead.
+- `readiness-no-session-id`: 2026-07-28 runs only. Reads one `server/discover` answer, sent without a session id, and fires when it carries an `Mcp-Session-Id` header. The spec says a server SHOULD not mint or echo session ids, so a server that does is advised and never failed: `modern-no-session-id` passes either way and lists the ids it saw.
 - `readiness-log-level-filtering`: 2026-07-28 runs with a `logProbe` only. Calls the tool asking for logs at `logProbe.level` (default `warning`). Fires when no logs come back, or when any log comes back below that level or with an unknown level. The spec says a server `MAY` send logs at or above the requested level, so this costs no points.
 
 ## CI reporting
