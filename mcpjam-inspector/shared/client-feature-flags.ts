@@ -27,6 +27,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "evaluate-run-result-pages",
   "evaluator-library",
   "evals-start-recording",
+  "first-run-onboarding-vs-checklist",
   "guest-credit-wall-copy",
   "home-setup-checklist",
   "hosted-browser-enabled",

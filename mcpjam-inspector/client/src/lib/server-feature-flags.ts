@@ -105,11 +105,41 @@ export async function loadBootstrapFeatureFlags(): Promise<ClientFeatureFlagValu
       bearer: guest?.guestId === distinctId ? guest.token : null,
       timeoutMs: BOOTSTRAP_FLAGS_TIMEOUT_MS,
     });
-    return flags && Object.keys(flags).length > 0 ? flags : null;
+    if (!flags || Object.keys(flags).length === 0) return null;
+    setFeatureFlagsActorKey(distinctId);
+    return flags;
   } catch {
     // The first render awaits this; it must never reject.
     return null;
   }
+}
+
+// The actor whose evaluation posthog-js holds right now, or null for none.
+// While a refresh for a new actor is in flight the SDK still holds the
+// previous actor's values, so a reader that must not act on someone else's
+// variant (an experiment assignment) compares this with its own actor first.
+let featureFlagsActorKey: string | null = null;
+const featureFlagsActorListeners = new Set<() => void>();
+
+function setFeatureFlagsActorKey(next: string | null): void {
+  if (featureFlagsActorKey === next) return;
+  featureFlagsActorKey = next;
+  for (const listener of featureFlagsActorListeners) listener();
+}
+
+export function getFeatureFlagsActorKey(): string | null {
+  return featureFlagsActorKey;
+}
+
+export function subscribeFeatureFlagsActor(listener: () => void): () => void {
+  featureFlagsActorListeners.add(listener);
+  return () => {
+    featureFlagsActorListeners.delete(listener);
+  };
+}
+
+export function resetFeatureFlagsActorForTests(): void {
+  setFeatureFlagsActorKey(null);
 }
 
 let refreshGeneration = 0;
@@ -150,6 +180,9 @@ export async function refreshServerFeatureFlagsForActor(
   } catch {
     // A failed evaluation cannot preserve the previous actor's access flags.
   } finally {
-    if (generation === refreshGeneration) posthog.updateFlags?.(flags ?? {});
+    if (generation === refreshGeneration) {
+      posthog.updateFlags?.(flags ?? {});
+      setFeatureFlagsActorKey(flags ? actor.actorKey : null);
+    }
   }
 }

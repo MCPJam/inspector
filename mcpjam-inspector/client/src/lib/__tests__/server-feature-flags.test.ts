@@ -9,8 +9,11 @@ vi.mock("../guest-session", () => ({
 }));
 
 import {
+  getFeatureFlagsActorKey,
   loadBootstrapFeatureFlags,
   refreshServerFeatureFlagsForActor,
+  resetFeatureFlagsActorForTests,
+  subscribeFeatureFlagsActor,
 } from "../server-feature-flags";
 import { POSTHOG_TAB_STORAGE_KEY } from "../posthog-tab-storage";
 import {
@@ -44,6 +47,7 @@ describe("server-evaluated feature flags", () => {
     vi.stubGlobal("fetch", vi.fn());
     guestState.session = null;
     window.sessionStorage.clear();
+    resetFeatureFlagsActorForTests();
   });
 
   afterEach(() => {
@@ -279,6 +283,76 @@ describe("server-evaluated feature flags", () => {
       expect(posthog.updateFlags).toHaveBeenCalledWith({
         "learn-more-enabled": true,
       });
+    });
+  });
+
+  describe("the actor the loaded flags belong to", () => {
+    it("names the bootstrap identity once its flags load", async () => {
+      window.sessionStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ distinct_id: "user_1" }),
+      );
+      vi.mocked(fetch).mockResolvedValueOnce(
+        flagsResponse({ "learn-more-enabled": true }),
+      );
+
+      await loadBootstrapFeatureFlags();
+
+      expect(getFeatureFlagsActorKey()).toBe("user_1");
+    });
+
+    it("keeps the previous actor until the new actor's flags arrive", async () => {
+      const posthog = { updateFlags: vi.fn() };
+      vi.mocked(fetch).mockResolvedValueOnce(
+        flagsResponse({ "learn-more-enabled": true }),
+      );
+      await refreshServerFeatureFlagsForActor(posthog, {
+        actorKey: "guest_1",
+        isAuthedActor: false,
+      });
+      const listener = vi.fn();
+      const unsubscribe = subscribeFeatureFlagsActor(listener);
+      let respond: (response: Response) => void = () => {};
+      vi.mocked(fetch).mockReturnValueOnce(
+        new Promise<Response>((resolve) => {
+          respond = resolve;
+        }),
+      );
+
+      const refresh = refreshServerFeatureFlagsForActor(posthog, {
+        actorKey: "user_1",
+        isAuthedActor: true,
+        getAccessToken: async () => "access-token",
+      });
+      await Promise.resolve();
+      expect(getFeatureFlagsActorKey()).toBe("guest_1");
+
+      respond(flagsResponse({ "learn-more-enabled": false }));
+      await refresh;
+      unsubscribe();
+
+      expect(getFeatureFlagsActorKey()).toBe("user_1");
+      expect(listener).toHaveBeenCalledOnce();
+    });
+
+    it("names no actor when the evaluation fails", async () => {
+      const posthog = { updateFlags: vi.fn() };
+      vi.mocked(fetch).mockResolvedValueOnce(
+        flagsResponse({ "learn-more-enabled": true }),
+      );
+      await refreshServerFeatureFlagsForActor(posthog, {
+        actorKey: "guest_1",
+        isAuthedActor: false,
+      });
+      vi.mocked(fetch).mockResolvedValueOnce(new Response("", { status: 500 }));
+
+      await refreshServerFeatureFlagsForActor(posthog, {
+        actorKey: "user_1",
+        isAuthedActor: true,
+        getAccessToken: async () => "access-token",
+      });
+
+      expect(getFeatureFlagsActorKey()).toBeNull();
     });
   });
 });
