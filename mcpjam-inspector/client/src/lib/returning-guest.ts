@@ -18,7 +18,6 @@ interface GuestVisitRecord {
   visitStartedAt: number;
   visitCount: number;
   dialogClosedForVisit?: number;
-  noticeDismissedForVisit?: number;
 }
 
 export interface GuestVisit {
@@ -26,10 +25,7 @@ export interface GuestVisit {
   visitStartedAt: number;
   isReturning: boolean;
   dialogClosed: boolean;
-  noticeDismissed: boolean;
 }
-
-type VisitMark = "dialogClosedForVisit" | "noticeDismissedForVisit";
 
 let current: GuestVisit | null = null;
 const listeners = new Set<() => void>();
@@ -67,14 +63,12 @@ function publish(record: GuestVisitRecord): void {
     visitStartedAt: record.visitStartedAt,
     isReturning: record.visitCount > 1,
     dialogClosed: record.dialogClosedForVisit === record.visitStartedAt,
-    noticeDismissed: record.noticeDismissedForVisit === record.visitStartedAt,
   };
   if (
     current &&
     current.visitNumber === next.visitNumber &&
     current.visitStartedAt === next.visitStartedAt &&
-    current.dialogClosed === next.dialogClosed &&
-    current.noticeDismissed === next.noticeDismissed
+    current.dialogClosed === next.dialogClosed
   ) {
     return;
   }
@@ -104,11 +98,11 @@ export function touchGuestVisit(now: number = Date.now()): void {
   publish(record);
 }
 
-/** Remembers, for the rest of this visit, that the guest closed a prompt. */
-export function markGuestVisit(mark: VisitMark): void {
+/** Remembers, for the rest of this visit, that the guest closed the dialog. */
+export function markGuestDialogClosed(): void {
   const record = readRecord();
   if (!record) return;
-  const next = { ...record, [mark]: record.visitStartedAt };
+  const next = { ...record, dialogClosedForVisit: record.visitStartedAt };
   writeRecord(next);
   publish(next);
 }

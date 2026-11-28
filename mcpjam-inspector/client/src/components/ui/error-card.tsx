@@ -138,9 +138,6 @@ function resolveNormalized(input: unknown): NormalizedError {
  *   label and a red badge, so one recoverable state lit up four separate
  *   alarms and the surface read as broken rather than informative.
  *
- * - `action` is an outline button class for an action inside the filled panel,
- *   so a CTA there matches the panel instead of the brand primary.
- *
  * Both are kept deliberately. Colour should answer "how bad" once per screen,
  * and which treatment does that depends on what else is already coloured
  * around it — that is the caller's knowledge, not the palette's.
@@ -154,8 +151,6 @@ export function severityStyles(severity: NormalizedError["severity"]) {
         accent: "border-l-blue-500/60",
         icon: Info,
         iconClass: "text-blue-600 dark:text-blue-400",
-        action:
-          "border-blue-500/40 bg-transparent text-blue-700 hover:bg-blue-500/10 hover:text-blue-800 dark:border-blue-400/40 dark:bg-transparent dark:text-blue-300 dark:hover:bg-blue-400/10 dark:hover:text-blue-200",
       };
     case "warning":
       return {
@@ -164,8 +159,6 @@ export function severityStyles(severity: NormalizedError["severity"]) {
         accent: "border-l-amber-500/60",
         icon: AlertTriangle,
         iconClass: "text-amber-600 dark:text-amber-400",
-        action:
-          "border-amber-500/40 bg-transparent text-amber-700 hover:bg-amber-500/10 hover:text-amber-800 dark:border-amber-400/40 dark:bg-transparent dark:text-amber-300 dark:hover:bg-amber-400/10 dark:hover:text-amber-200",
       };
     case "error":
     default:
@@ -174,8 +167,6 @@ export function severityStyles(severity: NormalizedError["severity"]) {
         accent: "border-l-destructive/60",
         icon: CircleAlert,
         iconClass: "text-destructive",
-        action:
-          "border-destructive/40 bg-transparent text-destructive hover:bg-destructive/10 hover:text-destructive dark:bg-transparent",
       };
   }
 }

@@ -107,7 +107,6 @@ import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { ReturningGuestNotice } from "@/components/auth/returning-guest-prompt";
 import {
   applyMcpProtocolVersionOverride,
   type ProjectServerConfigDto,
@@ -2003,7 +2002,6 @@ export function ServersTab({
         minSize={70}
       >
         <div className="space-y-6 p-8 h-full overflow-auto">
-          <ReturningGuestNotice />
           {renderPermalinkNotice()}
           {/* Header Section */}
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2165,7 +2163,6 @@ export function ServersTab({
           cannot see most often lands on a project with no servers at all,
           which is exactly when the collection fallback would say only "No
           servers connected" and the link's failure would go unmentioned. */}
-      <ReturningGuestNotice />
       {renderPermalinkNotice()}
       {/* Header Section */}
       <div className="flex flex-wrap items-center justify-end gap-2">

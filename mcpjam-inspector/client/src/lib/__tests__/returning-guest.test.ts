@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GUEST_VISIT_GAP_MS,
   getGuestVisit,
-  markGuestVisit,
+  markGuestDialogClosed,
   resetGuestVisitForTests,
   touchGuestVisit,
 } from "../returning-guest";
@@ -41,7 +41,6 @@ describe("returning guest visits", () => {
       visitNumber: 2,
       isReturning: true,
       dialogClosed: false,
-      noticeDismissed: false,
     });
     expect(track).toHaveBeenCalledWith("returning_guest_detected", {
       visit_number: 2,
@@ -49,14 +48,12 @@ describe("returning guest visits", () => {
     });
   });
 
-  it("remembers closed prompts only for the current visit", () => {
+  it("remembers a closed dialog only for the current visit", () => {
     touchGuestVisit(1_000);
     touchGuestVisit(1_000 + DAY);
-    markGuestVisit("dialogClosedForVisit");
-    markGuestVisit("noticeDismissedForVisit");
+    markGuestDialogClosed();
     expect(getGuestVisit()).toMatchObject({
       dialogClosed: true,
-      noticeDismissed: true,
     });
 
     touchGuestVisit(1_000 + DAY + 60_000);
@@ -66,7 +63,6 @@ describe("returning guest visits", () => {
     expect(getGuestVisit()).toMatchObject({
       visitNumber: 3,
       dialogClosed: false,
-      noticeDismissed: false,
     });
   });
 

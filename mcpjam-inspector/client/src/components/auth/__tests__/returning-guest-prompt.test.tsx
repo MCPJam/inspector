@@ -1,9 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ReturningGuestDialog,
-  ReturningGuestNotice,
-} from "../returning-guest-prompt";
+import { ReturningGuestDialog } from "../returning-guest-prompt";
 import { resetGuestVisitForTests } from "@/lib/returning-guest";
 
 const mocks = vi.hoisted(() => ({
@@ -48,7 +45,7 @@ function eventsNamed(name: string) {
   return mocks.track.mock.calls.filter(([event]) => event === name);
 }
 
-describe("returning guest prompts", () => {
+describe("returning guest dialog", () => {
   beforeEach(() => {
     localStorage.clear();
     resetGuestVisitForTests();
@@ -58,21 +55,15 @@ describe("returning guest prompts", () => {
   });
 
   it("shows nothing on a guest's first visit", () => {
-    render(
-      <>
-        <ReturningGuestDialog enabled />
-        <ReturningGuestNotice />
-      </>,
-    );
+    render(<ReturningGuestDialog enabled />);
     expect(screen.queryByTestId("returning-guest-dialog")).toBeNull();
-    expect(screen.queryByTestId("returning-guest-notice")).toBeNull();
   });
 
   it("shows nothing to a signed-in user", () => {
     mocks.user = { id: "user_1" };
     seedPreviousVisit(Date.now() - DAY);
-    render(<ReturningGuestNotice />);
-    expect(screen.queryByTestId("returning-guest-notice")).toBeNull();
+    render(<ReturningGuestDialog enabled />);
+    expect(screen.queryByTestId("returning-guest-dialog")).toBeNull();
   });
 
   it("waits for the announcement queue to be enabled", () => {
@@ -111,30 +102,6 @@ describe("returning guest prompts", () => {
     );
     expect(mocks.captureReturn).toHaveBeenCalled();
     expect(mocks.signUp).toHaveBeenCalledWith({ state: "return" });
-  });
-
-  it("shows the notice until it is dismissed for the visit", () => {
-    seedPreviousVisit(Date.now() - DAY);
-    render(<ReturningGuestNotice />);
-    expect(screen.getByTestId("returning-guest-notice")).toBeInTheDocument();
-    expect(eventsNamed("returning_guest_prompt_shown")).toHaveLength(1);
-
-    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
-    expect(mocks.track).toHaveBeenCalledWith(
-      "sign_up_button_clicked",
-      expect.objectContaining({ location: "returning_guest_notice" }),
-    );
-
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-    });
-    expect(screen.queryByTestId("returning-guest-notice")).toBeNull();
-    expect(eventsNamed("returning_guest_prompt_dismissed")).toEqual([
-      [
-        "returning_guest_prompt_dismissed",
-        expect.objectContaining({ prompt: "notice" }),
-      ],
-    ]);
   });
 
   it("starts a new visit on input after the guest left the tab open", () => {

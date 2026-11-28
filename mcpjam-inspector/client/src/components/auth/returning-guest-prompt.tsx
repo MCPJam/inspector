@@ -1,7 +1,6 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   DialogDescription,
@@ -10,7 +9,6 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { AnnouncementDialog } from "@/components/announcement-popups";
 import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
-import { severityStyles } from "@/components/ui/error-card";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
@@ -19,12 +17,11 @@ import { markPendingSignUpToast } from "@/lib/pending-signup-toast";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
   getGuestVisit,
-  markGuestVisit,
+  markGuestDialogClosed,
   subscribeGuestVisit,
   touchGuestVisit,
   type GuestVisit,
 } from "@/lib/returning-guest";
-import { cn } from "@/lib/utils";
 
 const COPY_VARIANT = "not_backed_up_v1";
 const ACTIVITY_THROTTLE_MS = 60 * 1000;
@@ -35,15 +32,13 @@ const ACTIVITY_EVENTS = [
   "visibilitychange",
 ] as const;
 
-type Prompt = "dialog" | "notice";
-
 function currentPage(): string {
   return `${window.location.pathname}${window.location.hash}`;
 }
 
-function promptProps(prompt: Prompt, visit: GuestVisit) {
+function promptProps(visit: GuestVisit) {
   return {
-    prompt,
+    prompt: "dialog",
     copy_variant: COPY_VARIANT,
     page: currentPage(),
     visit_number: visit.visitNumber,
@@ -102,9 +97,9 @@ export function ReturningGuestDialog({ enabled }: { enabled: boolean }) {
 
   const dismiss = () => {
     if (visit) {
-      track("returning_guest_prompt_dismissed", promptProps("dialog", visit));
+      track("returning_guest_prompt_dismissed", promptProps(visit));
     }
-    markGuestVisit("dialogClosedForVisit");
+    markGuestDialogClosed();
   };
 
   return (
@@ -113,7 +108,7 @@ export function ReturningGuestDialog({ enabled }: { enabled: boolean }) {
       onDismiss={dismiss}
       onOpenAutoFocus={() => {
         if (visit) {
-          track("returning_guest_prompt_shown", promptProps("dialog", visit));
+          track("returning_guest_prompt_shown", promptProps(visit));
         }
       }}
       className="sm:max-w-md"
@@ -130,7 +125,7 @@ export function ReturningGuestDialog({ enabled }: { enabled: boolean }) {
         <Button
           className="flex-1"
           onClick={() => {
-            markGuestVisit("dialogClosedForVisit");
+            markGuestDialogClosed();
             startSignUp("returning_guest_dialog");
           }}
         >
@@ -142,75 +137,5 @@ export function ReturningGuestDialog({ enabled }: { enabled: boolean }) {
       </div>
       <LegalConsentNotice />
     </AnnouncementDialog>
-  );
-}
-
-/** Inline reminder for a returning guest; dismissed for the rest of the visit. */
-export function ReturningGuestNotice() {
-  const visit = useReturningGuestVisit();
-  const startSignUp = useStartSignUp();
-  const visible = !!visit?.isReturning && !visit.noticeDismissed;
-  const impressionForVisit = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!visible || !visit) return;
-    if (impressionForVisit.current === visit.visitStartedAt) return;
-    impressionForVisit.current = visit.visitStartedAt;
-    track("returning_guest_prompt_shown", promptProps("notice", visit));
-  }, [visible, visit]);
-
-  if (!visible || !visit) return null;
-
-  const styles = severityStyles("info");
-  const Icon = styles.icon;
-  return (
-    <div
-      className={cn("rounded-md border p-3 text-xs", styles.container)}
-      data-testid="returning-guest-notice"
-    >
-      <div className="flex items-center gap-2">
-        <Icon
-          className={cn(
-            "mt-0.5 h-4 w-4 flex-shrink-0 self-start",
-            styles.iconClass,
-          )}
-          aria-hidden
-        />
-        <div className="min-w-0 flex-1 space-y-1">
-          <p className="font-medium leading-tight">
-            You’re using MCPJam as a guest
-          </p>
-          <p className="leading-snug text-foreground/80">
-            Guest work isn’t backed up. Create a free account to keep your
-            servers and chats.
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className={styles.action}
-          onClick={() => startSignUp("returning_guest_notice")}
-        >
-          Create account
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7 text-foreground/70"
-          aria-label="Dismiss"
-          onClick={() => {
-            track(
-              "returning_guest_prompt_dismissed",
-              promptProps("notice", visit),
-            );
-            markGuestVisit("noticeDismissedForVisit");
-          }}
-        >
-          <X className="size-4" />
-        </Button>
-      </div>
-    </div>
   );
 }
