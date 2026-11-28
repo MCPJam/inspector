@@ -92,6 +92,7 @@ jobs:
             .github/scripts/daily-release.test.mjs \
             .github/scripts/local-harness-bot-pr.test.mjs \
             .github/scripts/check-workos-loopback.test.mjs \
+            .github/scripts/dependency-intake.test.mjs \
             .github/scripts/retry-worker-crash.test.mjs
 
       # Same node_modules cache as test.yml's jobs — the rationale lives on the

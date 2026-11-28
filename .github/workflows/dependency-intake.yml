@@ -1,0 +1,45 @@
+name: Dependency intake
+
+# A PR that adds a package name (not a version bump) to any package.json gets
+# the `new-dependency` label and fails until its description has a
+# "Dependency intake:" block and someone other than the author approves the
+# latest commit (.github/scripts/dependency-intake.mjs). `edited` re-runs it
+# when the description is filled in, and a submitted or dismissed review
+# re-runs it. `pull_request`, not `pull_request_target`, for the reason in
+# pr-links.yml: a fork PR still gets the verdict, only the label is skipped.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: dependency-intake-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  intake:
+    name: Dependency intake
+    # GitHub-hosted, not Blacksmith: this job holds a write token.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The PR's merge commit, so HEAD^1 is the base branch.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.14.0"
+
+      - name: Check added dependencies
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node .github/scripts/dependency-intake.mjs
