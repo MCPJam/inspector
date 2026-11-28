@@ -33,6 +33,10 @@ import {
   type SwarmFundingChangedDetails,
   type SwarmFundingSummary,
 } from "@/shared/swarm-sponsorship";
+import type {
+  LaunchRecordView,
+  SwarmLaunchReply,
+} from "@/shared/swarm-launch";
 
 // ── Convex query names (string-keyed reads) ─────────────────────────────────
 export const SWARM_QUERIES = {
@@ -1033,6 +1037,61 @@ function detailsWithLaunchProblems(parsed: LaunchErrorBody | null): unknown {
     : { details, problems: parsed.problems };
 }
 
+/** A launch answer's JSON body, or `undefined` when it has none. */
+async function launchResponseBody(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    // A proxy's HTML error page or an empty body: the status still answers.
+    return undefined;
+  }
+}
+
+/**
+ * The error for a refused launch. The limit dialog is raised HERE, while the
+ * body still carries the route's `code` — same reasoning as `postGenerate`: a
+ * launch spends model budget like every other action that shows the dialog.
+ * No run id and no wave id: a refused launch is the user's own action, and
+ * the callers that see `limitDialogRaised` stay silent because the dialog IS
+ * their answer.
+ */
+function launchRefusal(
+  status: number,
+  body: unknown,
+  fallbackMessage: string,
+): LaunchJourneyRunError {
+  const parsed =
+    body && typeof body === "object" ? (body as Record<string, unknown>) : null;
+  const rawMessage = parsed?.message;
+  const message =
+    typeof rawMessage === "string" && rawMessage.length > 0
+      ? rawMessage
+      : fallbackMessage;
+  // `code` first, `error` as the fallback: the limit body sets both, and the
+  // generic fallback message above would otherwise be all the classifier sees.
+  const code =
+    typeof parsed?.code === "string"
+      ? parsed.code
+      : typeof parsed?.error === "string"
+        ? parsed.error
+        : null;
+  const limitDialogRaised = notifyMCPJamLimitError({
+    ...(code ? { code } : {}),
+    details: body,
+    message,
+    surface: "swarm",
+  });
+  const detailsCode = (parsed?.details as Record<string, unknown> | undefined)
+    ?.code;
+  return new LaunchJourneyRunError(
+    status,
+    message,
+    limitDialogRaised,
+    typeof detailsCode === "string" ? detailsCode : (code ?? undefined),
+    detailsWithLaunchProblems(parsed),
+  );
+}
+
 /**
  * Launch a journey run through the Inspector REST route. Resolves with the new
  * `runId` on a 202; throws {@link LaunchJourneyRunError} on any non-2xx so the
@@ -1065,56 +1124,12 @@ export async function launchJourneyRun(
     },
   );
 
-  let body: unknown = undefined;
-  try {
-    body = await response.json();
-  } catch {
-    body = undefined;
-  }
-
+  const body = await launchResponseBody(response);
   if (!response.ok) {
-    const parsed =
-      body && typeof body === "object"
-        ? (body as Record<string, unknown>)
-        : null;
-    const rawMessage = parsed?.message;
-    const message =
-      typeof rawMessage === "string" && rawMessage.length > 0
-        ? rawMessage
-        : `Failed to launch goal run (${response.status})`;
-    // `code` first, `error` as the fallback: the limit body sets both, and the
-    // generic fallback message above would otherwise be all the classifier
-    // sees.
-    const code =
-      typeof parsed?.code === "string"
-        ? parsed.code
-        : typeof parsed?.error === "string"
-          ? parsed.error
-          : null;
-    // Raise the wall HERE, while the body still carries the route's `code` —
-    // same reasoning as `postGenerate`. Launching a goal run spends model
-    // budget like every other action that already shows this dialog.
-    // No run id and no wave id: a refused launch is the user's own action, and
-    // the callers that see `limitDialogRaised` stay silent because the dialog
-    // IS their answer. Keyed by the wave (which a retry reuses), a second press
-    // of Launch would be deduped and answer nothing. There is no stack of
-    // dialogs to prevent: the create flow stops at the first refusal, and Run
-    // again carries on, where a notice while the dialog is open only re-asserts it.
-    const limitDialogRaised = notifyMCPJamLimitError({
-      ...(code ? { code } : {}),
-      details: body,
-      message,
-      surface: "swarm",
-    });
-    throw new LaunchJourneyRunError(
+    throw launchRefusal(
       response.status,
-      message,
-      limitDialogRaised,
-      typeof (parsed?.details as Record<string, unknown> | undefined)?.code ===
-        "string"
-        ? (parsed!.details as { code: string }).code
-        : (code ?? undefined),
-      detailsWithLaunchProblems(parsed),
+      body,
+      `Failed to launch goal run (${response.status})`,
     );
   }
 
@@ -1133,6 +1148,70 @@ export async function launchJourneyRun(
   );
   invalidateSwarmSponsorshipAllowance();
   return { runId, ...(funding ? { funding } : {}) };
+}
+
+// ── REST swarm launch ───────────────────────────────────────────────────────
+
+export type { LaunchRecordView, SwarmLaunchReply };
+
+export interface LaunchSwarmRunArgs {
+  projectId: string;
+  /** One key per launch, reused on a retry so the server replays it. */
+  idempotencyKey: string;
+  /** The swarm run to launch again. */
+  swarmRun?: string;
+  /** Or its goals, for a swarm run from before swarm run ids. */
+  goals?: Array<{ goalId: string }>;
+}
+
+/** A refused swarm launch, with its launch record when one was written. */
+export class LaunchSwarmRunError extends LaunchJourneyRunError {
+  constructor(
+    refusal: LaunchJourneyRunError,
+    readonly launch?: LaunchRecordView,
+  ) {
+    const { status, message, limitDialogRaised, code, details } = refusal;
+    super(status, message, limitDialogRaised, code, details);
+    this.name = "LaunchSwarmRunError";
+  }
+}
+
+function launchRecordOf(body: unknown): LaunchRecordView | undefined {
+  const launch = (body as { launch?: Partial<LaunchRecordView> } | undefined)
+    ?.launch;
+  return typeof launch?.state === "string" && Array.isArray(launch.goals)
+    ? (launch as LaunchRecordView)
+    : undefined;
+}
+
+/**
+ * Launch a whole swarm run; the Inspector starts its goals on the server.
+ * Resolves once the first goal's run started, with the launch record; throws
+ * {@link LaunchSwarmRunError} on any non-2xx.
+ */
+export async function launchSwarmRun(
+  args: LaunchSwarmRunArgs,
+): Promise<SwarmLaunchReply> {
+  const response = await authFetch("/api/web/swarm/swarm-runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  const body = await launchResponseBody(response);
+  const status = response.status;
+  if (!response.ok) {
+    const fallback = `Failed to launch swarm run (${status})`;
+    const refusal = launchRefusal(status, body, fallback);
+    throw new LaunchSwarmRunError(refusal, launchRecordOf(body));
+  }
+  const reply = body as Partial<SwarmLaunchReply> | undefined;
+  const launch = launchRecordOf(body);
+  if (typeof reply?.swarmRunId !== "string" || !launch) {
+    const message = "Launch accepted but the server returned no swarm run";
+    throw new LaunchSwarmRunError(new LaunchJourneyRunError(status, message));
+  }
+  invalidateSwarmSponsorshipAllowance();
+  return { ...reply, swarmRunId: reply.swarmRunId, launch };
 }
 
 /**

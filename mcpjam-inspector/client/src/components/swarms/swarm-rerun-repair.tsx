@@ -108,10 +108,10 @@ export function RepairableSwarmRunDetail(
       {repair.dialog}
       <SwarmRunDetail
         {...props}
-        onRunAgain={async (journeyIds, runIds) => {
-          const approved = runIds ? await repair.prepare(runIds) : journeyIds;
+        onRunAgain={async (rerun) => {
+          const approved = await repair.prepare(rerun.runIds);
           if (!approved) return { cancelled: true };
-          return props.onRunAgain(approved);
+          return props.onRunAgain({ ...rerun, journeyRefIds: approved });
         }}
       />
     </>
