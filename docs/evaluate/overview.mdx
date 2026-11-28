@@ -12,7 +12,7 @@ An eval is an end-to-end test of your MCP server from the user's side. Given a u
 </Frame>
 
 <Note>
-Evals test what a user gets end to end. To call tools by hand, use the [Playground](/inspector/playground). To check your server against the MCP spec, use the [CLI conformance commands](/cli/overview#local-mcp-testing).
+Evals test what a user gets end to end. To call tools by hand, use the [Playground](/inspector/playground). To check your server against the MCP spec, use [Conformance](/conformance/overview).
 </Note>
 
 ## What is an eval for an MCP server?
@@ -60,6 +60,8 @@ Which tool was called, and with what arguments, are stages on the way. The last 
 - **Gate releases**
   - Run a suite in CI and fail the build when it doesn't pass.
   - See [Run evals in CI](/evaluate/run-evals-in-ci).
+
+To discover which cases to write, use [Swarms](/swarms/overview) to explore goals with simulated users or [User Testing](/user-testing/overview) to see how real people approach the same tasks.
 
 ## Where to run evals
 

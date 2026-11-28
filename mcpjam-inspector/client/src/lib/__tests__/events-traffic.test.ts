@@ -19,17 +19,24 @@ const entry = (
 describe("logEventsFeedEntries", () => {
   beforeEach(() => useTrafficLogStore.getState().clear());
 
-  it("names each row by the delivery mode that carried the entry", () => {
+  it("names each row by its delivery mode and event type", () => {
+    const named = (
+      seq: number,
+      origin: EventsFeedEntryView["origin"],
+    ): EventsFeedEntryView => ({
+      ...entry(seq, origin),
+      name: "flight.status_changed",
+    });
     logEventsFeedEntries(
-      [entry(1, "push"), entry(2, "poll"), entry(3, "webhook"), entry(4, "push", "gap")],
+      [named(1, "push"), named(2, "poll"), named(3, "webhook"), entry(4, "push", "gap")],
       { feed: "local", resolveServer: () => ({ serverId: "Flights" }) },
     );
     const rows = useTrafficLogStore.getState().mcpServerItems;
     expect(rows.map((row) => row.method).sort()).toEqual([
-      "poll event",
-      "push event",
+      "poll event · flight.status_changed",
+      "push event · flight.status_changed",
       "push gap",
-      "webhook event",
+      "webhook event · flight.status_changed",
     ]);
     expect(rows.every((row) => row.direction === "RECEIVE")).toBe(true);
   });

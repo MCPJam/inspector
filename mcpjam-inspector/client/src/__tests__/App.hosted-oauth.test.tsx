@@ -3749,6 +3749,26 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
+  it.each(["/embed/host-compare", "/embed/score"])(
+    "keeps a first-run hosted guest on the public embed %s",
+    async (pathname) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      mockUnseenOnboardingState();
+      window.history.replaceState({}, "", pathname);
+      mockHandleOAuthCallback.mockReset();
+      mockConvexAuthState.isAuthenticated = true;
+      mockWorkOsAuthState.user = null;
+      mockHostedShellGateState.value = "ready";
+      mockFreshGuestUser();
+
+      render(<App />);
+
+      expect(window.location.pathname).toBe(pathname);
+      expect(screen.queryByTestId("home-tab")).not.toBeInTheDocument();
+    },
+  );
+
   it("leaves an IdP-initiated visitor on /login instead of auto-routing to Playground", async () => {
     // Same first-run-eligible guest as the test above, at the WorkOS Initiate
     // Login URL. `/login` is not a known tab segment, so the shell resolves it

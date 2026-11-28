@@ -228,6 +228,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {},
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp",
@@ -245,7 +248,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,
@@ -396,6 +399,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {},
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp",
@@ -413,7 +419,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,
@@ -573,6 +579,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {
+          "webhook": true,
+        },
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp (Codex)",
@@ -590,7 +601,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,
@@ -750,6 +761,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {
+          "webhook": true,
+        },
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp (Codex)",
@@ -767,7 +783,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,
@@ -934,6 +950,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {
+          "webhook": true,
+        },
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp (Codex)",
@@ -951,7 +972,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,
@@ -1118,6 +1139,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {
+          "webhook": true,
+        },
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp (Codex)",
@@ -1135,7 +1161,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,
@@ -1293,6 +1319,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {},
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp",
@@ -1314,7 +1343,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,
@@ -1472,6 +1501,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           },
         },
       },
+      "extensions": {
+        "com.mcpjam/events": {},
+      },
       "initialize": {
         "clientInfo": {
           "name": "openai-mcp",
@@ -1493,7 +1525,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "openai/gpt-6-luna",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,
@@ -5408,7 +5440,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "cursor/auto",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": true,
     "respectToolVisibility": false,
     "runUnloadedToolCalls": true,
@@ -5449,7 +5481,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "cursor/auto",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": true,
     "respectToolVisibility": false,
     "runUnloadedToolCalls": true,
@@ -6511,7 +6543,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "anthropic/claude-haiku-5.5",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,
@@ -6565,7 +6597,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "anthropic/claude-haiku-5.5",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,
@@ -6746,6 +6778,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "name": "MCPJam",
             "version": "0.0.0-test",
           },
+        },
+      },
+      "extensions": {
+        "com.mcpjam/events": {
+          "poll": true,
+          "push": true,
+          "webhook": true,
         },
       },
       "initialize": {
@@ -6939,6 +6978,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "name": "MCPJam",
             "version": "0.0.0-test",
           },
+        },
+      },
+      "extensions": {
+        "com.mcpjam/events": {
+          "poll": true,
+          "push": true,
+          "webhook": true,
         },
       },
       "initialize": {
@@ -7548,7 +7594,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "anthropic/claude-haiku-5.5",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,
@@ -7585,7 +7631,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "modelId": "anthropic/claude-haiku-5.5",
     "optionalServerIds": [],
-    "progressiveToolDiscovery": false,
+    "progressiveToolDiscovery": true,
     "requireToolApproval": false,
     "respectToolVisibility": true,
     "runUnloadedToolCalls": true,

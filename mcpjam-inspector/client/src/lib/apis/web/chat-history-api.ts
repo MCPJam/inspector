@@ -5,6 +5,7 @@ import type { ResumeExecutionTarget } from "@/shared/execution-target";
 import { authFetch } from "@/lib/session-token";
 import { registerArtifactUrls } from "@/lib/artifact-urls";
 import type { MintedPageToolRecord } from "@/shared/declared-tools";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import { WebApiError, requestIdOfResponse } from "./base";
 import type {
   McpToolResultImageRenderingPolicy,
@@ -150,6 +151,8 @@ export interface ChatHistoryTurnTrace {
   pageToolsAtTurn?: MintedPageToolRecord[];
   /** Harness turns only: the MCP route the turn ran on, and why. */
   harnessMcpAtTurn?: HarnessMcpAtTurn;
+  /** The MCP event that started this turn; absent on every other turn. */
+  eventAtTurn?: EventAtTurn;
 }
 
 export interface ChatHistoryDetailResponse {

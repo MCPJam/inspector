@@ -85,7 +85,6 @@ async function serveLegacy(options: {
 
 const NEEDS_SESSION: MCPCheckId[] = [
   "protocol-invalid-method-error",
-  "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
   "notification-post-accepted",
   "get-stream-or-405",

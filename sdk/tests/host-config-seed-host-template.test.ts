@@ -160,12 +160,19 @@ describe("seedHostTemplate", () => {
       "claude-code",
       "claude-code-desktop",
       "claude-code-web",
+      "chatgpt",
+      "chatgpt-desktop",
+      "chatgpt-work",
+      "chatgpt-work-desktop",
       "codex-cli",
       "opencode",
       "cursor",
+      "cursor-cli",
       "codex",
       "vscode",
       "goose",
+      "grokbot",
+      "notion",
     ]);
 
     for (const id of ALL_IDS) {

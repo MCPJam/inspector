@@ -32,6 +32,7 @@ vi.mock("@/hooks/use-aggregated-tools", () => ({
     ],
     collidingNames: [],
     loadingByServer: {},
+    errorByServer: {},
     refetch: vi.fn(),
   }),
 }));

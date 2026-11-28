@@ -243,18 +243,30 @@ export async function evaluateHostedBrowserRollout(
 }
 
 
+/**
+ * A local harness rollout's own answer: yes, no, or `undefined` when the
+ * request failed. Only a refusal's explanation needs the third state.
+ */
+export async function localHarnessRolloutAnswer(
+  distinctId: string,
+  trustedEmail?: string,
+  flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
+): Promise<boolean | undefined> {
+  return serverRolloutAnswer(
+    flagKey,
+    distinctId,
+    { deployment: "self_hosted" },
+    trustedEmail,
+  );
+}
+
 /** Same server-owned rollout decision for setup, launches and client visibility. */
 export async function evaluateLocalHarnessRollout(
   distinctId: string,
   trustedEmail?: string,
   flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
 ): Promise<boolean> {
-  return evaluateServerRollout(
-    flagKey,
-    distinctId,
-    { deployment: "self_hosted" },
-    trustedEmail,
-  );
+  return (await localHarnessRolloutAnswer(distinctId, trustedEmail, flagKey)) === true;
 }
 
 /**

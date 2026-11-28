@@ -61,7 +61,6 @@ const LEGACY_ONLY: MCPCheckId[] = [
   "ping",
   "logging-set-level",
   "server-sse-polling-session",
-  "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
   "localhost-host-rebinding-rejected",
   "localhost-host-valid-accepted",
@@ -87,8 +86,15 @@ const MODERN_ONLY_UNPREFIXED: MCPCheckId[] = [
   "tools-x-mcp-header-declarations-valid",
 ];
 
+/**
+ * Named `modern-` but not modern-only: "Servers MUST provide structured
+ * results that conform to this schema" is in 2025-06-18 and 2025-11-25 too.
+ */
+const OUTPUT_SCHEMA_CHECK: MCPCheckId = "modern-tool-output-schema-conformant";
+
 const isModernOnly = (id: MCPCheckId) =>
-  id.startsWith("modern-") || MODERN_ONLY_UNPREFIXED.includes(id);
+  id !== OUTPUT_SCHEMA_CHECK &&
+  (id.startsWith("modern-") || MODERN_ONLY_UNPREFIXED.includes(id));
 
 // Phase 7 §15.3 modern MUST checks the conforming beta.4 fixture satisfies.
 //
@@ -352,7 +358,14 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
 
     // Only the modern-only checks may be era-skipped on a legacy pin; every
     // pre-Phase-7 check keeps its original status.
+    // The output-schema check now asks its question here: this fixture's
+    // tools declare no outputSchema, which it found out by listing them.
+    const outputSchema = byId(pinned.checks, OUTPUT_SCHEMA_CHECK);
+    expect(outputSchema.skipReason).toBe("not-applicable");
+    expect(outputSchema.error?.message).toMatch(/No tool declares an outputSchema/);
+
     for (const check of pinned.checks) {
+      if (check.id === OUTPUT_SCHEMA_CHECK) continue;
       if (isModernOnly(check.id)) {
         expect(check.status).toBe("skipped");
         expect(check.error?.message).toMatch(
@@ -380,7 +393,9 @@ describe.each([undefined, "2026-07-28"] as const)("handshake selection %s", (pro
     ["input_required", true, "failed"],
     ["complete", true, "passed"],
     [undefined, true, "passed"],
-    ["complete", false, "failed"],
+    // No identity: `io.modelcontextprotocol/serverInfo` is a SHOULD and an
+    // optional field on 2026-07-28, so the handshake is still complete.
+    ["complete", false, "passed"],
   ] as const)("checks discovery type %s with identity %s", async (resultType, identity, status) => {
     const handler = createFixtureHandler();
     let discoveries = 0;
@@ -405,6 +420,88 @@ describe.each([undefined, "2026-07-28"] as const)("handshake selection %s", (pro
     if (resultType === "partial") expect(check.error?.message).toContain('Unrecognized resultType "partial"');
     expect(discoveries).toBe(1);
   });
+});
+
+it.each([
+  {
+    label: "an internal error",
+    status: 200,
+    reply: { error: { code: -32603, message: "Discovery failed in the fixture" } },
+    verdict: "failed",
+    reason: /-32603.*Discovery failed in the fixture/,
+  },
+  {
+    label: "missing supportedVersions",
+    status: 200,
+    reply: { result: { resultType: "complete", capabilities: {} } },
+    verdict: "failed",
+    reason: /supportedVersions must be a non-empty array of strings/,
+  },
+  {
+    label: "missing capabilities",
+    status: 200,
+    reply: { result: { resultType: "complete", supportedVersions: ["2026-07-28"] } },
+    verdict: "failed",
+    reason: /capabilities must be an object/,
+  },
+  {
+    label: "array capabilities",
+    status: 200,
+    reply: {
+      result: {
+        resultType: "complete",
+        supportedVersions: ["2026-07-28"],
+        capabilities: [],
+      },
+    },
+    verdict: "failed",
+    reason: /capabilities must be an object/,
+  },
+  {
+    label: "an explicit version refusal",
+    status: 400,
+    reply: {
+      error: {
+        code: -32022,
+        message: "Unsupported protocol version",
+        data: { requested: "2026-07-28", supported: ["2099-01-01"] },
+      },
+    },
+    verdict: "skipped",
+    reason: /It offers only 2099-01-01/,
+  },
+  {
+    label: "a legacy method-not-found error",
+    status: 200,
+    reply: { error: { code: -32601, message: "Method not found" } },
+    verdict: "skipped",
+    reason: /does not support protocol version 2026-07-28/,
+  },
+])("grades $label from a pinned discovery probe", async ({ status, reply, verdict, reason }) => {
+  const checkIds = ["modern-client-handshake", "modern-server-discover"] as const;
+  const methods: string[] = [];
+  const result = await new MCPConformanceTest({
+    serverUrl: "http://localhost/mcp",
+    protocolVersion: "2026-07-28",
+    checkIds: [...checkIds],
+    readinessIds: [],
+    fetchFn: async (input, init) => {
+      const request = new Request(input, init);
+      const method = request.headers.get("Mcp-Method") ?? request.method;
+      methods.push(method);
+      const { id }: { id: string | number } = await request.json();
+      return Response.json({ jsonrpc: "2.0", id, ...reply }, { status });
+    },
+  }).run();
+
+  for (const id of checkIds) {
+    const check = byId(result.checks, id);
+    expect(check.status, `${id}: ${check.error?.message}`).toBe(verdict);
+    expect(check.error?.message).toMatch(reason);
+    if (verdict === "skipped") expect(check.skipReason).toBe("could-not-run");
+  }
+  expect(result.outcome).toBe(verdict === "failed" ? "failed" : "incomplete");
+  expect(methods).toEqual(["server/discover"]);
 });
 
 describe.each(["raw", "mixed"] as const)("invalid discovery in a %s run", mode => {

@@ -184,11 +184,12 @@ describe("runnableSelection", () => {
   it("offers and runs the tasks update acknowledgement check", () => {
     // The app sends the answers set under it, so it runs like any other.
     const selection = runnableSelection(
-      { tasks: ["tasks-update-ack-shape", "tasks-wire-resolvable"] },
+      { tasks: ["tasks-update-ack-shape", "tasks-invalid-task-id-rejected"] },
       "auto",
     );
+    // In catalog order.
     expect(selection?.tasks).toEqual([
-      "tasks-wire-resolvable",
+      "tasks-invalid-task-id-rejected",
       "tasks-update-ack-shape",
     ]);
     expect(checkCatalogs("auto").tasks.map((entry) => entry.id)).toContain(

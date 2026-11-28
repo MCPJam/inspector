@@ -31,6 +31,7 @@ import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { AccountCreatedToast } from "./components/sidebar/sidebar-guest-signup-prompt";
 import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
+import { ReturningGuestDialog } from "./components/auth/returning-guest-prompt";
 import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
 import { AutoOAuthAuthorizationDialog } from "./components/connection/AutoOAuthAuthorizationDialog";
@@ -2517,6 +2518,7 @@ export function TasksRoute() {
 }
 
 export function EventsRoute() {
+  const fallback = useCurrentSearchParam("fallback");
   const {
     selectedMCPConfig,
     appState,
@@ -2527,7 +2529,14 @@ export function EventsRoute() {
   } = useAppRouteContext();
   const eventsEnabled = useEventsEnabledState();
   if (eventsEnabled === false) {
-    return <ScopedNavigate to={routePaths.servers} replace />;
+    return (
+      <ScopedNavigate
+        to={
+          fallback === "playground" ? routePaths.playground : routePaths.servers
+        }
+        replace
+      />
+    );
   }
   if (eventsEnabled === undefined) return null;
   return (
@@ -3165,7 +3174,12 @@ export default function App() {
   const isConformanceSharedRoute =
     barePathname === routePaths.conformanceShared ||
     barePathname.startsWith(`${routePaths.conformanceShared}/`);
+  const isCaniuseSite =
+    barePathname === routePaths.caniuseCompare ||
+    barePathname === routePaths.capabilities ||
+    barePathname.startsWith(`${routePaths.capabilities}/`);
   const isBareCaniuseRoute =
+    isCaniuseSite ||
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
     barePathname === routePaths.embedBench ||
@@ -3176,8 +3190,7 @@ export default function App() {
     barePathname.startsWith(`${routePaths.benchResults}/`) ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     isConformanceSharedRoute ||
-    barePathname.startsWith(`${routePaths.evalsShared}/`) ||
-    barePathname.startsWith(`${routePaths.capabilities}/`);
+    barePathname.startsWith(`${routePaths.evalsShared}/`);
   // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
   // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
   // fresh sign-in. `/login` is not a known tab segment, so it resolves to the
@@ -6636,6 +6649,7 @@ export default function App() {
     "billing",
   ].includes(activeTab);
   const announcementsEnabled =
+    !isBareCaniuseRoute &&
     !isWorkOsLoading &&
     !isAuthLoading &&
     effectiveHostedShellGateState === "ready" &&
@@ -6655,9 +6669,9 @@ export default function App() {
   const appContent = (
     <SettingsDraftProvider enabled={settingsShellActive}>
       <SidebarProvider defaultOpen={true}>
-        {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
-          collapse the sidebar to its icon rail; navigating back out of them
-          expands it again. */}
+        {/* With the opt-in Appearance setting on, wide working surfaces
+          (Playground, Evaluate, OAuth Debugger, Swarms) collapse the sidebar
+          to its icon rail; navigating back out of them expands it again. */}
         <SidebarAutoCollapse activeTab={activeTab} />
         <AppChromeSidebar
           hidden={playgroundOnboarding || settingsShellActive}
@@ -6800,6 +6814,7 @@ export default function App() {
             </Button>
           </DialogFooter>
         </TrialDecisionDialog>
+        <ReturningGuestDialog enabled={announcementsEnabled} />
       </SidebarProvider>
     </SettingsDraftProvider>
   );
@@ -7007,7 +7022,7 @@ export default function App() {
   );
 
   return (
-    <AnnouncementQueueProvider enabled={announcementsEnabled}>
+    <AnnouncementQueueProvider enabled={isCaniuseSite || announcementsEnabled}>
       {shell}
     </AnnouncementQueueProvider>
   );

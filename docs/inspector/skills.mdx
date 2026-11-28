@@ -7,11 +7,16 @@ tag: "NEW"
 
 [Skills](https://agentskills.io/what-are-skills) are an open format that provide instructions on how to use MCP tools and complete workflows. MCPJam discovers skills from your filesystem and from connected MCP servers, lets you upload new ones, and lets you use them in the Playground, either automatically based on the user's prompt or deterministically with the `/` command.
 
-## Getting Started
+<span id="getting-started" />
 
-1. **Open the Connect view** in MCPJam Inspector and select the **Skills** tab
-2. **Load skills**: MCPJam automatically discovers skills from [supported directories](#skill-directories). You can also upload skills directly through the Skills tab, or run `npx skills` to install them
-3. **Use skills in the Playground**: the LLM discovers them automatically, or you can inject them with the `/` command
+## Get started
+
+1. Open **Connect** → **Skills**. This tab is always visible in the local Inspector and appears in the hosted app where Skills has rolled out.
+2. Choose a way to load a skill:
+   - Use a skill from a [supported directory](#skill-directories) in the local Inspector.
+   - [Upload a skill](#uploading-skills) in the local Inspector.
+   - Connect a server that offers [Skills over MCP](#skills-over-mcp-server-provided-skills).
+3. Open [Playground](/inspector/playground). The model can discover relevant skills automatically, or you can choose a skill with the `/` command.
 
 <iframe
   className="w-full aspect-video rounded-xl"

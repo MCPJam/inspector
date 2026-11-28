@@ -174,7 +174,11 @@ function ConfigureEvent({
     : runtime.host.missing
       ? "Select an available client to connect an event."
       : availability
-        ? describeNoSubscribableMode(availability, runtime.host.name)
+        ? describeNoSubscribableMode(
+            availability,
+            runtime.host.name,
+            runtime.host.harnessName,
+          )
         : null;
   const testOnly =
     !!runtime.host && !runtime.host.missing && availability?.modes.length === 0;

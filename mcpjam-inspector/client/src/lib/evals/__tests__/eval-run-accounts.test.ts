@@ -2,19 +2,24 @@ import { describe, expect, it } from "vitest";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { EvalRunAccount } from "@/components/evals/types";
 import {
-  ranAsRole,
   runAccountsByServer,
+  runsUsedSeveralAccounts,
   spanAccountName,
   toolCallAccountNames,
 } from "../eval-run-accounts";
 
-describe("ranAsRole", () => {
-  it("names the schedule's owner and the key's owner from the run's source", () => {
-    expect(ranAsRole("schedule")).toBe("Schedule owner");
-    expect(ranAsRole("api")).toBe("Key owner");
-    expect(ranAsRole("sdk")).toBe("Key owner");
-    expect(ranAsRole("ui")).toBeNull();
-    expect(ranAsRole(undefined)).toBeNull();
+describe("runsUsedSeveralAccounts", () => {
+  const work: EvalRunAccount = { serverId: "srv-mail", kind: "account", connectionId: "c-work", name: "Work" };
+  it("is true only once the runs used a second account", () => {
+    expect(runsUsedSeveralAccounts([])).toBe(false);
+    expect(runsUsedSeveralAccounts([{ accountsAtRun: [work] }, { accountsAtRun: [work] }])).toBe(false);
+    expect(runsUsedSeveralAccounts([{ accountsAtRun: undefined }, { accountsAtRun: [work] }])).toBe(false);
+    expect(
+      runsUsedSeveralAccounts([
+        { accountsAtRun: [work] },
+        { accountsAtRun: [{ ...work, connectionId: "c-personal", name: "Personal" }] },
+      ]),
+    ).toBe(true);
   });
 });
 

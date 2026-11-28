@@ -17,6 +17,15 @@ import {
 } from "../src/lib/platform-auth.js";
 
 const NOW = 1_750_000_000_000;
+const ENTERPRISE_ORG = {
+  id: "org-1",
+  name: "Acme",
+  plan: "enterprise",
+  myRole: "member",
+  isCreator: false,
+  logoUrl: null,
+  createdAt: null,
+};
 
 async function tempAuthFile(): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-auth-"));
@@ -55,6 +64,7 @@ async function startAuthFixture(options: {
   meStatus?: number;
   meBody?: unknown;
   meRedirect?: string;
+  organizationsStatus?: number;
 }): Promise<{
   origin: string;
   requests: FixtureRequest[];
@@ -124,10 +134,26 @@ async function startAuthFixture(options: {
             name: "Dev",
             imageUrl: null,
             profilePictureUrl: null,
-            plan: "pro",
+            // The legacy per-user field: "free" for everyone, whatever the
+            // organization pays for. Login must not report it.
+            plan: "free",
             createdAt: null,
             updatedAt: null,
           }
+        )
+      );
+      return;
+    }
+
+    if (url.pathname === "/api/v1/organizations") {
+      const status = options.organizationsStatus ?? 200;
+      res.statusCode = status;
+      res.setHeader("content-type", "application/json");
+      res.end(
+        JSON.stringify(
+          status === 200
+            ? { items: [ENTERPRISE_ORG] }
+            : { code: "INTERNAL", message: "nope" }
         )
       );
       return;
@@ -325,9 +351,12 @@ test("runPlatformLogin completes the PKCE flow end to end and stores tokens", as
     // cloud commands default to it instead of prod.
     assert.equal(persisted?.apiUrl, `${fixture.origin}/api/v1`);
     assert.equal(persisted?.email, "dev@example.com");
-    assert.equal(persisted?.plan, "pro");
+    assert.equal(persisted?.plan, undefined);
     assert.equal(result.email, "dev@example.com");
-    assert.equal(result.plan, "pro");
+    assert.equal("plan" in result, false);
+    assert.deepEqual(result.organizations, [
+      { id: "org-1", name: "Acme", plan: "enterprise" },
+    ]);
     assert.equal(result.apiUrl, `${fixture.origin}/api/v1`);
 
     const tokenRequest = fixture.requests.find(
@@ -369,10 +398,40 @@ test("runPlatformLogin still succeeds when account lookup fails", async () => {
 
     assert.equal(result.authFilePath, authFilePath);
     assert.equal(result.email, undefined);
+    assert.deepEqual(result.organizations, [
+      { id: "org-1", name: "Acme", plan: "enterprise" },
+    ]);
     assert.equal(readStoredAuth(authFilePath)?.accessToken, "new-access");
     assert.equal(readStoredAuth(authFilePath)?.email, undefined);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0]!, /account details/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("runPlatformLogin still succeeds when the organization lookup fails", async () => {
+  const fixture = await startAuthFixture({ organizationsStatus: 500 });
+  try {
+    const authFilePath = await tempAuthFile();
+    const warnings: string[] = [];
+
+    const result = await runPlatformLogin(
+      { origin: fixture.origin, apiUrl: `${fixture.origin}/api/v1` },
+      {
+        openUrl: browserSimulator(),
+        authFilePath,
+        timeoutMs: 10_000,
+        now: () => NOW,
+        warn: (message) => warnings.push(message),
+      }
+    );
+
+    assert.equal(result.organizations, undefined);
+    assert.equal(result.email, "dev@example.com");
+    assert.equal(readStoredAuth(authFilePath)?.email, "dev@example.com");
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /Could not load organizations after login/);
   } finally {
     await fixture.close();
   }

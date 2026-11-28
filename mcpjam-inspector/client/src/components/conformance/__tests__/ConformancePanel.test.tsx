@@ -461,10 +461,10 @@ describe("ConformanceTab", () => {
       result: createTasksResult({
         checks: [
           {
-            id: "tasks-wire-resolvable",
-            category: "dispatch",
-            title: "Tasks Wire Resolvable",
-            description: "wire",
+            id: "tasks-invalid-task-id-rejected",
+            category: "lifecycle",
+            title: "Invalid Task Id Rejected",
+            description: "unknown task id",
             status: "passed",
             durationMs: 1,
           },
@@ -519,7 +519,10 @@ describe("ConformanceTab", () => {
       success: true,
       result: createTasksResult({
         checks: [
-          { ...notApplicable("tasks-wire-resolvable"), category: "dispatch" },
+          {
+            ...notApplicable("tasks-invalid-task-id-rejected"),
+            category: "lifecycle",
+          },
         ],
       }),
     });
@@ -1721,13 +1724,15 @@ describe("ConformanceTab", () => {
         onViewRun={vi.fn()}
         onLoadServerDefaults={async () => ({
           selection: {
-            protocol: ["modern-tool-output-schema-conformant"],
+            // An input the 2025 revisions never offered. The output schema
+            // check is not one any more: it runs there too.
+            protocol: ["modern-logs-require-log-level"],
             protocolAdvice: [],
             apps: [],
             tasks: [],
             oauth: false,
           },
-          inputs: saved ? { toolCallProbe: { toolName: "echo" } } : {},
+          inputs: saved ? { logProbe: { toolName: "echo" } } : {},
         })}
       />,
     );
@@ -1751,7 +1756,7 @@ describe("ConformanceTab", () => {
         "alpha",
         expect.objectContaining({
           protocolVersion: "2026-07-28",
-          checkIds: ["modern-tool-output-schema-conformant"],
+          checkIds: ["modern-logs-require-log-level"],
         }),
       ),
     );
@@ -2874,19 +2879,70 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
     });
 
-    it("asks for no protocol tool on Auto, where these checks do not run", async () => {
+    it("asks only for the output tool on Auto, where the 2026-07-28 checks do not run", async () => {
       await toStep2("auto");
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      // Auto negotiates a 2025 revision. The output schema rule is in
+      // 2025-06-18 and 2025-11-25, so that check runs and needs its tool.
+      expect(
+        within(header).getByText(inputBadge("1 optional check needs input")),
+      ).toBeInTheDocument();
+      fireEvent.click(header);
+      // Tasks needs its tool on Auto as before; the output check is one more.
+      expect(screen.getAllByText("Needs input")).toHaveLength(12);
+      expect(
+        screen.getByRole("combobox", { name: "Tool to check output" }),
+      ).toBeInTheDocument();
+      // The tools only 2026-07-28 checks call are still not asked for.
+      expect(
+        screen.queryByRole("combobox", { name: "Tool that emits logs" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("combobox", { name: "Tool that asks for input" }),
+      ).toBeNull();
+    });
+
+    it("asks for no protocol tool on 2025-03-26, which has no outputSchema", async () => {
+      await toStep2("2025-03-26");
       const header = screen.getByRole("button", {
         name: /^Protocol.*checks selected$/,
       });
       expect(within(header).queryByText(/need(s)? input/)).toBeNull();
       fireEvent.click(header);
-      // Tasks still needs its tool on Auto; protocol tools do not apply.
-      expect(screen.getAllByText("Needs input")).toHaveLength(11);
       expect(
-        screen.queryByRole("combobox", { name: "Tool that emits logs" }),
+        screen.queryByRole("combobox", { name: "Tool to check output" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("checkbox", { name: "Run Tool Output Schema Honored" }),
       ).toBeNull();
     });
+
+    it.each(["2025-06-18", "2025-11-25"])(
+      "asks for the output tool on %s, where the rule exists too",
+      async (pin) => {
+        await toStep2(pin);
+        const header = screen.getByRole("button", {
+          name: /^Protocol.*checks selected$/,
+        });
+        fireEvent.click(header);
+        // Picked, and waiting on its tool: the app shows such a row unchecked
+        // and locked until a tool is set, as it does on 2026-07-28.
+        expect(
+          screen.getByRole("checkbox", { name: "Run Tool Output Schema Honored" }),
+        ).toBeDisabled();
+        expect(
+          within(header).getByText(inputBadge("1 optional check needs input")),
+        ).toBeInTheDocument();
+        expect(
+          screen.getByRole("combobox", { name: "Tool to check output" }),
+        ).toBeInTheDocument();
+        expect(
+          screen.queryByRole("combobox", { name: "Tool that emits logs" }),
+        ).toBeNull();
+      },
+    );
 
     it.each([
       ["auto", undefined],
@@ -3092,7 +3148,7 @@ describe("ConformanceTab", () => {
       ).toBeInTheDocument();
     });
 
-    it("asks once for the Tasks tool on any pin, and for answers under the update check", async () => {
+    it("asks once for the shared Tasks tool and its answers", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
       await toStep2("auto");
@@ -3151,7 +3207,7 @@ describe("ConformanceTab", () => {
       );
     });
 
-    it("hides the flagged update check and its answers box", async () => {
+    it("keeps the shared answers box when the flagged update check is hidden", async () => {
       enabledFlags.delete("conformance-tasks-update-check");
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
@@ -3173,7 +3229,7 @@ describe("ConformanceTab", () => {
         screen.queryByRole("textbox", {
           name: "Answers to the task's questions (optional)",
         }),
-      ).toBeNull();
+      ).toBeInTheDocument();
     });
 
     it("lists the tools once for every field, across pages", async () => {

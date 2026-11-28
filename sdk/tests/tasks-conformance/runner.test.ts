@@ -720,8 +720,6 @@ describe("MCPTasksConformanceTest", () => {
 
     expect(result.checks).toHaveLength(MCP_TASKS_CHECK_IDS.length);
     expect(statusMap(result)).toEqual({
-      "tasks-wire-resolvable": "passed",
-      "tasks-declaration-hygiene": "passed",
       "tasks-result-type-discipline": "passed",
       "tasks-undeclared-creation-refused": "passed",
       "tasks-undeclared-capability-rejected": "passed",
@@ -1028,11 +1026,11 @@ describe("MCPTasksConformanceTest", () => {
       config: { toolName: "long_job", pollTimeoutMs: 500 },
     });
 
-    const wireCheck = result.checks.find(
-      (c) => c.id === "tasks-wire-resolvable"
-    );
-    expect(wireCheck?.status).toBe("passed");
-    expect(wireCheck?.warnings).toBeUndefined();
+    // Listing the extension on 2025-11-25 is not judged: nothing forbids it,
+    // and SEP-2663 only forbids USING it there. The run stays on the legacy
+    // wire and no check warns about the listing.
+    expect(result.discovery.wire).toBe("legacy");
+    expect(result.checks.filter((c) => c.warnings?.length)).toEqual([]);
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     // Extension-only checks do not apply to the legacy wire.
     expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(

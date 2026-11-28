@@ -31,7 +31,11 @@ import {
 } from "../operations.js";
 import { CORE_CHECKS } from "./checks/core.js";
 import { RESOURCE_CHECKS } from "./checks/resources.js";
-import { MODERN_CHECK_METADATA, runModernChecks } from "./checks/modern.js";
+import {
+  MODERN_CHECK_METADATA,
+  probeServerDiscover,
+  runModernChecks,
+} from "./checks/modern.js";
 import { runProtocolChecks } from "./checks/protocol.js";
 import { runSecurityChecks } from "./checks/security.js";
 import { runTransportChecks } from "./checks/transport.js";
@@ -61,16 +65,22 @@ import type {
   RawHttpCheckContext,
 } from "./types.js";
 import { MCP_CHECK_CATEGORIES } from "./types.js";
-import { pinRefusalChecks } from "./version-refusal.js";
+import {
+  modernPinRefusal,
+  pinRefusalChecks,
+  pinRefusalResults,
+} from "./version-refusal.js";
 import {
   collectClientAdvice,
   collectRawAdvice,
   splitReadinessOutcomes,
 } from "./readiness.js";
 import { WireObservationRecorder } from "./wire-observations.js";
+import type { RawHttpResult } from "./raw-http.js";
 import { createCapturingFetch } from "./raw-capture.js";
 import {
   createNegotiationProbeHold,
+  pinnedDiscoveryFailure,
   type NegotiationProbeHold,
 } from "./negotiation-probes.js";
 import {
@@ -92,7 +102,6 @@ const RAW_CHECK_CATEGORY_ENTRIES: ReadonlyArray<
   ["localhost-host-rebinding-rejected", "security"],
   ["localhost-host-valid-accepted", "security"],
   ["server-sse-polling-session", "transport"],
-  ["server-accepts-multiple-post-streams", "transport"],
   ["server-sse-streams-functional", "transport"],
   ["notification-post-accepted", "transport"],
   ["get-stream-or-405", "transport"],
@@ -315,6 +324,8 @@ async function runClientChecks(
   authorizationRefused?: true;
   /** The pinned version was refused: no raw check or advice may run. */
   versionRefused?: true;
+  /** The `server/discover` answer already in hand, for the modern track. */
+  discover?: RawHttpResult;
   /** The check that carries a failed connect, for checks blocked by it. */
   connectFailedCheck?: { id: MCPCheckId; title: string };
 }> {
@@ -329,6 +340,53 @@ async function runClientChecks(
     selectedClientChecks.length === 0 &&
     config.protocolVersion !== undefined
   ) {
+    // With no client connect, a 2026 pin has nothing that would see the
+    // server refuse it: ask once, so a refusal stops the run as it does on
+    // the client path instead of failing every raw probe. (A 2025 pin sees it
+    // in each probe's own `initialize`; see `legacy-handshake.ts`.)
+    // The modern track grades this same answer, so the run still asks once.
+    if (config.era === "modern" && selectedCheckIds.size > 0) {
+      let discover: RawHttpResult | undefined;
+      try {
+        discover = await probeServerDiscover({
+          config,
+          serverUrl: config.serverUrl,
+          fetchFn: config.fetchFn,
+          recorder,
+        });
+      } catch {
+        // Unreachable: Server Discover sends its own and grades that.
+        config.signal?.throwIfAborted();
+      }
+      const refusal =
+        discover !== undefined ? modernPinRefusal(discover) : undefined;
+      if (discover !== undefined && !refusal) {
+        return { checks: [], config, readiness: [], discover };
+      }
+      if (refusal) {
+        return {
+          checks: pinRefusalResults(
+            {
+              pinned: config.protocolVersion,
+              offered: refusal.offered,
+              extraDetails: {
+                status: refusal.status,
+                error: { code: refusal.error.code, message: refusal.error.message },
+              },
+            },
+            {
+              config,
+              selectedCheckIds,
+              selectedClientChecks,
+              categoryOf: (id) => CHECK_CATEGORY_BY_ID.get(id) ?? "protocol",
+            },
+          ),
+          config,
+          readiness: [],
+          versionRefused: true,
+        };
+      }
+    }
     return { checks: [], config, readiness: [] };
   }
 
@@ -520,7 +578,10 @@ async function runClientChecks(
       selectedClientChecks,
       categoryOf: (id) => CHECK_CATEGORY_BY_ID.get(id) ?? "protocol",
     });
-    if (refused) {
+    const discovery =
+      refused && config.era === "modern" ? negotiationProbes.discovery : undefined;
+    const discoveryFailure = pinnedDiscoveryFailure(discovery);
+    if (refused && !discoveryFailure) {
       return { checks: refused, config, readiness: [], versionRefused: true };
     }
 
@@ -587,7 +648,7 @@ async function runClientChecks(
             ? failedResult(
                 check,
                 connectDurationMs,
-                errorMessage(error),
+                discoveryFailure ?? errorMessage(error),
                 undefined,
                 error,
               )
@@ -596,6 +657,7 @@ async function runClientChecks(
         ),
         config,
         readiness: [],
+        discover: discoveryFailure ? discovery : undefined,
         connectFailedCheck: { id: anchor.id, title: anchor.title },
       };
     }
@@ -615,7 +677,7 @@ async function runClientChecks(
           failedResult(
             check,
             connectDurationMs,
-            errorMessage(error),
+            discoveryFailure ?? errorMessage(error),
             undefined,
             error,
           ),
@@ -629,6 +691,7 @@ async function runClientChecks(
       checks,
       config,
       readiness: [],
+      discover: discoveryFailure ? discovery : undefined,
       connectFailedCheck: {
         id: firstApplicableCheck.id,
         title: firstApplicableCheck.title,
@@ -708,6 +771,7 @@ export class MCPConformanceTest {
       surface: clientRun.surface,
       recorder,
       connectFailedCheck: clientRun.connectFailedCheck,
+      discover: clientRun.discover,
     };
 
     // A refused run (an Auto run's credentials, or a pinned version) already

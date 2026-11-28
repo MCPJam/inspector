@@ -14,7 +14,7 @@
 import { describe, expect, it } from "vitest";
 import { runProtocolChecks } from "../../src/mcp-conformance/checks/protocol.js";
 import { runTransportChecks } from "../../src/mcp-conformance/checks/transport.js";
-import { legacyInitialize } from "../../src/mcp-conformance/raw-http.js";
+import { legacyInitialize } from "../../src/mcp-conformance/legacy-handshake.js";
 import { collectRawAdvice } from "../../src/mcp-conformance/readiness.js";
 import { computeConformanceScore } from "../../src/conformance-score.js";
 import type {
@@ -126,7 +126,6 @@ const STOP_MESSAGE = `The server answered initialize with protocol version "${UN
 
 /** The checks that need more requests on the session after `initialize`. */
 const NEEDS_SESSION: MCPCheckId[] = [
-  "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
   "notification-post-accepted",
   "get-stream-or-405",
@@ -288,6 +287,7 @@ describe("the version the run asked for leaves the probes as they were", () => {
 
     expect(sent).toEqual([
       "POST initialize",
+      "POST notifications/initialized",
       "POST nonexistent/method_that_does_not_exist",
     ]);
     expect(results[0].status).toBe("passed");

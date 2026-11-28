@@ -10,7 +10,6 @@ import type {
 import {
   EVENT_DELIVERY_MODES,
   MCPJAM_EVENTS_EXTENSION_ID,
-  clearEventsHostSetting,
   describeModeRefusal,
   describeNoSubscribableMode,
   readEventsHostSetting,
@@ -23,6 +22,9 @@ import {
   getCatalogTemplate,
 } from "../src/host-compat/index";
 import { CHATGPT_PROFILE, DRAFT_PROFILE } from "../src/events/profiles";
+
+// A client with an Apps style and nothing saved: the style must not matter.
+const unsaved = (hostStyle: string) => ({ hostStyle, mcpProfile: undefined });
 
 const saved = (events: unknown, hostStyle = "chatgpt") => ({
   hostStyle,
@@ -40,24 +42,28 @@ describe("resolveHostEventDeliveryModes", () => {
     );
   });
 
-  it("falls back to the host style when nothing is saved", () => {
-    expect(resolveHostEventDeliveryModes({ hostStyle: "chatgpt" })).toEqual([
-      "webhook",
-    ]);
-    expect(resolveHostEventDeliveryModes({ hostStyle: "mcpjam" })).toEqual([
-      "poll",
-      "push",
-      "webhook",
-    ]);
-    expect(resolveHostEventDeliveryModes({ hostStyle: "claude" })).toEqual([]);
-    expect(resolveHostEventDeliveryModes({ hostStyle: null })).toEqual([]);
-    // Own entries only: a style named like an Object member has no default.
-    for (const hostStyle of ["constructor", "toString", "__proto__"]) {
-      expect(resolveHostEventDeliveryModes({ hostStyle })).toEqual([]);
+  it("is no modes when nothing is saved, whatever the style", () => {
+    for (const hostStyle of ["mcpjam", "chatgpt", "chatgpt-work", "claude"]) {
+      expect(resolveHostEventDeliveryModes(unsaved(hostStyle))).toEqual([]);
     }
+    expect(resolveHostEventDeliveryModes({})).toEqual([]);
   });
 
-  it("reads a saved setting over the style, true modes only", () => {
+  it("is no modes under a vendor harness, whatever is saved", () => {
+    const all = saved({ poll: true, push: true, webhook: true }, "mcpjam");
+    expect(resolveHostEventDeliveryModes(all)).toEqual(EVENT_DELIVERY_MODES);
+    expect(resolveHostEventDeliveryModes({ ...all, harness: "codex" })).toEqual(
+      []
+    );
+    expect(
+      resolveHostEventDeliveryModes({ ...all, agentLoop: "claude-code" })
+    ).toEqual([]);
+    expect(
+      resolveHostEventDeliveryModes({ ...all, harness: null, agentLoop: null })
+    ).toEqual(EVENT_DELIVERY_MODES);
+  });
+
+  it("reads a saved setting, true modes only", () => {
     expect(
       resolveHostEventDeliveryModes(saved({ poll: true, webhook: false }))
     ).toEqual(["poll"]);
@@ -75,18 +81,17 @@ describe("resolveHostEventDeliveryModes", () => {
       expect(resolveHostEventDeliveryModes(saved(bad, "mcpjam"))).toEqual([]);
     }
     expect(
-      resolveHostEventDeliveryModes({ hostStyle: "mcpjam", mcpProfile: "on" })
+      resolveHostEventDeliveryModes({ mcpProfile: "on" })
     ).toEqual([]);
     expect(
       resolveHostEventDeliveryModes({
-        hostStyle: "mcpjam",
         mcpProfile: { extensions: new Map() },
       })
     ).toEqual([]);
   });
 });
 
-describe("setEventsHostSetting / clearEventsHostSetting", () => {
+describe("setEventsHostSetting", () => {
   it("saves only the true modes and keeps other extensions", () => {
     const host = {
       hostStyle: "claude",
@@ -105,38 +110,22 @@ describe("setEventsHostSetting / clearEventsHostSetting", () => {
     });
     expect(resolveHostEventDeliveryModes(next)).toEqual(["poll", "webhook"]);
     expect(
-      readEventsHostSetting(setEventsHostSetting({ hostStyle: "chatgpt" }, []))
+      readEventsHostSetting(setEventsHostSetting(unsaved("chatgpt"), []))
     ).toEqual({ kind: "valid", modes: [] });
   });
 
-  it("clears back to the style default without leaving empty containers", () => {
-    const host = { hostStyle: "chatgpt" };
-    // A profile it creates carries its version, so it canonicalizes.
-    expect(setEventsHostSetting(host, []).mcpProfile).toEqual({
+  it("creates a versioned profile, so a new setting canonicalizes", () => {
+    expect(setEventsHostSetting({}, []).mcpProfile).toEqual({
       profileVersion: 1,
       extensions: { [MCPJAM_EVENTS_EXTENSION_ID]: {} },
     });
-    expect(clearEventsHostSetting(setEventsHostSetting(host, []))).toEqual(
-      host
-    );
-    const withTasks = {
-      hostStyle: "chatgpt",
-      mcpProfile: {
-        profileVersion: 1,
-        extensions: { "com.mcpjam/tasks": { enabled: false } },
-      },
-    };
-    expect(
-      clearEventsHostSetting(setEventsHostSetting(withTasks, ["poll"]))
-    ).toEqual(withTasks);
-    expect(clearEventsHostSetting(host)).toBe(host);
   });
 });
 
 describe("subscribableModes", () => {
   it("is the intersection of runtime, event and host", () => {
     const result = subscribableModes({
-      host: { hostStyle: "mcpjam" },
+      host: saved({ poll: true, push: true, webhook: true }, "mcpjam"),
       eventModes: ["poll", "push"],
       runtime: "hosted",
     });
@@ -149,12 +138,12 @@ describe("subscribableModes", () => {
 
   it("names the side that refused, so the user knows what to change", () => {
     const chatgpt = subscribableModes({
-      host: { hostStyle: "chatgpt" },
+      host: saved({ webhook: true }, "chatgpt-work"),
       runtime: "hosted",
     });
     expect(chatgpt.modes).toEqual(["webhook"]);
     expect(describeModeRefusal("poll", chatgpt, "ChatGPT")).toBe(
-      "ChatGPT doesn't receive events by poll. Turn it on in its Protocol settings, or pick another client."
+      "ChatGPT doesn't receive events by poll. Turn it on in the client's Events tab, or pick another client."
     );
     expect(describeModeRefusal("push", chatgpt, "ChatGPT")).toBe(
       "Hosted subscriptions can't use push yet. Use webhook or poll, or subscribe from the local app."
@@ -165,15 +154,18 @@ describe("subscribableModes", () => {
 
   it("explains an empty result from the host's side first", () => {
     const claude = subscribableModes({
-      host: { hostStyle: "claude" },
+      host: unsaved("claude"),
       eventModes: ["webhook"],
       runtime: "hosted",
     });
     expect(describeNoSubscribableMode(claude, "Claude")).toBe(
-      "Claude doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client."
+      "Claude doesn't receive events. Turn on a delivery mode in the client's Events tab, or pick another client."
+    );
+    expect(describeNoSubscribableMode(claude, "My Codex client", "Codex")).toBe(
+      "My Codex client runs on Codex, which doesn't receive MCP Events. Pick another client."
     );
     const pollOnly = subscribableModes({
-      host: { hostStyle: "chatgpt" },
+      host: saved({ webhook: true }, "chatgpt-work"),
       eventModes: ["poll"],
       runtime: "hosted",
     });
@@ -206,16 +198,13 @@ describe("hashes and parity", () => {
       ...(mcpProfile ? { mcpProfile } : {}),
     }) as HostConfigInputV2;
 
-  it("canonicalizes a setting saved on a host with no profile", async () => {
+  it("canonicalizes a setting saved on a host with no profile", () => {
     const set = setEventsHostSetting(base(), ["webhook"]);
     expect(
       canonicalizeHostConfigV2(set).mcpProfile?.extensions?.[
         MCPJAM_EVENTS_EXTENSION_ID
       ]
     ).toEqual({ webhook: true });
-    expect(await computeHostConfigHashV2(clearEventsHostSetting(set))).toBe(
-      await computeHostConfigHashV2(base())
-    );
   });
 
   it("keeps an explicit {} distinct from absent, and absent hashes as before", async () => {
@@ -233,16 +222,29 @@ describe("hashes and parity", () => {
     expect(await computeHostConfigHashV2(base())).toBe(absent);
   });
 
-  it("matches the conformance profiles for ChatGPT and MCPJam", () => {
+  it("matches the conformance profiles for ChatGPT Work and MCPJam", () => {
     const catalog = bundledHostCompatCatalog();
-    expect(
-      resolveHostEventDeliveryModes(getCatalogTemplate(catalog, "chatgpt"))
-    ).toEqual(CHATGPT_PROFILE.deliveryModes.value);
+    for (const id of ["chatgpt-work", "chatgpt-work-desktop"]) {
+      expect(
+        resolveHostEventDeliveryModes(getCatalogTemplate(catalog, id))
+      ).toEqual(CHATGPT_PROFILE.deliveryModes.value);
+    }
     expect(
       [
         ...resolveHostEventDeliveryModes(getCatalogTemplate(catalog, "mcpjam")),
       ].sort()
     ).toEqual([...DRAFT_PROFILE.deliveryModes.value].sort());
+  });
+
+  it("saves no events for personal ChatGPT, which receives none", () => {
+    const catalog = bundledHostCompatCatalog();
+    for (const id of ["chatgpt", "chatgpt-desktop"]) {
+      const template = getCatalogTemplate(catalog, id);
+      expect(readEventsHostSetting(template)).toEqual({
+        kind: "valid",
+        modes: [],
+      });
+    }
   });
 
   it("covers every protocol version the ChatGPT template speaks", () => {
