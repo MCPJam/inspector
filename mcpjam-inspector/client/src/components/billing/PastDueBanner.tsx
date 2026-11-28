@@ -83,8 +83,8 @@ export function PastDueBanner({
           className="size-1.5 shrink-0 rounded-full bg-warning"
         />
         <span className="text-pretty">
-          Billing for {organizationName} needs attention. An owner has been
-          asked to update the card.
+          Payment failed for {organizationName}. An owner has been asked to
+          update the card.
         </span>
         <Button
           size="icon"
