@@ -568,6 +568,8 @@ export async function executeSteps(args: {
     | "drainFollowUps"
   >;
   handlers: StepExecutorHandlers;
+  /** Records a client decision made by the executor rather than a turn handler. */
+  onClientDecision?: (span: EvalTraceSpan) => void;
   /** Aborted check — when true at a step boundary the executor stops early. */
   isAborted?: () => boolean;
   /**
@@ -585,6 +587,7 @@ export async function executeSteps(args: {
   }) => void;
 }): Promise<StepExecutorResult> {
   const { steps, state, browser, handlers, isAborted, onStepStatus } = args;
+  const startedAt = Date.now();
 
   // Bind the state's render-observation field to the browser session's live
   // array (a stable reference the session pushes into as widgets render). This
@@ -737,6 +740,24 @@ export async function executeSteps(args: {
 
     if (isToolCallStep(step)) {
       browser.setActivePromptIndex(turnOrdinal);
+      if (step.approval === "deny") {
+        const elapsedMs = Date.now() - startedAt;
+        const denial: EvalTraceSpan = {
+          id: crypto.randomUUID(),
+          name: "Saved client approval denied",
+          category: "step",
+          authoredStepId: step.id,
+          toolName: step.toolName,
+          promptIndex: turnOrdinal,
+          startMs: elapsedMs,
+          endMs: elapsedMs,
+          status: "ok",
+        };
+        state.spans.push(denial);
+        args.onClientDecision?.(denial);
+        emitStatus(stepIndex, "ok");
+        continue;
+      }
       emitStatus(stepIndex, "running");
       const outcome = await handlers.onToolCall({
         step,

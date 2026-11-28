@@ -362,6 +362,86 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     }
   );
 
+  it("lets a persona click the previous assistant turn's app before ending", async () => {
+    const context = buildFakeBrowserContext({ computerUse: true });
+    const control = { toolCallId: "app-call", role: "button", name: "Save" };
+    const clickPersonaAppControl = vi.fn().mockResolvedValue({ ok: true });
+    createBrowserSessionContextMock.mockReturnValue({
+      ...context,
+      listPersonaAppControls: vi.fn().mockResolvedValue([control]),
+      clickPersonaAppControl,
+    });
+    const args = baseAdapter();
+    args.nextPersonaTurn.mockReset()
+      .mockResolvedValueOnce({ message: "open the form", endSession: false })
+      .mockResolvedValueOnce({ message: "", endSession: true, clickIndex: 0 });
+    const result = await runSyntheticHostSession({
+      ...args,
+      enablePersonaAppClicks: true,
+    });
+    expect(result.outcome).toBe("succeeded");
+    expect(args.nextPersonaTurn).toHaveBeenLastCalledWith(
+      expect.any(Array), ["button: Save"],
+    );
+    expect(clickPersonaAppControl).toHaveBeenCalledExactlyOnceWith(control);
+    expect(context.dismissCarriedWidget).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes host controls after each persona click without another assistant turn", async () => {
+    const context = buildFakeBrowserContext({ computerUse: true });
+    const close = { toolCallId: "app-call", role: "button", name: "Back to chat", scope: "host" };
+    const reopen = { ...close, name: "Show app" };
+    const click = vi.fn().mockResolvedValue({ ok: true });
+    createBrowserSessionContextMock.mockReturnValue({
+      ...context,
+      listPersonaAppControls: vi.fn().mockResolvedValueOnce([close]).mockResolvedValueOnce([reopen]),
+      clickPersonaAppControl: click,
+    });
+    const args = baseAdapter();
+    args.nextPersonaTurn.mockReset()
+      .mockResolvedValueOnce({ message: "open the form", endSession: false })
+      .mockResolvedValueOnce({ message: "", clickIndex: 0, continueControls: true })
+      .mockResolvedValueOnce({ message: "", clickIndex: 0, endSession: true });
+    expect(await runSyntheticHostSession({ ...args, enablePersonaAppClicks: true }))
+      .toMatchObject({ outcome: "succeeded" });
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+    expect(click.mock.calls).toEqual([[close], [reopen]]);
+    expect(args.nextPersonaTurn).toHaveBeenLastCalledWith(
+      expect.any(Array), ["host button: Show app"], ["host button: Back to chat"],
+    );
+  });
+
+  it("continues after failed clicks and asks for a text reply at the limit", async () => {
+    const context = buildFakeBrowserContext({ computerUse: true });
+    const click = vi.fn().mockResolvedValue({ ok: false, reason: "control disappeared" });
+    createBrowserSessionContextMock.mockReturnValue({
+      ...context,
+      listPersonaAppControls: vi.fn().mockResolvedValue([
+        { toolCallId: "app-call", role: "button", name: "Save" },
+      ]),
+      clickPersonaAppControl: click,
+    });
+    const args = baseAdapter();
+    args.nextPersonaTurn.mockReset().mockResolvedValueOnce({
+      message: "open the form", endSession: false,
+    });
+    for (let i = 0; i < 5; i++) {
+      args.nextPersonaTurn.mockResolvedValueOnce({
+        message: "", clickIndex: 0, continueControls: true, endSession: false,
+      });
+    }
+    args.nextPersonaTurn.mockResolvedValue({
+      message: "the button disappeared", endSession: false,
+    });
+    expect(await runSyntheticHostSession({ ...args, maxTurns: 2, enablePersonaAppClicks: true }))
+      .toMatchObject({ outcome: "succeeded" });
+    expect(click).toHaveBeenCalledTimes(5);
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(2);
+    expect(args.nextPersonaTurn).toHaveBeenLastCalledWith(expect.any(Array), [],
+      Array(5).fill("Failed to click button: Save"),
+    );
+  });
+
   it("rejects an empty persona message without calling the assistant", async () => {
     createBrowserSessionContextMock.mockReturnValue(
       buildFakeBrowserContext({ computerUse: true })

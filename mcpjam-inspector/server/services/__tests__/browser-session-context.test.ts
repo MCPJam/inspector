@@ -42,6 +42,8 @@ const harnessInstances: Array<{
   // this instance.
   runScriptedStep: (...args: unknown[]) => unknown;
   getRecordingStartedAt: ReturnType<typeof vi.fn>;
+  captureSnapshot: ReturnType<typeof vi.fn>;
+  visibleHostAppControl: ReturnType<typeof vi.fn>;
   captureLiveThumbnail?: ReturnType<typeof vi.fn>;
 }> = [];
 
@@ -62,6 +64,8 @@ vi.mock("../../utils/mcp-app-browser-harness", async () => {
         dismissWidget: vi.fn().mockResolvedValue(undefined),
         dispose: vi.fn().mockResolvedValue(undefined),
         executeAction: vi.fn(),
+        captureSnapshot: vi.fn(),
+        visibleHostAppControl: vi.fn().mockResolvedValue(undefined),
         runScriptedStep: (...args: unknown[]) => runScriptedStepImpl(...args),
         // Recording-start origin for `videoOffsetMs`. Null (no recording) is
         // the default, matching a harness that never launched Chromium.
@@ -982,6 +986,50 @@ describe("createBrowserSessionContext — widget interaction checks", () => {
       passed: true,
     });
     expect(ctx.scriptedCheckFailures).toHaveLength(0);
+  });
+
+  it("records persona clicks on named, unambiguous controls", async () => {
+    rendered();
+    const ctx = await createBrowserSessionContext({ mcpClientManager: managerWithWidget() });
+    ctx.setKeepWidgetsMountedForSteps(true);
+    await ctx.renderPinnedToolResult(renderArgs);
+    const harness = harnessInstances[0]!;
+    harness.getMountedWidgetId.mockReturnValue("tc-1");
+    harness.captureSnapshot.mockResolvedValue({
+      elements: [
+        { role: { role: "button", name: "Save" } },
+        { role: { role: "button", name: "Duplicate" }, ambiguous: true },
+        { role: { role: "textbox", name: "Title" } },
+      ],
+    });
+
+    const controls = await ctx.listPersonaAppControls();
+    expect(controls).toEqual([{ toolCallId: "tc-1", role: "button", name: "Save" }]);
+    await expect(ctx.clickPersonaAppControl(controls[0]!)).resolves.toEqual({ ok: true });
+    expect(runScriptedStepImpl).toHaveBeenCalledWith({
+      toolCallId: "tc-1",
+      step: { kind: "click", target: { role: { role: "button", name: "Save", exact: true } } },
+      priorWidgetToolCalls: [],
+    });
+    expect(ctx.browserInteractionSteps).toMatchObject([{
+      toolCallId: "tc-1",
+      action: "left_click",
+      actor: "persona",
+      target: { role: "button", name: "Save" },
+      elapsedMs: 1,
+      ok: true,
+    }]);
+
+    harness.visibleHostAppControl.mockResolvedValue("Show app");
+    const [showApp] = await ctx.listPersonaAppControls();
+    expect(showApp).toEqual({
+      toolCallId: "tc-1", role: "button", name: "Show app", scope: "host",
+    });
+    await ctx.clickPersonaAppControl(showApp!);
+    expect(ctx.browserInteractionSteps[1]).toMatchObject({
+      actor: "persona",
+      target: { role: "button", name: "Show app", scope: "host" },
+    });
   });
 
   it("forwards prior widget tool calls across separate unified steps (widgetToolCalled sees an earlier interact's call)", async () => {

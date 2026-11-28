@@ -1197,3 +1197,5 @@ export type {
   JudgeBacktestReport,
 } from "../contract/judge-backtest.js";
 export { PLATFORM_EVAL_FINDINGS_VIEW_VERSION } from "./findings-view-types.js";
+
+export * from "./recorded-app-operations.js";

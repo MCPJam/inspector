@@ -221,6 +221,50 @@ describe("GET /v1/chat-sessions/:id", () => {
 // ── Trace read ──────────────────────────────────────────────────────────────
 
 describe("GET /v1/chat-sessions/:id/trace", () => {
+  it("includes app replay metadata on request without widget messages", async () => {
+    const action = {
+      toolCallId: "call-1",
+      stepIndex: 0,
+      promptIndex: 0,
+      elapsedMs: 4,
+      ts: 100,
+      action: "left_click",
+      actor: "persona",
+      target: { role: "button", name: "Save" },
+      followUps: ["A widget message"],
+      ok: true,
+    };
+    queryMock.mockImplementation(async (name: string) => {
+      if (name === "chatSessions:getSession") return sessionRow({ origin: "swarm" });
+      if (name === "chatSessions:getSessionTurnTraces") return [traceRow(0)];
+      return {
+        widgetRenderObservations: [{
+          toolCallId: "call-1", toolName: "show_form", status: "rendered",
+        }],
+        browserInteractionSteps: [action],
+        personaAppActions: { attempted: 1, succeeded: 1, elapsedMs: 4 },
+      };
+    });
+
+    const ordinary = await call("GET", `/api/v1/chat-sessions/${SESSION}/trace?includeSpans=false`);
+    expect(await ordinary.json()).not.toHaveProperty("appRecording");
+    expect(queryMock).not.toHaveBeenCalledWith("chatSessions:getBrowserArtifacts", expect.anything());
+
+    const response = await call(
+      "GET",
+      `/api/v1/chat-sessions/${SESSION}/trace?includeSpans=false&includeAppRecording=true`,
+    );
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.appRecording).toMatchObject({
+      apps: [{ toolCallId: "call-1", toolName: "show_form" }],
+      actions: [{ actor: "persona", target: action.target, requiresModelFollowUp: true }],
+      summary: { attempted: 1, succeeded: 1, elapsedMs: 4 },
+      truncated: false,
+    });
+    expect(JSON.stringify(payload)).not.toContain("A widget message");
+  });
+
   it("returns the LATEST turn by default, not the whole session", async () => {
     queryMock.mockImplementation(async (name: string) =>
       name === "chatSessions:getSession"

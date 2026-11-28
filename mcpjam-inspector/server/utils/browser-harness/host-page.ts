@@ -127,6 +127,7 @@ declare global {
 
 let workspacePanel: HTMLElement | undefined;
 let workspaceUpdate: ((presentation?: HarnessPresentation) => void) | undefined;
+let workspaceOpenApp: typeof workspaceUpdate;
 function ensureRoot(): HTMLElement {
   if (workspacePanel?.isConnected) return workspacePanel;
   const root = document.createElement("div");
@@ -135,6 +136,7 @@ function ensureRoot(): HTMLElement {
   const mounted = mountHarnessWorkspace(root);
   workspacePanel = mounted.panel;
   workspaceUpdate = mounted.update;
+  workspaceOpenApp = mounted.openApp;
   return workspacePanel;
 }
 
@@ -176,7 +178,7 @@ async function renderWidget(
   dismissWidget(opts.widgetId);
 
   const root = ensureRoot();
-  workspaceUpdate?.(opts.presentation);
+  workspaceOpenApp?.(opts.presentation ?? {});
   const iframe = document.createElement("iframe");
   iframe.setAttribute("sandbox", policy.sandbox);
   if (policy.allow) iframe.setAttribute("allow", policy.allow);

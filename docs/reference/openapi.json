@@ -11756,6 +11756,16 @@
               "type": "boolean",
               "default": true
             }
+          },
+          {
+            "name": "includeAppRecording",
+            "in": "query",
+            "required": false,
+            "description": "Include the session's recorded MCP App targets and persona action counts when available.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -16984,6 +16994,17 @@
             "description": "Tool-call arguments (`kind: toolCall`).",
             "additionalProperties": true
           },
+          "approval": {
+            "type": "string",
+            "enum": ["approve", "deny"],
+            "description": "Saved client decision for a tool call. A denial records the decision without sending the call."
+          },
+          "expectedQuestions": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "Require this many form questions from the tool, answered in saved reply order."
+          },
           "action": {
             "type": "object",
             "description": "Widget action (`kind: interact`).",
@@ -17306,6 +17327,11 @@
                   "items": {
                     "$ref": "#/components/schemas/EvalTestStep"
                   }
+                },
+                "inputAnswers": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "items": { "$ref": "#/components/schemas/EvalInputAnswer" }
                 },
                 "runs": {
                   "type": "integer",
@@ -29452,6 +29478,12 @@
         ],
         "properties": {
           "projectId": { "type": ["string", "null"] },
+          "appRecording": { "$ref": "#/components/schemas/RecordedAppTrace" },
+          "clientActions": {
+            "type": "array",
+            "description": "Ordered client action receipts. Returned with includeAppRecording when present.",
+            "items": { "$ref": "#/components/schemas/ClientActionReceipt" }
+          },
           "sessionId": {
             "type": "string"
           },
@@ -29483,6 +29515,82 @@
           "chatSessionId": {
             "type": "string"
           }
+        }
+      },
+      "ClientActionReceipt": {
+        "type": "object",
+        "required": ["id", "order", "actor", "surface", "kind", "outcome", "elapsedMs", "startedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "order": { "type": "integer", "minimum": 0 },
+          "actor": { "type": "string", "enum": ["persona", "model", "scripted"] },
+          "surface": { "type": "string", "enum": ["client"] },
+          "kind": { "type": "string", "enum": ["question", "approval"] },
+          "outcome": {
+            "type": "string",
+            "enum": ["accepted", "declined", "cancelled", "approved", "denied", "expired", "invalid", "unavailable", "unsupported"]
+          },
+          "elapsedMs": { "type": "number", "minimum": 0 },
+          "startedAt": { "type": "number", "minimum": 0 },
+          "serverId": { "type": "string", "maxLength": 256 },
+          "toolName": { "type": "string", "maxLength": 256 },
+          "invocationId": { "type": "string", "maxLength": 256 }
+        },
+        "additionalProperties": false
+      },
+      "RecordedAppTrace": {
+        "type": "object",
+        "required": ["apps", "actions", "summary", "truncated"],
+        "properties": {
+          "apps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["toolCallId", "toolName"],
+              "properties": {
+                "toolCallId": { "type": "string" },
+                "toolName": { "type": "string" },
+                "serverId": { "type": "string" }
+              }
+            }
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["toolCallId", "stepIndex", "promptIndex", "elapsedMs", "ts", "action", "requiresModelFollowUp"],
+              "properties": {
+                "toolCallId": { "type": "string" },
+                "stepIndex": { "type": "integer", "minimum": 0 },
+                "promptIndex": { "type": "integer", "minimum": 0 },
+                "elapsedMs": { "type": "number", "minimum": 0 },
+                "ts": { "type": "number" },
+                "action": { "type": "string" },
+                "actor": { "type": "string", "enum": ["persona", "model", "scripted"] },
+                "ok": { "type": "boolean" },
+                "target": {
+                  "type": "object",
+                  "required": ["role", "name"],
+                  "properties": {
+                    "role": { "type": "string" },
+                    "name": { "type": "string" },
+                    "scope": { "type": "string", "enum": ["host"] }
+                  }
+                },
+                "requiresModelFollowUp": { "type": "boolean" }
+              }
+            }
+          },
+          "summary": {
+            "type": "object",
+            "required": ["attempted", "succeeded", "elapsedMs"],
+            "properties": {
+              "attempted": { "type": "integer", "minimum": 0 },
+              "succeeded": { "type": "integer", "minimum": 0 },
+              "elapsedMs": { "type": "number", "minimum": 0 }
+            }
+          },
+          "truncated": { "type": "boolean" }
         }
       },
       "WidgetSnapshotElement": {

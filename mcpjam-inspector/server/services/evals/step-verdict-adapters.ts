@@ -122,6 +122,9 @@ export function buildStepResultRecords(
         ? { ...base, status: "fail", reason: f.reason }
         : { ...base, status: "ok" };
     }
+    if (step.kind === "toolCall" && step.approval === "deny") {
+      return { ...base, status: "ok", reason: "The saved approval denied the call." };
+    }
     return { ...base, status: "ok" };
   });
 }

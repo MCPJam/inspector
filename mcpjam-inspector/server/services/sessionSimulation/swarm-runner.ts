@@ -1683,6 +1683,7 @@ async function runJourneyFanOut(
             budgets,
             ...(personaClientActionsEnabled()
               ? {
+                  enablePersonaAppClicks: true,
                   nextPersonaClientAction: async (transcriptSoFar, clientAction, signal) =>
                     (await swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
                       projectId,
@@ -1697,7 +1698,7 @@ async function runJourneyFanOut(
                     })).message,
                 }
               : {}),
-            nextPersonaTurn: (transcriptSoFar) =>
+            nextPersonaTurn: (transcriptSoFar, appControls, recentActions) =>
               swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
                 projectId,
                 runId,
@@ -1705,6 +1706,8 @@ async function runJourneyFanOut(
                 ...(targetId ? { targetId } : {}),
                 sessionIdx: attemptSessionIdx,
                 transcriptSoFar,
+                ...(appControls?.length ? { appControls } : {}),
+                ...(recentActions?.length ? { recentActions } : {}),
                 // Forward the run-level stop (composed shutdown/cancel + spend-cap
                 // runStop) so a short-circuit aborts a parked persona fetch
                 // immediately and the session unwinds (instead of lingering up to

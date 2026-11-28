@@ -52,6 +52,19 @@ describe("buildStepResultRecords", () => {
     expect(out.find((r) => r.stepId === "p0")?.status).toBe("ok");
     expect(out.find((r) => r.stepId === "i0")?.status).toBe("ok");
   });
+
+  it("explains a replayed denial in the step result", () => {
+    const results = buildStepResultRecords({
+      assertionResults: [], interactionFailures: [], skippedSteps: [],
+    }, [{
+      id: "discard", kind: "toolCall", serverName: "forms", toolName: "discard",
+      arguments: {}, approval: "deny",
+    }]);
+    expect(results).toEqual([{
+      stepId: "discard", stepIndex: 0, kind: "toolCall", status: "ok",
+      reason: "The saved approval denied the call.",
+    }]);
+  });
 });
 
 describe("bucketStepToolCallsByPrompt", () => {

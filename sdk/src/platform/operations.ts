@@ -1,3 +1,7 @@
+import {
+  compileRecordedAppCaseOperation,
+  summarizeRecordedAppActionsOperation,
+} from "./recorded-app-operations.js";
 export { toolResultAuthChallengeFindings } from "../host-compat/tool-auth-compatibility.js";
 import {
   environmentNamesFor,
@@ -5136,6 +5140,8 @@ const stepInputSchema = z
         serverName: z.string().min(1),
         toolName: z.string().min(1),
         arguments: z.record(z.string(), z.any()),
+        approval: z.enum(["approve", "deny"]).optional(),
+        expectedQuestions: z.number().int().min(1).max(20).optional(),
         renderTimeoutMs: z.number().int().positive().optional(),
       })
       .passthrough(),
@@ -9767,6 +9773,7 @@ export const getChatSessionOperation: PlatformOperation<
 };
 
 const getChatSessionTraceInput = z.object({
+  includeAppRecording: z.boolean().optional(),
   sessionId: z.string().trim().min(1).describe("The session id to trace."),
   project: z.string().trim().min(1).optional(),
   turnId: z
@@ -9843,6 +9850,7 @@ export const getChatSessionTraceOperation: PlatformOperation<
     return client.getChatSessionTrace(
       {
         sessionId: input.sessionId,
+        ...(input.includeAppRecording ? { includeAppRecording: true } : {}),
         ...(projectId ? { projectId } : {}),
         ...(input.turnId ? { turnId: input.turnId } : {}),
         ...(input.afterPromptIndex !== undefined
@@ -19610,6 +19618,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   observeChatSessionBrowserOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
+  compileRecordedAppCaseOperation,
+  summarizeRecordedAppActionsOperation,
   listGoalsOperation,
   listGoalRunsOperation,
   getGoalRunOperation,

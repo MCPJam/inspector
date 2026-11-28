@@ -55,6 +55,35 @@ function makeHandlers(
 }
 
 describe("step-executor", () => {
+  it("records a saved denial without calling the tool and resumes at the next step", async () => {
+    const denied: TestStep = {
+      id: "denied",
+      kind: "toolCall",
+      serverName: "viewer",
+      toolName: "discard_view",
+      arguments: {},
+      approval: "deny",
+    };
+    const approved: TestStep = {
+      ...denied,
+      id: "approved",
+      toolName: "create_view",
+      approval: "approve",
+    };
+    const state = createStepExecutionState();
+    const handlers = makeHandlers();
+    const onClientDecision = vi.fn();
+    await executeSteps({ steps: [denied, approved], state, browser: makeBrowser(), handlers, onClientDecision });
+    expect(handlers.onToolCall).toHaveBeenCalledExactlyOnceWith({
+      step: approved, stepIndex: 1, turnOrdinal: 1,
+    });
+    expect(state.spans).toContainEqual(
+      expect.objectContaining({ name: "Saved client approval denied", authoredStepId: "denied" }),
+    );
+    expect(onClientDecision).toHaveBeenCalledExactlyOnceWith(state.spans[0]);
+    expect(state.toolCalls.map(({ toolName }) => toolName)).toEqual(["create_view"]);
+  });
+
   it("runs prompt + toolCall steps through the engine handlers and accumulates state", async () => {
     const steps: TestStep[] = [
       { id: "s1", kind: "prompt", prompt: "Draw a cat" },
