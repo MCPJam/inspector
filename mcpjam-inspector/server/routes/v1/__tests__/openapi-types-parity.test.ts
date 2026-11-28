@@ -257,8 +257,9 @@ const FIELD_EXEMPTIONS: Readonly<Record<string, Readonly<string[]>>> = {
   ProjectEnvironment: ["pluginVersionIds", "sandboxImageId"],
   AdhocEnvironment: ["pluginVersionIds", "sandboxImageId"],
   ProjectEnvironmentResolved: ["pluginVersions", "sandboxImageId"],
-  // Code evaluators and setup and cleanup scripts are behind the
-  // `eval-code-evaluators` flag, so the spec leaves them out the same way.
+  // Code evaluators and grading settings are behind the `eval-code-evaluators`
+  // flag, and setup and cleanup scripts behind `eval-setup-cleanup-scripts`, so
+  // the spec leaves them out the same way.
   EvalSuiteSettings: ["codeEvaluators", "scripts", "grading"],
   EvalSuiteSettingsV2: ["codeEvaluators", "scripts", "grading"],
 };

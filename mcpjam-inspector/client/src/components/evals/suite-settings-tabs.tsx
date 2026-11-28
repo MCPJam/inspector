@@ -46,7 +46,10 @@ const TAB_OPTIONS = (["settings", "evaluators"] as const).map((value) => ({
  * `hiddenUnless("evaluators")`: a key missing here sends `goToSetting` to the
  * wrong tab, where its section is hidden and the scroll does nothing.
  */
-const EVALUATOR_SETTING_KEYS: ReadonlySet<string> = new Set(["passOrFail"]);
+const EVALUATOR_SETTING_KEYS: ReadonlySet<string> = new Set([
+  "passOrFail",
+  "grading",
+]);
 
 export function suiteSettingsTabForKey(key: string): SuiteSettingsTab {
   return EVALUATOR_SETTING_KEYS.has(key) ? "evaluators" : "settings";

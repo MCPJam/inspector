@@ -105,6 +105,13 @@ export type SuiteCapabilities = {
     "cursor-harness": SuiteFeatureGate;
     /** An env-var kill switch, not a per-org flag: no reason vocabulary. */
     scheduledEvals: { enabled: boolean };
+    /**
+     * Adding setup and cleanup scripts, and adding code evaluators or grading
+     * settings. Absent on a backend that predates the keys: unknown, so the
+     * client flag decides (`code-grading-flags.ts`).
+     */
+    "eval-setup-cleanup-scripts"?: SuiteFeatureGate;
+    "eval-code-evaluators"?: SuiteFeatureGate;
   };
   judge: {
     role: "advisory" | "gating";

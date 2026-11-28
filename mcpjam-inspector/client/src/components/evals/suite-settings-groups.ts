@@ -15,9 +15,12 @@ export const SUITE_SETTINGS_GROUPS = [
     // threshold their runs are decided against had to open a heading about
     // regressions to find it — and once inside, the criterion, the count and
     // the gate shared one Edit/Close and one dirty badge.
-    rows: ["policy", "iterations", "qualityGate", "passOrFail"],
+    // `grading` is the grading box row beside the evaluators, on the Default
+    // evaluators tab: a row key, not this group's id.
+    rows: ["policy", "iterations", "qualityGate", "passOrFail", "grading"],
   },
   { id: "runs", label: "Clients and models", rows: ["environments", "accounts"] },
+  { id: "setup", label: "Setup and cleanup", rows: ["scripts"] },
   {
     id: "limits",
     label: "Time & retry limits",

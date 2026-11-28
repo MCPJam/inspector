@@ -502,6 +502,53 @@ describe("eval suite settings manifest — render parity", () => {
     expect(keys).not.toContain("schedule");
   });
 
+  /**
+   * Setup and cleanup and Grading each follow their own flag (on here) and
+   * the suite's capabilities. A refusal there keeps a stored value on screen,
+   * read-only and removable, and says why rather than hiding the row.
+   */
+  it("renders Setup and cleanup and Grading as rows of their own", () => {
+    const { container } = renderSettingsSheet();
+    const keys = collectAllSettingKeys(container);
+    expect(keys).toContain("scripts");
+    expect(keys).toContain("grading");
+  });
+
+  it("explains a capability refusal on the row it applies to, and keeps it clearable", () => {
+    const features = readyCapabilities().capabilities.features;
+    mocks.capabilities.mockReturnValue(
+      readyCapabilities({
+        features: {
+          ...features,
+          "eval-setup-cleanup-scripts": {
+            enabled: false,
+            reason: "flag_false",
+          },
+          "eval-code-evaluators": { enabled: true },
+        },
+      }),
+    );
+    const { container } = renderSettingsSheet({
+      suite: { ...baseSuite, scripts: { runSetup: "seed" } },
+    });
+    const scripts = container.querySelector('[data-setting-key="scripts"]');
+    expect(scripts?.getAttribute("data-read-only-reason")).toBe(
+      "Not enabled for this organization. These scripts still run, and you can remove them.",
+    );
+    // Not a disabled row: removing a script is never gated.
+    expect(scripts?.getAttribute("data-disabled-reason")).toBeNull();
+    expect(
+      scripts?.querySelector(
+        'button[aria-label="Remove the Before the run script"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      container
+        .querySelector('[data-setting-key="grading"]')
+        ?.getAttribute("data-read-only-reason"),
+    ).toBeNull();
+  });
+
   it("puts the setup client table on the Clients row", () => {
     const { container } = renderSettingsSheet();
     showSettingsKey(container, "environments");

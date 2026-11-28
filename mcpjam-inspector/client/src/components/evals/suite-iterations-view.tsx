@@ -63,9 +63,13 @@ import { useEnvironmentCapabilities } from "@/hooks/use-environment-capabilities
 import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { useCodeGradingGates } from "./code-grading/code-grading-flags";
+import { SetupCleanupRow } from "./code-grading/setup-cleanup-row";
+import { GradingRow } from "./code-grading/grading-row";
 import {
   buildHostNamesById,
   compareRunsBySequence,
+  evalSandboxPhaseRefusal,
   evalSuitePinsSandboxImage,
   generationEnvironmentChoices,
   generationEnvironmentId,
@@ -278,6 +282,8 @@ const ROW_DRAFT_KEYS: Partial<Record<EvalSuiteSettingKey, SuiteSettingsKey[]>> =
     iterationTimeoutMs: ["iterationTimeoutMs"],
     runTimeoutMs: ["runTimeoutMs"],
     turnRetries: ["turnRetries"],
+    scripts: ["scripts"],
+    grading: ["grading"],
   };
 
 /**
@@ -791,6 +797,9 @@ export function SuiteIterationsView({
   // page more honest; they must never make it less usable than the page that
   // had none.
   const capabilitiesReady = capabilitiesState === "ready" && capabilities;
+  const codeGradingGates = useCodeGradingGates(
+    capabilitiesReady ? capabilities : null,
+  );
 
   // IS THIS SUITE CI'S? — asked of two sources, and answered once.
   //
@@ -1375,11 +1384,14 @@ export function SuiteIterationsView({
     projectId: projectId ?? null,
     includePrivateBacking: true,
   });
+  const sandboxPhaseRefusal = evalSandboxPhaseRefusal("suite", suite, {
+    ephemeralCloudAvailable,
+  });
   const evalRunsDisabledReason =
     evalRunsDisabledReasonProp ??
     (suitePinsSandboxImage && ephemeralCloudAvailable === false
       ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
-      : null);
+      : (sandboxPhaseRefusal?.message ?? null));
   // Out of credits, a run whose every model is a locked MCPJam one could only
   // be refused, so its buttons say so before the click. Each control asks
   // about the cases it launches: the suite for Run all, one case for its Run.
@@ -3288,6 +3300,20 @@ export function SuiteIterationsView({
               disabled={editingDisabled}
               className="m-0 min-w-0 space-y-8 border-0 p-0"
             >
+              <SetupCleanupRow
+                key={suite._id}
+                suite={suite}
+                draft={draft}
+                dispatch={dispatchDraft}
+                gate={codeGradingGates.scripts}
+                runRefusal={sandboxPhaseRefusal?.message}
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("scripts")}
+                    conflict={rowIsConflict("scripts")}
+                  />
+                }
+              />
               <BudgetSettingRow
                 settingKey="turnTimeoutMs"
                 label="Per-turn timeout"
@@ -3493,6 +3519,17 @@ export function SuiteIterationsView({
                   }
                 />
               </div>
+              <GradingRow
+                draft={draft}
+                dispatch={dispatchDraft}
+                gate={codeGradingGates.grading}
+                accessory={
+                  <LedgerRowChips
+                    dirty={rowIsDirty("grading")}
+                    conflict={rowIsConflict("grading")}
+                  />
+                }
+              />
             </fieldset>
           </div>
         </div>

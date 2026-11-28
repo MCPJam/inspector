@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 import { Loader2, RotateCw, X } from "lucide-react";
 import { EVAL_REPLAY_SNAPSHOT_CLOUD_UNREACHABLE_MESSAGE } from "@/components/computer/CloudUnreachableNotice";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
+import { HOSTED_MODE } from "@/lib/config";
+import { evalSandboxPhaseRefusal } from "./helpers";
 import type { EvalSuite, EvalSuiteRun } from "./types";
 
 /** Replay / rerun / cancel controls for a run detail view (SuiteHeader row or CI sidebar). */
@@ -74,12 +76,19 @@ export function RunDetailPlaygroundActions({
   // pin may have been cleared or changed since, so the externally-derived
   // reason (live suite/environment state) can't cover this case.
   const ephemeralCloudAvailable = useEphemeralCloudAvailable();
-  const replaySnapshotBlockedReason =
-    isReplayAction &&
-    ephemeralCloudAvailable === false &&
-    Boolean(selectedRun.configSnapshot?.environment?.computerEnvironmentId)
+  // The run's frozen scripts and code evaluators replay too, on the venue the
+  // run used: a local one stays on this machine.
+  const replaySnapshotBlockedReason = !isReplayAction
+    ? null
+    : ephemeralCloudAvailable === false &&
+        Boolean(selectedRun.configSnapshot?.environment?.computerEnvironmentId)
       ? EVAL_REPLAY_SNAPSHOT_CLOUD_UNREACHABLE_MESSAGE
-      : null;
+      : (evalSandboxPhaseRefusal("run", selectedRun.configSnapshot, {
+          ephemeralCloudAvailable,
+          localRun:
+            !HOSTED_MODE &&
+            selectedRun.configSnapshot?.executionVenue === "local",
+        })?.message ?? null);
   const effectiveDisabledReason =
     runsDisabledReason ?? replaySnapshotBlockedReason;
   const runActionDisabled = Boolean(
