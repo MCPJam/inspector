@@ -50,7 +50,9 @@ describe("reapHarnessBridgesCommand", () => {
     );
   });
 
-  it("does nothing, and says nothing, when no bridge is running", () => {
+  // The command only ever runs on an E2B box, so this runs it under /bin/sh
+  // with a POSIX state dir, neither of which a Windows host has.
+  it.skipIf(process.platform === "win32")("does nothing, and says nothing, when no bridge is running", () => {
     // Also the whole story on a box without /proc: nothing to read, no-op.
     expect(reap(join(tmpdir(), "no-such-root", "s-1", "bridge"))).toBe("");
   });

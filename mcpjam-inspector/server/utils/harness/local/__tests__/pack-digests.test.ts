@@ -68,7 +68,8 @@ describe("the pack build and the server agree on what a digest is", () => {
     expect(buildScriptDigest(root).digest).toBe(await computeTreeDigest(root));
   });
 
-  it("agrees that the executable bit changes the digest", async () => {
+  // NTFS has no execute bit to flip, so every file digests as non-executable.
+  it.skipIf(process.platform === "win32")("agrees that the executable bit changes the digest", async () => {
     const root = join(base, "mode");
     await mkdir(root, { recursive: true });
     await writeFile(join(root, "x"), "same bytes\n");
@@ -132,7 +133,8 @@ describe("a staged pack has no hardlinks left in it", () => {
     expect(await readFile(join(root, "shared.js"), "utf8")).toBe(
       "module.exports = 1;\n",
     );
-    expect(a.mode & 0o777).toBe(0o755);
+    // NTFS reports 0o666 whatever chmod asked for.
+    if (process.platform !== "win32") expect(a.mode & 0o777).toBe(0o755);
     expect(buildScriptDigest(root).digest).toBe(before);
     expect(await computeTreeDigest(root)).toBe(before);
   });

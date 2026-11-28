@@ -27,12 +27,13 @@ import {
   type LocalHarnessProcessRecord,
 } from "../process-registry.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 const canOwnProcesses = supportsOwnershipProof();
 
 let base: string;
 let scripts: string;
-const realHome = process.env.HOME;
+let restoreHome: () => void;
 
 function record(
   overrides: Partial<LocalHarnessProcessRecord> = {},
@@ -73,7 +74,7 @@ const LEADER_WITH_SURVIVOR = [
 
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-registry-")));
-  process.env.HOME = base;
+  restoreHome = useDisposableHome(base);
   scripts = join(base, "scripts");
   await mkdir(scripts, { recursive: true });
   await writeFile(
@@ -83,8 +84,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
+  restoreHome();
 });
 
 beforeEach(async () => {

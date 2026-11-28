@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
   chmod,
   link,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -144,8 +145,10 @@ async function stagePack(
   await writeFile(join(packRoot, "bridge.mjs"), "export const bridge = 1;\n");
   await writeFile(join(packRoot, "launcher.mjs"), 'await import("./bridge.mjs");\n');
   await writeFile(join(packRoot, "package.json"), '{"name":"pack"}\n');
-  await writeFile(join(packRoot, "bin", "node"), "#!/bin/sh\nexit 0\n");
-  await chmod(join(packRoot, "bin", "node"), 0o755);
+  // The name the build script gives the pack's Node on this host.
+  const node = join(packRoot, "bin", process.platform === "win32" ? "node.exe" : "node");
+  await writeFile(node, "#!/bin/sh\nexit 0\n");
+  await chmod(node, 0o755);
   if (opts.extraFile !== undefined) {
     await writeFile(join(packRoot, "extra.js"), opts.extraFile);
   }
@@ -163,7 +166,11 @@ async function stagePack(
   // against. A tree containing either could not be digested at all (symlink)
   // or would digest to something else (AppleDouble).
   if (opts.withSymlink === true) {
-    await symlink("/etc/passwd", join(packRoot, "sneaky"));
+    // A junction on Windows, which needs no privilege; POSIX ignores the type.
+    // Its target is a directory this test owns, beside the archived tree.
+    const outside = join(staging, "outside");
+    await mkdir(outside);
+    await symlink(outside, join(packRoot, "sneaky"), "junction");
   }
   if (opts.withAppleDouble === true) {
     await writeFile(
@@ -209,6 +216,8 @@ async function buildFixturePack(
         "--group=0",
         "--numeric-owner",
         "--hard-dereference",
+        // As the build script passes it: GNU tar reads `D:\…` as a remote host.
+        "--force-local",
         "-czf",
         archive,
         "-C",
@@ -484,7 +493,9 @@ describe("installing a pack", () => {
       expect(result.state).toBe("ready");
       // The link did not survive extraction.
       const packRoot = join(packVersionRoot("claude-code", PACK_VERSION), "claude-code");
-      await expect(readFile(join(packRoot, "sneaky"))).rejects.toThrow();
+      await expect(lstat(join(packRoot, "sneaky"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
     }

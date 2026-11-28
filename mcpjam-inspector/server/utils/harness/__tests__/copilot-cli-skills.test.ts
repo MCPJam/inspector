@@ -7,6 +7,7 @@
  * expose the `skill` tool and no other built-in, and that the bridge the
  * recipe installs on the box carries them.
  */
+import { normalize } from "node:path";
 import { describe, expect, it } from "vitest";
 import { boxSkillsFolder, planBoxSkills } from "../box-skills-writer";
 import {
@@ -34,8 +35,10 @@ describe("Copilot CLI skills", () => {
     const settings = sessionSkillsAndTools(BOX_HOME, ["search"], []);
 
     expect(settings.enableSkills).toBe(true);
-    expect(settings.skillDirectories).toEqual([
-      boxSkillsFolder(descriptor, BOX_HOME),
+    // The bridge joins with the host's separator, the box writer with `/`; on
+    // Windows those spell one folder two ways.
+    expect(settings.skillDirectories.map(normalize)).toEqual([
+      normalize(boxSkillsFolder(descriptor, BOX_HOME)),
     ]);
     expect(descriptor.readFolders).toEqual([descriptor.writeFolder]);
     // Discovery would add the `.claude`, `.agents` and `.github` skill

@@ -7,16 +7,18 @@ vi.mock("../process-identity.js", () => ({ probeProcess: mocks.probe }));
 vi.mock("../process-registry.js", () => ({ listProcessRecords: mocks.records }));
 vi.mock("../grants.js", async importOriginal => ({ ...await importOriginal<typeof import('../grants.js')>(), forgetWorkspaceGrant: mocks.forget, pruneExpiredHarnessGrants: mocks.prune }));
 import { recordScratchOwner, scratchRoot, sweepLocalHarnessScratch } from "../scratch-janitor.js";
+import { useDisposableHome } from "./disposable-home.js";
 let home: string;
+let restoreHome: () => void;
 beforeEach(async () => {
   vi.clearAllMocks();
-  home = await mkdtemp(join(tmpdir(), "scratch-janitor-")); vi.stubEnv("HOME", home);
+  home = await mkdtemp(join(tmpdir(), "scratch-janitor-")); restoreHome = useDisposableHome(home);
   mocks.probe.mockResolvedValue({ state: "alive", identity: "owner" }); mocks.records.mockResolvedValue([]);
   await mkdir(join(scratchRoot(), "run-test"), { recursive: true });
   await writeFile(join(scratchRoot(), "run-test", "proof"), "keep");
   await recordScratchOwner("run-test", "grant");
 });
-afterEach(async () => { vi.unstubAllEnvs(); await rm(home, { recursive: true, force: true }); });
+afterEach(async () => { restoreHome(); await rm(home, { recursive: true, force: true }); });
 it.each(["alive", "unknown"])("retains work when the owner is %s", async state => {
   mocks.probe.mockResolvedValue({ state, identity: "owner" });
   await sweepLocalHarnessScratch();

@@ -16,6 +16,7 @@ import {
   loadLocalInstanceKey,
   resetInstanceKeyCacheForTests,
 } from "../instance-key.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 // A lease whose payload carries a jti. Not signed by anything — the gateway
 // only reads the claim to bind its proof of possession to, and the backend is
@@ -27,15 +28,14 @@ function fakeLease(jti: string): string {
 }
 
 let home: string;
-let realHome: string | undefined;
+let restoreHome: () => void;
 const open: LocalModelGateway[] = [];
 
 beforeAll(async () => {
   // The gateway signs with the machine's instance key, which is minted under
   // the harness-local state root on first use.
   home = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-gateway-")));
-  realHome = process.env.HOME;
-  process.env.HOME = home;
+  restoreHome = useDisposableHome(home);
   resetInstanceKeyCacheForTests();
 });
 
@@ -44,8 +44,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
+  restoreHome();
   resetInstanceKeyCacheForTests();
   await rm(home, { recursive: true, force: true });
 });

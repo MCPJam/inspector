@@ -7,7 +7,10 @@ type Step = { name?: string; run?: string };
 const file = new URL("../../../../../../.github/workflows/local-harness-conformance.yml", import.meta.url);
 const workflow = parse(readFileSync(file, "utf8")) as { jobs: Record<string, { steps: Step[] }> };
 
-describe("conformance evidence shell arguments", () => {
+// The step runs under `shell: bash` on every runner, Git Bash on windows-latest.
+// A Windows dev machine has no /bin/bash, and the `bash` on its PATH is
+// usually WSL's, which does not inherit this process's environment.
+describe.skipIf(process.platform === "win32")("conformance evidence shell arguments", () => {
   for (const job of ["scenarios", "windows", "codex-scenarios", "runtime-scenarios"]) {
     it.each(["", "1.0.6"])(`${job} records source or published evidence (%s)`, (version) => {
       const script = workflow.jobs[job].steps.find((step) => step.name === "Record conformance evidence")?.run;

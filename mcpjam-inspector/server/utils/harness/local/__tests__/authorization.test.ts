@@ -5,11 +5,13 @@ import { join } from "node:path";
 import { authorizeLocalHarness, readLocalHarnessAuthorization, revokeLocalHarnessAuthorization, updateAuthorizedWorkspace, acknowledgeLocalHarnessAutoApprove } from "../authorization.js";
 import { LOCAL_HARNESS_POLICY_VERSION } from "../targets.js";
 import { localHarnessStateRoot } from "../grants.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 let root: string;
+let restoreHome: () => void;
 const binding = { userId: "user", machineId: "machine", projectId: "project", workspaceGrantId: "workspace" };
-beforeEach(async () => { root = await mkdtemp(join(tmpdir(), "local-authorize-")); vi.stubEnv("HOME", root); });
-afterEach(async () => { vi.useRealTimers(); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); });
+beforeEach(async () => { root = await mkdtemp(join(tmpdir(), "local-authorize-")); restoreHome = useDisposableHome(root); });
+afterEach(async () => { vi.useRealTimers(); restoreHome(); await rm(root, { recursive: true, force: true }); });
 describe("durable local authorization", () => {
   it("survives execution credential expiry and is bound to member, project and machine", async () => {
     await authorizeLocalHarness(binding);

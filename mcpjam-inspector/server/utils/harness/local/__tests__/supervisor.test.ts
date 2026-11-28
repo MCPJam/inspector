@@ -9,6 +9,7 @@ import {
 } from "../process-identity.js";
 import { listProcessRecords } from "../process-registry.js";
 import { LocalHarnessSupervisor, SupervisorError } from "../supervisor.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 /** These exercise real processes, so they only run where the supervisor is
  *  willing to own one — which is the same predicate the manifest uses to
@@ -18,7 +19,7 @@ const canOwnProcesses = supportsOwnershipProof();
 let base: string;
 let scripts: string;
 let stateDir: string;
-const realHome = process.env.HOME;
+let restoreHome: () => void;
 
 /** Poll until `pid` is gone, or give up. Returns whether it went. */
 async function waitForExit(pid: number, timeoutMs = 8_000): Promise<boolean> {
@@ -64,9 +65,9 @@ function request(
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-supervisor-")));
   scripts = join(base, "scripts");
-  // The registry writes under `homedir()`; point HOME at the temp tree so a
+  // The registry writes under `homedir()`; point it at the temp tree so a
   // test never touches the developer's real state.
-  process.env.HOME = base;
+  restoreHome = useDisposableHome(base);
   stateDir = join(base, ".mcpjam", "harness-local", "sessions", "s1");
   await mkdir(scripts, { recursive: true });
   await mkdir(stateDir, { recursive: true });
@@ -140,8 +141,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
+  restoreHome();
 });
 
 describe("launch preconditions", () => {
@@ -165,11 +165,14 @@ describe("launch preconditions", () => {
     ).rejects.toThrow(SupervisorError);
   });
 
+  // As helpers: argv is checked for every role, and a root on a host that
+  // cannot prove process ownership (Windows without the pack's job launcher)
+  // is refused before its argv is read.
   it("refuses argv carrying shell syntax", async () => {
     const sup = supervisor();
     await expect(
       sup.spawnSupervised({
-        ...request("s-argv", "idle.js"),
+        ...request("s-argv", "idle.js", "helper"),
         args: [join(scripts, "idle.js"), "; rm -rf /"],
       }),
     ).rejects.toThrow(/shell metacharacter/);
@@ -179,7 +182,7 @@ describe("launch preconditions", () => {
     const sup = supervisor();
     await expect(
       sup.spawnSupervised({
-        ...request("s-bypass", "idle.js"),
+        ...request("s-bypass", "idle.js", "helper"),
         args: [join(scripts, "idle.js"), "--dangerously-skip-permissions"],
       }),
     ).rejects.toThrow(/disables the vendor permission controls/);

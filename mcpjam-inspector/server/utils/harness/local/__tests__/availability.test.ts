@@ -49,10 +49,12 @@ import {
   resolveLocalHarnessAvailability,
   type LocalHarnessActor,
 } from "../availability.js";
+import { setWindowsJobLauncherVerified } from "../process-identity.js";
 import {
   LOCAL_HARNESS_POLICY_VERSION,
   type LocalHarnessExecutionTarget,
 } from "../targets.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 let base: string;
 let workspace: string;
@@ -60,11 +62,11 @@ let runtimeRoot: string;
 let workspaceGrantId: string;
 let runtimeId: string;
 let manifests: Record<string, LocalHarnessCompatibility>;
-const realHome = process.env.HOME;
-// `os.homedir()` reads USERPROFILE on Windows; both point at the fixture so
-// the grant revokes below never reach a developer's real store.
-const realUserProfile = process.env.USERPROFILE;
+let restoreHome: () => void;
 
+// The host's platform, because the fixture pack is resolved on this host's
+// filesystem: NTFS has no execute bits for a "linux" resolution to find.
+const PLATFORM = process.platform === "win32" ? "win32" : "linux";
 const USER = "user_1";
 const PROJECT = "proj_1";
 const MACHINE = "mach_1";
@@ -118,7 +120,7 @@ async function query(overrides: Record<string, unknown> = {}) {
       LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion,
     localMachineId: MACHINE,
     manifests,
-    platform: "linux",
+    platform: PLATFORM,
     killSwitchEnabled: true,
     hosted: false,
     ...overrides,
@@ -127,8 +129,7 @@ async function query(overrides: Record<string, unknown> = {}) {
 
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-avail-")));
-  process.env.HOME = base;
-  process.env.USERPROFILE = base;
+  restoreHome = useDisposableHome(base);
   workspace = join(base, "project");
   runtimeRoot = join(base, "runtimes");
   await mkdir(workspace, { recursive: true });
@@ -139,8 +140,14 @@ beforeAll(async () => {
     join(bundleRoot, "launcher.mjs"),
     'await import("./bridge.mjs");',
   );
-  await writeFile(join(bundleRoot, "bin", "node"), "#!/bin/sh\nexit 0\n");
-  await chmod(join(bundleRoot, "bin", "node"), 0o755);
+  // The name the build script gives the pack's Node on this host.
+  const node = join(bundleRoot, "bin", process.platform === "win32" ? "node.exe" : "node");
+  await writeFile(node, "#!/bin/sh\nexit 0\n");
+  await chmod(node, 0o755);
+  // Windows proves process ownership through the pack's job launcher.
+  if (PLATFORM === "win32") {
+    await writeFile(join(bundleRoot, "bin", "mcpjam-job-launcher.exe"), "stub");
+  }
 
   const grant = await registerWorkspaceGrant(workspace);
   if (!grant.ok) throw new Error(grant.message);
@@ -179,7 +186,7 @@ beforeAll(async () => {
       LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion,
     localMachineId: MACHINE,
     manifests,
-    platform: "linux",
+    platform: PLATFORM,
     killSwitchEnabled: true,
     hosted: false,
   });
@@ -188,17 +195,14 @@ beforeAll(async () => {
   const resolved = await resolveManagedBundle({
     manifest: manifests["claude-code"]!,
     runtimeRoot,
-    platform: "linux",
+    platform: PLATFORM,
   });
   if (!resolved.ok) throw new Error(resolved.message);
   runtimeId = resolved.runtime.runtimeId;
 });
 
 afterAll(() => {
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
-  if (realUserProfile === undefined) delete process.env.USERPROFILE;
-  else process.env.USERPROFILE = realUserProfile;
+  restoreHome();
 });
 
 beforeEach(async () => {
@@ -238,9 +242,17 @@ describe("the gates, in order", () => {
   });
 
   it("refuses a platform whose process trees it cannot own", async () => {
-    await expect(query({ platform: "win32" })).resolves.toMatchObject({
-      status: "ownership-unprovable",
-    });
+    // Windows without a verified job launcher. On a Windows host this file's
+    // pack carries one, so the verification its resolution recorded is
+    // cleared for this query and put back after.
+    setWindowsJobLauncherVerified(false);
+    try {
+      await expect(query({ platform: "win32" })).resolves.toMatchObject({
+        status: "ownership-unprovable",
+      });
+    } finally {
+      setWindowsJobLauncherVerified(PLATFORM === "win32");
+    }
   });
 
   it("refuses an unknown workspace grant", async () => {
@@ -340,9 +352,13 @@ describe("a fully authorized turn", () => {
       available: true,
     });
 
+    // A different size from the verified bytes. Linux stamps mtime and ctime
+    // from a clock that ticks every few milliseconds, so a same-size rewrite
+    // landing in the tick of the previous test's restore leaves every field
+    // the snapshot compares unchanged.
     await writeFile(
       join(runtimeRoot, "claude-code", "bridge.mjs"),
-      "console.log(3)",
+      "console.log(3333)",
     );
     const result = await query({ grantToken: token });
     expect(result.available).toBe(false);

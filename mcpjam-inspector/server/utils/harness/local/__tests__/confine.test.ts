@@ -1,8 +1,12 @@
 import { mkdtemp, mkdir, symlink, writeFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, parse, sep } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PathConfinementError, confinePath } from "../confine.js";
+
+// Every link below is a junction. Windows lets any user create one without
+// the symlink privilege, so it is the link a model can plant there; POSIX
+// ignores the type and creates an ordinary symlink.
 
 let workspace: string;
 let stateDir: string;
@@ -89,35 +93,46 @@ describe("confinePath", () => {
     // the old offset the path resolved inside `/tmp` and was accepted; with
     // the fix it stays `/ttmp/...` and is rejected. Asserting against a root
     // set that excludes both spellings would pass either way.
-    const tmpRoot = await realpath("/tmp");
+    // The top-level directory holding the temp dir: `/tmp` on Linux, a drive's
+    // first directory on Windows, where `D:\` ends in a separator the same way.
+    const temp = await realpath(tmpdir());
+    const { root } = parse(temp);
+    const top = join(root, temp.slice(root.length).split(sep)[0]!);
+    const name = basename(top);
     await expect(
-      confinePath("/ttmp/definitely-not-here", { roots: [tmpRoot] }),
+      confinePath(join(root, `${name[0]}${name}`, "definitely-not-here"), {
+        roots: [top],
+      }),
     ).rejects.toThrow(PathConfinementError);
     // The same shape one character shorter really is inside, so the test is
     // measuring the slice and not simply a missing directory.
     await expect(
-      confinePath(`${tmpRoot}/definitely-not-here`, { roots: [tmpRoot] }),
-    ).resolves.toBe(`${tmpRoot}/definitely-not-here`);
+      confinePath(join(top, "definitely-not-here"), { roots: [top] }),
+    ).resolves.toBe(join(top, "definitely-not-here"));
   });
 
   it("rejects a read THROUGH a symlink that leaves the root", async () => {
     // The case pure string normalization cannot see: every character of this
     // path is inside the workspace.
-    await symlink(outside, join(workspace, "escape"));
+    await symlink(outside, join(workspace, "escape"), "junction");
     await expect(
       confinePath(join(workspace, "escape", "secret.txt"), { roots }),
     ).rejects.toThrow(PathConfinementError);
   });
 
   it("rejects a WRITE through a symlinked parent to a file that does not exist", async () => {
-    await symlink(outside, join(workspace, "escape-write"));
+    await symlink(outside, join(workspace, "escape-write"), "junction");
     await expect(
       confinePath(join(workspace, "escape-write", "planted.txt"), { roots }),
     ).rejects.toThrow(PathConfinementError);
   });
 
   it("allows a symlink that stays inside the root", async () => {
-    await symlink(join(workspace, "src"), join(workspace, "src-link"));
+    await symlink(
+      join(workspace, "src"),
+      join(workspace, "src-link"),
+      "junction",
+    );
     await expect(
       confinePath(join(workspace, "src-link", "a.ts"), { roots }),
     ).resolves.toBe(join(workspace, "src", "a.ts"));
@@ -161,7 +176,11 @@ describe("dangling symlinks are links, not absences", () => {
     // yet" and re-attached literally — landing back inside the root and
     // passing. `open(…, "w")` then follows it and CREATES the target outside.
     // No race is involved; the model can plant this link itself.
-    await symlink(join(outside, "not-yet.txt"), join(workspace, "dangling"));
+    await symlink(
+      join(outside, "not-yet.txt"),
+      join(workspace, "dangling"),
+      "junction",
+    );
     await expect(
       confinePath(join(workspace, "dangling"), { roots }),
     ).rejects.toThrow(PathConfinementError);
@@ -171,6 +190,7 @@ describe("dangling symlinks are links, not absences", () => {
     await symlink(
       join(workspace, "src", "later.ts"),
       join(workspace, "inside"),
+      "junction",
     );
     await expect(
       confinePath(join(workspace, "inside"), { roots }),
@@ -178,23 +198,39 @@ describe("dangling symlinks are links, not absences", () => {
   });
 
   it("follows a dangling link used as a DIRECTORY component", async () => {
-    await symlink(join(outside, "nowhere"), join(workspace, "dangling-dir"));
+    await symlink(
+      join(outside, "nowhere"),
+      join(workspace, "dangling-dir"),
+      "junction",
+    );
     await expect(
       confinePath(join(workspace, "dangling-dir", "child.txt"), { roots }),
     ).rejects.toThrow(PathConfinementError);
   });
 
   it("follows a chain of dangling links to where it actually lands", async () => {
-    await symlink(join(workspace, "hop2"), join(workspace, "hop1"));
-    await symlink(join(outside, "end.txt"), join(workspace, "hop2"));
+    await symlink(join(workspace, "hop2"), join(workspace, "hop1"), "junction");
+    await symlink(
+      join(outside, "end.txt"),
+      join(workspace, "hop2"),
+      "junction",
+    );
     await expect(
       confinePath(join(workspace, "hop1"), { roots }),
     ).rejects.toThrow(PathConfinementError);
   });
 
   it("refuses a symlink cycle rather than spinning", async () => {
-    await symlink(join(workspace, "loop-b"), join(workspace, "loop-a"));
-    await symlink(join(workspace, "loop-a"), join(workspace, "loop-b"));
+    await symlink(
+      join(workspace, "loop-b"),
+      join(workspace, "loop-a"),
+      "junction",
+    );
+    await symlink(
+      join(workspace, "loop-a"),
+      join(workspace, "loop-b"),
+      "junction",
+    );
     await expect(
       confinePath(join(workspace, "loop-a"), { roots }),
     ).rejects.toThrow(/more than 8 symbolic links/);

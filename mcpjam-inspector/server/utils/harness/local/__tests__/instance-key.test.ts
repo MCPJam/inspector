@@ -13,9 +13,10 @@ import {
   type InstanceKeyStore,
 } from "../instance-key.js";
 import { localHarnessStateRoot } from "../grants.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 let home: string;
-let realHome: string | undefined;
+let restoreHome: () => void;
 
 function keyPath(): string {
   return join(localHarnessStateRoot(), "instance-key.json");
@@ -43,8 +44,7 @@ function fakeKeystore(available = true): InstanceKeyStore {
 
 beforeEach(async () => {
   home = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-instance-key-")));
-  realHome = process.env.HOME;
-  process.env.HOME = home;
+  restoreHome = useDisposableHome(home);
   setInstanceKeyStore(null);
   resetInstanceKeyCacheForTests();
 });
@@ -52,13 +52,16 @@ beforeEach(async () => {
 afterEach(async () => {
   setInstanceKeyStore(null);
   resetInstanceKeyCacheForTests();
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
+  restoreHome();
   await rm(home, { recursive: true, force: true });
 });
 
+// NTFS has no POSIX mode bits: `stat` reports 0o666 for every file and the
+// key-file repair skips Windows for that reason (`repairKeyFileMode`).
+const posixModes = process.platform !== "win32";
+
 describe("minting the machine's instance key", () => {
-  it("writes it owner-only, because it is a private key in a home directory", async () => {
+  it.runIf(posixModes)("writes it owner-only, because it is a private key in a home directory", async () => {
     const key = await loadLocalInstanceKey();
     expect(key.publicKey.length).toBeGreaterThan(20);
     const mode = (await stat(keyPath())).mode & 0o777;
@@ -84,7 +87,7 @@ describe("minting the machine's instance key", () => {
     expect(stored.privateKey).not.toContain("PRIVATE KEY");
   });
 
-  it("repairs a key file whose mode drifted wider than owner-only", async () => {
+  it.runIf(posixModes)("repairs a key file whose mode drifted wider than owner-only", async () => {
     // A file written before this rule existed keeps its old mode forever:
     // `writeFile`'s `mode` applies at CREATION only, so nothing re-narrows it.
     await loadLocalInstanceKey();

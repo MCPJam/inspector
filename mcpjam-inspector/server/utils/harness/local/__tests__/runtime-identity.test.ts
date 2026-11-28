@@ -32,6 +32,11 @@ import { inspectorLayerDigest } from "../inspector-layer.js";
 let base: string;
 let runtimeRoot: string;
 
+// A pack is resolved on the host that installed it, so the fixtures are the
+// host's: Windows has no execute bits, and its pack ships `bin/node.exe`.
+const PLATFORM = process.platform === "win32" ? "win32" : "linux";
+const NODE = PLATFORM === "win32" ? "bin/node.exe" : "bin/node";
+
 /**
  * A pack always carries a launcher and its own `bin/node`; both are required
  * for a bundle to resolve, so the fixtures add them unless a test is
@@ -64,15 +69,15 @@ async function writeBundle(
   if (!opts.omitLauncher && all["launcher.mjs"] === undefined) {
     all["launcher.mjs"] = 'await import("./bridge.mjs");';
   }
-  if (!opts.omitNode && all["bin/node"] === undefined) {
-    all["bin/node"] = "#!/bin/sh\nexit 0\n";
+  if (!opts.omitNode && all[NODE] === undefined) {
+    all[NODE] = "#!/bin/sh\nexit 0\n";
   }
   for (const [rel, content] of Object.entries(all)) {
     const full = join(root, rel);
     await mkdir(join(full, ".."), { recursive: true });
     await writeFile(full, content);
   }
-  if (!opts.omitNode) await chmod(join(root, "bin/node"), 0o755);
+  if (!opts.omitNode) await chmod(join(root, NODE), 0o755);
   return root;
 }
 
@@ -130,7 +135,8 @@ describe("tree digests", () => {
     expect(await computeTreeDigest(c)).not.toBe(await computeTreeDigest(a));
   });
 
-  it("notices a file becoming executable, not just its content", async () => {
+  // NTFS has no execute bit to flip, so every file digests as non-executable.
+  it.skipIf(process.platform === "win32")("notices a file becoming executable, not just its content", async () => {
     const root = await writeBundle("mode", { "bridge.mjs": "x" });
     const before = await computeTreeDigest(root);
     await chmod(join(root, "bridge.mjs"), 0o755);
@@ -145,7 +151,10 @@ describe("tree digests", () => {
 
   it("refuses to digest a bundle containing a symlink", async () => {
     const root = await writeBundle("linked", { "bridge.mjs": "x" });
-    await symlink("/etc", join(root, "escape"));
+    // A junction on Windows, which needs no privilege; POSIX ignores the type.
+    // Its target is a directory this test owns, outside the bundle.
+    const outside = await mkdtemp(join(base, "link-target-"));
+    await symlink(outside, join(root, "escape"), "junction");
     await expect(computeTreeDigest(root)).rejects.toThrow(/symlink/);
   });
 });
@@ -157,13 +166,13 @@ describe("managed bundles", () => {
     const result = await resolveManagedBundle({
       manifest: manifestFor("good", digest),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.runtime.runtimeId).toMatch(/^rt_/);
     expect(result.runtime.launcherPath).toBe(join(root, "launcher.mjs"));
-    expect(result.runtime.nodePath).toBe(join(root, "bin", "node"));
+    expect(result.runtime.nodePath).toBe(join(root, NODE));
     expect(result.runtime.digest).toBe(digest);
   });
 
@@ -193,10 +202,12 @@ describe("managed bundles", () => {
     // The other half of the same claim: the platform's extension is required,
     // not merely preferred, so a tree carrying the POSIX name cannot satisfy a
     // Windows resolution by accident.
-    const root = await writeBundle("win-node-missing", {
-      "bridge.mjs": "x",
-      "bin/node": "#!not-an-exe",
-    });
+    // `omitNode`, or a Windows host's fixture would add `bin/node.exe` itself.
+    const root = await writeBundle(
+      "win-node-missing",
+      { "bridge.mjs": "x", "bin/node": "#!not-an-exe" },
+      { omitNode: true },
+    );
     const result = await resolveManagedBundle({
       manifest: manifestFor("win-node-missing", await computeTreeDigest(root)),
       runtimeRoot,
@@ -211,13 +222,13 @@ describe("managed bundles", () => {
     const first = await resolveManagedBundle({
       manifest: manifestFor("rebind", await computeTreeDigest(root)),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     await writeFile(join(root, "bridge.mjs"), "b");
     const second = await resolveManagedBundle({
       manifest: manifestFor("rebind", await computeTreeDigest(root)),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     expect(first.ok && second.ok).toBe(true);
     if (!first.ok || !second.ok) return;
@@ -228,7 +239,7 @@ describe("managed bundles", () => {
     const result = await resolveManagedBundle({
       manifest: manifestFor("missing", "sha256:whatever"),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     expect(result).toMatchObject({ ok: false, status: "bundle-absent" });
     expect((result as { message: string }).message).toMatch(
@@ -243,7 +254,7 @@ describe("managed bundles", () => {
     const result = await resolveManagedBundle({
       manifest,
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     expect(result).toMatchObject({
       ok: false,
@@ -266,7 +277,7 @@ describe("managed bundles", () => {
         runtime: { ...withDigests.runtime, bundleDigest: {} },
       } as LocalHarnessCompatibility,
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     expect(result).toMatchObject({ ok: false, status: "bundle-absent" });
     expect((result as { message: string }).message).toMatch(
@@ -286,7 +297,7 @@ describe("managed bundles", () => {
         },
       } as LocalHarnessCompatibility,
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     expect(result).toMatchObject({ ok: false, status: "bundle-corrupt" });
     expect((result as { message: string }).message).toMatch(
@@ -303,7 +314,7 @@ describe("managed bundles", () => {
     const result = await resolveManagedBundle({
       manifest: manifestFor("nolauncher", await computeTreeDigest(root)),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     expect(result).toMatchObject({ ok: false, status: "bundle-corrupt" });
   });
@@ -320,19 +331,20 @@ describe("managed bundles", () => {
     const result = await resolveManagedBundle({
       manifest: manifestFor("nonode", await computeTreeDigest(root)),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     expect(result).toMatchObject({ ok: false, status: "bundle-corrupt" });
     expect((result as { message: string }).message).toMatch(/Node binary/);
   });
 
-  it("refuses a Node binary that is not executable", async () => {
+  // Windows has no execute bit to clear.
+  it.skipIf(PLATFORM === "win32")("refuses a Node binary that is not executable", async () => {
     const root = await writeBundle("dudnode", { "bridge.mjs": "x" });
-    await chmod(join(root, "bin/node"), 0o644);
+    await chmod(join(root, NODE), 0o644);
     const result = await resolveManagedBundle({
       manifest: manifestFor("dudnode", await computeTreeDigest(root)),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     expect(result).toMatchObject({ ok: false, status: "bundle-corrupt" });
   });
@@ -368,7 +380,7 @@ describe("a harness whose launcher is the Inspector layer (invariant 1)", () => 
     const result = await resolveManagedBundle({
       manifest: layered("layer-codex", digest),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
       arch: "x64",
       layerRuntimeRoot: layerRoot,
     });
@@ -380,7 +392,7 @@ describe("a harness whose launcher is the Inspector layer (invariant 1)", () => 
       files: ["bridge.mjs", "host-tools-mcp.mjs", "launcher.mjs", "layer.json"],
     });
     expect(result.runtime.launcherPath).toBe(join(result.runtime.layer!.root, "launcher.mjs"));
-    expect(result.runtime.nodePath).toBe(join(root, "bin/node"));
+    expect(result.runtime.nodePath).toBe(join(root, NODE));
     expect(result.runtime.digest).toBe(digest);
     expect(await revalidateRuntime(result.runtime)).toEqual({ ok: true });
   });
@@ -396,12 +408,12 @@ describe("a harness whose launcher is the Inspector layer (invariant 1)", () => 
       layered("predict-codex", digest),
       { ...layered("predict-codex", digest), runtime: { ...layered("predict-codex", digest).runtime, launcherSource: "pack" } as LocalHarnessCompatibility["runtime"] },
     ]) {
-      const resolved = await resolveManagedBundle({ manifest, runtimeRoot, platform: "linux", arch: "x64", layerRuntimeRoot: layerRoot });
+      const resolved = await resolveManagedBundle({ manifest, runtimeRoot, platform: PLATFORM, arch: "x64", layerRuntimeRoot: layerRoot });
       if (!resolved.ok) throw new Error(resolved.message);
-      expect(predictManagedRuntimeId(manifest, "linux", digest)).toBe(resolved.runtime.runtimeId);
+      expect(predictManagedRuntimeId(manifest, PLATFORM, digest)).toBe(resolved.runtime.runtimeId);
     }
-    expect(predictManagedRuntimeId(layered("predict-codex", digest), "linux", `sha256:${"0".repeat(64)}`)).not.toBe(
-      predictManagedRuntimeId(layered("predict-codex", digest), "linux", digest),
+    expect(predictManagedRuntimeId(layered("predict-codex", digest), PLATFORM, `sha256:${"0".repeat(64)}`)).not.toBe(
+      predictManagedRuntimeId(layered("predict-codex", digest), PLATFORM, digest),
     );
   });
 
@@ -414,7 +426,7 @@ describe("a harness whose launcher is the Inspector layer (invariant 1)", () => 
     const viaLayer = await resolveManagedBundle({
       manifest: layered("identity-codex", digest),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
       arch: "x64",
       layerRuntimeRoot: layerRoot,
     });
@@ -424,7 +436,7 @@ describe("a harness whose launcher is the Inspector layer (invariant 1)", () => 
         runtime: { ...layered("identity-codex", digest).runtime, launcherSource: "pack" } as LocalHarnessCompatibility["runtime"],
       },
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
       arch: "x64",
     });
     if (!viaLayer.ok || !viaPack.ok) throw new Error("both resolve");
@@ -438,7 +450,7 @@ describe("a harness whose launcher is the Inspector layer (invariant 1)", () => 
     const result = await resolveManagedBundle({
       manifest: layered("tamper-codex", digest),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
       arch: "x64",
       layerRuntimeRoot: layerRoot,
     });
@@ -455,7 +467,7 @@ describe("a harness whose launcher is the Inspector layer (invariant 1)", () => 
     const again = await resolveManagedBundle({
       manifest: layered("tamper-codex", digest),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
       arch: "x64",
       layerRuntimeRoot: layerRoot,
     });
@@ -469,7 +481,7 @@ describe("a harness whose launcher is the Inspector layer (invariant 1)", () => 
     const result = await resolveManagedBundle({
       manifest: layered("tamper-pack-codex", digest),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
       arch: "x64",
       layerRuntimeRoot: layerRoot,
     });
@@ -601,7 +613,7 @@ describe("verification cost", () => {
     const resolved = await resolveManagedBundle({
       manifest: manifestFor("added", await computeTreeDigest(root)),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     expect(resolved.ok).toBe(true);
     if (!resolved.ok) return;
@@ -626,7 +638,7 @@ describe("verification cost", () => {
     const resolved = await resolveManagedBundle({
       manifest: manifestFor("missingfile", await computeTreeDigest(root)),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     if (!resolved.ok) throw new Error("fixture did not resolve");
     await rm(join(root, "lib/keep.js"));
@@ -645,7 +657,7 @@ describe("verification cost", () => {
     const resolved = await resolveManagedBundle({
       manifest: manifestFor("rewrite", await computeTreeDigest(root)),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     if (!resolved.ok) throw new Error("fixture did not resolve");
 
@@ -675,14 +687,14 @@ describe("verification cost", () => {
     delete process.env.MCPJAM_LOCAL_HARNESS_STRICT_REVERIFY;
     clearRuntimeVerificationCache();
     const root = await writeBundle("bignode", { "bridge.mjs": "x" });
-    const nodePath = join(root, "bin", "node");
+    const nodePath = join(root, NODE);
     const stamp = new Date(1_600_000_000_000);
     await utimes(nodePath, stamp, stamp);
 
     const resolved = await resolveManagedBundle({
       manifest: manifestFor("bignode", await computeTreeDigest(root)),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     if (!resolved.ok) throw new Error("fixture did not resolve");
     await expect(revalidateRuntime(resolved.runtime)).resolves.toEqual({
@@ -717,13 +729,13 @@ describe("verification cost", () => {
     const resolved = await resolveManagedBundle({
       manifest: manifestFor("strictnode", await computeTreeDigest(root)),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     if (!resolved.ok) throw new Error("fixture did not resolve");
 
     const verification = await verifyRuntime(root, resolved.runtime.digest, "claude-code");
     if (!verification.ok) throw new Error("fixture did not verify");
-    const nodePath = join(root, "bin", "node");
+    const nodePath = join(root, NODE);
     const original = await readFile(nodePath);
     await writeFile(nodePath, Buffer.alloc(original.length, 0x7a));
     // Re-stamp the snapshot from the tampered file, so every cheap field
@@ -731,7 +743,7 @@ describe("verification cost", () => {
     // original bytes.
     const rewritten = await stat(nodePath);
     const entry = verification.snapshot.entries.find(
-      (e) => e.path === "bin/node",
+      (e) => e.path === NODE,
     )!;
     Object.assign(entry, {
       size: rewritten.size,
@@ -772,7 +784,7 @@ describe("verification cost", () => {
     expect(verification.ok).toBe(true);
     if (!verification.ok) return;
     expect(Object.keys(verification.snapshot.executableDigests)).toEqual(
-      expect.arrayContaining(["bin/node", "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs"]),
+      expect.arrayContaining([NODE, "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs"]),
     );
     // The bridge and its launcher are not pack files any more: the Inspector
     // layer re-hashes them in full before every exec.
@@ -786,7 +798,7 @@ describe("re-verification immediately before spawn", () => {
     const resolved = await resolveManagedBundle({
       manifest: manifestFor("swap", await computeTreeDigest(root)),
       runtimeRoot,
-      platform: "linux",
+      platform: PLATFORM,
     });
     expect(resolved.ok).toBe(true);
     if (!resolved.ok) return;

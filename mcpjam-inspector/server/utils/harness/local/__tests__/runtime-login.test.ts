@@ -17,6 +17,7 @@ import {
   RUNTIME_LOGIN_CLEAR_PATH,
   RUNTIME_LOGIN_INSTALL_PATH,
 } from "../runtime-login.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 const SCOPE = {
   harnessId: "cursor",
@@ -28,12 +29,11 @@ const SCOPE = {
 const EXPIRES_AT = Date.now() + 3_600_000;
 
 let home: string;
-let realHome: string | undefined;
+let restoreHome: () => void;
 
 beforeEach(async () => {
   home = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-runtime-login-")));
-  realHome = process.env.HOME;
-  process.env.HOME = home;
+  restoreHome = useDisposableHome(home);
   resetInstanceKeyCacheForTests();
   vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
 });
@@ -42,8 +42,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   resetInstanceKeyCacheForTests();
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
+  restoreHome();
   await rm(home, { recursive: true, force: true });
 });
 

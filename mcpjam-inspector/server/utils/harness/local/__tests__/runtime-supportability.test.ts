@@ -49,8 +49,10 @@ async function buildRelease(): Promise<void> {
   const staging = await mkdtemp(join(base, "stage-"));
   const root = join(staging, "claude-code");
   await mkdir(join(root, "bin"), { recursive: true });
-  await writeFile(join(root, "bin", "node"), "#!/bin/sh\nexit 0\n");
-  await chmod(join(root, "bin", "node"), 0o755);
+  // The name the build script gives the pack's Node on this host.
+  const node = join(root, "bin", process.platform === "win32" ? "node.exe" : "node");
+  await writeFile(node, "#!/bin/sh\nexit 0\n");
+  await chmod(node, 0o755);
   await writeFile(join(root, "package.json"), JSON.stringify({ name: "pack", version: VERSION }));
   digest = await computeTreeDigest(root);
   release = join(base, "release");
@@ -301,13 +303,15 @@ describe("harness doctor", () => {
       })),
     };
     const text = JSON.stringify(redactDoctorReport(leaky));
-    expect(text).not.toContain(homedir());
+    // As JSON spells it, or a Windows home's backslashes never match.
+    expect(text).not.toContain(JSON.stringify(homedir()).slice(1, -1));
     expect(text).not.toContain("s3cret");
     expect(text).not.toContain("abc123def456");
     expect(text).not.toContain("eyJhbGci");
     expect(text).not.toContain("ghp_");
     expect(text).not.toContain("sk-bbbb");
-    expect(text).toContain("~/.mcpjam/runtime");
+    // The home prefix becomes `~`; the rest keeps the host's separator.
+    expect(JSON.parse(text).runtimeRoot).toBe(join("~", ".mcpjam", "runtime"));
   });
 });
 

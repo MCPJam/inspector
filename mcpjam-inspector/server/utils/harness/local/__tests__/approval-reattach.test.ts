@@ -58,14 +58,16 @@ import {
   parkLocalSession,
   resetApprovalParkForTests,
 } from "../approval-park.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 const supervisors: LocalHarnessSupervisor[] = [];
 const roots: string[] = [];
+const homeRestores: (() => void)[] = [];
 afterEach(async () => {
   for (const supervisor of supervisors.splice(0))
     await supervisor.stopSession("s1");
   resetApprovalParkForTests();
-  vi.unstubAllEnvs();
+  for (const restore of homeRestores.splice(0).reverse()) restore();
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
 });
@@ -75,7 +77,7 @@ async function fixture() {
     await mkdtemp(join(tmpdir(), "approval-attach-")),
   );
   roots.push(root);
-  vi.stubEnv("HOME", root);
+  homeRestores.push(useDisposableHome(root));
   const workspace = join(root, "workspace");
   const bundle = join(root, "runtimes", "claude-code");
   await mkdir(workspace);

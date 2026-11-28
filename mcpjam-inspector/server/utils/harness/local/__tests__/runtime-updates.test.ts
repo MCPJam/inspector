@@ -80,8 +80,10 @@ async function buildPack(version: string): Promise<void> {
   const staging = await mkdtemp(join(base, `stage-${version}-`));
   const root = join(staging, "claude-code");
   await mkdir(join(root, "bin"), { recursive: true });
-  await writeFile(join(root, "bin", "node"), "#!/bin/sh\nexit 0\n");
-  await chmod(join(root, "bin", "node"), 0o755);
+  // The name the build script gives the pack's Node on this host.
+  const node = join(root, "bin", process.platform === "win32" ? "node.exe" : "node");
+  await writeFile(node, "#!/bin/sh\nexit 0\n");
+  await chmod(node, 0o755);
   await writeFile(join(root, "package.json"), JSON.stringify({ name: "pack", version }));
   digests[version] = await computeTreeDigest(root);
   archives[version] = join(base, `pack-${version}.tar.gz`);
