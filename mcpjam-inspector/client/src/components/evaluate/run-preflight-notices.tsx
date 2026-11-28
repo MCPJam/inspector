@@ -146,7 +146,7 @@ export function RunPreflightNotices({
             )
           }
         >
-          <p>{serverName(ref)} isn't connected. Start tries to connect it.</p>
+          <p>{`${serverName(ref)} isn't connected. Start tries to connect it.`}</p>
           {failure?.ref === ref && (
             <p role="alert" className="text-destructive">
               {failure.message} {openServers}
@@ -171,8 +171,7 @@ export function RunPreflightNotices({
           }
         >
           <p>
-            {getProviderDisplayName(provider)} isn't enabled in your
-            organization's AI providers, so its models will fail to run.
+            {`${getProviderDisplayName(provider)} isn't enabled in your organization's AI providers, so its models will fail to run.`}
           </p>
         </PreflightNotice>
       ))}
