@@ -70,10 +70,19 @@ describe("step-executor", () => {
       toolName: "create_view",
       approval: "approve",
     };
-    const state = createStepExecutionState();
+    const state = createStepExecutionState({
+      toolDeclarations: [{ serverKey: "viewer", name: "discard_view" }],
+    });
     const handlers = makeHandlers();
     const onClientDecision = vi.fn();
-    await executeSteps({ steps: [denied, approved], state, browser: makeBrowser(), handlers, onClientDecision });
+    await executeSteps({
+      steps: [denied, approved],
+      state,
+      browser: makeBrowser(),
+      handlers,
+      onClientDecision,
+      resolveDeniedToolServer: () => "viewer",
+    });
     expect(handlers.onToolCall).toHaveBeenCalledExactlyOnceWith({
       step: approved, stepIndex: 1, turnOrdinal: 1,
     });
@@ -82,6 +91,26 @@ describe("step-executor", () => {
     );
     expect(onClientDecision).toHaveBeenCalledExactlyOnceWith(state.spans[0]);
     expect(state.toolCalls.map(({ toolName }) => toolName)).toEqual(["create_view"]);
+  });
+
+  it("fails a saved denial for an undeclared tool without invoking it", async () => {
+    const handlers = makeHandlers();
+    const result = await executeSteps({
+      steps: [{
+        id: "denied",
+        kind: "toolCall",
+        serverName: "viewer",
+        toolName: "missing",
+        arguments: {},
+        approval: "deny",
+      }],
+      state: createStepExecutionState({ toolDeclarations: [] }),
+      browser: makeBrowser(),
+      handlers,
+      resolveDeniedToolServer: () => "viewer",
+    });
+    expect(result.iterationError).toContain('Cannot replay a denial for "missing"');
+    expect(handlers.onToolCall).not.toHaveBeenCalled();
   });
 
   it("runs prompt + toolCall steps through the engine handlers and accumulates state", async () => {

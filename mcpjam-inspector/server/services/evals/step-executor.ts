@@ -570,6 +570,7 @@ export async function executeSteps(args: {
   handlers: StepExecutorHandlers;
   /** Records a client decision made by the executor rather than a turn handler. */
   onClientDecision?: (span: EvalTraceSpan) => void;
+  resolveDeniedToolServer?: (step: Extract<TestStep, { kind: "toolCall" }>) => string | undefined;
   /** Aborted check — when true at a step boundary the executor stops early. */
   isAborted?: () => boolean;
   /**
@@ -741,6 +742,16 @@ export async function executeSteps(args: {
     if (isToolCallStep(step)) {
       browser.setActivePromptIndex(turnOrdinal);
       if (step.approval === "deny") {
+        const serverKey = args.resolveDeniedToolServer?.(step);
+        if (!serverKey || !state.toolDeclarations?.some(
+          (tool) => tool.serverKey === serverKey && tool.name === step.toolName,
+        )) {
+          const iterationError = `Cannot replay a denial for "${step.toolName}" because the selected server does not declare it.`;
+          emitStatus(stepIndex, "fail");
+          recordSkippedSteps(state, steps, stepIndex + 1, iterationError);
+          emitSkipped(stepIndex + 1);
+          return { state, iterationError, setupFailure: false };
+        }
         const elapsedMs = Date.now() - startedAt;
         const denial: EvalTraceSpan = {
           id: crypto.randomUUID(),
