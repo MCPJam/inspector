@@ -1,5 +1,6 @@
 import { PlaygroundEventsProvider } from "./events/PlaygroundEventsProvider";
 import { LocalBrowserOnboarding } from "@/components/browser/LocalBrowserOnboarding";
+import { LocalChatElicitationHost } from "@/components/elicitation/LocalChatElicitationHost";
 import { useActiveChatSessionStore } from "@/stores/active-chat-session-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
@@ -556,6 +557,9 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
             (!props.isSignedInWithWorkOs || isConvexAuthenticated)
           }
         />
+        {/* A server's question in a local chat without a project. Renders
+        nothing until one arrives. */}
+        <LocalChatElicitationHost />
         <PlaygroundPreviewedClientSync
           projectId={props.sharedProjectId ?? props.activeProjectId ?? null}
         />

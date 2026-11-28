@@ -1,6 +1,9 @@
 vi.mock("@/components/browser/LocalBrowserOnboarding", () => ({
   LocalBrowserOnboarding: () => null,
 }));
+vi.mock("@/components/elicitation/LocalChatElicitationHost", () => ({
+  LocalChatElicitationHost: () => null,
+}));
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: { id: "member" } }),
 }));
