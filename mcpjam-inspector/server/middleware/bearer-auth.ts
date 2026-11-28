@@ -1,5 +1,9 @@
 import type { Context, Next } from "hono";
-import { ErrorCode, hostedOnlyResponse } from "../routes/web/errors.js";
+import {
+  ErrorCode,
+  WebRouteError,
+  hostedOnlyResponse,
+} from "../routes/web/errors.js";
 import { validateGuestTokenDetailedAsync } from "../services/guest-token.js";
 import { getWorkOSClient } from "../services/workos-client.js";
 import { resolveUserByExternalId } from "../services/identity.js";
@@ -273,6 +277,19 @@ export async function bearerAuthMiddleware(
     } catch (error) {
       if (isServiceCredentialUnavailableError(error)) {
         return hostedOnlyResponse(c, WORKOS_API_KEY_FEATURE);
+      }
+      // The owner is suspended (the backend raises the alert). The key is
+      // still live at WorkOS until the suspension's revocation reaches it,
+      // so name it in the log for whoever answers that alert.
+      if (error instanceof WebRouteError && error.status === 403) {
+        logger.warn("WorkOS API key of a suspended account refused", {
+          event: "auth.workos_api_key_suspended_account",
+          workos_key_id: workosKeyId,
+        });
+        return c.json(
+          { code: error.code, message: error.message, details: error.details },
+          403,
+        );
       }
       logger.error(
         "Failed to resolve MCPJam user from WorkOS externalId",

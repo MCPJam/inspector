@@ -63,6 +63,33 @@ describe("resolveUserByExternalId", () => {
     );
   });
 
+  it("throws a 403 route error when the account is suspended", async () => {
+    mockFetchResponse(
+      403,
+      JSON.stringify({
+        ok: false,
+        error: "Account suspended",
+        code: "account_suspended",
+      }),
+    );
+
+    await expect(
+      resolveUserByExternalId("workos|user_1"),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      details: { reason: "ACCOUNT_SUSPENDED" },
+    });
+  });
+
+  it("throws a plain failure on a 403 that is not the suspension answer", async () => {
+    mockFetchResponse(403, "Forbidden");
+
+    await expect(resolveUserByExternalId("workos|user_1")).rejects.toThrow(
+      /User lookup failed \(403\)/,
+    );
+  });
+
   it("throws on other non-OK statuses", async () => {
     mockFetchResponse(
       401,
