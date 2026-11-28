@@ -289,13 +289,15 @@ export function checkForUpdates(
         currentVersion,
       );
 
-      if (hasNewerCachedVersion && isUpdateCacheFresh(cache, now)) {
-        printUpdateNotification(
-          currentVersion,
-          cache.latestVersion,
-          packageName,
-          options.stderr,
-        );
+      if (hasNewerCachedVersion && cache.checkedAt <= now) {
+        if (isUpdateCacheFresh(cache, now)) {
+          printUpdateNotification(currentVersion, cache.latestVersion, packageName, options.stderr);
+        } else {
+          (options.stderr ?? process.stderr).write(
+            `A newer ${packageName} release is available.\n` +
+            `Run npm install -g ${packageName}@latest to update.\n`,
+          );
+        }
       }
 
       if (isUpdateCacheFresh(cache, now)) {

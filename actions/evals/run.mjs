@@ -1,4 +1,4 @@
-import { resolveCliVersion } from "./cli-version.mjs";
+import { cliResolutionDiagnostic, resolveCliVersion } from "./cli-version.mjs";
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -470,9 +470,9 @@ export async function runAction(
       let cliVersion;
       try {
         cliVersion = await resolveVersion(inputs.cliVersion);
-      } catch {
+      } catch (error) {
         state.message =
-          "Couldn't resolve the CLI version from npm. Check registry access or set cli-version to an exact published version.";
+          `Couldn't resolve the CLI version. ${cliResolutionDiagnostic(error)} Check registry access or set cli-version to an exact published version.`;
         throw new Error(state.message);
       }
       log(`MCPJam CLI ${cliVersion} (requested ${inputs.cliVersion}).`);

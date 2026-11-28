@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveCliVersion } from "./cli-version.mjs";
+import { cliResolutionDiagnostic, resolveCliVersion } from "./cli-version.mjs";
 import { parseInputs, runAction } from "./run.mjs";
 
 const env = {
@@ -141,4 +141,30 @@ test("a major line resolves once and the run and gates share its exact release",
   assert.equal(resolutions, 1);
   assert.equal(calls.length, 2);
   for (const args of calls) assert.ok(args.includes("@mcpjam/cli@6.4.10"));
+});
+
+test("resolver failures have distinct fixed diagnostics without subprocess secrets", async () => {
+  for (const [failure, expected] of [
+    [{ code: "ENOENT", message: "secret-key" }, /executable was not found/],
+    [{ killed: true, message: "secret-key" }, /timed out/],
+    [{ code: 1, message: "secret-key" }, /could not read/],
+  ]) {
+    await assert.rejects(
+      resolveCliVersion("6", async () => {
+        throw failure;
+      }),
+      (error) => {
+        assert.match(cliResolutionDiagnostic(error), expected);
+        assert.ok(!cliResolutionDiagnostic(error).includes("secret-key"));
+        return true;
+      },
+    );
+  }
+  await assert.rejects(
+    resolveCliVersion("6", async () => ({ stdout: "[]" })),
+    (error) => {
+      assert.match(cliResolutionDiagnostic(error), /No stable CLI release/);
+      return true;
+    },
+  );
 });

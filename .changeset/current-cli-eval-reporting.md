@@ -4,4 +4,4 @@
 "@mcpjam/inspector": patch
 ---
 
-Expired CLI update notices now refresh silently instead of advertising an outdated version, and the install hint explicitly requests the latest release. Eval run pages flag recorded CLI versions before 6.4.1, whose local HTML and JUnit reports can omit iteration evidence. New online eval launches and report uploads from identified older MCPJam CLIs return an upgrade message before creating a run.
+CLI update notices keep reminding infrequent users without advertising expired target versions, and install guidance requests the latest release with supported Node versions. Eval run pages flag recorded CLI versions before 6.4.1, whose local HTML and JUnit reports can omit iteration evidence. Server refusals use an independent, explicitly configured compatibility floor and remain disabled by default pending task-owner approval. Configured refusals explain both Node and CLI upgrade steps. Floating CLI releases receive a post-publication Action smoke test.

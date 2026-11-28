@@ -239,7 +239,7 @@ test("checkForUpdates stays quiet for fresh same or older cached versions", () =
   });
 });
 
-test("checkForUpdates refreshes stale newer cache without advertising an expired target", () => {
+test("checkForUpdates warns infrequent users without advertising an expired target", () => {
   withTempDir((directory) => {
     const staleCachePath = join(directory, "stale.json");
     const spawns: string[] = [];
@@ -266,7 +266,8 @@ test("checkForUpdates refreshes stale newer cache without advertising an expired
       spawnBackgroundFetch: spawn,
     });
 
-    assert.equal(stderr, "");
+    assert.match(stderr, /A newer @mcpjam\/cli release is available/);
+    assert.doesNotMatch(stderr, /3\.1\.0|->/);
     assert.deepEqual(spawns, [staleCachePath]);
   });
 });
@@ -409,5 +410,26 @@ test("a future-dated cache refreshes without advertising its target", () => {
     assert.equal(notices, "");
     assert.deepEqual(paths, [cachePath]);
     assert.equal(isUpdateCacheFresh({ latestVersion: "99.0.0", checkedAt: 2_000 }, 1_000), false);
+  });
+});
+
+
+test("daily-separated invocations retain the update signal while refreshing the target", () => {
+  withTempDir((directory) => {
+    const cachePath = join(directory, "infrequent.json");
+    const interval = UPDATE_CHECK_INTERVAL_MS + 1;
+    for (const now of [interval * 2, interval * 4]) {
+      writeCache(cachePath, { latestVersion: "6.4.4", checkedAt: now - interval });
+      let notice = "";
+      let refreshes = 0;
+      checkForUpdates("6.1.0", {
+        cachePath, env: {}, now,
+        stderr: { write(chunk) { notice += chunk; } },
+        spawnBackgroundFetch() { refreshes++; },
+      });
+      assert.match(notice, /A newer @mcpjam\/cli release is available/);
+      assert.doesNotMatch(notice, /6\.4\.4/);
+      assert.equal(refreshes, 1);
+    }
   });
 });

@@ -159,7 +159,8 @@ The default follows new CLI 6 releases automatically. Hosted mode resolves the
 newest stable release from npm once, then uses that exact version for both the
 run and its gates. The log records the selected version. Set `cli-version` to an
 exact version to reproduce a run; a future major requires an explicit change.
-Registry lookup failures stop before starting an eval. This input does not
+Registry lookup failures stop before starting an eval and report a fixed diagnostic
+for timeout, missing npm, invalid metadata or an unavailable release. This input does not
 upgrade the repository SDK used by `command` mode.
 
 ### Targeting a non-production deployment
@@ -225,6 +226,12 @@ does it create the next immutable `evals-v1.X.Y` and force-move `evals-v1` to
 the same commit. The smoke verifies the CLI 6 release line is published, runs the helper
 tests, executes the local action and uploads real reports — it spends eval
 credits, which is why a release that did not touch the folder skips both jobs.
+
+Every CLI publication through `Release` also runs the live Action smoke after npm publication,
+even when this folder did not change. It resolves CLI 6 once, verifies registry
+visibility of a newly published 6.x version, and pins that exact version for the
+smoke. Release announcements wait for this check. These checks use the configured smoke suite and spend eval credits during
+release runs.
 
 The action has no changeset of its own, so it rides along with the next package
 release that includes the change. Re-running a release after a successful one is

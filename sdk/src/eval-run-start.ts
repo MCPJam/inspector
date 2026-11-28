@@ -29,7 +29,7 @@ export type EvalRunContext = EvalRunStartReceipt & {
 };
 const refusalMessages: Record<string, string> = {
   CLI_UPGRADE_REQUIRED:
-    "This CLI version is too old to start an eval. Run npm install -g @mcpjam/cli@latest, or update the cli-version pin in CI, and retry.",
+    "This CLI version is too old to start an eval. First use supported Node (^22.23.4 || ^24.22.1 || >=26.12.1), then run npm install -g @mcpjam/cli@latest or update the cli-version pin in CI and retry.",
   UNAUTHORIZED:
     "Your MCPJam credential is invalid or revoked. Create a new sk_ key or run `mcpjam cloud login` again.",
   EXPIRED_KEY:

@@ -1,6 +1,6 @@
 import evalIngest from "../eval-ingest.js";
 import evals from "../evals.js";
-import { afterEach } from "vitest";
+import { afterEach, beforeEach } from "vitest";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { requireCurrentEvalCli, startsEval } from "../eval-cli-version.js";
@@ -12,6 +12,10 @@ function app() {
   router.all("*", (c) => c.json(createRun()));
   return { router, createRun };
 }
+
+beforeEach(() => {
+  vi.stubEnv("MCPJAM_MINIMUM_EVAL_CLI_VERSION", "6.4.1");
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -130,5 +134,40 @@ it("keeps vocabulary negotiation headers on the real eval router's upgrade refus
   expect(response.headers.get("vary")).toContain("x-mcpjam-eval-vocabulary");
   expect(await response.json()).toMatchObject({
     details: { reason: "CLI_UPGRADE_REQUIRED" },
+  });
+});
+
+it("does not refuse clients using the reporting warning threshold by default", async () => {
+  vi.stubEnv("MCPJAM_MINIMUM_EVAL_CLI_VERSION", "");
+  const { router, createRun } = app();
+  for (const version of ["5.7.1", "6.0.1", "6.4.0"]) {
+    const response = await router.request(start, {
+      method: "POST",
+      headers: { "user-agent": `mcpjam-cli/${version}` },
+    });
+    expect(response.status).toBe(200);
+  }
+  expect(createRun).toHaveBeenCalledTimes(3);
+});
+
+it("uses the independently configured compatibility floor", async () => {
+  vi.stubEnv("MCPJAM_MINIMUM_EVAL_CLI_VERSION", "6.0.0");
+  const { router } = app();
+  expect(
+    (
+      await router.request(start, {
+        method: "POST",
+        headers: { "user-agent": "mcpjam-cli/6.0.1" },
+      })
+    ).status,
+  ).toBe(200);
+  const refusal = await router.request(start, {
+    method: "POST",
+    headers: { "user-agent": "mcpjam-cli/5.7.1" },
+  });
+  expect(refusal.status).toBe(400);
+  expect(await refusal.json()).toMatchObject({
+    message: expect.stringContaining("^22.23.4 || ^24.22.1 || >=26.12.1"),
+    details: { minimumCliVersion: "6.0.0" },
   });
 });

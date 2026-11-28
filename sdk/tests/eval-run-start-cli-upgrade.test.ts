@@ -29,5 +29,6 @@ it("names the CLI upgrade required by the server without retrying or blaming cre
     code: "CLI_UPGRADE_REQUIRED",
     message: expect.stringContaining("npm install -g @mcpjam/cli@latest"),
   });
-  expect(fetcher).toHaveBeenCalledOnce();
+  await expect(startEvalRun({ apiKey: "sk_test", mcpjam: { baseUrl: "http://localhost:3000" }, plannedIterations: 1 })).rejects.toMatchObject({ message: expect.stringContaining("^22.23.4 || ^24.22.1 || >=26.12.1") });
+  expect(fetcher).toHaveBeenCalledTimes(2);
 });
