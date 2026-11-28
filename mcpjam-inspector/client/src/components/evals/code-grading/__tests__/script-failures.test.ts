@@ -38,11 +38,12 @@ describe("Setup failed", () => {
       title:
         "Couldn't set up this iteration. Fix the script under Setup and cleanup in suite settings.",
       oneLine:
-        "The Before each iteration script exited 1, so the agent didn't run. This iteration is left out of the pass rate.",
+        "The Before each iteration script stopped with an error, so the agent didn't run. This iteration is left out of the pass rate.",
       nextSteps: ["After you fix the script, run the suite again."],
       severity: "error",
       origin: "user_config",
-      rawMessage: failed.output,
+      // The exit code leads the details, beside the output it explains.
+      rawMessage: `Exit code 1\n\n${failed.output}`,
     });
     expect(failure.rawLabel).toBe("Script output");
     expect(
@@ -124,7 +125,7 @@ describe("the cleanup warning", () => {
       title:
         "Couldn't clean up after this iteration. Fix the script under Setup and cleanup in suite settings.",
       oneLine:
-        "The After each iteration script exited 1. This iteration's results are unchanged.",
+        "The After each iteration script stopped with an error. This iteration's results are unchanged.",
       severity: "warning",
     });
   });
@@ -139,7 +140,7 @@ describe("run script failures", () => {
       },
     });
     expect(failures.map((failure) => failure.error.oneLine)).toEqual([
-      "The Before the run script exited 1, so no iteration started.",
+      "The Before the run script stopped with an error, so no iteration started.",
       "The After the run script was stopped at its time limit. The run's results are unchanged.",
     ]);
     expect(runScriptFailures({})).toEqual([]);

@@ -37,7 +37,7 @@ describe("Setup failed, on the iteration page", () => {
     expect(card.getByText(SETUP_TITLE)).toBeInTheDocument();
     expect(
       card.getByText(
-        "The Before each iteration script exited 1, so the agent didn't run. This iteration is left out of the pass rate.",
+        "The Before each iteration script stopped with an error, so the agent didn't run. This iteration is left out of the pass rate.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -101,7 +101,7 @@ describe("IterationErrorCards", () => {
     expect(screen.getAllByRole("alert")).toHaveLength(2);
     expect(
       within(screen.getByTestId("script-failure-iterationCleanup")).getByText(
-        "The After each iteration script exited 2. This iteration's results are unchanged.",
+        "The After each iteration script stopped with an error. This iteration's results are unchanged.",
       ),
     ).toBeInTheDocument();
   });
@@ -152,7 +152,7 @@ describe("RunScriptNotices, on the run page", () => {
     );
     expect(
       screen.getByText(
-        "The Before the run script exited 127, so no iteration started.",
+        "The Before the run script stopped with an error, so no iteration started.",
       ),
     ).toBeInTheDocument();
     expect(
