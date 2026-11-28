@@ -17,7 +17,10 @@ import { buildGuardedOrgModel } from "../utils/guarded-org-model.js";
 import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
-import { runStopRefusal } from "../../shared/credit-exhaustion.js";
+import {
+  isSpendLimitCode,
+  runStopRefusal,
+} from "../../shared/credit-exhaustion.js";
 import type { CreditRecovery } from "@mcpjam/sdk/contract";
 import { creditStopNote } from "./evals/credit-stop.js";
 import { providerErrorDetails } from "./evals/provider-error-details.js";
@@ -7653,12 +7656,16 @@ const runHostedIterationWithBrowser = async (
   });
   // An external-account turn spends no MCPJam credits, so its errors (the
   // vendor's own words) never stop the run as if MCPJam's had run out. The
-  // engine's code goes in too: a harness broker's spend-cap sentence names no
-  // code, so without it a terminal cap let the remaining trials run.
+  // engine's spend-limit code goes in too: a harness broker's spend-cap
+  // sentence names no code, so without it a terminal cap let the remaining
+  // trials run. Only a spend-limit code: a gateway throttle's
+  // `mcpjam_rate_limit` is retryable and must not skip the rest.
   const creditRefusal = {
     message: iterationError,
     details: iterationErrorDetails,
-    ...(result.errorCode ? { code: result.errorCode } : {}),
+    ...(result.errorCode && isSpendLimitCode(result.errorCode)
+      ? { code: result.errorCode }
+      : {}),
   };
   const stopRefusal =
     modelSource !== "external-account"
