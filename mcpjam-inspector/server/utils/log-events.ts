@@ -552,6 +552,16 @@ export type RequestEventMap = {
     workosKeyId: string;
     errorMessage: string;
   };
+  /**
+   * An own-key mint, list or revoke sent to the backend's `/web/api-keys`
+   * routes got no usable answer (unreachable, timed out, or not its JSON), so
+   * the request failed rather than run again in the Inspector.
+   */
+  "apikey.backend.unavailable": {
+    method: "GET" | "POST" | "DELETE";
+    statusCode?: number;
+    errorMessage?: string;
+  };
 };
 
 export type SystemEventMap = {
