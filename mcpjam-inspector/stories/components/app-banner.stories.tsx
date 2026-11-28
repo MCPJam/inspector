@@ -38,12 +38,8 @@ const updateCard = (
 
 export const Prominent: Story = {
   args: {
-    children: (
-      <>
-        <span className="font-medium">Payment failed for Acme Labs.</span>{" "}
-        Update your card by Dec 11, 2026 to keep Team.
-      </>
-    ),
+    children:
+      "Payment failed for Acme Labs. Update your card by Dec 11, 2026 to keep Team.",
     actions: updateCard,
   },
   render: (args) => (
@@ -90,8 +86,8 @@ export const LightAndDark: Story = {
     <ThemePair>
       <Chrome>
         <AppBanner actions={updateCard}>
-          <span className="font-medium">Payment failed for Acme Labs.</span>{" "}
-          Update your card by Dec 11, 2026 to keep Team.
+          Payment failed for Acme Labs. Update your card by Dec 11, 2026 to keep
+          Team.
         </AppBanner>
       </Chrome>
       <Chrome>

@@ -81,8 +81,7 @@ export function PastDueBanner({
           setDismissedOrganizationId(billingStatus.organizationId)
         }
       >
-        Payment failed for {organizationName}. An owner has been asked to update
-        the card.
+        {`Payment failed for ${organizationName}. An owner has been asked to update the card.`}
       </AppBanner>
     );
   }
@@ -131,12 +130,9 @@ export function PastDueBanner({
         </Button>
       }
     >
-      <span className="font-medium">
-        Payment failed for {organizationName}.
-      </span>{" "}
       {graceEndsAt != null
-        ? `Update your card by ${formatBillingDate(graceEndsAt)} to keep ${planName}.`
-        : `Update your card to keep ${planName}.`}
+        ? `Payment failed for ${organizationName}. Update your card by ${formatBillingDate(graceEndsAt)} to keep ${planName}.`
+        : `Payment failed for ${organizationName}. Update your card to keep ${planName}.`}
     </AppBanner>
   );
 }
