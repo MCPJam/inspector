@@ -2670,8 +2670,8 @@ export function TestTemplateEditor({
   // First Save of a prompt draft: insert into Convex (instead of updating a
   // record that does not exist yet), then hand the new id to the parent so it
   // can swap the `draft:<kind>` route for the real one.
-  const handleCreateFromDraft = async () => {
-    if (!editForm || isSavingDraft) return;
+  const handleCreateFromDraft = async (quiet = false): Promise<boolean> => {
+    if (!editForm || isSavingDraft) return false;
     if (hasInvalidFieldDraft) {
       toast.error("Complete the highlighted fields before saving.");
       return false;
@@ -2701,6 +2701,7 @@ export function TestTemplateEditor({
         // validates. It lands in `declaredCaseId`; the row's storage `caseKey`
         // stays the platform's own random `ui_*` value and is untouched.
         caseId: mintCaseId(),
+        requireUniqueTitle: true,
         ...savePayload,
       });
       track("eval_test_case_created", {
@@ -2710,7 +2711,7 @@ export function TestTemplateEditor({
         num_models: currentTestCase?.models?.length ?? 0,
         num_steps: editForm.steps?.length ?? 0,
       });
-      toast.success("Test case created");
+      if (!quiet) toast.success("Test case created");
       if (simpleCaseEditorEnabled && projectId) {
         promoteEvalDraftChat(
           {
@@ -2723,10 +2724,13 @@ export function TestTemplateEditor({
         );
       }
       onDraftSaved?.(newTestCaseId);
+      return true;
     } catch (error) {
       console.error("Failed to create test case:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to create test case"));
-      throw error;
+      return refuseCaseSave(
+        getBillingErrorMessage(error, "Failed to create test case"),
+        quiet,
+      );
     } finally {
       setIsSavingDraft(false);
     }
@@ -2748,10 +2752,7 @@ export function TestTemplateEditor({
         quiet,
       );
     if (readOnly) return false;
-    if (isDraft) {
-      await handleCreateFromDraft();
-      return true;
-    }
+    if (isDraft) return handleCreateFromDraft(quiet);
     if (!editForm || !currentTestCase) return false;
 
     if (simpleToolsBlock) {

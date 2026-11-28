@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   suite: undefined as unknown,
   cases: undefined as unknown,
   update: vi.fn(),
+  create: vi.fn(),
   ciOwned: false,
 }));
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
@@ -17,7 +18,7 @@ vi.mock("convex/react", () => ({
   useQuery: (name: string) =>
     name === "testSuites:getTestSuite" ? state.suite : state.cases,
   useMutation: (name: string) =>
-    name === "testSuites:updateTestCase" ? state.update : vi.fn(),
+    name === "testSuites:updateTestCase" ? state.update : state.create,
 }));
 vi.mock("@/hooks/use-actor-can-query", () => ({
   useActorCanQuery: () => true,
@@ -63,6 +64,7 @@ beforeEach(() => {
   state.suite = suite;
   state.cases = [storedCase()];
   state.update = vi.fn().mockResolvedValue(null);
+  state.create = vi.fn().mockResolvedValue("new-case");
   state.ciOwned = false;
   toast.error.mockClear();
   toast.success.mockClear();
@@ -226,5 +228,56 @@ describe("useCaseStepsDraft", () => {
     await waitFor(() =>
       expect(result.current.draft?.title).not.toBe("Suite 1 case"),
     );
+  });
+});
+
+describe("new test name conflicts", () => {
+  it("requests server name validation and preserves the draft on rejection", async () => {
+    const message =
+      'A test named "List workspaces" already exists in this suite. Give this test a different name.';
+    state.create.mockRejectedValue(
+      Object.assign(new Error("Server Error"), {
+        data: { code: "CONFLICT", field: "title", message },
+      }),
+    );
+    const { result } = renderHook(() =>
+      useCaseStepsDraft({ suiteId: "suite-1", testCaseId: null }),
+    );
+    await waitFor(() => expect(result.current.draft).not.toBeNull());
+    act(() =>
+      result.current.setDraft((draft) => ({
+        ...draft,
+        title: "List workspaces",
+        steps,
+        toolsChoice: "noTool",
+      })),
+    );
+    await act(async () => {
+      expect(await result.current.save()).toEqual({ ok: false });
+    });
+    expect(state.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteId: "suite-1",
+        title: "List workspaces",
+        requireUniqueTitle: true,
+      }),
+    );
+    expect(toast.error).toHaveBeenCalledWith(message);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(result.current.draft?.title).toBe("List workspaces");
+    expect(result.current.saving).toBe(false);
+    state.create.mockResolvedValue("new-case");
+    act(() =>
+      result.current.setDraft((draft) => ({
+        ...draft,
+        title: "List projects",
+      })),
+    );
+    await act(async () => {
+      expect(await result.current.save()).toEqual({
+        ok: true,
+        testCaseId: "new-case",
+      });
+    });
   });
 });
