@@ -77,6 +77,13 @@ export type ErrorCardProps = {
    * tighten spacing without re-styling the whole card.
    */
   className?: string;
+  /**
+   * Keeps the raw error behind the "Technical details" toggle instead of in
+   * the details panel, for a card that opens on its causes and steps.
+   */
+  rawInTechnical?: boolean;
+  /** Label for the Copy button. */
+  copyLabel?: string;
 };
 
 /**
@@ -362,6 +369,8 @@ export function ErrorCard({
   open,
   onOpenChange,
   className,
+  rawInTechnical = false,
+  copyLabel = "Copy",
 }: ErrorCardProps) {
   const normalized = useMemo(() => resolveNormalized(error), [error]);
   // Present only inside the signed-in hosted shell. Everywhere else the card
@@ -429,7 +438,9 @@ export function ErrorCard({
    */
   // `errorType` alone does not earn a disclosure: "Type: Error" tells a reader
   // nothing they cannot see from the card itself.
-  const hasTechnical = Boolean(normalized.stack || normalized.requestId);
+  const hasTechnical = Boolean(
+    normalized.stack || normalized.requestId || (rawInTechnical && showRaw),
+  );
   const hasDetail =
     causes.length > 0 ||
     steps.length > 0 ||
@@ -445,6 +456,19 @@ export function ErrorCard({
   const compact =
     density === "row" || (density === undefined && Boolean(action));
   const showDetailsPanel = isOpen && (hasDetail || compact);
+  const rawRow = (
+    <div>
+      <SectionLabel>Raw error</SectionLabel>
+      <MonoBlock>
+        {normalized.rawMessage}
+        {normalized.rawCode !== undefined ? (
+          <span className="ml-1.5 rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
+            {normalized.rawCode}
+          </span>
+        ) : null}
+      </MonoBlock>
+    </div>
+  );
 
   const detailsPanel = showDetailsPanel ? (
     <div
@@ -495,19 +519,7 @@ export function ErrorCard({
           <SectionBody items={steps} />
         </div>
       ) : null}
-      {showRaw ? (
-        <div>
-          <SectionLabel>Raw error</SectionLabel>
-          <MonoBlock>
-            {normalized.rawMessage}
-            {normalized.rawCode !== undefined ? (
-              <span className="ml-1.5 rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
-                {normalized.rawCode}
-              </span>
-            ) : null}
-          </MonoBlock>
-        </div>
-      ) : null}
+      {showRaw && !rawInTechnical ? rawRow : null}
       {normalized.cause ? (
         <div>
           <SectionLabel>Cause</SectionLabel>
@@ -537,6 +549,7 @@ export function ErrorCard({
               data-testid="error-card-technical-panel"
               className="mt-1.5 space-y-2"
             >
+              {showRaw && rawInTechnical ? rawRow : null}
               {normalized.errorType ? (
                 <div>
                   <SectionLabel>Type</SectionLabel>
@@ -570,7 +583,7 @@ export function ErrorCard({
                   <SectionLabel>Stack trace</SectionLabel>
                   <MonoBlock>{normalized.stack}</MonoBlock>
                 </div>
-              ) : (
+              ) : rawInTechnical && !normalized.requestId ? null : (
                 /* Said out loud rather than left blank. A server error has no
                    stack here by design — the backend attaches its cause
                    non-enumerably so it never reaches a JSON body — and an
@@ -614,7 +627,7 @@ export function ErrorCard({
               ? "Copied"
               : copyState === "failed"
                 ? "Copy failed"
-                : "Copy"}
+                : copyLabel}
           </button>
         ) : null}
       </div>
@@ -811,7 +824,7 @@ export function ErrorCard({
                 ? "Copied"
                 : copyState === "failed"
                   ? "Copy failed"
-                  : "Copy"}
+                  : copyLabel}
             </button>
           </div>
 

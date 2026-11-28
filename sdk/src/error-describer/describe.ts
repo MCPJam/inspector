@@ -211,7 +211,9 @@ function maybePromoteRawMessage(
     const sentence = mcpjamShortfallSentence(rawMessage);
     return sentence ? { ...entry, oneLine: sentence } : entry;
   }
-  if (slug !== "internal/unknown") return entry;
+  if (slug !== "internal/unknown" && slug !== "connect/unclassified") {
+    return entry;
+  }
   if (!rawMessage) return entry;
   return { ...entry, oneLine: truncateOneLine(rawMessage) };
 }
@@ -599,6 +601,13 @@ function resolveSlug(error: unknown): {
     if (fromHttp) return { slug: fromHttp, rawCode: numericCode };
   }
 
+  // (c.5) A stdio command that never started. Node reports it as ENOENT or
+  // EACCES on a `spawn <cmd>` syscall; the same errnos from any other syscall
+  // are not about the command, so the errno alone is not enough.
+  if (isSpawnFailure(error, message)) {
+    return { slug: "transport/spawn_failed", rawCode: getStringCode(error) };
+  }
+
   // (d) Node errno via string `.code`.
   const errno = extractNodeErrno(error);
   if (errno) {
@@ -718,6 +727,24 @@ function resolveSlug(error: unknown): {
   return { slug: "internal/unknown" };
 }
 
+// Node's message is "spawn <command> <errno>", and the command may contain
+// spaces (C:\Program Files\...). Two linear checks replace a single
+// `spawn\s+\S.*?\s+ERRNO` pattern, whose overlapping `.*?` and `\s+`
+// backtrack quadratically on a long run of spaces.
+const SPAWN_COMMAND = /\bspawn\s+\S/;
+const SPAWN_ERRNO = /\s(?:ENOENT|EACCES|EPERM)\b/;
+
+function isSpawnFailure(error: unknown, message: string): boolean {
+  const syscall =
+    error && typeof error === "object"
+      ? (error as { syscall?: unknown }).syscall
+      : undefined;
+  if (typeof syscall === "string" && syscall.startsWith("spawn")) return true;
+  const command = SPAWN_COMMAND.exec(message);
+  if (!command) return false;
+  return SPAWN_ERRNO.test(message.slice(command.index + command[0].length));
+}
+
 /**
  * Slugs whose default `user_config` origin rests on an assumption the wire
  * cannot check: that the credential belongs to the user. When MCPJam holds it
@@ -772,6 +799,12 @@ export type DescribeContext = {
   refresh?: {
     outcome: "token_rejected" | "authorization_server_unreachable";
   };
+  /**
+   * The operation that failed. `"connect"` files an error the resolver cannot
+   * classify under `connect/unclassified` instead of `internal/unknown`, so
+   * every failed connect carries a slug that names the phase.
+   */
+  phase?: "connect";
 };
 
 /**
@@ -1033,13 +1066,19 @@ function applyOriginContext(
  * the caller knows which boundary it crossed, so the correction is applied
  * here rather than by widening the classifier — every caller that does not
  * pass a surface keeps exactly the behaviour it had.
+ *
+ * A connect-phase caller gets the same treatment for the catch-all: only it
+ * knows the unclassified failure was a connect.
  */
-function retargetQuotaForSurface(
+function retargetForContext(
   slug: string,
   context: DescribeContext | undefined,
 ): string {
   if (slug === "provider/quota" && context?.surface === "mcpServer") {
     return "server/rate_limited";
+  }
+  if (slug === "internal/unknown" && context?.phase === "connect") {
+    return "connect/unclassified";
   }
   return slug;
 }
@@ -1053,7 +1092,7 @@ export function describeError(
     const rawMessage = redactString(getErrorMessage(error));
     const fromContext = contextSlug(error, context);
     const resolved = fromContext ? { slug: fromContext } : resolveSlug(error);
-    const slug = retargetQuotaForSurface(resolved.slug, context);
+    const slug = retargetForContext(resolved.slug, context);
     const rawCode =
       resolved.rawCode ?? (fromContext ? httpStatusOf(error) : undefined);
     const entry = applyOriginContext(

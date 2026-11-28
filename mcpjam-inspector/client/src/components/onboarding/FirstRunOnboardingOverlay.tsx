@@ -35,14 +35,22 @@ import type {
   ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
 import type { RegistrationMode, XaaClientAuthMethod } from "@/shared/xaa.js";
+import { AlertCircle, Check, ChevronDown, Circle, Loader2, X } from "lucide-react";
+import type { NormalizedError } from "@mcpjam/sdk/browser";
 import {
-  AlertCircle,
-  Check,
-  ChevronDown,
-  Circle,
-  Loader2,
-  X,
-} from "lucide-react";
+  connectFailureActionKind,
+  connectFailureActionLabel,
+  describeConnectFailure,
+} from "@/lib/connect-failure";
+import {
+  inferFirstRunTransport,
+  withDefaultUrlScheme,
+} from "@/lib/hosted-connect-precheck";
+import {
+  ConnectionFailureNotice,
+  HostedInputNotice,
+  useHostedInputGate,
+} from "./FirstRunConnectionNotices";
 import {
   trackFirstRunConnectionFailed,
   trackFirstRunOnboardingEntered,
@@ -81,6 +89,7 @@ export type FirstRunConnectionState =
       serverName: string;
       serverKind: FirstRunServerKind;
       error?: string;
+      normalized?: NormalizedError;
     }
   | {
       status: "connected";
@@ -93,6 +102,8 @@ export type FirstRunConnectionState =
       serverName: string;
       serverKind: FirstRunServerKind;
       error: string;
+      /** The server's own account of the failure, when one reached the client. */
+      normalized?: NormalizedError;
     };
 
 export interface FirstRunServerDraft {
@@ -228,6 +239,9 @@ export function FirstRunOnboardingOverlay({
   const idleDestinationRef = useRef<"choose" | "server-details" | null>(null);
   const [serverUrlOrCommand, setServerUrlOrCommand] = useState("");
   const [serverUrlError, setServerUrlError] = useState<string | null>(null);
+  const hostedInputGate = useHostedInputGate(HOSTED_MODE);
+  const serverDetailsFormRef = useRef<HTMLFormElement>(null);
+  const serverDetailsUrlInputRef = useRef<HTMLInputElement>(null);
   const [serverName, setServerName] = useState("");
   const [serverTransport, setServerTransport] = useState<"http" | "stdio">(
     "http",
@@ -405,86 +419,100 @@ export function FirstRunOnboardingOverlay({
       }
 
       setServerUrlError(null);
-      setServerUrlOrCommand(trimmedUrlOrCommand);
       // The choice screen starts a new server connection. Always derive its
       // identity from the URL entered here instead of reusing a name hydrated
       // from an earlier OAuth recovery attempt.
       const inferredName = deriveServerName(trimmedUrlOrCommand);
-      const inferredTransport = /^https?:\/\//i.test(trimmedUrlOrCommand)
-        ? "http"
-        : "stdio";
+      const inferredTransport = inferFirstRunTransport(
+        trimmedUrlOrCommand,
+        HOSTED_MODE,
+      );
+      const urlOrCommand =
+        inferredTransport === "http"
+          ? withDefaultUrlScheme(trimmedUrlOrCommand)
+          : trimmedUrlOrCommand;
+      setServerUrlOrCommand(urlOrCommand);
+      if (!hostedInputGate.allow(urlOrCommand, inferredTransport)) {
+        trackFirstRunConnectionFailed(
+          { serverKind: "personal", transport: inferredTransport },
+          "validation",
+        );
+        return;
+      }
       setServerName(inferredName);
       setServerTransport(inferredTransport);
       onConnectOwnServer({
         name: inferredName,
         transport: inferredTransport,
-        urlOrCommand: trimmedUrlOrCommand,
+        urlOrCommand,
         authentication: "auto",
       });
     },
-    [onConnectOwnServer, serverUrlOrCommand],
+    [hostedInputGate, onConnectOwnServer, serverUrlOrCommand],
   );
 
-  const validateSelectedAuthentication = useCallback(() => {
-    setBearerTokenError(null);
-    setClientIdError(null);
-    setClientSecretError(null);
-    setXaaConfigurationError(null);
+  const validateSelectedAuthentication = useCallback(
+    (authentication: ServerFormAuthType = serverAuthentication) => {
+      setBearerTokenError(null);
+      setClientIdError(null);
+      setClientSecretError(null);
+      setXaaConfigurationError(null);
 
-    if (serverTransport === "stdio") return true;
+      if (serverTransport === "stdio") return true;
 
-    if (serverAuthentication === "bearer" && !bearerToken.trim()) {
-      setBearerTokenError("Enter a bearer token to continue.");
-      bearerTokenInputRef.current?.focus();
-      return false;
-    }
+      if (authentication === "bearer" && !bearerToken.trim()) {
+        setBearerTokenError("Enter a bearer token to continue.");
+        bearerTokenInputRef.current?.focus();
+        return false;
+      }
 
-    const usesPreregisteredCredentials =
-      serverAuthentication === "xaa"
-        ? registrationMode === "auto" || registrationMode === "preregistered"
-        : (serverAuthentication === "oauth" ||
-            serverAuthentication === "auto") &&
-          registrationMode === "preregistered";
-    const clientIdValidation = usesPreregisteredCredentials
-      ? validateOAuthClientId(clientId)
-      : null;
-    if (clientIdValidation) {
-      setClientIdError(clientIdValidation);
-      window.setTimeout(() => {
-        contentRef.current
-          ?.querySelector<HTMLInputElement>('input[aria-required="true"]')
-          ?.focus();
-      }, 0);
-      return false;
-    }
-    const clientSecretValidation = usesPreregisteredCredentials
-      ? validateOAuthClientSecret(clientSecret)
-      : null;
-    if (clientSecretValidation) {
-      setClientSecretError(clientSecretValidation);
-      return false;
-    }
-    if (serverAuthentication !== "xaa") return true;
-    if ((xaaSubject.trim() === "") !== (xaaEmail.trim() === "")) {
-      setXaaConfigurationError(XAA_PARTIAL_OVERRIDE_ERROR);
-      return false;
-    }
-    if (confidentialCimdBlockReason) {
-      setXaaConfigurationError(confidentialCimdBlockReason);
-      return false;
-    }
-    return true;
-  }, [
-    bearerToken,
-    clientId,
-    clientSecret,
-    confidentialCimdBlockReason,
-    registrationMode,
-    serverAuthentication,
-    serverTransport,
-    xaaEmail,
-    xaaSubject,
-  ]);
+      const usesPreregisteredCredentials =
+        authentication === "xaa"
+          ? registrationMode === "auto" || registrationMode === "preregistered"
+          : (authentication === "oauth" || authentication === "auto") &&
+            registrationMode === "preregistered";
+      const clientIdValidation = usesPreregisteredCredentials
+        ? validateOAuthClientId(clientId)
+        : null;
+      if (clientIdValidation) {
+        setClientIdError(clientIdValidation);
+        window.setTimeout(() => {
+          contentRef.current
+            ?.querySelector<HTMLInputElement>('input[aria-required="true"]')
+            ?.focus();
+        }, 0);
+        return false;
+      }
+      const clientSecretValidation = usesPreregisteredCredentials
+        ? validateOAuthClientSecret(clientSecret)
+        : null;
+      if (clientSecretValidation) {
+        setClientSecretError(clientSecretValidation);
+        return false;
+      }
+      if (authentication !== "xaa") return true;
+      if ((xaaSubject.trim() === "") !== (xaaEmail.trim() === "")) {
+        setXaaConfigurationError(XAA_PARTIAL_OVERRIDE_ERROR);
+        return false;
+      }
+      if (confidentialCimdBlockReason) {
+        setXaaConfigurationError(confidentialCimdBlockReason);
+        return false;
+      }
+      return true;
+    },
+    [
+      bearerToken,
+      clientId,
+      clientSecret,
+      confidentialCimdBlockReason,
+      registrationMode,
+      serverAuthentication,
+      serverTransport,
+      xaaEmail,
+      xaaSubject,
+    ],
+  );
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -553,16 +581,18 @@ export function FirstRunOnboardingOverlay({
     ],
   );
 
+  // Every details-form connect runs these checks, including Start OAuth,
+  // which overrides only the authentication it submits.
   const submitServerDetails = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
+    (authenticationOverride?: ServerFormAuthType) => {
+      const authentication = authenticationOverride ?? serverAuthentication;
       const trimmedUrlOrCommand = serverUrlOrCommand.trim();
       if (!trimmedUrlOrCommand) {
         trackFirstRunConnectionFailed(
           {
             serverKind: "personal",
             transport: serverTransport,
-            authentication: serverAuthentication,
+            authentication,
           },
           "validation",
         );
@@ -571,17 +601,38 @@ export function FirstRunOnboardingOverlay({
       }
 
       setServerUrlError(null);
-      setServerUrlOrCommand(trimmedUrlOrCommand);
-      if (!validateSelectedAuthentication()) return;
+      // Same default scheme as the first screen, so a bare host typed here
+      // is not rejected as an incomplete URL.
+      const urlOrCommand =
+        serverTransport === "http"
+          ? withDefaultUrlScheme(trimmedUrlOrCommand)
+          : trimmedUrlOrCommand;
+      setServerUrlOrCommand(urlOrCommand);
+      if (!hostedInputGate.allow(urlOrCommand, serverTransport)) {
+        trackFirstRunConnectionFailed(
+          {
+            serverKind: "personal",
+            transport: serverTransport,
+            authentication,
+          },
+          "validation",
+        );
+        return;
+      }
+      if (!validateSelectedAuthentication(authentication)) return;
+      const draft = buildServerDraft(
+        serverName.trim() || deriveServerName(trimmedUrlOrCommand),
+        urlOrCommand,
+      );
       onConnectOwnServer(
-        buildServerDraft(
-          serverName.trim() || deriveServerName(trimmedUrlOrCommand),
-          trimmedUrlOrCommand,
-        ),
+        authenticationOverride
+          ? { ...draft, authentication: authenticationOverride }
+          : draft,
       );
     },
     [
       buildServerDraft,
+      hostedInputGate,
       onConnectOwnServer,
       serverAuthentication,
       serverName,
@@ -590,6 +641,31 @@ export function FirstRunOnboardingOverlay({
       validateSelectedAuthentication,
     ],
   );
+
+  // The failure card's one primary fix, chosen from the catalog slug.
+  const failureAction = (() => {
+    if (connectionState.status !== "failed") return undefined;
+    const { slug } = describeConnectFailure(
+      connectionState.error,
+      connectionState.normalized,
+    );
+    const kind = connectFailureActionKind(slug, serverTransport);
+    const run = () => {
+      if (kind === "edit_input") {
+        serverDetailsUrlInputRef.current?.focus();
+        serverDetailsUrlInputRef.current?.select();
+      } else if (kind === "start_oauth") {
+        changeServerAuthentication("oauth");
+        submitServerDetails("oauth");
+      } else {
+        serverDetailsFormRef.current?.requestSubmit();
+      }
+    };
+    return {
+      label: connectFailureActionLabel(kind, serverTransport),
+      onClick: run,
+    };
+  })();
 
   const authorizeWithSelectedSettings = useCallback(() => {
     if (!validateSelectedAuthentication()) return;
@@ -973,9 +1049,13 @@ export function FirstRunOnboardingOverlay({
                   aria-invalid={serverUrlError ? true : undefined}
                   onChange={(event) => {
                     setServerUrlOrCommand(event.target.value);
+                    hostedInputGate.clear();
                     if (serverUrlError) setServerUrlError(null);
                   }}
                 />
+                {hostedInputGate.check ? (
+                  <HostedInputNotice check={hostedInputGate.check} />
+                ) : null}
                 {serverUrlError ? (
                   <p
                     className="mt-1.5 text-[10.5px] text-destructive"
@@ -1045,7 +1125,10 @@ export function FirstRunOnboardingOverlay({
                 </p>
                 {connectionState.error ? (
                   <div className="mt-3">
-                    <ConnectionFailureNotice error={connectionState.error} />
+                    <ConnectionFailureNotice
+                      error={connectionState.error}
+                      normalized={connectionState.normalized}
+                    />
                   </div>
                 ) : null}
                 <Button
@@ -1197,6 +1280,7 @@ export function FirstRunOnboardingOverlay({
               <ConnectionFailureNotice
                 key={connectionState.error}
                 error={connectionState.error}
+                normalized={connectionState.normalized}
               />
               <Button
                 type="button"
@@ -1217,7 +1301,13 @@ export function FirstRunOnboardingOverlay({
               </div>
             </div>
           ) : (
-            <form onSubmit={submitServerDetails}>
+            <form
+              ref={serverDetailsFormRef}
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitServerDetails();
+              }}
+            >
               <DialogHeader className="gap-0 text-left">
                 <DialogTitle className="pb-0 text-[17px] leading-6 font-bold tracking-[-0.02em] text-card-foreground">
                   Set up your server
@@ -1232,6 +1322,8 @@ export function FirstRunOnboardingOverlay({
                 <ConnectionFailureNotice
                   key={connectionState.error}
                   error={connectionState.error}
+                  normalized={connectionState.normalized}
+                  action={failureAction}
                 />
               ) : null}
 
@@ -1256,11 +1348,12 @@ export function FirstRunOnboardingOverlay({
                     <select
                       className="h-10 rounded-md border border-border bg-card px-3 font-sans text-[12px] tracking-normal text-foreground normal-case shadow-none outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
                       value={serverTransport}
-                      onChange={(event) =>
+                      onChange={(event) => {
                         setServerTransport(
                           event.target.value as "http" | "stdio",
-                        )
-                      }
+                        );
+                        hostedInputGate.clear();
+                      }}
                     >
                       <option value="http">HTTP / SSE</option>
                       <option value="stdio">stdio</option>
@@ -1277,15 +1370,20 @@ export function FirstRunOnboardingOverlay({
                   </Label>
                   <Input
                     id="first-run-server-details-url"
+                    ref={serverDetailsUrlInputRef}
                     className="h-10 border-border bg-card font-mono text-[11.5px] shadow-none"
                     spellCheck={false}
                     value={serverUrlOrCommand}
                     aria-invalid={serverUrlError ? true : undefined}
                     onChange={(event) => {
                       setServerUrlOrCommand(event.target.value);
+                      hostedInputGate.clear();
                       if (serverUrlError) setServerUrlError(null);
                     }}
                   />
+                  {hostedInputGate.check ? (
+                    <HostedInputNotice check={hostedInputGate.check} />
+                  ) : null}
                   {serverUrlError ? (
                     <p className="text-[10.5px] text-destructive" role="alert">
                       {serverUrlError}
@@ -1358,59 +1456,6 @@ function GuestSessionRefusalNotice({
       >
         Sign in
       </Button>
-    </div>
-  );
-}
-
-function ConnectionFailureNotice({ error }: { error: string }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const detailsId = "first-run-connection-error-details";
-
-  return (
-    <div
-      className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 p-3"
-      role="alert"
-    >
-      <div className="flex items-start gap-2.5">
-        <span
-          className="flex size-7 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive"
-          aria-hidden
-        >
-          <AlertCircle className="size-4" strokeWidth={2} />
-        </span>
-        <div className="min-w-0 flex-1 pt-0.5">
-          <p className="text-[12px] leading-4 font-semibold text-card-foreground">
-            Failed to connect to MCP server
-          </p>
-          <Button
-            type="button"
-            variant="ghost"
-            className="mt-1 h-auto gap-1 px-2 py-1 text-[10.5px] font-normal text-foreground"
-            aria-expanded={isExpanded}
-            aria-controls={detailsId}
-            onClick={() => setIsExpanded((current) => !current)}
-          >
-            {isExpanded ? "Hide technical details" : "View technical details"}
-            <ChevronDown
-              className={cn(
-                "size-3 transition-transform",
-                isExpanded && "rotate-180",
-              )}
-              aria-hidden
-            />
-          </Button>
-        </div>
-      </div>
-      {isExpanded ? (
-        <div className="mt-3 border-t border-destructive/15 pt-3">
-          <p
-            id={detailsId}
-            className="break-words font-mono text-[10.5px] leading-[1.5] text-muted-foreground"
-          >
-            {error}
-          </p>
-        </div>
-      ) : null}
     </div>
   );
 }

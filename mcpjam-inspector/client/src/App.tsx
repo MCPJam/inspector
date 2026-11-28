@@ -4542,6 +4542,9 @@ export default function App() {
                 "MCPJam could not verify the server with these authorization settings. Review the error and try again.",
               )
             : server.lastError || "MCPJam could not connect to this server.",
+        ...(isOAuthReturnFailure || isAuthorizationRetryFailure
+          ? {}
+          : { normalized: server.lastNormalizedError }),
       });
     }
   }, [

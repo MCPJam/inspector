@@ -4379,9 +4379,10 @@ describe("App hosted OAuth callback handling", () => {
         screen.getByRole("heading", { name: "Set up your server" }),
       ).toBeInTheDocument();
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "Failed to connect to MCP server",
+        "Connection refused",
       );
     });
+    expect(screen.getByRole("button", { name: "Edit URL" })).toBeVisible();
     expect(mockTrack).toHaveBeenCalledWith(
       "first_run_onboarding_connection_failed",
       {
@@ -4622,7 +4623,7 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("preserves quoted arguments in a first-run stdio command", async () => {
+  it("stops a first-run stdio command before it reaches the hosted backend", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
     mockUnseenOnboardingState();
@@ -4642,29 +4643,48 @@ describe("App hosted OAuth callback handling", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
 
+    expect(
+      await screen.findByText("The web app cannot run local commands"),
+    ).toBeVisible();
+    expect(appState.handleConnect).not.toHaveBeenCalled();
+    expect(mockTrack).toHaveBeenCalledWith(
+      "first_run_onboarding_connection_failed",
+      expect.objectContaining({
+        transport: "stdio",
+        failure_stage: "validation",
+      }),
+    );
+  });
+
+  it("connects a first-run bare host over HTTPS", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/servers");
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+    const appState = createAppStateMock();
+    mockUseAppState.mockReturnValue(appState);
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome to MCPJam" });
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.change(screen.getByLabelText("Server URL"), {
+      target: { value: "mcp.example.com/mcp" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
     await waitFor(() => {
       expect(appState.handleConnect).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: "stdio",
-          command: "node",
-          args: ["server.js", "--config", "My Files/config.json", ""],
+          type: "http",
+          url: "https://mcp.example.com/mcp",
         }),
-        expect.objectContaining({
-          suppressErrorToast: true,
-          suppressSuccessToast: true,
-          requestOAuthAuthorization: expect.any(Function),
-        }),
+        expect.anything(),
       );
     });
-    expect(mockTrack).toHaveBeenCalledWith(
-      "first_run_onboarding_connection_started",
-      {
-        location: "first_run_onboarding",
-        server_kind: "personal",
-        transport: "stdio",
-        authentication: "auto",
-      },
-    );
   });
 
   it("keeps the Excalidraw demo in onboarding while it connects", async () => {

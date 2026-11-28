@@ -164,6 +164,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Despite the `sdk/` namespace, this one is a misconfiguration: "you
   // enabled the stateless protocol toggle on a stdio server".
   "sdk/stateless_requires_http": "user_config",
+  // The stdio command could not start: the executable is missing from PATH
+  // or is not runnable. The command is the user's input.
+  "transport/spawn_failed": "user_config",
   // Same shape, and the reason this slug exists at all: the failure is a
   // version PIN meeting a server that doesn't offer it, and the pin is a
   // setting the user (or the host profile they picked) owns. Classifying it
@@ -212,6 +215,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // noise problem this field exists to remove. Callers that know the failure
   // happened on an internal boundary escalate it themselves.
   "internal/unknown": "ambiguous",
+  // The connect-time form of `internal/unknown`, so a failed connect always
+  // carries a slug that says which phase failed. Same reasoning for origin.
+  "connect/unclassified": "ambiguous",
   "provider/empty_response": "ambiguous",
 };
 
@@ -552,6 +558,23 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Or point Node.js at the CA file with `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`.",
     ],
     "tls-certificate-not-trusted"
+  ),
+  "transport/spawn_failed": entry(
+    "transport/spawn_failed",
+    "Command could not start",
+    "MCPJam could not start the server command, so no server process ran.",
+    [
+      "The program is not installed or not on your PATH.",
+      "The command has a typo.",
+      "The file is not executable.",
+    ],
+    [
+      "Check the command for typos.",
+      "Run the command in a terminal to confirm it starts.",
+      "Use the full path to the program if it is not on your PATH.",
+    ],
+    // The docs have no heading for this slug; the generic one is closest.
+    "unknown-error"
   ),
 
   // --- Auth ---
@@ -1059,6 +1082,22 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   ),
 
   // --- Internal / unknown ---
+  // `describeError` swaps the raw message into `oneLine`, as it does for
+  // `internal/unknown`, so the reader sees what the server actually said.
+  "connect/unclassified": entry(
+    "connect/unclassified",
+    "Connection failed",
+    "MCPJam could not connect to the server, and the error did not match a known cause.",
+    [
+      "The server returned an error MCPJam does not recognize.",
+      "A proxy or network device between MCPJam and the server rejected the request.",
+    ],
+    [
+      "Check the server's logs for an error at the time of the attempt.",
+      "Copy the error and include it when you ask for help.",
+    ],
+    "unknown-error",
+  ),
   "internal/unknown": entry(
     "internal/unknown",
     "Unknown error",

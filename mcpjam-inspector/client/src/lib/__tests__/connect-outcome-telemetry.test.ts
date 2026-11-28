@@ -62,6 +62,42 @@ describe("connect outcome telemetry", () => {
     });
   });
 
+  it("gives a failure that reached the client as text a slug and origin", () => {
+    const { dispatch } = setup();
+    dispatch({ type: "CONNECT_REQUEST", name: "srv", config });
+    dispatch({
+      type: "CONNECT_FAILURE",
+      name: "srv",
+      error: "Upstream said no in an unfamiliar way",
+    });
+    expect(lastProps()).toMatchObject({
+      outcome: "failure",
+      error_slug: "connect/unclassified",
+      error_origin: "ambiguous",
+    });
+  });
+
+  it("refiles the catch-all and keeps a classified slug's origin", () => {
+    const { dispatch } = setup();
+    dispatch({
+      type: "CONNECT_FAILURE",
+      name: "srv",
+      error: "x",
+      normalized: { slug: "internal/unknown", rawMessage: "x" } as never,
+    });
+    expect(lastProps()).toMatchObject({ error_slug: "connect/unclassified" });
+    dispatch({
+      type: "CONNECT_FAILURE",
+      name: "srv",
+      error: "x",
+      normalized: { slug: "auth/http_401", origin: "user_config" } as never,
+    });
+    expect(lastProps()).toMatchObject({
+      error_slug: "auth/http_401",
+      error_origin: "user_config",
+    });
+  });
+
   it.each([
     [
       "the client deadline",
