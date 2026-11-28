@@ -182,6 +182,7 @@ function stubProject(serverSource) {
   symlinkSync(
     join(here, "..", "..", "..", "node_modules"),
     join(root, "node_modules"),
+    "junction",
   );
   return root;
 }
