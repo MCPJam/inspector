@@ -158,6 +158,7 @@ import {
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
+import { pointAtMockRoute } from "../../utils/mock-servers.js";
 import {
   deliveryContractHeaders,
   hostedCredentialDeliveryHeaders,
@@ -1267,6 +1268,8 @@ export function toHttpConfig(
    * function — is the reachability gate.
    */
   pluginRuntime?: PluginStdioHttpTarget,
+  /** The caller's own bearer, presented to the mock route when this is a mock's address. */
+  mockBearer?: string,
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
     if (pluginRuntime) {
@@ -1353,7 +1356,7 @@ export function toHttpConfig(
     headers["Authorization"] = `Bearer ${oauthAccessToken}`;
   }
 
-  return {
+  const config: HttpServerConfig = {
     url: authResponse.serverConfig.url,
     capabilities: clientCapabilities,
     clientCapabilities: clientCapabilities,
@@ -1414,6 +1417,8 @@ export function toHttpConfig(
       ? { toolCallCancellation: initializePins.toolCallCancellation }
       : {}),
   };
+  // A mock's saved address is a placeholder: dial the mock route instead.
+  return pointAtMockRoute(config, mockBearer);
 }
 
 export interface AuthorizedManagerResult {
@@ -2801,6 +2806,7 @@ export async function createAuthorizedManager(
             connectOnUnauthorized,
             effectiveInitializePins,
             pluginRuntime,
+            bearerNow(bearerToken),
           ),
         ] as const;
       } catch (error) {
