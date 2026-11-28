@@ -42,6 +42,7 @@ import { PendingOrganizationDeletions } from "./components/organization/PendingO
 import { UnavailableOrganizationDialog } from "./components/organization/UnavailableOrganizationDialog";
 import { SessionRefreshBanner } from "./components/session-refresh-banner";
 import { GuestSessionRefusedBanner } from "./components/guest-session-refused-banner";
+import { PastDueBanner } from "./components/billing/PastDueBanner";
 import {
   getGuestSessionRefusal,
   subscribeGuestSessionChanges,
@@ -4933,6 +4934,8 @@ export default function App() {
     projectPremiumness,
     selectFreeAfterTrial,
     isSelectingFreeAfterTrial,
+    openPortal: openShellBillingPortal,
+    isOpeningPortal: isOpeningShellBillingPortal,
   } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
     projectId: billingProjectId,
   });
@@ -6720,6 +6723,17 @@ export default function App() {
           surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-row has-[[data-agent-dock=bottom]]:flex-col">
           <SidebarInset className="bg-sidebar flex flex-col min-h-0">
+            <PastDueBanner
+              billingStatus={shellBillingStatus}
+              viewerRole={
+                effectiveOrganizations.find(
+                  (org) => org._id === billingOrganizationId,
+                )?.myRole
+              }
+              hidden={shouldShowBillingHandoffOverlay || isGuestProjectActor}
+              openPortal={openShellBillingPortal}
+              isOpeningPortal={isOpeningShellBillingPortal}
+            />
             <AppChromeHeader
               // "make nux clean" (#2868) hid this on Home for everyone, but that
               // also hid guests' only Sign in / Create account affordance there

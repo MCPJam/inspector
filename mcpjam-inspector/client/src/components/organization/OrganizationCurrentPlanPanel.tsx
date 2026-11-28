@@ -30,7 +30,7 @@ function formatCurrency(
   }).format(amount);
 }
 
-function formatBillingDate(timestampMs: number | null): string {
+export function formatBillingDate(timestampMs: number | null): string {
   if (timestampMs == null) {
     return "Not available";
   }

@@ -121,6 +121,10 @@ import {
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { track } from "@/lib/analytics";
 import {
+  openBillingUrlInNewTab,
+  reserveBillingTab,
+} from "@/lib/billing-portal-tab";
+import {
   beginOrganizationDeletion,
   endOrganizationDeletion,
   useOrganizationDeletionStore,
@@ -1358,16 +1362,6 @@ function OrganizationPage({
   };
   const handleViewBilling = () => navigateToSection("billing");
 
-  const reserveBillingTab = useCallback((): Window | null => {
-    // Electron rejects blank popup reservations in its main-process window
-    // handler. The eventual Stripe URL is opened through the desktop bridge
-    // instead, after the async request returns.
-    if (window.isElectron) return null;
-    const reserved = window.open("", "_blank");
-    if (reserved) reserved.opener = null;
-    return reserved;
-  }, []);
-
   const openBillingUrl = useCallback(
     async (
       url: string,
@@ -1382,21 +1376,7 @@ function OrganizationPage({
         return true;
       }
 
-      if (window.isElectron) {
-        if (window.electronAPI?.app?.openExternal) {
-          await window.electronAPI.app.openExternal(url);
-        } else {
-          // Older desktop builds do not expose the bridge, but their
-          // main-process window handler still opens safe HTTP(S) URLs in the
-          // system browser.
-          window.open(url, "_blank", "noopener,noreferrer");
-        }
-        return true;
-      }
-
-      if (!reservedTab) return false;
-      reservedTab.location.href = url;
-      return true;
+      return openBillingUrlInNewTab(url, reservedTab);
     },
     [navigateBillingInSameTab],
   );
