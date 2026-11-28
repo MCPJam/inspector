@@ -71,7 +71,9 @@ npx tsx --tsconfig server/tsconfig.json scripts/web-clients-local-tracer.ts --si
 ```
 
 Sign in to claude.ai in the window that opens, close it, then run the tracer
-again. The profile keeps the session for later runs. Add `--vendor chatgpt` to
+again. The window is Playwright's Chromium started as a plain browser, with no
+automation flags or remote control, so claude.ai's human check treats it like
+any browser; answer the check yourself. The profile keeps the session for later runs. Add `--vendor chatgpt` to
 sign in to ChatGPT instead; the tracer itself drives Claude web only, but a
 local Inspector runs either vendor on these profiles (see
 `web-clients-forwarding.md`).

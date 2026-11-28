@@ -24,6 +24,7 @@ import { isOutsideRepository } from "../../utils/outside-repository.js";
 import { createMemorySendJournal } from "../../utils/harness/real-ui/drive-turn.js";
 import { RealUiError } from "../../utils/harness/real-ui/page-module.js";
 import { createPlaywrightDriver } from "../../utils/harness/real-ui/playwright-driver.js";
+import { launchTurnBrowser } from "./local-browser-launch.js";
 import { localWebConnectors, type LocalConnectorRegistry } from "./local-connectors.js";
 import { pause } from "./run-web-client-turn.js";
 import type {
@@ -51,13 +52,6 @@ export type LaunchLocalBrowser = (
   profileDir: string,
   options: { headless: boolean },
 ) => Promise<{ page: Page; close(): Promise<void> }>;
-
-const launchPersistent: LaunchLocalBrowser = async (profileDir, options) => {
-  const { chromium } = await import("playwright");
-  const context = await chromium.launchPersistentContext(profileDir, { headless: options.headless });
-  const page = context.pages()[0] ?? (await context.newPage());
-  return { page, close: () => context.close() };
-};
 
 /** Profiles a turn in this process has open: one browser per profile at a time. */
 const openProfiles = new Set<string>();
@@ -186,7 +180,7 @@ export function createLocalWebClientEnvironment(deps: {
       openProfiles.add(deps.profileDir);
       let launched: Awaited<ReturnType<LaunchLocalBrowser>> | undefined;
       try {
-        const browser = await (deps.launch ?? launchPersistent)(deps.profileDir, { headless: deps.headless });
+        const browser = await (deps.launch ?? launchTurnBrowser)(deps.profileDir, { headless: deps.headless });
         launched = browser;
         return {
           driver: await createPlaywrightDriver(browser.page, { sites }),
