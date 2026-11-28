@@ -596,6 +596,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         if (isCurrent()) {
           setTools(aggregatedTools);
           setToolsMetadata(aggregatedMetadata);
+          setToolsListedFor(serverName);
         }
 
         return { tools: aggregatedTools, metadata: aggregatedMetadata };

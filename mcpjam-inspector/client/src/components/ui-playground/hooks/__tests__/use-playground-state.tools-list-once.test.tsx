@@ -43,6 +43,7 @@ import {
   injectHostedServerMapping,
   setApiContext,
 } from "@/lib/apis/web/context";
+import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 
 const SERVER = "excalidraw";
 const UNMAPPED = "not-synced-yet";
@@ -245,6 +246,31 @@ describe("usePlaygroundState — one tools/list per request it would send", () =
     await waitFor(() =>
       expect(Object.keys(result.current.tools)).toEqual(["draw"]),
     );
+    expect(result.current.toolsListed).toBe(true);
+  });
+
+  it("marks the server listed when a selectTool command lists it after a failure", async () => {
+    const { result } = renderPlayground();
+    await waitFor(() => expect(listed).toHaveLength(1));
+    await act(async () => answers[0](new Error("token expired")));
+    await waitFor(() => expect(result.current.fetchingTools).toBe(false));
+    expect(result.current.toolsListed).toBe(false);
+
+    let command: Promise<unknown> | undefined;
+    act(() => {
+      command = executeInspectorCommand({
+        id: "command-1",
+        type: "selectTool",
+        payload: { surface: "playground", toolName: "draw" },
+      });
+    });
+    await waitFor(() => expect(listed).toEqual(["srv-1", "srv-1"]));
+    await act(async () => {
+      answers[1]("draw");
+      await command;
+    });
+
+    expect(Object.keys(result.current.tools)).toEqual(["draw"]);
     expect(result.current.toolsListed).toBe(true);
   });
 
