@@ -38,7 +38,9 @@ function appFor(manager: ReturnType<typeof fakeManager>) {
 }
 
 /** The data events a fresh subscriber is sent before any live traffic. */
-async function firstEvents(app: Hono): Promise<Array<{ requestId: string }>> {
+async function firstEvents(
+  app: Hono,
+): Promise<Array<{ type: string; requestId?: string; requestIds?: string[] }>> {
   const abort = new AbortController();
   const response = await app.request("/stream", { signal: abort.signal });
   const reader = response.body!.getReader();
@@ -77,8 +79,14 @@ describe("elicitation stream replay", () => {
     await expect(answered).resolves.toEqual({ action: "decline" });
 
     const events = await firstEvents(app);
-    expect(events.map((e) => e.requestId)).toEqual(["req-open"]);
-    expect(events[0]).toMatchObject({
+    // The open set comes first, so a reconnecting listener can drop the rest.
+    expect(events[0]).toEqual({
+      type: "elicitation_open",
+      requestIds: ["req-open"],
+    });
+    const replayed = events.slice(1);
+    expect(replayed.map((e) => e.requestId)).toEqual(["req-open"]);
+    expect(replayed[0]).toMatchObject({
       type: "elicitation_request",
       serverId: "weather",
       message: "Q req-open",

@@ -253,6 +253,9 @@ elicitation.get("/stream", async (c) => {
 
       const subscriber = { send, close };
       elicitationSubscribers.add(subscriber);
+      // The open set first, so a listener that reconnected drops questions
+      // settled while it was away, then each open question in full.
+      send({ type: "elicitation_open", requestIds: [...openRequests.keys()] });
       for (const event of openRequests.values()) send(event);
 
       // On client disconnect

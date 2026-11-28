@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import { HOSTED_MODE } from "@/lib/config";
 import { useChatElicitation } from "@/hooks/use-task-elicitation";
+import { ElicitationResponseError } from "@/lib/apis/mcp-tasks-api";
 import { ElicitationDialog } from "../ElicitationDialog";
 
 /**
@@ -42,16 +43,20 @@ export function LocalChatElicitationHost() {
       onResponse={async (action, parameters) => {
         try {
           await respond(action, parameters);
-        } catch {
-          // The question is usually gone server-side (answered, timed out, or
-          // its server disconnected), so keeping the dialog would only take
-          // more answers that go nowhere.
-          // By id: a completion that landed while this answer was in flight
-          // may already have moved another question to the head.
-          clear(elicitation.requestId);
-          toast.error(
-            `Couldn't send your answer${elicitation.serverId ? ` to ${elicitation.serverId}` : ""}. Send your message again to retry.`,
-          );
+        } catch (error) {
+          const server = elicitation.serverId ? ` to ${elicitation.serverId}` : "";
+          if (error instanceof ElicitationResponseError && error.questionGone) {
+            // Answered elsewhere, or its server went away: nothing is waiting.
+            // By id: a completion that landed while this answer was in flight
+            // may already have moved another question to the head.
+            clear(elicitation.requestId);
+            toast.error(
+              `Couldn't send your answer${server}: the question is no longer open.`,
+            );
+            return;
+          }
+          // The server is still waiting, so the question stays open to retry.
+          toast.error(`Couldn't send your answer${server}. Try again.`);
         }
       }}
     />

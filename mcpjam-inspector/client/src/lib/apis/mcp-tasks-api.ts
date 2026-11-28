@@ -420,6 +420,22 @@ export interface TaskElicitationRequest {
   relatedTaskId?: string;
 }
 
+/**
+ * A failed answer to a local elicitation. `questionGone` is true when the
+ * server no longer holds the question (answered elsewhere, or its server went
+ * away), so the dialog should close; any other failure leaves the server
+ * waiting and the question answerable.
+ */
+export class ElicitationResponseError extends Error {
+  constructor(
+    message: string,
+    readonly questionGone: boolean,
+  ) {
+    super(message);
+    this.name = "ElicitationResponseError";
+  }
+}
+
 // Respond to a task-related elicitation via the global elicitation endpoint
 // Per MCP Tasks spec (2025-11-25): elicitations related to tasks include relatedTaskId
 export async function respondToTaskElicitation(
@@ -441,8 +457,9 @@ export async function respondToTaskElicitation(
   } catch {}
 
   if (!res.ok) {
-    throw new Error(
+    throw new ElicitationResponseError(
       body?.error || `Respond to elicitation failed (${res.status})`,
+      res.status === 404,
     );
   }
   return body as { ok: boolean };

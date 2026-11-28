@@ -57,6 +57,14 @@ function useLocalElicitationStream(
               ? current
               : [...current, request],
           );
+        } else if (
+          data?.type === "elicitation_open" &&
+          Array.isArray(data.requestIds)
+        ) {
+          // Sent first on every (re)connect: anything not in it was settled
+          // while this stream was away, and its completion was missed.
+          const open = new Set<unknown>(data.requestIds);
+          setQueue((current) => current.filter((r) => open.has(r.requestId)));
         } else if (data?.type === "elicitation_complete") {
           setQueue((current) =>
             data.requestId

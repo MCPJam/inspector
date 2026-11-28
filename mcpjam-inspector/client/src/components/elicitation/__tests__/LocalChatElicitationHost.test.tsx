@@ -1,10 +1,12 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ElicitationResponseError } from "@/lib/apis/mcp-tasks-api";
 import { LocalChatElicitationHost } from "../LocalChatElicitationHost";
 
 const respondToTaskElicitation = vi.fn();
-vi.mock("@/lib/apis/mcp-tasks-api", () => ({
+vi.mock("@/lib/apis/mcp-tasks-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/apis/mcp-tasks-api")>()),
   respondToTaskElicitation: (...args: unknown[]) =>
     respondToTaskElicitation(...args),
 }));
@@ -94,9 +96,39 @@ describe("LocalChatElicitationHost", () => {
     // req-1 is completed elsewhere while its answer is in flight, so req-2
     // becomes the current question before the answer fails.
     emit({ type: "elicitation_complete", requestId: "req-1" });
-    await act(async () => fail(new Error("Unknown or expired requestId")));
+    await act(async () =>
+      fail(new ElicitationResponseError("Unknown or expired requestId", true)),
+    );
 
     expect(await screen.findByText("Which day?")).toBeTruthy();
+  });
+
+  it("keeps the question open to retry when the answer doesn't arrive", async () => {
+    respondToTaskElicitation.mockRejectedValueOnce(
+      new ElicitationResponseError("Respond to elicitation failed (500)", false),
+    );
+    render(<LocalChatElicitationHost />);
+    emit(question);
+    expect(await screen.findByText("Which city?")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /decline/i }));
+    expect(respondToTaskElicitation).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Which city?")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /decline/i }));
+    expect(respondToTaskElicitation).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Which city?")).toBeNull();
+  });
+
+  it("drops questions settled while the stream was away", async () => {
+    render(<LocalChatElicitationHost />);
+    emit(question);
+    emit({ ...question, requestId: "req-2", message: "Which day?" });
+    expect(await screen.findByText("Which city?")).toBeTruthy();
+    // On reconnect the server sends the open set before replaying it.
+    emit({ type: "elicitation_open", requestIds: ["req-2"] });
+    expect(await screen.findByText("Which day?")).toBeTruthy();
+    expect(screen.queryByText("Which city?")).toBeNull();
   });
 
   it("closes the dialog when the question is answered elsewhere", async () => {
