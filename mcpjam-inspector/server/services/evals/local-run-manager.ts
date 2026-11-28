@@ -337,6 +337,7 @@ export async function openLocalEvalRun(
         clientCapabilities: undefined,
         options: {},
       };
+  const inputAnswers = await inputAnswerResolverFor(convex, target);
   const openHosted = (connectionIdSets?: ConnectionIdSets) => createAuthorizedManager(
     callerContextFromHono(c),
     target.convexAuthToken,
@@ -350,9 +351,7 @@ export async function openLocalEvalRun(
       pluginComputerRuntime: false,
       ...(connectionIdSets ? { connectionIdSets } : {}),
       // Loaded before connect: the capability to be asked is declared there.
-      inputAnswers: await inputAnswerResolverFor(convex, {
-        suiteId: target.suiteId,
-      }),
+      ...(inputAnswers ? { inputAnswers } : {}),
       serverNames: servers.serverNames,
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
       ...(host ? { xaaPolicy: xaaPolicyFromMcpProfile(host.mcpProfile) } : {}),

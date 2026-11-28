@@ -470,7 +470,7 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     };
     if (includeAppRecording && evidence) appRecording = projectRecordedAppTrace(evidence);
     if (includeBrowserScreenshots) {
-      artifacts = (evidence?.browserInteractionSteps ?? []).map((step) => ({
+      artifacts = (evidence?.browserInteractionSteps ?? []).map((step: Artifact) => ({
         ...step,
         screenshotUrl: publicArtifactLink(step.screenshotUrl) ?? undefined,
       }));
