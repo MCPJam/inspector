@@ -37,6 +37,12 @@ import {
 import { ORDER_OPTIONS, ARGS_OPTIONS } from "./validators-section";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
 import {
+  describeCodeGradingChange,
+  readCodeGradingValues,
+  type SuiteGrading,
+  type SuiteScripts,
+} from "./code-grading/code-grading-values";
+import {
   describeGatePolicy,
   describeJudge,
   describePredicates,
@@ -113,6 +119,9 @@ export type SuiteSettingsValues = {
   iterationTimeoutMs: number | undefined;
   runTimeoutMs: number | undefined;
   turnRetries: number | undefined;
+  /** EFTW-90, each saved whole; `undefined` is none, and a clear sends `null`. */
+  scripts?: SuiteScripts;
+  grading?: SuiteGrading;
 };
 
 /** The v2 defaults a case inherits. Fractions in [0,1], never percents. */
@@ -146,6 +155,8 @@ export const SUITE_SETTINGS_KEYS: readonly SuiteSettingsKey[] = [
   "iterationTimeoutMs",
   "runTimeoutMs",
   "turnRetries",
+  "scripts",
+  "grading",
 ];
 
 export type SuiteSettingsDraft = {
@@ -262,6 +273,8 @@ export function readSuiteSettingsValues(suite: {
     runTimeoutMs?: number;
     turnRetries?: number;
   };
+  scripts?: SuiteScripts | null;
+  grading?: SuiteGrading | null;
 }): SuiteSettingsValues {
   return {
     name: suite.name ?? "",
@@ -290,6 +303,7 @@ export function readSuiteSettingsValues(suite: {
     iterationTimeoutMs: suite.executionBudgets?.iterationTimeoutMs,
     runTimeoutMs: suite.executionBudgets?.runTimeoutMs,
     turnRetries: suite.executionBudgets?.turnRetries,
+    ...readCodeGradingValues(suite),
   };
 }
 
@@ -536,7 +550,12 @@ export function outOfRangeBudgetKeys(
 export function normalizeSuiteSettingsValues(
   values: SuiteSettingsValues,
 ): SuiteSettingsValues {
-  return { ...values, name: values.name.trim() };
+  return {
+    ...values,
+    name: values.name.trim(),
+    // Blank scripts and paths drop away, as the platform drops them.
+    ...readCodeGradingValues(values),
+  };
 }
 
 /**
@@ -670,6 +689,11 @@ export function toUpdateArgs(
         // defaults, which is what an author who emptied every field meant.
         // Omitting it would silently keep the budgets they just deleted.
         args.executionBudgets = authoredExecutionBudgets(draft.current);
+        break;
+      case "scripts":
+      case "grading":
+        // The whole object, which replaces the stored one; `null` clears it.
+        args[key] = normalized[key] ?? null;
         break;
     }
   }
@@ -886,6 +910,9 @@ export function describeChange(
         before: describeGatePolicy(before.gatePolicy),
         after: describeGatePolicy(after.gatePolicy),
       };
+    case "scripts":
+    case "grading":
+      return { key, ...describeCodeGradingChange(key, before, after) };
   }
 }
 

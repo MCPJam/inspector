@@ -60,8 +60,21 @@ export function getSubsectionsForGroup(
           label: manifestLabel("checks"),
           target: { type: "passOrFailChecks" },
         },
+        {
+          id: "grading",
+          label: manifestLabel("grading"),
+          target: { type: "row", key: "grading" },
+        },
       ];
     }
+    case "setup":
+      return [
+        {
+          id: "scripts",
+          label: manifestLabel("scripts"),
+          target: { type: "row", key: "scripts" },
+        },
+      ];
     case "runs": {
       const subs: SuiteSettingsSubsection[] = [];
       subs.push({

@@ -879,3 +879,88 @@ describe("execution budgets save as one object", () => {
     }
   });
 });
+
+describe("setup and cleanup scripts and grading settings", () => {
+  test("a script edit sends the whole object; removing the last sends null", () => {
+    let draft = draftOf({ scripts: { runSetup: "seed", runCleanup: "rm" } });
+    draft = edit(draft, "scripts", {
+      runSetup: "seed --fast",
+      runCleanup: "rm",
+    });
+    expect(toUpdateArgs(draft, SUITE_ID)).toEqual({
+      suiteId: SUITE_ID,
+      scripts: { runSetup: "seed --fast", runCleanup: "rm" },
+    });
+    draft = edit(draft, "scripts", undefined);
+    expect(toUpdateArgs(draft, SUITE_ID)).toEqual({
+      suiteId: SUITE_ID,
+      scripts: null,
+    });
+  });
+
+  test("blank scripts and untrimmed paths save as the platform keeps them", () => {
+    let draft = draftOf();
+    draft = edit(draft, "scripts", { runSetup: "  " });
+    draft = edit(draft, "grading", { files: [" /home/user/a ", ""] });
+    expect(toUpdateArgs(draft, SUITE_ID)).toEqual({
+      suiteId: SUITE_ID,
+      scripts: null,
+      grading: { files: ["/home/user/a"] },
+    });
+    // The draft then holds what the save wrote, so nothing stays dirty.
+    const saved = suiteSettingsReducer(draft, {
+      type: "commitSucceeded",
+      suiteId: SUITE_ID,
+      live: committedSuiteSettingsValues(draft),
+    });
+    expect(dirtyKeys(saved)).toEqual([]);
+    expect(saved.current.grading).toEqual({ files: ["/home/user/a"] });
+  });
+
+  test("reads both off a suite, with network none as nothing", () => {
+    const values = readSuiteSettingsValues({
+      scripts: { iterationSetup: "seed" },
+      grading: { network: "none" },
+    });
+    expect(values.scripts).toEqual({ iterationSetup: "seed" });
+    expect(values.grading).toBeUndefined();
+  });
+
+  test("a colleague's edit conflicts only with the row you edited", () => {
+    let draft = draftOf({ scripts: { runSetup: "a" } });
+    draft = edit(draft, "scripts", { runSetup: "mine" });
+    draft = suiteSettingsReducer(draft, {
+      type: "rebase",
+      suiteId: SUITE_ID,
+      live: {
+        ...BASE,
+        scripts: { runSetup: "theirs" },
+        grading: { network: "web" },
+      },
+    });
+    expect(draft.conflicts).toEqual(["scripts"]);
+    expect(draft.current.grading).toEqual({ network: "web" });
+  });
+
+  test("the review dialog names each change", () => {
+    expect(
+      describeChange("scripts", BASE, {
+        ...BASE,
+        scripts: { iterationCleanup: "rm" },
+      }),
+    ).toEqual({
+      key: "scripts",
+      label: "Setup and cleanup",
+      before: "None",
+      after: "After each iteration",
+    });
+    expect(
+      describeChange("grading", BASE, { ...BASE, grading: { network: "web" } }),
+    ).toEqual({
+      key: "grading",
+      label: "Grading",
+      before: "None",
+      after: "Web access",
+    });
+  });
+});

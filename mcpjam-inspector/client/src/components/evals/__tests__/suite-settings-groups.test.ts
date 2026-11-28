@@ -9,6 +9,7 @@ import {
   SUITE_SETTINGS_GROUPS,
   SUITE_SETTINGS_HEADER_KEYS,
 } from "../suite-settings-groups";
+import { suiteSettingsTabForKey } from "../suite-settings-tabs";
 
 describe("SUITE_SETTINGS_GROUPS", () => {
   it("places every visible manifest key exactly once across header keys, rows and nested keys", () => {
@@ -32,5 +33,18 @@ describe("SUITE_SETTINGS_GROUPS", () => {
       [],
     );
     expect(unknown, `unknown keys in groups: ${unknown.join(", ")}`).toEqual([]);
+  });
+
+  it("puts Setup and cleanup on Settings and Grading on Default evaluators", () => {
+    // A key on the wrong tab sends a deep link to a hidden section.
+    const groupOf = (key: string) =>
+      SUITE_SETTINGS_GROUPS.find((group) =>
+        (group.rows as readonly string[]).includes(key),
+      )?.id;
+    expect(groupOf("scripts")).toBe("setup");
+    expect(suiteSettingsTabForKey("scripts")).toBe("settings");
+    // Beside the evaluators it configures the box for.
+    expect(groupOf("grading")).toBe("grading");
+    expect(suiteSettingsTabForKey("grading")).toBe("evaluators");
   });
 });

@@ -278,6 +278,21 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     api: "settings.qualityGate.noGatingScoreErrors",
   },
   {
+    // Bash before and after the run and each iteration, keyed as the suite
+    // stores it so revision history labels it with this row's name.
+    key: "scripts",
+    label: "Setup and cleanup",
+    api: "settings.scripts",
+  },
+  {
+    // What the box that runs code evaluators gets: files copied from the
+    // agent's box, and the web. Not the `grading` GROUP of rows, which is the
+    // pass criteria; this row sits on the Default evaluators tab.
+    key: "grading",
+    label: "Grading",
+    api: "settings.grading",
+  },
+  {
     key: "schedule",
     settingsPage: "hidden",
     label: "Schedule",
@@ -380,6 +395,8 @@ export const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
   "settings.qualityGate.noDeterministicRegressions": true,
   "settings.qualityGate.maximumP95LatencyIncreaseMs": 0,
   "settings.qualityGate.noGatingScoreErrors": true,
+  "settings.scripts": { runSetup: "echo seed", iterationCleanup: "rm -rf out" },
+  "settings.grading": { files: ["/home/user/app/report.json"], network: "web" },
   "environment.computerEnvironment": "Playwright",
   environmentIds: ["env_1"],
 };

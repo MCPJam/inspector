@@ -23,6 +23,7 @@ describe("getSubsectionsForGroup", () => {
       "Iterations",
       "Quality gate",
       "Evaluators",
+      "Grading",
     ]);
     expect(subs.some((sub) => sub.target.type === "stage")).toBe(false);
   });
@@ -40,6 +41,7 @@ describe("getSubsectionsForGroup", () => {
       "Iterations",
       "Quality gate",
       "Evaluators",
+      "Grading",
     ]);
   });
 
