@@ -76,12 +76,10 @@ export const PROTOCOL_CHECK_FEATURES = {
   "modern-tool-output-schema-conformant": [
     "tool-results.output-schema-conformance",
   ],
-  // Fails on logs without a requested level and needs the supplied tool to log
-  // when asked, so a pass shows both the messages and the per-request level.
-  "modern-logs-require-log-level": [
-    "request-control.log-messages",
-    "request-control.per-request-log-level",
-  ],
+  // Fails only on logs without a requested level. A server that never logs
+  // passes too (sending logs is a MAY), so a pass shows neither the messages
+  // nor the per-request level.
+  "modern-logs-require-log-level": "excluded",
   "modern-subscription-ack-precedes-notifications": [
     "subscriptions.listen",
     "subscriptions.acknowledged",

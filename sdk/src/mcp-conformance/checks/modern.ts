@@ -2174,7 +2174,6 @@ function unavailableLogProbe(
   return undefined;
 }
 
-const SUPPLIED_TOOL_NO_LOGS = "the supplied tool produced no logs.";
 
 async function runLogLevelCheck(
   ctx: RawHttpCheckContext,
@@ -2243,8 +2242,10 @@ async function runLogLevelCheck(
     );
   }
 
-  // Supplying the tool is the caller's assertion that it logs. A completed
-  // requested call with no records breaks that assertion and fails the test.
+  // The same tool asking for logs. What it sends is reported, not graded:
+  // with a level the server "MAY send" `notifications/message` (2026-07-28
+  // `server/utilities/logging.mdx`), so none at all is allowed. The
+  // `readiness-log-level-filtering` advice is where a silent tool shows up.
   const requested = await captureLogProbe(ctx, state, meta, {
     id: 7901,
     method: "tools/call",
@@ -2278,9 +2279,7 @@ async function runLogLevelCheck(
     requestedLogLevel: "debug",
     logNotificationCountWithLevel: logRecords(requested.response).length,
   };
-  return details.logNotificationCountWithLevel === 0
-    ? failedResult(meta, Date.now() - startedAt, SUPPLIED_TOOL_NO_LOGS, details)
-    : passedResult(meta, Date.now() - startedAt, details);
+  return passedResult(meta, Date.now() - startedAt, details);
 }
 
 async function runNoSessionIdCheck(

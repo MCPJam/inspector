@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runModernChecks } from "../../src/mcp-conformance/checks/modern.js";
 import { normalizeMCPConformanceConfig } from "../../src/mcp-conformance/validation.js";
 import type { MCPCheckId } from "../../src/mcp-conformance/types.js";
+import { featuresForCheck } from "../../src/server-features/check-map/index.js";
 
 const LOGGING_CHECKS = ["modern-logs-require-log-level"] as const;
 
@@ -91,4 +92,34 @@ describe("modern logging unavailable probes", () => {
       });
     }
   }
+});
+
+describe("modern-logs-require-log-level with a tool that never logs", () => {
+  // Hello MCP `?logs=silent`, catalog 40.P3: the tool answers both calls and
+  // sends no log. Sending logs after opting in is a MAY (2026-07-28
+  // `server/utilities/logging.mdx`), so the silence is not a violation.
+  const silent: typeof fetch = async (_input, init) =>
+    completed(JSON.parse(String(init?.body)).id);
+
+  it("passes, with both counts at zero", async () => {
+    const check = await runCheck("modern-logs-require-log-level", silent);
+
+    expect(check.status).toBe("passed");
+    expect(check.error).toBeUndefined();
+    expect(check.details).toMatchObject({
+      logNotificationCount: 0,
+      logNotificationCountWithLevel: 0,
+      requestedLogLevel: "debug",
+      probedTool: "emit-log",
+    });
+  });
+
+  it("is not evidence for the logging features", () => {
+    // A pass no longer shows that the server logs: a server that never logs
+    // passes too. So it must not mark log messages or the per-request level as
+    // present on the server-features page.
+    expect(featuresForCheck("protocol:modern-logs-require-log-level")).toEqual(
+      []
+    );
+  });
 });

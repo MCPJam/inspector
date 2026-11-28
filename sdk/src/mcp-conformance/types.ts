@@ -375,7 +375,7 @@ export interface MCPConformanceConfig {
   };
   /**
    * Tool the modern logging probes may call to make the server emit log
-   * records. Supplying it asserts that it produces logs when requested.
+   * records. Pick one that logs when asked, or the run shows little.
    * It must be safe to call repeatedly: `modern-logs-require-log-level` calls
    * it without a level and with debug, and the
    * `readiness-log-level-filtering` advice calls it once more with `level`.
@@ -385,8 +385,8 @@ export interface MCPConformanceConfig {
    *
    * Absent ⇒ the check reports could-not-run, except that unrequested logs
    * observed on an ordinary request still fail it, and the advice is not
-   * produced. A successful supplied tool call that produces no requested logs
-   * fails the check rather than skipping it.
+   * produced. A supplied tool that sends no logs when asked still passes the
+   * check (sending them is a MAY); the advice reports it.
    */
   logProbe?: {
     toolName: string;
