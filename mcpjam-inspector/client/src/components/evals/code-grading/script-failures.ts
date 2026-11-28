@@ -74,7 +74,7 @@ function whatHappened(result: ScriptResult): string {
     case "error":
       return "couldn't start";
     default:
-      // The exit code goes in the details, beside the output it explains.
+      // The output says why; the exit code stays in the API, not the card.
       return "stopped with an error";
   }
 }
@@ -107,8 +107,6 @@ export function scriptFailure(
   if (!result || result.status === "passed") return null;
   const setup = slot === "runSetup" || slot === "iterationSetup";
   const output = redacted(result.output).trim();
-  const exitLine =
-    result.exitCode === undefined ? "" : `Exit code ${result.exitCode}`;
   return {
     slot,
     error: {
@@ -125,11 +123,11 @@ export function scriptFailure(
       severity: setup ? "error" : "warning",
       // The suite's own script failed, not MCPJam: no "MCPJam issue" badge.
       origin: "user_config",
-      rawMessage: [exitLine, output, redacted(result.error ?? "").trim()]
+      rawMessage: [output, redacted(result.error ?? "").trim()]
         .filter(Boolean)
         .join("\n\n"),
     },
-    ...(output || exitLine ? { rawLabel: "Script output" } : {}),
+    ...(output ? { rawLabel: "Script output" } : {}),
   };
 }
 
