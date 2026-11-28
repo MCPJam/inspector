@@ -64,12 +64,14 @@ function changedManifests() {
     // A rename or copy record carries the old path and then the new one.
     changes.push({ state, from, to: /^[RC]/.test(state) ? fields[i++] : from });
   }
+  const isManifest = (path) => /(^|\/)package\.json$/.test(path);
   return changes
-    .filter(({ to }) => /(^|\/)package\.json$/.test(to))
+    .filter(({ to }) => isManifest(to))
     .map(({ state, from, to }) => ({
       file: to,
+      // A manifest made by renaming another file (a template, say) starts empty.
       added: addedDependencies(
-        state === "A" ? {} : JSON.parse(git("show", `HEAD^1:${from}`)),
+        state === "A" || !isManifest(from) ? {} : JSON.parse(git("show", `HEAD^1:${from}`)),
         JSON.parse(git("show", `HEAD:${to}`)),
       ),
     }))
