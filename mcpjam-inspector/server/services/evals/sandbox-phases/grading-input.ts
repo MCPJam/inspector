@@ -27,6 +27,82 @@ export type GradingInputSource = {
   expectedToolCalls?: EvaluatorContextV1["expectedToolCalls"];
 };
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function list(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map(record) : [];
+}
+
+type Named = Record<string, unknown> & { toolName: string };
+
+function named(value: Record<string, unknown>): value is Named {
+  return typeof value.toolName === "string";
+}
+
+function isMessage(
+  value: Record<string, unknown>,
+): value is Record<string, unknown> & { role: string; content: unknown } {
+  return typeof value.role === "string";
+}
+
+const USAGE_KEYS = [
+  "inputTokens",
+  "outputTokens",
+  "totalTokens",
+  "reasoningTokens",
+  "cachedInputTokens",
+] as const;
+
+/**
+ * The source a run built its input from, read back off the stored iteration
+ * and its trace (`getTestIteration`, `getTestIterationBlob`). Rows pass
+ * through as stored, as a run passes its own; a malformed one is left out
+ * rather than guessed at.
+ */
+export function gradingInputSourceFromStored(
+  iteration: unknown,
+  trace: unknown,
+): GradingInputSource {
+  const row = record(iteration);
+  const snapshot = record(row.testCaseSnapshot);
+  const usage = record(row.usage);
+  const usageTotals: Record<string, number> = {};
+  for (const key of USAGE_KEYS) {
+    const value = usage[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      usageTotals[key] = value;
+    }
+  }
+  const expectedToolCalls = list(snapshot.expectedToolCalls)
+    .filter(named)
+    .map(({ arguments: args, ...call }) => ({
+      ...call,
+      ...(args === undefined ? {} : { arguments: record(args) }),
+    }));
+  return {
+    scenario: {
+      title: typeof snapshot.title === "string" ? snapshot.title : "",
+      ...(snapshot.isNegativeTest === true ? { isNegativeTest: true } : {}),
+    },
+    messages: list(record(trace).messages).filter(isMessage),
+    toolCalls: list(row.actualToolCalls)
+      .filter(named)
+      .map(({ arguments: args, ...call }) => ({
+        ...call,
+        arguments: record(args),
+      })),
+    ...(Object.keys(usageTotals).length ? { usage: usageTotals } : {}),
+    ...(typeof snapshot.expectedOutput === "string" && snapshot.expectedOutput
+      ? { expectedOutput: snapshot.expectedOutput }
+      : {}),
+    ...(expectedToolCalls.length ? { expectedToolCalls } : {}),
+  };
+}
+
 export function buildGradingInput(
   source: GradingInputSource,
 ): EvaluatorContextV1 {

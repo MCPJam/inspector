@@ -22,6 +22,11 @@ import type {
   EvalBacktestContinuation,
   EvalBacktestReport,
 } from "../contract/eval-backtest.js";
+import {
+  CODE_EVALUATOR_TEST_TIMEOUT_MS,
+  type CodeEvaluatorTestRequest,
+  type CodeEvaluatorTestResult,
+} from "../contract/code-evaluators.js";
 import type {
   PlatformSessionBrowserBodies,
   PlatformSessionBrowserResults,
@@ -606,6 +611,8 @@ type RequestOptions = {
   signal?: AbortSignal;
   /** Stable retry key forwarded to write routes. */
   idempotencyKey?: string;
+  /** The least time this request gets; a client's longer deadline wins. */
+  minTimeoutMs?: number;
 };
 
 type ServerScope = {
@@ -2902,6 +2909,41 @@ export class PlatformApiClient extends MockServerClient {
         },
       },
       options
+    );
+  }
+
+  /**
+   * Run an unsaved code evaluator once against one stored iteration of one of
+   * the suite's finished runs, in a fresh paid box. Writes nothing. A test can
+   * take minutes, so it gets {@link CODE_EVALUATOR_TEST_TIMEOUT_MS} at least.
+   */
+  testEvalCodeEvaluator(
+    params: CodeEvaluatorTestRequest & { projectId: string; suiteId: string },
+    options?: RequestOptions
+  ): Promise<CodeEvaluatorTestResult> {
+    // Field by field: the route's body is strict, so a stray key would 400.
+    const { fileName, script, threshold, id } = params.evaluator;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/code-evaluators/test`,
+      {
+        body: {
+          iterationId: params.iterationId,
+          evaluator: {
+            fileName,
+            script,
+            ...(threshold !== undefined ? { threshold } : {}),
+            ...(id !== undefined ? { id } : {}),
+          },
+          ...(params.network ? { network: params.network } : {}),
+        },
+      },
+      {
+        ...options,
+        minTimeoutMs: options?.minTimeoutMs ?? CODE_EVALUATOR_TEST_TIMEOUT_MS,
+      }
     );
   }
 
@@ -6716,12 +6758,11 @@ export class PlatformApiClient extends MockServerClient {
         });
       }
     }
+    const timeoutMs = Math.max(this.timeoutMs, options?.minTimeoutMs ?? 0);
     const timeoutHandle = setTimeout(
       () =>
-        controller.abort(
-          new Error(`Request timed out after ${this.timeoutMs}ms`)
-        ),
-      this.timeoutMs
+        controller.abort(new Error(`Request timed out after ${timeoutMs}ms`)),
+      timeoutMs
     );
 
     // BOTH THE FETCH AND THE BODY READ ARE INSIDE THIS `try`, and that is the
@@ -6750,7 +6791,7 @@ export class PlatformApiClient extends MockServerClient {
         const aborted = controller.signal.aborted;
         throw new PlatformApiError(
           aborted
-            ? `Request to ${path} timed out after ${this.timeoutMs}ms`
+            ? `Request to ${path} timed out after ${timeoutMs}ms`
             : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(
                 error
               )}`,
@@ -6769,7 +6810,7 @@ export class PlatformApiClient extends MockServerClient {
         if (externalSignal?.aborted) throw error;
         if (controller.signal.aborted) {
           throw new PlatformApiError(
-            `Request to ${path} timed out after ${this.timeoutMs}ms`,
+            `Request to ${path} timed out after ${timeoutMs}ms`,
             "TIMEOUT",
             { status: 0, endpoint: path, cause: error }
           );

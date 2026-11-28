@@ -217,6 +217,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   cancel_eval_run: { command: "cloud eval cancel" },
   backtest_eval_run: { command: "cloud eval backtest" },
   backtest_eval_run_judge: { command: "cloud eval judge-backtest" },
+  test_eval_code_evaluator: { command: "cloud eval code-evaluator test" },
   request_eval_run_judge: { command: "cloud eval judge" },
   request_eval_run_insights: { command: "cloud eval request-insights" },
   cancel_eval_run_insights: { command: "cloud eval cancel-insights" },

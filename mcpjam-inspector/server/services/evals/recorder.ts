@@ -194,6 +194,8 @@ export type SuiteRunRecorder = {
     errorDetails?: string;
     /** OUR infrastructure failed this trial; only with `status: "failed"`. */
     infraError?: EvalInfraError;
+    /** The confirmed grading archive. Pure pass-through. */
+    gradingFilesStorageId?: string;
     resultSource?: "reported" | "derived";
     // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
     // nested `predicates: PredicateResult[]` rows. Persisted to

@@ -172,6 +172,7 @@ export * from "./directory-submission-handoff-operations.js";
 export * from "./directory-test-plan-operations.js";
 export * from "./directory-submission-eval-operations.js";
 export * from "./eval-run-insights-operations.js";
+export * from "./code-evaluator-test-operations.js";
 export * from "./mock-operations.js";
 export * from "./mock-run-operations.js";
 export type * from "./mock-types.js";

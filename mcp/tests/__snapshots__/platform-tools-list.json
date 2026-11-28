@@ -1232,6 +1232,17 @@
     "spendNotice": true
   },
   {
+    "name": "test_eval_code_evaluator",
+    "annotations": {
+      "title": "Test an MCPJam code evaluator on a past iteration",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": true
+  },
+  {
     "name": "request_eval_run_judge",
     "annotations": {
       "title": "Request MCPJam eval run grading",

@@ -503,6 +503,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/eval-runs/{runId}/findings/build":
     "buildEvalRunFindings",
   "post /projects/{projectId}/eval-runs/{runId}/backtest": "backtestEvalRun",
+  "post /projects/{projectId}/eval-suites/{suiteId}/code-evaluators/test":
+    "testEvalCodeEvaluator",
   "post /projects/{projectId}/eval-runs/{runId}/judge/backtest":
     "backtestEvalRunJudge",
   "post /projects/{projectId}/eval-runs/{runId}/judge": "requestEvalRunJudge",

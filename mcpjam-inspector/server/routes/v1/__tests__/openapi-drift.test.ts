@@ -101,6 +101,11 @@ const KNOWN_UNDOCUMENTED = new Set([
   "get /projects/{projectId}/mock-servers/{mockId}/forwarding-policy",
   "get /projects/{projectId}/mock-forwarding-policy",
   "put /projects/{projectId}/mock-forwarding-policy",
+  // "Test on a past iteration" for a code evaluator. Code evaluators answer
+  // to the `eval-code-evaluators` flag, which the backend checks per
+  // organization, so this stays out of the spec until the flag comes off. The
+  // SDK, MCP and the CLI carry it in the meantime.
+  "post /projects/{projectId}/eval-suites/{suiteId}/code-evaluators/test",
   // Deliberately internal: executing an action a human approved in Slack. The
   // route is reachable ONLY with the bot's `slk_` service credential (see
   // SLACK_ALLOWED_PATHS), its `actionId` is minted server-side per proposal,

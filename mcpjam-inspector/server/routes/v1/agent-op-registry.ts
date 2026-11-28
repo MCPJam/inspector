@@ -45,6 +45,7 @@ import {
   cancelEvalRunOperation,
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
+  testEvalCodeEvaluatorOperation,
   requestEvalRunJudgeOperation,
   requestEvalRunInsightsOperation,
   cancelEvalRunInsightsOperation,
@@ -2164,6 +2165,29 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   {
     operation: backtestEvalRunOperation,
     tier: "direct",
+  },
+  // Each test boots a paid sandbox and runs the draft script in it.
+  {
+    operation: testEvalCodeEvaluatorOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const evaluator = input.evaluator;
+        const file =
+          evaluator &&
+          typeof evaluator === "object" &&
+          "fileName" in evaluator &&
+          typeof evaluator.fileName === "string"
+            ? evaluator.fileName
+            : "(unnamed)";
+        return `Test the draft code evaluator ${file} on iteration ${
+          named(input, "iterationId") ?? "(unnamed)"
+        } of suite ${named(input, "suite") ?? "(unnamed)"}`;
+      },
+      buttonLabel: "Run the test",
+      kind: "start",
+      confirmSeverity: "spend",
+    },
   },
   {
     operation: requestEvalRunJudgeOperation,
