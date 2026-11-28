@@ -29,9 +29,6 @@ import { authoredRequiredRole } from "@mcpjam/sdk/contract";
 // NOTHING, so a mismatch row is always a real disagreement.
 // =============================================================================
 
-const ENV_KEY = "MCPJAM_GRADING_ENGINE_MODE";
-const originalEnv = process.env[ENV_KEY];
-
 const usageZero = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 const messages: ModelMessage[] = [{ role: "user", content: "hi" }];
 
@@ -73,14 +70,12 @@ const metadataOf = (params: ReturnType<typeof build>) =>
   params.metadata as Record<string, unknown>;
 
 afterEach(() => {
-  if (originalEnv === undefined) delete process.env[ENV_KEY];
-  else process.env[ENV_KEY] = originalEnv;
   resetShadowMismatchStateForTests();
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
 beforeEach(() => {
-  delete process.env[ENV_KEY];
   resetShadowMismatchStateForTests();
 });
 
@@ -131,8 +126,8 @@ describe("mode gate on the persisted payload", () => {
     expect(new Set(verdicts).size).toBe(1);
   });
 
-  test("the env var alone is enough to keep a caller-less path off", () => {
-    process.env[ENV_KEY] = "off";
+  test("a caller-less path is off, whatever the process environment says", () => {
+    vi.stubEnv("MCPJAM_GRADING_ENGINE_MODE", "enforce");
     const metadata = metadataOf(build());
     expect(metadata).not.toHaveProperty("scores");
     expect(metadata).not.toHaveProperty("scoresShadow");

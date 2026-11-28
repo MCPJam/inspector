@@ -1,49 +1,24 @@
 /**
- * The grading-engine mode for one hosted run.
+ * The grading-engine mode one run executes at.
  *
- * Four positions, ordered: `off < shadow < dual_write < enforce`. The effective
- * mode is the MINIMUM of every position that has an opinion, which is what
- * makes the rollout monotone — no single input can raise the mode above what
- * any other input allows:
+ * Four positions, ordered: `off < shadow < dual_write < enforce`.
  *
- *   - `MCPJAM_GRADING_ENGINE_MODE` (env) is the KILL SWITCH. Absent or
- *     unrecognized ⇒ `off`, so a deploy that ships this code and nothing else
- *     changes no behaviour anywhere.
- *   - the org feature gate (`grading-engine-mode`, W1),
- *   - the suite's `gradingEngine.mode`, read from the RUN SNAPSHOT
- *     (`configSnapshot.gradingEngine`) rather than the live suite, so a
- *     mid-run edit cannot split one run across two modes,
- *   - a per-run override.
+ * The backend decides it once, when it creates the run, and freezes the answer
+ * into `configSnapshot.gradingEngine`: the suite's own `gradingEngine.mode`,
+ * lowered for a replay to its source run's mode, then clamped to verdict-policy
+ * authority. This process runs the run at exactly that. It reads the run's
+ * snapshot rather than the live suite, so a mid-run edit cannot split one run
+ * across two modes.
  *
- * Total and pure: every unparseable or absent input is simply an input with no
- * opinion (env excepted — see above), never a throw, because a mode resolver
- * that can throw becomes a new way for a run to fail.
+ * There is deliberately no setting here that can raise or lower it. The backend
+ * accepts a Required judge or code evaluator only on a run frozen at `enforce`,
+ * so a second source on this side could grade that run at something lower and
+ * leave the Required gate accepted but never applied.
  *
- * WHO SUPPLIES WHICH POSITION. Both passes now carry the RUN's frozen position:
- * the second pass reads it off the run row, and the runner threads
- * `gradingMode` from `configSnapshot.gradingEngine` into
- * `buildIterationFinishParams` (B3b). A per-suite `off` is therefore
- * authoritative on the first pass too, which it was not before — the first pass
- * used to consult the env ceiling alone.
- *
- * ── THE STALE-FLEET HAZARD, and why env is flipped LAST ─────────────────────
- *
- * `parseGradingEngineMode` accepts exactly the spellings THIS BUILD knows. A
- * pod running a build that predates `enforce` parses `MCPJAM_GRADING_ENGINE_MODE
- * =enforce` as UNRECOGNIZED, and an unrecognized env value is `off` — not
- * `dual_write`, not "ignore this position". So during a rollout where the env
- * var is raised before every pod has the new build, the old pods do not merely
- * decline to enforce: they write no score rows at all.
- *
- * That is the safe direction (a lower position is always safe) and it is not a
- * bug to "fix" by making unknown values inherit — inheriting an unknown value
- * is how a typo becomes a promotion. It does mean the ORDER of a promotion
- * matters: raise the org flag and the suite ceiling FIRST, which are read from
- * data every build understands, and raise the env ceiling LAST, once the fleet
- * is uniform.
+ * Total and pure: every unparseable or absent input resolves to `off`, never a
+ * throw, because a mode resolver that can throw becomes a new way for a run to
+ * fail.
  */
-
-import { logger } from "../../utils/logger.js";
 
 export const GRADING_ENGINE_MODES = [
   "off",
@@ -52,25 +27,6 @@ export const GRADING_ENGINE_MODES = [
   "enforce",
 ] as const;
 export type GradingEngineMode = (typeof GRADING_ENGINE_MODES)[number];
-
-/** Monotone order. Index IS the rank — `min` over ranks is the resolution. */
-const MODE_RANK: Record<GradingEngineMode, number> = {
-  off: 0,
-  shadow: 1,
-  dual_write: 2,
-  /**
-   * B3b. The score contract DECIDES here: `finalize-iteration` derives the
-   * iteration's outgoing `result` from its gating rows via the contract's
-   * `allGatingScorersPassed`, and the backend re-derives from the rows it
-   * persisted and downgrades on disagreement.
-   *
-   * Above `dual_write` rather than beside it, deliberately: `enforce` writes
-   * exactly the fields `dual_write` writes, so lowering one position restores
-   * boolean authority with no data migration in either direction. That is what
-   * makes the rollback a flag flip for the whole window between the two waves.
-   */
-  enforce: 3,
-};
 
 /** The one recognized spelling of each position. Anything else has no opinion. */
 export function parseGradingEngineMode(
@@ -82,92 +38,37 @@ export function parseGradingEngineMode(
     : undefined;
 }
 
-/** A `{ mode }` carrier (feature gate payload, suite config, run snapshot). */
+/** The run snapshot's `gradingEngine`: a `{ mode }` carrier, or nothing. */
 type ModeCarrier = { mode?: unknown } | null | undefined;
-
-function carrierMode(carrier: ModeCarrier): GradingEngineMode | undefined {
-  return carrier ? parseGradingEngineMode(carrier.mode) : undefined;
-}
-
-export type GradingModeInputs = {
-  /**
-   * Raw `MCPJAM_GRADING_ENGINE_MODE`. Defaults to `process.env` when absent so
-   * callers that have nothing to say still get the kill switch honored.
-   */
-  env?: string | undefined;
-  /** The org's `grading-engine-mode` gate payload, if the caller resolved one. */
-  orgFlag?: ModeCarrier;
-  /**
-   * The suite's grading config AS SNAPSHOTTED ON THE RUN
-   * (`testSuiteRun.configSnapshot.gradingEngine`). Never the live suite row.
-   */
-  runSnapshot?: ModeCarrier;
-  /** Per-run override, when a run carries one. */
-  runOverride?: ModeCarrier;
-};
-
-/**
- * Resolve the effective mode. Defaults to `off`.
- *
- * The env position is deliberately asymmetric: an absent env var resolves to
- * `off` (ships-at-off), while an absent org/suite/run position is merely
- * unconstrained — those three can only ever lower the env's ceiling.
- */
-export function resolveGradingEngineMode(
-  inputs: GradingModeInputs = {}
-): GradingEngineMode {
-  const envRaw =
-    inputs.env === undefined
-      ? process.env.MCPJAM_GRADING_ENGINE_MODE
-      : inputs.env;
-  const ceiling = parseGradingEngineMode(envRaw) ?? "off";
-  const positions = [
-    carrierMode(inputs.orgFlag),
-    carrierMode(inputs.runSnapshot),
-    carrierMode(inputs.runOverride),
-  ].filter((mode): mode is GradingEngineMode => mode !== undefined);
-  return positions.reduce<GradingEngineMode>(
-    (lowest, mode) => (MODE_RANK[mode] < MODE_RANK[lowest] ? mode : lowest),
-    ceiling
-  );
-}
 
 /**
  * The mode ONE RUN executes at, from the position the backend FROZE onto it.
  *
- * The subtlety this exists to contain: `resolveGradingEngineMode` treats a
- * position with no opinion as UNCONSTRAINED, so it falls through to the env
- * ceiling — correct for an org flag nobody resolved, and exactly wrong for a
- * run snapshot. The backend writes no `gradingEngine` key at all when it
- * resolved `off`, so that an `off` run's snapshot stays byte-identical to a
- * pre-B3b one. An ABSENT STAMP IS THEREFORE A DECISION, not a missing opinion —
- * the suite ceiling, the org flag and the legacy v2 clamp all live upstream of
- * it, and absence is their combined answer.
+ * An ABSENT STAMP IS A DECISION, not a missing opinion: the backend writes no
+ * `gradingEngine` key at all when it resolved `off`, so that an `off` run's
+ * snapshot stays byte-identical to one from before the key existed.
  *
- * Passing that absence straight through would promote every `off` run to
- * whatever this process's env var says, the moment an operator raises it — the
- * precise inverse of the safety the ceilings are for. Every caller that has a
- * run snapshot goes through here instead of spelling the fallback out, so
- * there is one place to get it right.
+ * A PRESENT stamp this build cannot spell is a decision too. A carrier like
+ * `{}`, or one naming a mode a NEWER backend added, is read as the lowest
+ * position, because the safe reading of a decision we cannot read is the one
+ * that writes and enforces nothing. Inheriting some other value instead is how
+ * a typo becomes a promotion.
  */
 export function resolveFrozenRunGradingMode(
   runSnapshot: ModeCarrier
 ): GradingEngineMode {
-  // A PRESENT stamp this build cannot spell is still a DECISION, and the safe
-  // reading of a decision we cannot read is the lowest position.
-  //
-  // The absent case was already handled; a carrier like `{}`, or one naming a
-  // mode a NEWER backend added, yields `undefined` from the parser — and
-  // `resolveGradingEngineMode` treats an unparseable position as "no opinion"
-  // and falls through to the env ceiling. That is the same promotion this
-  // function exists to prevent, reached by a different route. The module
-  // already resolves an unrecognized ENV value to `off` for exactly this
-  // reason; the run stamp gets the same direction.
-  const stamped = runSnapshot
-    ? (parseGradingEngineMode(runSnapshot.mode) ?? "off")
-    : "off";
-  return resolveGradingEngineMode({ runSnapshot: { mode: stamped } });
+  return parseGradingEngineMode(runSnapshot?.mode) ?? "off";
 }
+
+/**
+ * The mode a quick run (Run or Compare on one case in the editor) grades at.
+ *
+ * A quick run has no suite run, so the backend froze no position for it and
+ * there is no stamp to read. It grades at `enforce` so its trial keeps the
+ * score rows it is saved with; the `off` an absent stamp resolves to would
+ * drop them.
+ */
+export const QUICK_RUN_GRADING_MODE: GradingEngineMode = "enforce";
 
 /**
  * True when this mode writes real (non-shadow) score rows.
@@ -188,28 +89,4 @@ export function isEnforcing(mode: GradingEngineMode): boolean {
 /** True when this mode produces score rows at all (shadow or real). */
 export function producesScoreRows(mode: GradingEngineMode): boolean {
   return mode !== "off";
-}
-
-let loggedStartupMode = false;
-
-/**
- * Log the env ceiling exactly once, at startup, so an operator can see which
- * mode the process could reach without reading a flag dashboard. Idempotent:
- * repeated calls are no-ops.
- */
-export function logGradingEngineModeOnce(): void {
-  if (loggedStartupMode) return;
-  loggedStartupMode = true;
-  const raw = process.env.MCPJAM_GRADING_ENGINE_MODE;
-  logger.info("[evals] grading engine mode", {
-    envCeiling: parseGradingEngineMode(raw) ?? "off",
-    ...(raw !== undefined && parseGradingEngineMode(raw) === undefined
-      ? { unrecognizedEnvValue: true }
-      : {}),
-  });
-}
-
-/** Test-only reset of the once-per-process startup log latch. */
-export function resetGradingEngineModeLogForTests(): void {
-  loggedStartupMode = false;
 }

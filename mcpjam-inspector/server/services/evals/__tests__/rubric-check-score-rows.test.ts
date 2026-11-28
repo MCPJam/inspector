@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { allGatingScorersPassed, definitionHash } from "@mcpjam/sdk/contract";
 import { buildHostedScoreContract } from "../score-rows.js";
 import {
@@ -223,16 +223,6 @@ describe("rubric-check rows", () => {
 });
 
 describe("the judge second pass forwards the verdict on the goal channel", () => {
-  const ENV_KEY = "MCPJAM_GRADING_ENGINE_MODE";
-  const originalEnv = process.env[ENV_KEY];
-  beforeEach(() => {
-    process.env[ENV_KEY] = "dual_write";
-  });
-  afterEach(() => {
-    if (originalEnv === undefined) delete process.env[ENV_KEY];
-    else process.env[ENV_KEY] = originalEnv;
-  });
-
   function run(metadata: Record<string, unknown>): JudgeSecondPassRunRow {
     return {
       runId: "run1",

@@ -67,7 +67,6 @@ import { buildStageAuthoredCase } from "./stage-inputs.js";
 import {
   isDualWrite,
   resolveFrozenRunGradingMode,
-  resolveGradingEngineMode,
   type GradingEngineMode,
 } from "./grading-mode.js";
 import {
@@ -846,8 +845,6 @@ export async function runJudgeSecondPass(
     reason,
   });
 
-  const envMode = resolveGradingEngineMode();
-
   let run: JudgeSecondPassRunRow;
   try {
     run = await ports.fetchRun(runId);
@@ -856,22 +853,19 @@ export async function runJudgeSecondPass(
       logger.warn("[evals] judge second pass: backend read route unavailable", {
         runId,
       });
-      return emptyResult(envMode, "backend_unavailable");
+      // The run row is unreadable, so there is no stamp to resolve.
+      return emptyResult("off", "backend_unavailable");
     }
     throw error;
   }
 
-  // Through the SAME translation the first-pass and replay paths use: an absent
-  // stamp is the backend's `off`, not an absent opinion. Resolving it as
-  // "unconstrained" would fall through to this process's env ceiling and run
-  // the REAL-WRITE second pass for a run whose frozen position was `off`,
-  // contaminating the off and legacy cohorts with real score rows.
-  const mode =
-    envMode === "off"
-      ? "off"
-      : resolveFrozenRunGradingMode(
-          run.configSnapshot?.gradingEngine ?? run.gradingEngine,
-        );
+  // Through the SAME translation the first-pass and replay paths use, so all
+  // three read a run's stamp one way: an absent stamp is the backend's `off`.
+  // A run frozen at `off` must never get the REAL-WRITE second pass, which
+  // would put real score rows on a run that never opted in.
+  const mode = resolveFrozenRunGradingMode(
+    run.configSnapshot?.gradingEngine ?? run.gradingEngine,
+  );
   const goalCompletionJobId = run.goalCompletionJobId;
   const metadataAttributionJobId = run.metadataAttributionJobId;
   if (

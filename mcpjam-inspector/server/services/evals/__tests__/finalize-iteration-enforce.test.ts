@@ -30,9 +30,6 @@ import { logger } from "../../../utils/logger.js";
 // pipeline said" come apart.
 // =============================================================================
 
-const ENV_KEY = "MCPJAM_GRADING_ENGINE_MODE";
-const originalEnv = process.env[ENV_KEY];
-
 const usageZero = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 const messages: ModelMessage[] = [{ role: "user", content: "hi" }];
 
@@ -76,8 +73,6 @@ function build(over: Record<string, unknown> = {}) {
 }
 
 afterEach(() => {
-  if (originalEnv === undefined) delete process.env[ENV_KEY];
-  else process.env[ENV_KEY] = originalEnv;
   resetShadowMismatchStateForTests();
   vi.restoreAllMocks();
 });

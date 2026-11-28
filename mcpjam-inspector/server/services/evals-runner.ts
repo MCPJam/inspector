@@ -604,11 +604,8 @@ export type RunEvalSuiteOptions = {
    * `configSnapshot.gradingEngine` at run start and threaded to every
    * iteration's finalization.
    *
-   * ABSENT ⇒ each finalization falls back to the env kill switch alone, which
-   * is `off` unless an operator set it — the pre-B3b behaviour. Threading it
-   * is what makes a per-suite `off` real on the FIRST pass (it was previously
-   * honoured only by the judge second pass, which reads the run row) and what
-   * lets a run reach `enforce` at all.
+   * ABSENT ⇒ `off`: each finalization writes no score keys. A suite run and a
+   * replay always pass it, and a quick run passes `QUICK_RUN_GRADING_MODE`.
    */
   gradingMode?: GradingEngineMode;
   /**
@@ -986,8 +983,7 @@ function formatBudget(ms: number): string {
  *
  * `0` restores the old behaviour — an iteration timeout aborts the whole run —
  * for one release, so a customer surprised by runs that now finish with a
- * verdict instead of exiting 5 has a way back. Naming follows
- * `MCPJAM_GRADING_ENGINE_MODE`.
+ * verdict instead of exiting 5 has a way back.
  */
 /**
  * The platform defaults, resolved through the real resolver.

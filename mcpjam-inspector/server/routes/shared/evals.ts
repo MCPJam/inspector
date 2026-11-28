@@ -31,7 +31,10 @@ import {
   convertToEvalTestCases,
   generateNegativeTestCases,
 } from "../../services/negative-test-agent";
-import { resolveFrozenRunGradingMode } from "../../services/evals/grading-mode.js";
+import {
+  QUICK_RUN_GRADING_MODE,
+  resolveFrozenRunGradingMode,
+} from "../../services/evals/grading-mode.js";
 import {
   startSuiteRunWithRecorder,
   type EvalRunProvenance,
@@ -3321,21 +3324,10 @@ export async function prepareEvalRun(
       recorder,
       suiteInjectOpenAiCompat,
       hostExecutionPolicy: suiteHostPolicy,
-      // B3b: the run's FROZEN grading-engine position, resolved once by the
-      // backend at run creation and combined here with this process's env
-      // ceiling. Threading it makes a per-suite `off` authoritative on the
-      // FIRST pass — before, only the judge second pass (which reads the run
-      // row) could see it — and is what lets a run reach `enforce` at all.
-      //
-      // AN ABSENT STAMP IS A DECISION, NOT A MISSING OPINION. The backend
-      // writes no `gradingEngine` key at all when it resolved `off` — so the
-      // snapshot of an `off` run stays byte-identical to a pre-B3b one — and
-      // this resolver treats a position with no opinion as UNCONSTRAINED,
-      // falling back to the env ceiling. Passing the absence straight through
-      // would therefore promote every `off` run to whatever the process env
-      // says the moment that var is raised, which is exactly backwards: the
-      // suite ceiling, the org flag and the legacy clamp all live upstream of
-      // that stamp, and an absent stamp is their combined answer.
+      // The run's FROZEN grading-engine position, resolved once by the backend
+      // at run creation. It reaches every iteration's first pass, so a
+      // per-suite `off` holds there as well as in the judge second pass, which
+      // reads the run row. An absent stamp is the backend's `off`.
       gradingMode: resolveFrozenRunGradingMode(runGradingEngine),
       // PR 4d: thread the raw suite hostConfig record into the runner so
       // it can resolve CONFIG fields (`systemPrompt` / `temperature` /
@@ -4109,6 +4101,8 @@ export async function runEvalTestCaseWithManager(
       compareRunId,
       suiteInjectOpenAiCompat: prepared.suiteInjectOpenAiCompat,
       hostExecutionPolicy: prepared.suiteHostPolicy,
+      // No suite run, so no frozen position to read.
+      gradingMode: QUICK_RUN_GRADING_MODE,
       // PR 4d: see comment on the suite-run wire-up site above.
       suiteHostConfig: prepared.suiteHostConfig,
       harnessRuntimeVenue: prepared.harnessRuntimeVenue,
@@ -4600,6 +4594,8 @@ export async function streamEvalTestCaseWithManager(
           testCaseId,
           suiteId: testCase.evalTestSuiteId,
           runId: null,
+          // No suite run, so no frozen position to read.
+          gradingMode: QUICK_RUN_GRADING_MODE,
           // Previously unwired here: without it, a cancelled stream kept the
           // iteration loop (and any awaited task) running to completion.
           abortSignal: streamAbortController.signal,

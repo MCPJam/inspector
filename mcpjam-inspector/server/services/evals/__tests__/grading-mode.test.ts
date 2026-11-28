@@ -1,36 +1,31 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  GRADING_ENGINE_MODES,
   isDualWrite,
-  logGradingEngineModeOnce,
+  isEnforcing,
   parseGradingEngineMode,
   producesScoreRows,
-  resetGradingEngineModeLogForTests,
+  QUICK_RUN_GRADING_MODE,
   resolveFrozenRunGradingMode,
-  resolveGradingEngineMode,
 } from "../grading-mode.js";
 
 // =============================================================================
-// The mode resolver is the whole "ships at off" claim in one function, so the
-// cases below pin the two properties that claim rests on: an absent or bogus
-// env var resolves to `off`, and no other position can ever raise the mode
-// above what env allows (monotone `min`, not last-writer-wins).
+// A run's mode is the position the backend froze onto it, read the same way
+// everywhere. The cases below pin that reading: an absent or unreadable stamp
+// is `off`, a readable one is honoured as stamped, and nothing in this
+// process's environment moves it.
 // =============================================================================
 
-const ENV_KEY = "MCPJAM_GRADING_ENGINE_MODE";
-const original = process.env[ENV_KEY];
-
 afterEach(() => {
-  if (original === undefined) delete process.env[ENV_KEY];
-  else process.env[ENV_KEY] = original;
-  resetGradingEngineModeLogForTests();
-  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("parseGradingEngineMode", () => {
-  test("recognizes exactly the three positions", () => {
+  test("recognizes exactly the four positions", () => {
     expect(parseGradingEngineMode("off")).toBe("off");
     expect(parseGradingEngineMode("shadow")).toBe("shadow");
     expect(parseGradingEngineMode("dual_write")).toBe("dual_write");
+    expect(parseGradingEngineMode("enforce")).toBe("enforce");
   });
 
   test("everything else has no opinion rather than throwing", () => {
@@ -49,153 +44,71 @@ describe("parseGradingEngineMode", () => {
   });
 });
 
-describe("resolveGradingEngineMode", () => {
-  test("defaults to off with no inputs at all", () => {
-    delete process.env[ENV_KEY];
-    expect(resolveGradingEngineMode()).toBe("off");
+describe("resolveFrozenRunGradingMode", () => {
+  test("an absent stamp is off", () => {
+    expect(resolveFrozenRunGradingMode(undefined)).toBe("off");
+    expect(resolveFrozenRunGradingMode(null)).toBe("off");
   });
 
-  test("an unrecognized env value is off, not an error and not a pass-through", () => {
-    expect(resolveGradingEngineMode({ env: "DUAL_WRITE" })).toBe("off");
-    expect(resolveGradingEngineMode({ env: "" })).toBe("off");
+  test("a stamp this build cannot read is off, not a pass-through", () => {
+    // `{}` and a mode a NEWER backend added are decisions this build cannot
+    // spell. The safe reading of those is the lowest position.
+    for (const stamp of [
+      {},
+      { mode: "" },
+      { mode: "DUAL_WRITE" },
+      { mode: "turbo" },
+      { mode: 3 },
+    ]) {
+      expect(resolveFrozenRunGradingMode(stamp)).toBe("off");
+    }
   });
 
-  test("env is a ceiling: no other position can raise the mode", () => {
-    expect(
-      resolveGradingEngineMode({
-        env: "off",
-        orgFlag: { mode: "dual_write" },
-        runSnapshot: { mode: "dual_write" },
-        runOverride: { mode: "dual_write" },
-      })
-    ).toBe("off");
-    expect(
-      resolveGradingEngineMode({
-        env: "shadow",
-        orgFlag: { mode: "dual_write" },
-      })
-    ).toBe("shadow");
+  test("a stamped position is honoured at every position", () => {
+    for (const mode of GRADING_ENGINE_MODES) {
+      expect(resolveFrozenRunGradingMode({ mode })).toBe(mode);
+    }
   });
 
-  test("any single position can lower the mode", () => {
-    expect(
-      resolveGradingEngineMode({ env: "dual_write", orgFlag: { mode: "off" } })
-    ).toBe("off");
-    expect(
-      resolveGradingEngineMode({
-        env: "dual_write",
-        runSnapshot: { mode: "shadow" },
-      })
-    ).toBe("shadow");
-    expect(
-      resolveGradingEngineMode({
-        env: "dual_write",
-        orgFlag: { mode: "dual_write" },
-        runSnapshot: { mode: "dual_write" },
-        runOverride: { mode: "shadow" },
-      })
-    ).toBe("shadow");
+  test("the process environment cannot lower a stamped position", () => {
+    // `MCPJAM_GRADING_ENGINE_MODE` used to cap every run at its value and read
+    // unset as `off`. The backend accepts a Required judge only on a run frozen
+    // at `enforce`, so a cap here would leave that gate accepted but not applied.
+    for (const value of ["off", "shadow", "dual_write", "", "unrecognized"]) {
+      vi.stubEnv("MCPJAM_GRADING_ENGINE_MODE", value);
+      expect(resolveFrozenRunGradingMode({ mode: "enforce" })).toBe("enforce");
+    }
   });
 
-  test("a position with no opinion is unconstrained, not off", () => {
-    expect(
-      resolveGradingEngineMode({
-        env: "dual_write",
-        orgFlag: null,
-        runSnapshot: { mode: "nonsense" },
-        runOverride: undefined,
-      })
-    ).toBe("dual_write");
+  test("the process environment cannot raise an absent stamp", () => {
+    vi.stubEnv("MCPJAM_GRADING_ENGINE_MODE", "enforce");
+    expect(resolveFrozenRunGradingMode(undefined)).toBe("off");
   });
+});
 
-  test("reads the env var when the caller passes none", () => {
-    process.env[ENV_KEY] = "shadow";
-    expect(resolveGradingEngineMode()).toBe("shadow");
+describe("QUICK_RUN_GRADING_MODE", () => {
+  test("writes real score rows, which the off of an absent stamp would not", () => {
+    expect(QUICK_RUN_GRADING_MODE).toBe("enforce");
+    expect(isDualWrite(QUICK_RUN_GRADING_MODE)).toBe(true);
   });
 });
 
 describe("mode predicates", () => {
-  test("only dual_write writes real rows; only off writes none", () => {
+  test("enforce and dual_write write real rows; only off writes none", () => {
+    expect(isDualWrite("enforce")).toBe(true);
     expect(isDualWrite("dual_write")).toBe(true);
     expect(isDualWrite("shadow")).toBe(false);
     expect(isDualWrite("off")).toBe(false);
     expect(producesScoreRows("off")).toBe(false);
     expect(producesScoreRows("shadow")).toBe(true);
     expect(producesScoreRows("dual_write")).toBe(true);
-  });
-});
-
-describe("startup log", () => {
-  beforeEach(() => {
-    resetGradingEngineModeLogForTests();
+    expect(producesScoreRows("enforce")).toBe(true);
   });
 
-  test("logs the ceiling exactly once per process", async () => {
-    process.env[ENV_KEY] = "shadow";
-    const { logger } = await import("../../../utils/logger.js");
-    const info = vi.spyOn(logger, "info").mockImplementation(() => {});
-    logGradingEngineModeOnce();
-    logGradingEngineModeOnce();
-    expect(info).toHaveBeenCalledTimes(1);
-    expect(info.mock.calls[0]?.[1]).toMatchObject({ envCeiling: "shadow" });
-  });
-
-  test("flags an unrecognized env value so a typo is visible", async () => {
-    process.env[ENV_KEY] = "dualwrite";
-    const { logger } = await import("../../../utils/logger.js");
-    const info = vi.spyOn(logger, "info").mockImplementation(() => {});
-    logGradingEngineModeOnce();
-    expect(info.mock.calls[0]?.[1]).toMatchObject({
-      envCeiling: "off",
-      unrecognizedEnvValue: true,
-    });
-  });
-});
-
-// =============================================================================
-// B3b review follow-up: an ABSENT frozen stamp is a DECISION, not a missing
-// opinion.
-//
-// `resolveGradingEngineMode` treats a position with no opinion as
-// unconstrained and falls through to the env ceiling. That is right for an org
-// flag nobody resolved and exactly wrong for a run snapshot: the backend writes
-// no `gradingEngine` key when it resolved `off` (so an `off` run's snapshot
-// stays byte-identical to a pre-B3b one), and the suite ceiling, the org flag
-// and the legacy v2 clamp all live upstream of that stamp.
-//
-// Passing the absence through promotes every `off` run to whatever the process
-// env says the moment an operator raises it — the inverse of the safety the
-// ceilings exist for.
-// =============================================================================
-describe("resolveFrozenRunGradingMode", () => {
-  beforeEach(() => {
-    // The hazard only bites once an operator has raised the process ceiling.
-    process.env[ENV_KEY] = "enforce";
-  });
-
-  test("an absent stamp is off, however high the env ceiling is", () => {
-    expect(resolveFrozenRunGradingMode(undefined)).toBe("off");
-  });
-
-  test("the hazard it exists to close", () => {
-    // The raw resolver, handed the same absence: promoted to the env ceiling.
-    // Kept as a test so the difference between the two entry points stays
-    // visible rather than looking like a redundant wrapper.
-    expect(resolveGradingEngineMode({ runSnapshot: undefined })).toBe(
-      "enforce"
-    );
-    expect(resolveFrozenRunGradingMode(undefined)).toBe("off");
-  });
-
-  test("a stamped position is honoured", () => {
-    expect(resolveFrozenRunGradingMode({ mode: "shadow" })).toBe("shadow");
-    expect(resolveFrozenRunGradingMode({ mode: "enforce" })).toBe("enforce");
-  });
-
-  test("the env ceiling still LOWERS a stamped position", () => {
-    // The run snapshot is the backend's decision; this process's env var is a
-    // second kill switch that can only ever take a position away.
-    process.env[ENV_KEY] = "dual_write";
-    expect(resolveFrozenRunGradingMode({ mode: "enforce" })).toBe("dual_write");
+  test("only enforce makes the rows authoritative", () => {
+    expect(isEnforcing("enforce")).toBe(true);
+    expect(isEnforcing("dual_write")).toBe(false);
+    expect(isEnforcing("shadow")).toBe(false);
+    expect(isEnforcing("off")).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { StageAuthoredCase } from "@mcpjam/sdk/contract";
 import {
   LATENCY_BASIS_EVIDENCE_SPAN_UNION,
@@ -48,9 +48,6 @@ import {
 // nothing at `shadow`, nothing for an iteration with no verdict, nothing for a
 // terminal iteration, and never a lifecycle field.
 // =============================================================================
-
-const ENV_KEY = "MCPJAM_GRADING_ENGINE_MODE";
-const originalEnv = process.env[ENV_KEY];
 
 /**
  * The RAW authored case, as the backend's derivation-input route hands it back
@@ -155,20 +152,18 @@ function ports(over: Partial<JudgeSecondPassPorts> = {}) {
   };
 }
 
-beforeEach(() => {
-  process.env[ENV_KEY] = "dual_write";
-});
-
 afterEach(() => {
-  if (originalEnv === undefined) delete process.env[ENV_KEY];
-  else process.env[ENV_KEY] = originalEnv;
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
 describe("no-op modes settle fanout without grading", () => {
-  test("env off: reads job ids and settles without deriving", async () => {
-    process.env[ENV_KEY] = "off";
-    const { value } = ports();
+  test("the run's snapshot says off: reads job ids and settles without deriving", async () => {
+    const { value } = ports({
+      fetchRun: vi.fn(async () =>
+        runRow({ configSnapshot: { gradingEngine: { mode: "off" } } }),
+      ),
+    });
     const result = await runJudgeSecondPass("run1", value);
     expect(result).toMatchObject({ noop: true, reason: "mode_off", graded: 0 });
     expect(value.fetchRun).toHaveBeenCalledWith("run1");
@@ -181,9 +176,10 @@ describe("no-op modes settle fanout without grading", () => {
     });
   });
 
-  test("an absent env var behaves as off", async () => {
-    delete process.env[ENV_KEY];
-    const { value } = ports();
+  test("an absent stamp behaves as off", async () => {
+    const { value } = ports({
+      fetchRun: vi.fn(async () => runRow({ configSnapshot: {} })),
+    });
     expect(await runJudgeSecondPass("run1", value)).toMatchObject({
       noop: true,
       reason: "mode_off",
@@ -208,7 +204,8 @@ describe("no-op modes settle fanout without grading", () => {
     });
   });
 
-  test("the run's snapshot wins over env: env dual_write, suite off", async () => {
+  test("the process environment cannot raise a stamped off", async () => {
+    vi.stubEnv("MCPJAM_GRADING_ENGINE_MODE", "enforce");
     const { value } = ports({
       fetchRun: vi.fn(async () =>
         runRow({ configSnapshot: { gradingEngine: { mode: "off" } } }),
@@ -219,6 +216,14 @@ describe("no-op modes settle fanout without grading", () => {
       reason: "mode_off",
     });
     expect(value.applyDerivation).not.toHaveBeenCalled();
+  });
+
+  test("the process environment cannot lower a stamped mode", async () => {
+    vi.stubEnv("MCPJAM_GRADING_ENGINE_MODE", "off");
+    const { value } = ports();
+    const result = await runJudgeSecondPass("run1", value);
+    expect(result).toMatchObject({ noop: false, graded: 1 });
+    expect(value.applyDerivation).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1202,7 +1207,6 @@ describe("the second pass keeps its contract with the run and the first pass", (
   test("an off run returns the FULL result shape, not a partial literal", async () => {
     // `JudgeSecondPassResult` requires `metadataAttributionOutcomes`. The
     // off/shadow path built its own literal and omitted it — for most runs.
-    process.env[ENV_KEY] = "dual_write";
     const { value } = ports({
       fetchRun: vi.fn(async () => ({
         ...runRow(),
