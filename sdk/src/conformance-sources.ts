@@ -89,7 +89,7 @@ export const PROTOCOL_CHECK_SOURCES = {
     legacy: `${LEGACY_TRANSPORTS}#session-management`,
   },
   "server-sse-streams-functional": {
-    legacy: `${LEGACY_TRANSPORTS}#listening-for-messages-from-the-server`,
+    legacy: `${LEGACY_TRANSPORTS}#multiple-connections`,
   },
   "notification-post-accepted": {
     legacy: `${LEGACY_TRANSPORTS}#sending-messages-to-the-server`,

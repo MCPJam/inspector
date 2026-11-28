@@ -86,6 +86,7 @@ function responseMessages(exchange: RawExchange): unknown[] {
   const { response } = exchange;
   if (response.sse) {
     return response.sse
+      .filter((event) => event.terminated)
       .map((event) => event.json)
       .filter((json): json is unknown => json !== undefined);
   }

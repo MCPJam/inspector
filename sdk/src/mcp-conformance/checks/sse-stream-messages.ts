@@ -7,7 +7,13 @@ import type { RawHttpResult } from "../raw-http.js";
 
 type SseStream = {
   index: number;
-  response: Pick<RawHttpResult, "sse" | "bodyError">;
+  response: Pick<RawHttpResult, "sse" | "bodyError" | "bodyTimedOut">;
+};
+
+type StreamViolation = {
+  message: string;
+  streamIndexes: number[];
+  eventIndex: number;
 };
 
 type StreamInspection =
@@ -15,9 +21,10 @@ type StreamInspection =
       unansweredStreams: number[];
       eventCounts: number[];
       readErrors: Array<string | undefined>;
+      incompleteMessage?: string;
     }
   | {
-      violation: { message: string; streamIndexes: number[]; eventIndex: number };
+      violation: StreamViolation;
     };
 
 export function inspectSseStreamMessages(
@@ -27,10 +34,14 @@ export function inspectSseStreamMessages(
 ): StreamInspection {
   const firstStreamByMessage = new Map<string, number>();
   const unansweredStreams: number[] = [];
+  let unexpectedReply: StreamViolation | undefined;
+  let cutOff = false;
+  let timedOutWithoutReply = false;
 
   for (const { index, response } of streams) {
     const requestId = firstRequestId + index;
     let answered = false;
+    let unexpectedReplyIndex: number | undefined;
     for (const [eventIndex, event] of (response.sse ?? []).entries()) {
       // The client SDK reads data from complete, default or named message events.
       if (
@@ -64,8 +75,9 @@ export function inspectSseStreamMessages(
 
       for (const [messageIndex, message] of messages.entries()) {
         const isResponse = isJSONRPCResponse(message);
-        if (isResponse && String(message.id) === String(requestId)) {
-          answered = true;
+        if (isResponse) {
+          if (String(message.id) === String(requestId)) answered = true;
+          else unexpectedReplyIndex ??= eventIndex;
         }
 
         // Request and response IDs identify calls in opposite directions.
@@ -90,8 +102,26 @@ export function inspectSseStreamMessages(
         firstStreamByMessage.set(key, index);
       }
     }
-    if (!answered) unansweredStreams.push(index);
+    if (!answered) {
+      unansweredStreams.push(index);
+      timedOutWithoutReply ||= response.bodyTimedOut === true;
+      if (unexpectedReplyIndex !== undefined) {
+        unexpectedReply ??= {
+          message: "A concurrent SSE stream sent a JSON-RPC response for a different request",
+          streamIndexes: [index],
+          eventIndex: unexpectedReplyIndex,
+        };
+      }
+    }
+    // Our deadline can leave a partial frame on a stream that was still open.
+    cutOff ||=
+      !response.bodyTimedOut &&
+      (response.bodyError !== undefined ||
+        (response.sse?.some((event) => !event.terminated) ?? false));
   }
+
+  // Compare all streams first so a copied response is reported as a broadcast.
+  if (unexpectedReply) return { violation: unexpectedReply };
 
   return {
     unansweredStreams,
@@ -101,5 +131,10 @@ export function inspectSseStreamMessages(
         response.sse?.filter((event) => event.terminated).length ?? 0,
     ),
     readErrors: streams.map(({ response }) => response.bodyError),
+    incompleteMessage: cutOff
+      ? "An SSE stream was cut off before it could be fully observed"
+      : timedOutWithoutReply
+        ? "The probe deadline passed while an SSE stream was still open without a complete reply"
+        : undefined,
   };
 }

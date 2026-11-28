@@ -183,7 +183,7 @@ describe("Functional SSE Streams and the ping fallback", () => {
     expect(byId(SSE).details).toMatchObject({ probeMethod: "tools/list" });
   });
 
-  it("still catches a broken stream on a declared listing", async () => {
+  it("warns about a cut-off stream on a declared listing", async () => {
     // A server that answers ping as plain JSON but streams its listings, and
     // streams them badly. A ping-only probe would never see the stream.
     const { byId, sent } = await run({
@@ -194,9 +194,10 @@ describe("Functional SSE Streams and the ping fallback", () => {
 
     expect(sent("tools/list")).toBe(3);
     expect(sent("ping")).toBe(0);
-    expect(byId(SSE).status).toBe("failed");
-    expect(byId(SSE).error?.message).toContain(
-      "ended without the JSON-RPC response to its request"
-    );
+    expect(byId(SSE)).toMatchObject({
+      status: "skipped",
+      skipReason: "could-not-run",
+      error: { message: expect.stringContaining("An SSE stream was cut off") },
+    });
   });
 });

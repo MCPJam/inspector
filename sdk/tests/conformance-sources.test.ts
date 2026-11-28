@@ -83,6 +83,14 @@ describe("conformanceCheckSourceUrl", () => {
     );
   });
 
+  it("links Functional SSE Streams to the multiple-connections rule", () => {
+    expect(
+      conformanceCheckSourceUrl("server-sse-streams-functional", "2025-11-25")
+    ).toBe(
+      "https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#multiple-connections"
+    );
+  });
+
   it("prefers the current revision when the version is unknown", () => {
     const modern =
       "https://modelcontextprotocol.io/specification/2026-07-28/server/tools#listing-tools";

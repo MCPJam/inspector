@@ -548,13 +548,16 @@ export async function runTransportChecks(
               Accept: "text/event-stream, application/json",
             },
             body: probe.body(firstRequestId + index),
+            observeSse: true,
           }).then((response) =>
-            // A polled answer needs a call-back; the three wait at once.
-            resumePolledStream(ctx, response, {
-              sessionId: activeSessionId,
-              protocolVersion: streamVersion,
-              inspectAllMessages: true,
-            }),
+            // A local deadline is not a server handoff to polling.
+            response.bodyTimedOut
+              ? response
+              : resumePolledStream(ctx, response, {
+                  sessionId: activeSessionId,
+                  protocolVersion: streamVersion,
+                  inspectAllMessages: true,
+                }),
           ),
         ),
       );
@@ -665,40 +668,20 @@ export async function runTransportChecks(
           ),
         );
       } else {
-        const { unansweredStreams, eventCounts, readErrors } = inspection;
-        const allStreamsReadable =
-          readErrors.every((error) => error === undefined) &&
-          unansweredStreams.length === 0;
-
+        const { incompleteMessage, ...evidence } = inspection;
+        const check = TRANSPORT_CHECK_METADATA["server-sse-streams-functional"];
+        const details = {
+          ...acceptance,
+          ...evidence,
+          ...polling.resumedDetail,
+          contentTypes,
+          sseStreamCount: sseResponses.length,
+          sseResponseIndexes: sseResponses.map(({ index }) => index),
+        };
         results.push(
-          allStreamsReadable
-            ? passedResult(
-                TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-                Date.now() - multiStreamStartedAt,
-                {
-                  eventCounts,
-                  sseStreamCount: sseResponses.length,
-                  ...acceptance,
-                  ...polling.resumedDetail,
-                },
-              )
-            : failedResult(
-                TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
-                Date.now() - multiStreamStartedAt,
-                unansweredStreams.length > 0
-                  ? "One or more concurrent SSE streams ended without the JSON-RPC response to its request"
-                  : "One or more concurrent SSE streams could not be read to the end",
-                {
-                  contentTypes,
-                  ...acceptance,
-                  eventCounts,
-                  unansweredStreams,
-                  readErrors,
-                  sseStreamCount: sseResponses.length,
-                  sseResponseIndexes: sseResponses.map(({ index }) => index),
-                  ...polling.resumedDetail,
-                },
-              ),
+          incompleteMessage
+            ? couldNotRunResult(check, incompleteMessage, details)
+            : passedResult(check, Date.now() - multiStreamStartedAt, details),
         );
       }
     }
