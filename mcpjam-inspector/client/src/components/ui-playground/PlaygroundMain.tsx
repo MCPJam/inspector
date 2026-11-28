@@ -1671,12 +1671,19 @@ export function PlaygroundMain({
         setModelContextQueue([]);
       }
       if (reason !== "conflict-fork") setPreludeTraceExecutions([]);
-      if (reason === "hydrate" && hydration &&
-          injectedAppScopeRef.current === hydration.appSessionScopeId) {
-        setInjectedToolRenderOverrides((previous) => retainInjectedAppOverrides(
-          previous, hydration.messages, hydration.toolRenderOverrides,
-          hydration.persistedSnapshotToolCallIds,
-        ));
+      if (
+        reason === "hydrate" &&
+        hydration &&
+        injectedAppScopeRef.current === hydration.appSessionScopeId
+      ) {
+        setInjectedToolRenderOverrides((previous) =>
+          retainInjectedAppOverrides(
+            previous,
+            hydration.messages,
+            hydration.toolRenderOverrides,
+            hydration.persistedSnapshotToolCallIds,
+          ),
+        );
       } else if (reason !== "conflict-fork") {
         injectedAppScopeRef.current = null;
         setInjectedToolRenderOverrides({});
@@ -1710,7 +1717,10 @@ export function PlaygroundMain({
   }, [error, onOAuthRequired, selectedServers]);
 
   const activeInjectedToolRenderOverrides = useMemo(
-    () => injectedAppScopeRef.current === appSessionScopeId ? injectedToolRenderOverrides : {},
+    () =>
+      injectedAppScopeRef.current === appSessionScopeId
+        ? injectedToolRenderOverrides
+        : {},
     [appSessionScopeId, injectedToolRenderOverrides],
   );
 

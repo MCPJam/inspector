@@ -640,8 +640,7 @@ export const useAppToolsRegistry = Object.assign(
  * context.
  */
 export interface AppToolInvocationRecord {
-  /** Durable conversation at dispatch time, independent of App ownership. */
-  chatSessionId?: string;
+  chatSessionId?: string; // Dispatch conversation, independent of App ownership.
   appSessionScopeId?: string;
   initiatedBy?: "user";
   alias: string;
@@ -690,7 +689,9 @@ export function createAppToolInvocationLog() {
     },
   }));
 }
-export type AppToolInvocationLog = ReturnType<typeof createAppToolInvocationLog>;
+export type AppToolInvocationLog = ReturnType<
+  typeof createAppToolInvocationLog
+>;
 const legacyInvocationLog = createAppToolInvocationLog();
 export function useAppToolInvocationLogApi(): AppToolInvocationLog {
   return useContext(WidgetWorkspaceContext)?.invocations ?? legacyInvocationLog;
