@@ -86,7 +86,7 @@ describe("PastDueBanner", () => {
     renderBanner(status({ canManageBilling: false }));
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("status").textContent).toContain(
-      "Billing for Acme Labs needs attention. An owner has been asked to update the card.",
+      "Payment failed for Acme Labs. An owner has been asked to update the card.",
     );
     expect(screen.queryByRole("button", { name: "Update card" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));

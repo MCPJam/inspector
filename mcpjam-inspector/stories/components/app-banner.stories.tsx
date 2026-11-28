@@ -59,7 +59,7 @@ export const Quiet: Story = {
   args: {
     emphasis: "quiet",
     children:
-      "Billing for Acme Labs needs attention. An owner has been asked to update the card.",
+      "Payment failed for Acme Labs. An owner has been asked to update the card.",
     onDismiss: () => {},
   },
   render: Prominent.render,
@@ -96,8 +96,8 @@ export const LightAndDark: Story = {
       </Chrome>
       <Chrome>
         <AppBanner emphasis="quiet" onDismiss={() => {}}>
-          Billing for Acme Labs needs attention. An owner has been asked to
-          update the card.
+          Payment failed for Acme Labs. An owner has been asked to update the
+          card.
         </AppBanner>
       </Chrome>
       <Chrome>

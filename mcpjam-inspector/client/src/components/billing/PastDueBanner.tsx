@@ -81,8 +81,8 @@ export function PastDueBanner({
           setDismissedOrganizationId(billingStatus.organizationId)
         }
       >
-        Billing for {organizationName} needs attention. An owner has been asked
-        to update the card.
+        Payment failed for {organizationName}. An owner has been asked to update
+        the card.
       </AppBanner>
     );
   }
