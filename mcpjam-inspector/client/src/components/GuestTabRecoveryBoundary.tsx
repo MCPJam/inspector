@@ -14,6 +14,7 @@ import {
   listenForGuestTransitions,
   readGuestTransition,
 } from "@/lib/auth/guest-tab-recovery";
+import { AppBanner } from "@mcpjam/design-system/app-banner";
 import { Button } from "@mcpjam/design-system/button";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
@@ -67,31 +68,35 @@ export function GuestTabRecoveryBoundary({
     <>
       <LoadingScreen message="Updating your session…" />
       {status === "failed" && (
-        <div
-          role="alert"
-          className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-3 border-b border-border bg-background px-4 py-2 text-sm"
+        <AppBanner
+          tone="neutral"
+          className="fixed inset-x-0 top-0 z-50"
+          actions={
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => guestTabRecovery.retry()}
+              >
+                Retry
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  captureAppSignInReturnPath();
+                  void Promise.resolve(signIn(permalinkSignInOptions())).catch(
+                    () => {},
+                  );
+                }}
+              >
+                Sign in
+              </Button>
+            </>
+          }
         >
-          <span>Couldn't update your session.</span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => guestTabRecovery.retry()}
-          >
-            Retry
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              captureAppSignInReturnPath();
-              void Promise.resolve(signIn(permalinkSignInOptions())).catch(
-                () => {},
-              );
-            }}
-          >
-            Sign in
-          </Button>
-        </div>
+          Couldn't update your session.
+        </AppBanner>
       )}
     </>
   );

@@ -1,0 +1,55 @@
+import { Canvas, Meta } from "@storybook/addon-docs/blocks";
+import * as Stories from "./app-banner.stories";
+
+<Meta of={Stories} name="Overview" />
+
+# App banner
+
+A full-width strip at the top of the app about the account or the session, not
+the page in front of you.
+
+**Use it** for a state that follows the reader everywhere until it's fixed: a
+failed payment, an expired session, a refused guest session.
+
+**Don't use it** for a problem on one page (use an alert or ErrorCard), for
+feedback on an action (a toast), or to announce a feature (Spotlight).
+
+The message is left aligned and the actions sit at the right edge. Write the
+problem first and the fix second, as one string so the fix stays with it.
+
+<Canvas of={Stories.Prominent} />
+
+## Emphasis
+
+**Prominent** asks the reader to fix something. It has a warning rail, an alert
+icon and the fix as a button. Don't make it dismissible while the problem
+blocks work.
+
+**Quiet** tells someone who can't fix it. It has no fill and no action, and it
+is dismissible for the session. A failed payment shows prominent to billing
+managers and quiet to members.
+
+<Canvas of={Stories.Quiet} />
+
+**Neutral tone** is for a session problem that isn't a warning about the
+account, like a guest tab that couldn't update.
+
+<Canvas of={Stories.Neutral} />
+
+In light and dark:
+
+<Canvas of={Stories.LightAndDark} />
+
+## Do's and Don'ts
+
+**Do**
+
+- Keep it in page flow above the header, unless it must cover a screen that
+can't render (session recovery banners are fixed for that reason).
+- Clear it from live state, so it goes away when the problem does.
+
+**Don't**
+
+- Center the text or put the action in the middle of the strip.
+- Stack two banners. Show the one the reader can act on.
+- Use a literal amber or red. Use the `warning` tone.

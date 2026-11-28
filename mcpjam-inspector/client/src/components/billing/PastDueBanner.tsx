@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { CircleAlert, Loader2, X } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { AppBanner } from "@mcpjam/design-system/app-banner";
 import { Button } from "@mcpjam/design-system/button";
 import type { OrganizationBillingStatus } from "@/hooks/useOrganizationBilling";
 import { buildOrganizationPath } from "@/lib/app-navigation";
@@ -73,30 +74,15 @@ export function PastDueBanner({
   if (!billingStatus.canManageBilling) {
     if (dismissedOrganizationId === billingStatus.organizationId) return null;
     return (
-      <div
-        role="status"
+      <AppBanner
+        emphasis="quiet"
         data-testid="past-due-member-bar"
-        className="flex shrink-0 items-center gap-2 border-b border-border/60 py-1 pl-4 pr-3 text-xs text-muted-foreground"
+        onDismiss={() =>
+          setDismissedOrganizationId(billingStatus.organizationId)
+        }
       >
-        <span
-          aria-hidden
-          className="size-1.5 shrink-0 rounded-full bg-warning"
-        />
-        <span className="text-pretty">
-          {`Payment failed for ${organizationName}. An owner has been asked to update the card.`}
-        </span>
-        <Button
-          size="icon"
-          variant="ghost"
-          aria-label="Dismiss"
-          className="ml-auto size-6 shrink-0"
-          onClick={() =>
-            setDismissedOrganizationId(billingStatus.organizationId)
-          }
-        >
-          <X className="size-3.5" />
-        </Button>
-      </div>
+        {`Payment failed for ${organizationName}. An owner has been asked to update the card.`}
+      </AppBanner>
     );
   }
 
@@ -124,33 +110,29 @@ export function PastDueBanner({
   };
 
   return (
-    <div
-      role="alert"
+    <AppBanner
       data-testid="past-due-owner-banner"
-      className="flex shrink-0 items-center gap-3 border-b border-l-2 border-b-warning/30 border-l-warning bg-warning/10 py-2 pl-3.5 pr-3 text-sm"
+      actions={
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!billingStatus.billingConfigured || isOpeningPortal}
+          onClick={() => void handleUpdateCard()}
+        >
+          {isOpeningPortal ? (
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              Opening…
+            </>
+          ) : (
+            "Update card"
+          )}
+        </Button>
+      }
     >
-      <CircleAlert className="size-4 shrink-0 text-warning" />
-      <span className="text-pretty text-foreground">
-        {graceEndsAt != null
-          ? `Payment failed for ${organizationName}. Update your card by ${formatBillingDate(graceEndsAt)} to keep ${planName}.`
-          : `Payment failed for ${organizationName}. Update your card to keep ${planName}.`}
-      </span>
-      <Button
-        size="sm"
-        variant="outline"
-        className="ml-auto shrink-0"
-        disabled={!billingStatus.billingConfigured || isOpeningPortal}
-        onClick={() => void handleUpdateCard()}
-      >
-        {isOpeningPortal ? (
-          <>
-            <Loader2 className="size-3.5 animate-spin" />
-            Opening…
-          </>
-        ) : (
-          "Update card"
-        )}
-      </Button>
-    </div>
+      {graceEndsAt != null
+        ? `Payment failed for ${organizationName}. Update your card by ${formatBillingDate(graceEndsAt)} to keep ${planName}.`
+        : `Payment failed for ${organizationName}. Update your card to keep ${planName}.`}
+    </AppBanner>
   );
 }

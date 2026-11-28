@@ -449,6 +449,10 @@ Tab sets open on their first visible tab. Do not seed the active tab from the
 current selection or from which tab holds it; a caller may open a specific tab
 only for an explicit deep link (a "Settings" action that opens the Settings tab).
 
+App-wide notices (a failed payment, an expired session) use `AppBanner`: left
+aligned, a warning rail when the reader must act, a quiet dismissible line when
+they can't, and the action at the right edge.
+
 Docs equivalents follow the product: buttons match the app's Add Server button,
 tables are bottom-hairline only, callouts are left-rail editorial marks.
 
