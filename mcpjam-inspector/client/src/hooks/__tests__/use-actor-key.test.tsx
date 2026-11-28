@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useActorKey } from "../use-actor-key";
 
@@ -7,8 +7,10 @@ const mockState = vi.hoisted(() => ({
     user: null as { id: string } | null,
     isLoading: false,
   },
+  getCachedGuestId: vi.fn(),
   getCachedGuestSession: vi.fn(),
   getOrCreateGuestSession: vi.fn(),
+  hasCachedGuestSession: vi.fn(),
   subscribeGuestSessionChanges: vi.fn(),
 }));
 
@@ -17,8 +19,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("@/lib/guest-session", () => ({
+  getCachedGuestId: mockState.getCachedGuestId,
   getCachedGuestSession: mockState.getCachedGuestSession,
   getOrCreateGuestSession: mockState.getOrCreateGuestSession,
+  hasCachedGuestSession: mockState.hasCachedGuestSession,
   subscribeGuestSessionChanges: mockState.subscribeGuestSessionChanges,
 }));
 
@@ -27,6 +31,14 @@ describe("useActorKey", () => {
     mockState.auth = { user: null, isLoading: false };
     mockState.getCachedGuestSession.mockReset();
     mockState.getCachedGuestSession.mockReturnValue(null);
+    mockState.getCachedGuestId.mockReset();
+    mockState.getCachedGuestId.mockImplementation(
+      () => mockState.getCachedGuestSession()?.guestId ?? null,
+    );
+    mockState.hasCachedGuestSession.mockReset();
+    mockState.hasCachedGuestSession.mockImplementation(
+      () => mockState.getCachedGuestSession() !== null,
+    );
     mockState.getOrCreateGuestSession.mockReset();
     mockState.getOrCreateGuestSession.mockResolvedValue(null);
     mockState.subscribeGuestSessionChanges.mockReset();
@@ -58,6 +70,114 @@ describe("useActorKey", () => {
     });
     await waitFor(() => {
       expect(result.current).toBe("guest_new");
+    });
+  });
+
+  // Convex keeps the token it already holds when the cache is cleared, so
+  // dropping the guest here left the app authenticated with no actor
+  // (`app_load/actor_pending`) whenever the re-lookup failed.
+  it("keeps the guest when the guest cache is cleared under it", () => {
+    let notify = () => {};
+    mockState.subscribeGuestSessionChanges.mockImplementation(
+      (listener: () => void) => {
+        notify = listener;
+        return () => {};
+      },
+    );
+    mockState.getCachedGuestSession.mockReturnValue({
+      guestId: "guest_1",
+      token: "token_1",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { result } = renderHook(() => useActorKey());
+    expect(result.current).toBe("guest_1");
+
+    mockState.getCachedGuestSession.mockReturnValue(null);
+    act(() => notify());
+
+    expect(result.current).toBe("guest_1");
+    expect(mockState.getOrCreateGuestSession).not.toHaveBeenCalled();
+  });
+
+  it("follows a new guest session once it is cached", () => {
+    let notify = () => {};
+    mockState.subscribeGuestSessionChanges.mockImplementation(
+      (listener: () => void) => {
+        notify = listener;
+        return () => {};
+      },
+    );
+    mockState.getCachedGuestSession.mockReturnValue({
+      guestId: "guest_1",
+      token: "token_1",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { result } = renderHook(() => useActorKey());
+
+    mockState.getCachedGuestSession.mockReturnValue({
+      guestId: "guest_2",
+      token: "token_2",
+      expiresAt: Date.now() + 60_000,
+    });
+    act(() => notify());
+
+    expect(result.current).toBe("guest_2");
+  });
+
+  // A browser clock running ahead puts a session that was just cached inside
+  // the expiry buffer, so the fresh-only read returns null for it.
+  it("follows a new guest when its session is inside the expiry buffer", () => {
+    let notify = () => {};
+    mockState.subscribeGuestSessionChanges.mockImplementation(
+      (listener: () => void) => {
+        notify = listener;
+        return () => {};
+      },
+    );
+    mockState.getCachedGuestSession.mockReturnValue({
+      guestId: "guest_1",
+      token: "token_1",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { result } = renderHook(() => useActorKey());
+
+    mockState.getCachedGuestSession.mockReturnValue(null);
+    mockState.getCachedGuestId.mockReturnValue("guest_2");
+    act(() => notify());
+
+    expect(result.current).toBe("guest_2");
+  });
+
+  // A configured guest authority may answer a renewal with a token and no
+  // guestId; keeping the old guest would scope the new token's state to it.
+  it("drops the guest when a replacement session has no guest id", async () => {
+    let notify = () => {};
+    mockState.subscribeGuestSessionChanges.mockImplementation(
+      (listener: () => void) => {
+        notify = listener;
+        return () => {};
+      },
+    );
+    mockState.getCachedGuestSession.mockReturnValue({
+      guestId: "guest_1",
+      token: "token_1",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { result } = renderHook(() => useActorKey());
+    expect(result.current).toBe("guest_1");
+
+    mockState.getCachedGuestSession.mockReturnValue({
+      token: "token_2",
+      expiresAt: Date.now() + 60_000,
+    });
+    act(() => notify());
+
+    await waitFor(() => {
+      expect(result.current).toBeNull();
     });
   });
 });

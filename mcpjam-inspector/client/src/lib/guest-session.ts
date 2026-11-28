@@ -534,6 +534,26 @@ export function getCachedGuestSession(): GuestSession | null {
 }
 
 /**
+ * The guestId of the in-memory session, or null once the cache is cleared.
+ * Unlike `getCachedGuestSession()` it ignores the expiry buffer: a session
+ * cached just now under a browser clock running ahead still names the guest
+ * whose token the mint or refresh just returned to Convex.
+ */
+export function getCachedGuestId(): string | null {
+  return cachedSession?.guestId ?? null;
+}
+
+/**
+ * Whether the in-memory cache holds a session, inside the expiry buffer or
+ * not. It tells a cleared cache apart from a session cached without a
+ * `guestId`, which a configured guest authority may omit; for both,
+ * `getCachedGuestId()` returns null.
+ */
+export function hasCachedGuestSession(): boolean {
+  return cachedSession !== null;
+}
+
+/**
  * Look up an existing guest bearer token without creating a new guest.
  * Used by post-login flows (e.g. registry-star merge) so signing in does
  * not accidentally mint a brand-new guest just to merge nothing.
