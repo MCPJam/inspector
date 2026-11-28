@@ -19,7 +19,13 @@ const mocks = vi.hoisted(() => ({
   copy: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
 }));
-vi.mock("@/lib/browser-shell/chat-handoff", () => ({ releaseBrowserForChat: mocks.release }));
+vi.mock("@/lib/browser-shell/chat-handoff", () => ({
+  releaseBrowserForChat: mocks.release,
+  withBrowserForAgent: async (projectId: string, sessionId: string, task: () => Promise<unknown>) => {
+    await mocks.release(projectId, sessionId);
+    return task();
+  },
+}));
 vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/hooks/use-web-accounts", () => ({ useWebAccounts: mocks.accounts }));
 vi.mock("convex/react", () => ({ useMutation: () => mocks.create }));
@@ -368,10 +374,17 @@ describe("SaveWebAccountBar", () => {
     ).toBeEnabled();
   });
 
+  it("shows the retry instruction when the server kept the browser open", async () => {
+    const message = "Couldn’t capture this browser profile. Keep the browser open and save again.";
+    await save(() => Promise.reject(new WebApiError(503, "WEB_ACCOUNT_PROFILE_RETRY", message)));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("button", { name: "Save for the project" })).toBeEnabled();
+  });
+
   it("says the save didn't happen when the request fails", async () => {
     await save(() => Promise.reject(new Error("network")));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Couldn't save the account. Try again.",
+      "The account wasn't saved because the request didn't finish.",
     );
   });
 });

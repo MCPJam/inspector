@@ -337,7 +337,8 @@ export async function runWebClientTurn(
     if (input.signal?.aborted && error === input.signal.reason) throw error;
     redactConnectors(error, serverOfConnector.keys(), env.publicBaseUrl);
     if (!(error instanceof RealUiError)) throw error;
-    logger.warn("[web-clients] turn stopped", {
+    // The reason goes in the message too: the dev logger prints no fields.
+    logger.warn(`[web-clients] turn stopped: ${error.failure.kind} at ${error.failure.step}`, {
       runtimeId: input.runtimeId,
       kind: error.failure.kind,
       step: error.failure.step,

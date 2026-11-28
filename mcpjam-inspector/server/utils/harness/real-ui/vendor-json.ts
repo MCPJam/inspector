@@ -6,8 +6,12 @@
  * browser), the browser opens the URL itself and the module reads the JSON
  * the browser shows, then goes back to the page it was on, whatever it read;
  * only a cookie-authenticated endpoint works that way, and only an answer
- * short enough for the browser's page text.
+ * short enough for the browser's page text. Longer answers on that browser:
+ * Claude's `/api/account` reads its email with `leadingJsonString`; a long
+ * Claude conversation or organization list fails as "didn't come through
+ * whole", a typed failure the turn reports instead of a wrong answer.
  */
+import { logger } from "../../logger.js";
 import { PageDriverError, type PageDriver } from "./page-driver.js";
 
 /** The site's own API answered with an error status, so nothing it saved was read. */
@@ -15,6 +19,14 @@ export class VendorStatusError extends PageDriverError {
   constructor(readonly status: number) {
     super("failed", `The site answered ${status} for its own saved data.`);
     this.name = "VendorStatusError";
+  }
+}
+
+/** The site's answer came back cut off: the hosted browser's text read is capped. */
+export class VendorTextCutOffError extends PageDriverError {
+  constructor() {
+    super("failed", "The site's saved data didn't come through whole in this browser.");
+    this.name = "VendorTextCutOffError";
   }
 }
 
@@ -45,12 +57,39 @@ export async function readVendorJson(
       "This site's saved data needs a script in the page, which this browser can't run.",
     );
   }
+  return shownJson(await readShownVendorText(driver, url));
+}
+
+/**
+ * The text a browser without a script in the page shows for a vendor URL,
+ * then back to the page it was on. The hosted browser caps its text read
+ * (16,000 bytes), so a long answer comes back cut off: a caller that needs
+ * one field near the start reads it from here instead of parsing it all.
+ */
+export async function readShownVendorText(driver: PageDriver, url: string): Promise<string> {
   const back = await driver.url();
   await driver.navigate(url);
   try {
-    return shownJson(driver.pageText ? await driver.pageText() : ((await driver.readText("body")) ?? ""));
+    return driver.pageText ? await driver.pageText() : ((await driver.readText("body")) ?? "");
   } finally {
     await driver.navigate(back);
+  }
+}
+
+/**
+ * The first string value of `key` in JSON text that may be cut off. Only
+ * for a field the answer puts before anything long.
+ */
+export function leadingJsonString(shown: string, key: string): string | undefined {
+  const match = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(shown);
+  if (!match) return undefined;
+  try {
+    return text(JSON.parse(`"${match[1]}"`));
+  } catch {
+    // A value cut mid-escape reads as no value: the caller treats a missing
+    // email as signed out, which asks for another save, never a wrong account.
+    logger.debug("[real-ui] a vendor field didn't parse", { key });
+    return undefined;
   }
 }
 
@@ -68,7 +107,7 @@ function shownJson(shown: string): unknown {
     return JSON.parse(shown.slice(start, end + 1));
   } catch {
     // A page too long for the browser's text read ends cut off, and reads here too.
-    throw new PageDriverError("failed", "The site's saved data didn't come through whole in this browser.");
+    throw new VendorTextCutOffError();
   }
 }
 

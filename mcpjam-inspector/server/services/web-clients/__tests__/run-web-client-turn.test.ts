@@ -284,6 +284,11 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
         replyTimeoutMs: 20_000,
       });
       expect(result).toMatchObject({ ok: false, failure: { kind: "needs_sign_in", reason: "human_check" } });
+      // The stop reason is in the message: the dev logger prints no fields.
+      expect(warn).toHaveBeenCalledWith(
+        "[web-clients] turn stopped: needs_sign_in at sign_in_check",
+        expect.objectContaining({ kind: "needs_sign_in", step: "sign_in_check" }),
+      );
       expect(warn).toHaveBeenCalledWith(
         "[web-clients] the turn's browser did not close",
         expect.objectContaining({ message: "The browser was already gone." }),

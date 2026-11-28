@@ -16,7 +16,7 @@
  *     and marks the account verified. Answers `{ok:true, accountEmail,
  *     workspaceName?}` or `{ok:false, reason}` with `not_signed_in`,
  *     `wrong_account` or `version_conflict`. The browser stays open after
- *     the first two, for the person to fix, and closes after anything else.
+ *     the first two and failures before storage, so the admin can retry.
  *     A browser this replica doesn't hold for the person, project and
  *     account answers 409.
  *
@@ -26,6 +26,7 @@
  */
 import { Hono, type Context } from "hono";
 import { z } from "zod";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   WEB_CLIENT_SITES,
   WEB_CLIENT_VENDORS,
@@ -33,7 +34,9 @@ import {
 } from "@/shared/web-clients";
 import { chatgptWebPageModule } from "../../utils/harness/real-ui/chatgpt-web.js";
 import { claudeWebPageModule } from "../../utils/harness/real-ui/claude-web.js";
-import type { PageDriver } from "../../utils/harness/real-ui/page-driver.js";
+import { PageDriverError, type PageDriver } from "../../utils/harness/real-ui/page-driver.js";
+import { BrowserdClientError } from "../browserd/browserd-codec.js";
+import { PROFILE_EXPORT_BROWSER_CLOSED } from "../browserd/profile-export-errors.js";
 import {
   RealUiError,
   type RealUiPageModule,
@@ -153,6 +156,45 @@ async function jsonBody(c: Context): Promise<unknown> {
   }
 }
 
+const SIGN_IN_ENDED =
+  "The browser closed while saving, so the account wasn't saved. Start signing in again, then save.";
+
+const PERSON_HAS_BROWSER =
+  "You have control of the browser, so the account couldn't be checked. Leave the browser alone for a moment, then save again.";
+
+/**
+ * What a failure can say without page text: its class, a driver code, the
+ * daemon's status and its snake_case reason. Browser messages can quote the
+ * vendor page, so they stay out; the original rides along as `cause`.
+ */
+function safeFailure(stage: string, error: unknown): Error {
+  const parts: string[] = [stage, error instanceof Error ? error.name : typeof error];
+  if (error instanceof RealUiError) parts.push(error.failure.kind);
+  if (error instanceof PageDriverError) parts.push(error.code);
+  if (error instanceof BrowserdClientError) {
+    parts.push(String(error.httpStatus));
+    const token = /"error":"([a-z][a-z0-9_]*)/.exec(error.message)?.[1];
+    if (token) parts.push(token);
+  }
+  const safe = new Error(parts.join(": "), { cause: error });
+  if (error instanceof Error && error.stack) {
+    safe.stack = [safe.message, ...error.stack.split("\n").slice(1)].join("\n");
+  }
+  return safe;
+}
+
+/** The export closed the browser before it failed: nothing is left to retry on. */
+function browserClosedByExport(error: unknown): boolean {
+  return error instanceof BrowserdClientError && error.message.includes(PROFILE_EXPORT_BROWSER_CLOSED);
+}
+
+function personHasBrowser(error: unknown): boolean {
+  return (
+    (error instanceof PageDriverError && error.code === "person_has_browser") ||
+    (error instanceof BrowserdClientError && error.httpStatus === 423)
+  );
+}
+
 export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
   const app = new Hono();
 
@@ -224,10 +266,21 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
       if (error instanceof SignInBrowserNotFoundError) return c.json({ error: error.message }, 409);
       throw error;
     }
-    // The browser stays open for the answers a person fixes in it (not signed
-    // in yet, or signed in to another account) and closes after any other, so
-    // its id can't save the account again later.
+    // Reading the vendor page and capturing a profile are safe to retry on
+    // the same browser. Once storage starts, its outcome may be ambiguous.
     const release = () => deps.browser.release({ ...browser, bearer: c.req.header("authorization") ?? "" });
+    const retryBeforeStorage = (stage: "identity" | "capture", error: unknown) => {
+      // The person still holds the browser (the save's check, or the daemon's
+      // export lease): their sign-in stays open for another save.
+      if (personHasBrowser(error)) return c.json({ error: PERSON_HAS_BROWSER }, 409);
+      reportRouteFailure("Web account profile save interrupted", safeFailure(stage, error), {
+        source: `web-clients.save-profile.${stage}`, hop: "mcpjam_internal",
+      });
+      const message = stage === "identity"
+        ? "Couldn’t check which account is signed in. Return to the chat in this browser, then save again."
+        : "Couldn’t capture this browser profile. Keep the browser open and save again.";
+      return c.json({ code: "WEB_ACCOUNT_PROFILE_RETRY", message }, 503);
+    };
     let identity;
     try {
       identity = await PAGE_MODULES[row.vendor].signedIn(driver, { timeoutMs: 30_000 });
@@ -235,18 +288,30 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
       if (error instanceof RealUiError && error.failure.kind === "needs_sign_in") {
         return c.json({ ok: false, reason: "not_signed_in" });
       }
-      await release();
-      throw error;
+      return retryBeforeStorage("identity", error);
     }
     if (!identity.email) return c.json({ ok: false, reason: "not_signed_in" });
     if (row.accountEmail && row.accountEmail.toLowerCase() !== identity.email.toLowerCase()) {
       return c.json({ ok: false, reason: "wrong_account" });
     }
+    let profile: Uint8Array;
+    try {
+      profile = await deps.browser.captureProfile(browser);
+    } catch (error) {
+      if (browserClosedByExport(error)) {
+        reportRouteFailure("Web account profile save interrupted", safeFailure("capture", error), {
+          source: "web-clients.save-profile.capture", hop: "mcpjam_internal",
+        });
+        await release();
+        return c.json({ code: "WEB_ACCOUNT_SIGN_IN_ENDED", message: SIGN_IN_ENDED }, 503);
+      }
+      return retryBeforeStorage("capture", error);
+    }
     try {
       const saved = await deps.saveProfile(actor, {
         webAccountId,
         expectedProfileVersion: row.profileVersion ?? 0,
-        profile: await deps.browser.captureProfile(browser),
+        profile,
       });
       if (!saved.ok) return c.json({ ok: false, reason: saved.reason });
       await deps.service.apply({

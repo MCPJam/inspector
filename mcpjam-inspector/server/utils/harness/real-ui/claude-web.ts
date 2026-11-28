@@ -16,6 +16,7 @@ import {
   WEB_CLIENT_SITES,
   WEB_CONNECTOR_PATH_PREFIX,
 } from "@/shared/web-clients";
+import { logger } from "../../logger.js";
 import type { PageDriver } from "./page-driver.js";
 import {
   RealUiError,
@@ -33,8 +34,11 @@ import {
 } from "./page-module.js";
 import {
   VendorStatusError,
+  VendorTextCutOffError,
   createdSince,
+  leadingJsonString,
   list,
+  readShownVendorText,
   readVendorJson,
   record,
   text,
@@ -80,6 +84,16 @@ async function chatOrganization(driver: PageDriver): Promise<Record<string, unkn
   return orgs.find((org) => list(org.capabilities).includes("chat")) ?? orgs[0] ?? {};
 }
 
+async function chatOrganizationName(driver: PageDriver): Promise<string | undefined> {
+  try {
+    return text((await chatOrganization(driver)).name);
+  } catch (error) {
+    if (!(error instanceof VendorTextCutOffError)) throw error;
+    logger.debug("[real-ui] claude.ai's organization list was too long to read; saving without a workspace");
+    return undefined;
+  }
+}
+
 async function organizationId(driver: PageDriver): Promise<string> {
   const id = text((await chatOrganization(driver)).uuid);
   if (!id) throw pageChanged("read_conversation", "claude.ai named no organization for this account.");
@@ -88,6 +102,12 @@ async function organizationId(driver: PageDriver): Promise<string> {
 
 /** The signed-in account's email. An error answer names none, on either driver. */
 async function accountEmail(driver: PageDriver): Promise<string | undefined> {
+  // `/api/account` lists every membership, often past the hosted browser's
+  // text cap, so that browser takes the email from the answer's start (it
+  // comes first) instead of parsing all of it. A sign-in page names none.
+  if (!driver.canEvaluate) {
+    return leadingJsonString(await readShownVendorText(driver, `${ORIGIN}/api/account`), "email_address");
+  }
   try {
     return text(record(await readVendorJson(driver, `${ORIGIN}/api/account`)).email_address);
   } catch (error) {
@@ -182,8 +202,10 @@ export const claudeWebPageModule: RealUiPageModule = {
     await waitVisible(driver, COMPOSER, ctx, "the chat composer", "sign_in_check");
     const email = await accountEmail(driver);
     if (!email) throw needsSignIn("signed_out", "sign_in_check", "The Claude account is signed out.");
-    // The organization whose chats the turn reads, not merely the first.
-    return { email, workspace: text((await chatOrganization(driver)).name) };
+    // The organization whose chats the turn reads, not merely the first. The
+    // name is optional: a list too long for the hosted browser's text read
+    // still leaves the account identified.
+    return { email, workspace: await chatOrganizationName(driver) };
   },
 
   async blocker(driver) {

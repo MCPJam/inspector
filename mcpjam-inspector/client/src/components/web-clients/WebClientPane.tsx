@@ -23,7 +23,7 @@ import {
 } from "@/lib/web-accounts/clients";
 import type { WebClientVendor } from "@/shared/web-clients";
 import { PaneBlocked } from "./PaneBlocked";
-import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
+import { withBrowserForAgent } from "@/lib/browser-shell/chat-handoff";
 import { SaveWebAccountBar } from "./SaveWebAccountBar";
 import { WebAccountChip } from "./WebAccountChip";
 import { WebSignInBrowser } from "./WebSignInBrowser";
@@ -209,11 +209,9 @@ export function useWebClientPane({
         vendor={vendor}
         expectedEmail={account?.accountEmail}
         onSave={async () => {
-          await releaseBrowserForChat(projectId, active.chatSessionId);
-          const result = await saveWebAccountProfile(
-            projectId,
-            active.webAccountId,
-            active.browserSessionId,
+          // The pane can't take control back mid-save and refuse the check.
+          const result = await withBrowserForAgent(projectId, active.chatSessionId, () =>
+            saveWebAccountProfile(projectId, active.webAccountId, active.browserSessionId),
           );
           if (result.ok) setSignIn(null);
           return result;

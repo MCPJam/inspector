@@ -120,3 +120,48 @@ export async function releaseBrowserForChat(
   // Also await an existing request if a render already updated holding.
   await holder.releaseInFlight;
 }
+
+const agentHolds = new Map<string, number>();
+const AGENT_RELEASE_WAIT_MS = 10_000;
+
+/** What a pane says when input arrives while the agent keeps the browser. */
+export const AGENT_HOLDS_NOTICE =
+  "MCPJam is using the browser to save the account. You can use it again when the save finishes.";
+
+/**
+ * Returns control to the agent and keeps it there while `task` runs: a pane
+ * that sees input meanwhile doesn't take the browser back. For a server step
+ * that drives the browser itself, such as saving a web account's sign-in.
+ */
+export async function withBrowserForAgent<T>(
+  projectId: string,
+  sessionId: string | null | undefined,
+  task: () => Promise<T>,
+): Promise<T> {
+  const key = keyFor(projectId, sessionId);
+  agentHolds.set(key, (agentHolds.get(key) ?? 0) + 1);
+  try {
+    // A release that never answers mustn't hold the task: the server refuses
+    // a browser the person still holds, and says so.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      releaseBrowserForChat(projectId, sessionId),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, AGENT_RELEASE_WAIT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    return await task();
+  } finally {
+    const left = (agentHolds.get(key) ?? 1) - 1;
+    if (left > 0) agentHolds.set(key, left);
+    else agentHolds.delete(key);
+  }
+}
+
+/** Whether `withBrowserForAgent` is keeping this browser for the agent now. */
+export function agentHoldsBrowser(
+  projectId: string | null | undefined,
+  sessionId?: string | null,
+): boolean {
+  return agentHolds.has(keyFor(projectId ?? null, sessionId));
+}

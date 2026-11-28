@@ -155,6 +155,31 @@ describe("clearing a site before a profile export", { timeout: 60_000 }, () => {
     }
   });
 
+  it("opens its blank page before closing the others, as a headed browser needs", async () => {
+    // A headed Chromium whose last tab closed refuses a new one.
+    const blank = { close: vi.fn(async () => {}) };
+    const open = new Set<{ close: () => Promise<void> }>();
+    const site = { close: vi.fn(async () => void open.delete(site)) };
+    open.add(site);
+    const sent: string[] = [];
+    const adapted = adaptContext({
+      newPage: async () => {
+        if (open.size === 0) throw new Error("Target.createTarget: Failed to open a new tab");
+        open.add(blank);
+        return blank as never;
+      },
+      pages: () => [...open] as never,
+      browser: () => null,
+      close: async () => {},
+      newCDPSession: async () => ({ send: async (method: string) => void sent.push(method) }) as never,
+      clearCookies: async () => {},
+    });
+    await adapted.clearOriginData!([SIGN_IN]);
+    expect(site.close).toHaveBeenCalledOnce();
+    expect(blank.close).not.toHaveBeenCalled();
+    expect(sent.length).toBeGreaterThan(0);
+  });
+
   it("refuses to clear in a browser that can't, rather than archive the site", async () => {
     const adapted = adaptContext({
       newPage: async () => ({}) as never,

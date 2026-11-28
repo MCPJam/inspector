@@ -4,7 +4,11 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createWebAccountRoutes, type WebAccountRouteDeps } from "../account-routes";
-import { pollUntil, type PageDriver } from "../../../utils/harness/real-ui/page-driver";
+import { reportRouteFailure } from "../../../utils/route-error-report";
+
+vi.mock("../../../utils/route-error-report", () => ({ reportRouteFailure: vi.fn() }));
+import { PageDriverError, pollUntil, type PageDriver } from "../../../utils/harness/real-ui/page-driver";
+import { BrowserdClientError } from "../../browserd/browserd-codec";
 
 const ACTOR = { actorExternalId: "user_admin" };
 const ROW = {
@@ -164,23 +168,10 @@ describe("POST /accounts/:id/save-profile", () => {
     // The person fixes the first two in the same browser; someone else's save ends it.
     expect(signedOut.deps.browser.release).not.toHaveBeenCalled();
     expect(other.deps.browser.release).not.toHaveBeenCalled();
-    expect(raced.deps.browser.release).toHaveBeenCalledTimes(1);
+    expect(raced.deps.browser.release).toHaveBeenCalledOnce();
   });
 
-  it("closes the browser when reading it or saving from it fails", async () => {
-    const unreadable = routes({
-      browser: {
-        ...routes().deps.browser,
-        driver: async () => ({
-          ...claudePage("team@example.com"),
-          navigate: async () => {
-            throw new Error("The browser went away.");
-          },
-        }),
-      },
-    });
-    expect((await post(unreadable.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
-    expect(unreadable.deps.browser.release).toHaveBeenCalledTimes(1);
+  it("closes the browser when the storage outcome is unknown", async () => {
     const offline = routes({
       saveProfile: async () => {
         throw new Error("socket hang up");
@@ -199,38 +190,72 @@ describe("POST /accounts/:id/save-profile", () => {
     expect(unknown.deps.saveProfile).not.toHaveBeenCalled();
   });
 
-  it("closes the browser once the save is over: saved, saved first by someone else, or failed", async () => {
-    const saved = routes();
-    expect((await post(saved.app, "/accounts/acct-1/save-profile", body)).status).toBe(200);
-    const raced = routes({
-      saveProfile: async () => ({ ok: false, reason: "version_conflict", profileVersion: 5 }),
-    });
-    expect((await post(raced.app, "/accounts/acct-1/save-profile", body)).status).toBe(200);
-    const exportFailed = routes({
-      browser: {
-        ...routes().deps.browser,
-        captureProfile: async () => {
-          throw new Error("The export stopped.");
-        },
-      },
-    });
-    const pageGone = routes({
-      browser: {
-        ...routes().deps.browser,
-        driver: async () => ({
-          ...claudePage("team@example.com"),
-          navigate: async () => {
-            throw new Error("The page closed.");
-          },
-        }),
-      },
-    });
-    for (const failed of [exportFailed, pageGone]) {
-      expect((await post(failed.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
+  it.each(["identity", "capture"] as const)("retries a failed %s check on the same browser", async (stage) => {
+    const page = claudePage("team@example.com");
+    const error = new Error("private browser details");
+    const captureProfile = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    if (stage === "identity") {
+      page.navigate = vi.fn(page.navigate).mockRejectedValueOnce(error);
+    } else {
+      captureProfile.mockRejectedValueOnce(error);
     }
-    for (const { deps } of [saved, raced, exportFailed, pageGone]) {
-      expect(deps.browser.release).toHaveBeenCalledWith({ actor: ACTOR, ...body, webAccountId: "acct-1", bearer: "" });
+    const { app, deps } = routes({
+      browser: { ...routes().deps.browser, driver: async () => page, captureProfile },
+    });
+    const path = "/accounts/acct-1/save-profile";
+    const first = await post(app, path, body);
+    expect(first.status).toBe(503);
+    expect(await first.json()).toMatchObject({
+      code: "WEB_ACCOUNT_PROFILE_RETRY",
+      message: expect.stringContaining(stage === "identity" ? "check which account" : "capture this browser"),
+    });
+    expect(deps.browser.release).not.toHaveBeenCalled();
+    expect(deps.saveProfile).not.toHaveBeenCalled();
+    expect(await (await post(app, path, body)).json()).toMatchObject({ ok: true });
+    expect(deps.saveProfile).toHaveBeenCalledTimes(1);
+    expect(deps.browser.release).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["the account check", "identity"],
+    ["the profile export", "capture"],
+  ] as const)("answers 409 and keeps the browser when the person holds it during %s", async (_what, stage) => {
+    const page = claudePage("team@example.com");
+    const captureProfile = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    if (stage === "identity") {
+      page.navigate = vi.fn(page.navigate).mockRejectedValueOnce(
+        new PageDriverError("person_has_browser", "a person has taken control of this browser"),
+      );
+    } else {
+      captureProfile.mockRejectedValueOnce(new BrowserdClientError("lease_held", 423));
     }
+    const { app, deps } = routes({
+      browser: { ...routes().deps.browser, driver: async () => page, captureProfile },
+    });
+    const first = await post(app, "/accounts/acct-1/save-profile", body);
+    expect(first.status).toBe(409);
+    expect(await first.json()).toMatchObject({ error: expect.stringContaining("You have control of the browser") });
+    expect(deps.browser.release).not.toHaveBeenCalled();
+    expect(deps.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it("asks for a new sign-in, and lets the browser go, when the export failed after closing it", async () => {
+    const captureProfile = vi.fn(async () => {
+      throw new BrowserdClientError(
+        'browser profile export failed with status 500: {"error":"profile_export_browser_closed: seat@example.com tar failed"}',
+        500,
+      );
+    });
+    const { app, deps } = routes({ browser: { ...routes().deps.browser, captureProfile } });
+    const answer = await post(app, "/accounts/acct-1/save-profile", body);
+    expect(answer.status).toBe(503);
+    expect(await answer.json()).toMatchObject({ code: "WEB_ACCOUNT_SIGN_IN_ENDED", message: expect.stringContaining("Start signing in again") });
+    expect(deps.browser.release).toHaveBeenCalledOnce();
+    expect(deps.saveProfile).not.toHaveBeenCalled();
+    // The report keeps the class, status and daemon token, and none of the page's text.
+    const reported = vi.mocked(reportRouteFailure).mock.calls.at(-1)?.[1] as Error;
+    expect(reported.message).toBe("capture: BrowserdClientError: 500: profile_export_browser_closed");
+    expect(reported.cause).toBeInstanceOf(BrowserdClientError);
   });
 
   it("keeps the browser open while the person finishes signing in or switches accounts", async () => {

@@ -19,7 +19,13 @@ const state = vi.hoisted(() => ({
   copy: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
 }));
-vi.mock("@/lib/browser-shell/chat-handoff", () => ({ releaseBrowserForChat: state.release }));
+vi.mock("@/lib/browser-shell/chat-handoff", () => ({
+  releaseBrowserForChat: state.release,
+  withBrowserForAgent: async (projectId: string, sessionId: string, task: () => Promise<unknown>) => {
+    await state.release(projectId, sessionId);
+    return task();
+  },
+}));
 vi.mock("sonner", () => ({ toast: state.toast }));
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (flag: string) =>

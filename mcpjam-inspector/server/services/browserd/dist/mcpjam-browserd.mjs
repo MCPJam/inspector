@@ -11749,12 +11749,14 @@ function adaptContext(context, options = {}) {
       if (!context.newCDPSession || !context.clearCookies) {
         throw new Error("This browser can't clear a site's data.");
       }
+      const page = await context.newPage();
       const closed = await Promise.race([
-        Promise.all(context.pages().map((open) => open.close())).then(() => true),
+        Promise.all(
+          context.pages().filter((open) => open !== page).map((open) => open.close())
+        ).then(() => true),
         closeGrace().then(() => false)
       ]);
       if (!closed) throw new Error("profile_export_pages_did_not_close");
-      const page = await context.newPage();
       const cdp = await context.newCDPSession(page);
       for (const origin of origins) {
         await cdp.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" });
@@ -11770,6 +11772,9 @@ function adaptContext(context, options = {}) {
     }
   };
 }
+
+// server/services/browserd/profile-export-errors.ts
+var PROFILE_EXPORT_BROWSER_CLOSED = "profile_export_browser_closed";
 
 // server/services/browserd/daemon/public-network.ts
 import { lookup } from "node:dns/promises";
@@ -12757,9 +12762,13 @@ async function main() {
           }
           await context.clearOriginData(excludeOrigins);
         }
-        await context.close();
-        await driver.close();
-        return exportBrowserProfileArchive(config.userDataDir);
+        try {
+          await context.close();
+          await driver.close();
+          return await exportBrowserProfileArchive(config.userDataDir);
+        } catch (error) {
+          throw new Error(`${PROFILE_EXPORT_BROWSER_CLOSED}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     } : {},
     // THE DISPLAY AS IT IS NOW, not as it booted.

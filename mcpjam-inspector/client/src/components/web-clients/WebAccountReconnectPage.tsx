@@ -21,7 +21,7 @@ import {
   webAccountFailureMessage,
   type HandbackResult,
 } from "@/lib/web-accounts/routes";
-import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
+import { releaseBrowserForChat, withBrowserForAgent } from "@/lib/browser-shell/chat-handoff";
 import { SaveWebAccountBar } from "./SaveWebAccountBar";
 import { WebSignInBrowser } from "./WebSignInBrowser";
 
@@ -293,10 +293,11 @@ function Reconnect({
             <SaveWebAccountBar
               vendor={account.vendor}
               expectedEmail={account.accountEmail}
-              onSave={async () => {
-                await releaseBrowserForChat(projectId, signIn.chatSessionId);
-                return saveWebAccountProfile(projectId, webAccountId, signIn.browserSessionId);
-              }}
+              onSave={() =>
+                withBrowserForAgent(projectId, signIn.chatSessionId, () =>
+                  saveWebAccountProfile(projectId, webAccountId, signIn.browserSessionId),
+                )
+              }
             />
           )}
           <div className="flex h-[520px] flex-col">

@@ -14,6 +14,7 @@ import { createVideoEncoder } from "./video-encoder";
 import { createVideoRecorder } from "./video-recorder";
 import { ChromiumDriver } from "./chromium-driver";
 import { launchBrowserdContext } from "./chromium-launch";
+import { PROFILE_EXPORT_BROWSER_CLOSED } from "../profile-export-errors";
 import { createPublicNetworkPolicy } from "./public-network";
 import { HandoffLease } from "./lease";
 import {
@@ -283,9 +284,15 @@ async function main(): Promise<void> {
             }
             // Closing Chromium flushes cookies/LevelDB before the archive is read.
             // The handler holds the export lease until the bytes are complete.
-            await context.close();
-            await driver.close();
-            return exportBrowserProfileArchive(config.userDataDir);
+            // A failure from here on leaves no browser, so it says so: the
+            // caller can't retry on this one and starts a sign-in again.
+            try {
+              await context.close();
+              await driver.close();
+              return await exportBrowserProfileArchive(config.userDataDir);
+            } catch (error) {
+              throw new Error(`${PROFILE_EXPORT_BROWSER_CLOSED}: ${error instanceof Error ? error.message : String(error)}`);
+            }
           },
         }
       : {}),

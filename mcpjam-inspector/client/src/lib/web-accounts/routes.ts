@@ -74,7 +74,7 @@ export function handBackWebReconnect(
  * What to tell a person when a sign-in step fails: the refusal's own words,
  * from these routes (a 4xx they word for people) or from the backend, else
  * `fallback`. Any other failure says nothing a person can act on beyond
- * trying again.
+ * trying again. A retryable profile error names the step to repeat.
  */
 export function webAccountFailureMessage(
   failure: unknown,
@@ -82,11 +82,12 @@ export function webAccountFailureMessage(
 ): string {
   if (
     failure instanceof WebApiError &&
-    failure.status >= 400 &&
-    failure.status < 500 &&
-    failure.status !== 429 &&
-    // Set only when the route answered with its own error body.
-    failure.code !== null
+    ((failure.status >= 400 &&
+      failure.status < 500 &&
+      failure.status !== 429 &&
+      failure.code !== null) ||
+      (failure.status === 503 &&
+        (failure.code === "WEB_ACCOUNT_PROFILE_RETRY" || failure.code === "WEB_ACCOUNT_SIGN_IN_ENDED")))
   )
     return failure.message;
   const described = describeConvexFailure(failure, fallback);
