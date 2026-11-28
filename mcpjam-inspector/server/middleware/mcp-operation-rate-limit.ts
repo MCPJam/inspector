@@ -318,9 +318,11 @@ export function mcpOperationRateLimit(family: McpOperationFamily) {
     next: Next,
   ): Promise<Response | void> {
     if (!HOSTED_MODE) return next();
-    // Every operation route in these families is a POST. Anything else reaches
-    // no handler, and must not spend a budget that one would.
-    if (c.req.method !== "POST") return next();
+    // Every operation route in the other families is a POST. Anything else
+    // reaches no handler, and must not spend a budget that one would. The mock
+    // door's router answers every method, and each one first asks the backend
+    // to resolve the mock, so each is charged.
+    if (c.req.method !== "POST" && family !== "mock-mcp") return next();
 
     const waitMs = spend(await bucketKeys(c, family), Date.now());
     if (waitMs !== null) return tooMany(c, waitMs);

@@ -64,13 +64,28 @@ export function findUncallableInputs(
       ...params.filter(([, p]) => "fixed" in p).map(([n]) => n),
       ...Object.keys(realAnswerOf(entry)?.arguments ?? {}),
     ]);
+    const effective = entry.inputSchema ?? real.inputSchema;
     const listed = new Set(
-      [...propertyNames(entry.inputSchema ?? real.inputSchema)].filter(
-        (name) => !hidden.has(name)
-      )
+      [...propertyNames(effective)].filter((name) => !hidden.has(name))
     );
+    // A name the schema requires is one the client is told to send, whether or
+    // not `properties` declares it.
+    const sendable = new Set([
+      ...listed,
+      ...requiredNames(effective).filter((name) => !hidden.has(name)),
+    ]);
+    // A real tool that names parameters by pattern takes names this check
+    // cannot judge without running the other server's patterns, so it does not
+    // judge extra parameters of one.
+    const namesByPattern =
+      isRecord(real.inputSchema.patternProperties) &&
+      Object.keys(real.inputSchema.patternProperties).length > 0;
 
-    if (real.inputSchema.additionalProperties === false && entry.inputSchema) {
+    if (
+      real.inputSchema.additionalProperties === false &&
+      !namesByPattern &&
+      entry.inputSchema
+    ) {
       const realProps = propertyNames(real.inputSchema);
       for (const name of listed) {
         if (realProps.has(name)) continue;
@@ -83,7 +98,7 @@ export function findUncallableInputs(
     }
 
     for (const name of requiredNames(real.inputSchema)) {
-      if (listed.has(name) || mapped.has(name)) continue;
+      if (sendable.has(name) || mapped.has(name)) continue;
       issues.push({
         code: "uncallable_input",
         path: entry.inputSchema

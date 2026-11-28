@@ -79,9 +79,15 @@ function seededOutcomes(
         : [];
     }
     case "list": {
+      // A filter or limit that reads the input leaves the page to the caller:
+      // any page it can select is valid, so only a written-out selection is
+      // predicted, and the call checks the rest when it fills them.
       const where = literal(state.where);
-      const limit =
-        typeof state.limit === "number" ? state.limit : DEFAULT_LIST_LIMIT;
+      if (state.where !== undefined && where === undefined) return [];
+      if (state.limit !== undefined && typeof state.limit !== "number") {
+        return [];
+      }
+      const limit = state.limit ?? DEFAULT_LIST_LIMIT;
       const records = keys
         .map((k) => seed[k]!)
         .filter((r) =>

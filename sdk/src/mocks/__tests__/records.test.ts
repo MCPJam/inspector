@@ -450,6 +450,177 @@ describe("list", () => {
     expect(tooMany.isError).toBe(true);
     expect(textOf(tooMany)).toContain("1 to 200");
   });
+
+  it("refuses a limit the caller sends as null, and uses the default for one it leaves out", async () => {
+    const paged: MockDefinition = {
+      seed: { notes },
+      tools: {
+        page_notes: {
+          state: { op: "list", collection: "notes", limit: "{{input.limit}}" },
+        },
+      },
+    };
+    const client = await connect(paged, {
+      store: createMemoryRecordStore({ notes }),
+      context: version,
+    });
+    const sentNull = await client.callTool({
+      name: "page_notes",
+      arguments: { limit: null },
+    });
+    expect(sentNull.isError).toBe(true);
+    expect(textOf(sentNull)).toContain("1 to 200");
+    expect(textOf(sentNull)).toContain("null");
+    const left = await client.callTool({ name: "page_notes", arguments: {} });
+    expect((structured(left) as { records: unknown[] }).records).toHaveLength(
+      5
+    );
+  });
+});
+
+describe("references into arrays", () => {
+  const def: MockDefinition = {
+    seed: {
+      notes: { a: { text: "one", tags: ["x"] }, b: { text: "two", tags: [] } },
+    },
+    tools: {
+      note_of_first_row: {
+        inputSchema: {
+          type: "object",
+          properties: { rows: { type: "array", items: idSchema } },
+          required: ["rows"],
+        },
+        state: { op: "get", collection: "notes", key: "{{input.rows.0.id}}" },
+      },
+      first_tag: {
+        inputSchema: idSchema,
+        state: {
+          op: "get",
+          collection: "notes",
+          key: "{{input.id}}",
+          result: { tag: "{{record.tags.0}}" },
+        },
+      },
+      first_text: {
+        state: {
+          op: "list",
+          collection: "notes",
+          result: { first: "{{records.0.text}}" },
+        },
+      },
+      how_many: {
+        state: {
+          op: "list",
+          collection: "notes",
+          result: { n: "{{records.length}}" },
+        },
+      },
+    },
+  };
+
+  async function start() {
+    return connect(def, {
+      store: createMemoryRecordStore(def.seed),
+      context: version,
+    });
+  }
+
+  it("reads an element of an input array by its index", async () => {
+    const client = await start();
+    const found = await client.callTool({
+      name: "note_of_first_row",
+      arguments: { rows: [{ id: "b" }, { id: "a" }] },
+    });
+    expect(structured(found)).toEqual({ text: "two", tags: [] });
+    const none = await client.callTool({
+      name: "note_of_first_row",
+      arguments: { rows: [] },
+    });
+    expect(none.isError).toBe(true);
+    expect(textOf(none)).toContain("{{input.rows.0.id}}");
+  });
+
+  it("reads an element of a record's array and of the records a list returned", async () => {
+    const client = await start();
+    expect(
+      structured(
+        await client.callTool({ name: "first_tag", arguments: { id: "a" } })
+      )
+    ).toEqual({ tag: "x" });
+    const empty = await client.callTool({
+      name: "first_tag",
+      arguments: { id: "b" },
+    });
+    expect(empty.isError).toBe(true);
+    expect(textOf(empty)).toContain("{{record.tags.0}}");
+    expect(
+      structured(await client.callTool({ name: "first_text", arguments: {} }))
+    ).toEqual({ first: "one" });
+  });
+
+  it("reads elements by index only, so an array's length is not a field", async () => {
+    const client = await start();
+    const result = await client.callTool({ name: "how_many", arguments: {} });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("{{records.length}}");
+  });
+});
+
+describe("a write whose result cannot be filled", () => {
+  const def: MockDefinition = {
+    seed: { notes: { a: { text: "one" } } },
+    tools: {
+      add_note: {
+        inputSchema: {
+          type: "object",
+          properties: { text: { type: "string" }, tag: { type: "string" } },
+          required: ["text"],
+        },
+        state: {
+          op: "create",
+          collection: "notes",
+          key: "n1",
+          value: { text: "{{input.text}}" },
+          result: { text: "{{record.text}}", tag: "{{input.tag}}" },
+        },
+      },
+      get_note: {
+        inputSchema: {
+          type: "object",
+          properties: { tag: { type: "string" } },
+        },
+        state: {
+          op: "get",
+          collection: "notes",
+          key: "a",
+          result: { text: "{{record.text}}", tag: "{{input.tag}}" },
+        },
+      },
+    },
+  };
+
+  it("says the change was saved, and says nothing of it for a read", async () => {
+    const store = createMemoryRecordStore(def.seed);
+    const client = await connect(def, { store, context: version });
+    const write = await client.callTool({
+      name: "add_note",
+      arguments: { text: "new" },
+    });
+    expect(write.isError).toBe(true);
+    expect(textOf(write)).toContain("{{input.tag}}");
+    expect(textOf(write)).toContain("The change was saved.");
+    expect(
+      await store.execute(version, {
+        op: "get",
+        collection: "notes",
+        key: "n1",
+      })
+    ).toMatchObject({ ok: true });
+    const read = await client.callTool({ name: "get_note", arguments: {} });
+    expect(read.isError).toBe(true);
+    expect(textOf(read)).toContain("{{input.tag}}");
+    expect(textOf(read)).not.toContain("saved");
+  });
 });
 
 describe("result templates and the output schema", () => {
@@ -555,6 +726,69 @@ describe("result templates and the output schema", () => {
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("output schema");
+  });
+
+  describe("a list whose filter or limit reads the input", () => {
+    const seed = {
+      tickets: {
+        "1": { kind: "open", status: "new" },
+        "2": { kind: "closed", status: 7 },
+      },
+    };
+    const listing = (
+      selection: { where?: JsonObject; limit?: number | string },
+      outputSchema: JsonObject
+    ): MockDefinition => ({
+      seed,
+      tools: {
+        find: {
+          outputSchema,
+          state: { op: "list", collection: "tickets", ...selection },
+        },
+      },
+    });
+    const textStatuses = {
+      type: "object",
+      properties: {
+        records: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { status: { type: "string" } },
+          },
+        },
+      },
+    };
+    const atMostOne = {
+      type: "object",
+      properties: { records: { type: "array", maxItems: 1 } },
+    };
+
+    it("is checked when the call fills it, not against the whole seed", () => {
+      expect(
+        checkStateOutputs(
+          listing({ where: { kind: "{{input.kind}}" } }, textStatuses)
+        )
+      ).toEqual([]);
+      expect(
+        checkStateOutputs(listing({ limit: "{{input.limit}}" }, atMostOne))
+      ).toEqual([]);
+    });
+
+    it("is still checked when the definition writes the filter and the limit out", () => {
+      expect(
+        checkStateOutputs(
+          listing({ where: { kind: "closed" } }, textStatuses)
+        ).map((i) => i.path)
+      ).toEqual(["tools.find.state"]);
+      expect(
+        checkStateOutputs(listing({ where: { kind: "open" } }, textStatuses))
+      ).toEqual([]);
+      expect(
+        checkStateOutputs(listing({ limit: 2 }, atMostOne)).map((i) => i.path)
+      ).toEqual(["tools.find.state"]);
+      expect(checkStateOutputs(listing({ limit: 1 }, atMostOne))).toEqual([]);
+    });
   });
 });
 

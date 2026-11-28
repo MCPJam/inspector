@@ -70,7 +70,9 @@ export function bindOperation(
   if (op === "list") {
     const where = bindObject(tool, state.where, input);
     if (!where.ok) return where;
-    const limit = bindOptional(state.limit, input) ?? DEFAULT_LIST_LIMIT;
+    // Only a limit the call leaves out gets the default; a null the caller sent is its value and fails the check below.
+    const given = bindOptional(state.limit, input);
+    const limit = given === undefined ? DEFAULT_LIST_LIMIT : given;
     if (
       typeof limit !== "number" ||
       !Number.isInteger(limit) ||

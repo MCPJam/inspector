@@ -415,6 +415,29 @@ describe("POST /mock-servers/:mockId/versions", () => {
     expect(mocks.mutation).not.toHaveBeenCalled();
   });
 
+  it("leaves a stale save to the backend, even when its patch would leave a tool uncallable", async () => {
+    queries["mockServers:getMock"] = () =>
+      stored(
+        { tools: { search: { description: "Find things." } } },
+        { headVersion: 3, version: 3, discovery: { visibility: "project", listingJson: JSON.stringify({ tools: [SEARCH] }) } },
+      );
+    mutations["mockServers:saveMockVersion"] = () => {
+      throw refusal("MOCK_VERSION_STALE", "The mock is at version 3.", { headVersion: 3 });
+    };
+    const response = await request("POST", path, {
+      body: { patch: { tools: { search: { params: { query: { hidden: true } } } } }, expectedVersion: 2 },
+    });
+    expect(response.status).toBe(409);
+    expect((await json(response)).details).toMatchObject({ code: "MOCK_VERSION_STALE", headVersion: 3 });
+    // The same patch against the current version is still refused before the backend.
+    mocks.mutation.mockClear();
+    const current = await request("POST", path, {
+      body: { patch: { tools: { search: { params: { query: { hidden: true } } } } }, expectedVersion: 3 },
+    });
+    expect(current.status).toBe(400);
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
   it("reports the head when the version is stale", async () => {
     mutations["mockServers:saveMockVersion"] = () => {
       throw refusal("MOCK_VERSION_STALE", "The mock is at version 5.", { headVersion: 5 });
