@@ -395,6 +395,16 @@ describe("Tool Input Schemas Valid", () => {
     type: "object",
     properties: { pair: { type: "array", items: [{ type: "string" }] } },
   };
+  const externalRef = {
+    type: "object",
+    properties: { name: { $ref: "https://example.com/schemas/name.json" } },
+  };
+  const embeddedRef = {
+    ...externalRef,
+    $defs: {
+      name: { $id: "https://example.com/schemas/name.json", type: "string" },
+    },
+  };
 
   it.each([
     ["2025-03-26", invalid, "passed"],
@@ -406,6 +416,10 @@ describe("Tool Input Schemas Valid", () => {
     ["2026-07-28", undefined, "passed"],
     ["2026-07-28", draft07, "passed"],
     ["2026-07-28", { ...draft07, $schema: "https://json-schema.org/draft/2019-09/schema" }, "skipped"],
+    ["2025-06-18", externalRef, "passed"],
+    ["2025-11-25", externalRef, "skipped"],
+    ["2026-07-28", externalRef, "skipped"],
+    ["2026-07-28", embeddedRef, "passed"],
   ] as const)("on %s with schema %j returns %s", async (protocolVersion, inputSchema, status) => {
     const handler = createFixtureHandler();
     const result = await new MCPConformanceTest({

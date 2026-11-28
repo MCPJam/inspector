@@ -1,9 +1,11 @@
 import { Ajv } from "@modelcontextprotocol/client/validators/ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { supportedJsonSchemaDialect } from "../../mcp-client-manager/dialect-dispatch-json-schema-validator.js";
+import { errorMessage } from "./helpers.js";
 
-const draft2020 = new Ajv2020({ strict: false, validateFormats: false });
-const draft07 = new Ajv({ strict: false, validateFormats: false });
+const options = { strict: false, validateFormats: false } as const;
+const draft2020 = new Ajv2020(options);
+const draft07 = new Ajv(options);
 
 export function checkToolInputSchema(
   schema: Record<string, unknown>,
@@ -26,11 +28,29 @@ export function checkToolInputSchema(
     dialect === "draft2020"
       ? "https://json-schema.org/draft/2020-12/schema"
       : "http://json-schema.org/draft-07/schema#";
-  // Grade the schema with the built-in metaschema so tool references stay offline.
-  if (validator.validate(metaSchema, schema) === true) return undefined;
+  if (validator.validate(metaSchema, schema) !== true) {
+    return {
+      status: "invalid",
+      reason: validator.errorsText(validator.errors, { dataVar: "inputSchema" }),
+    };
+  }
 
-  return {
-    status: "invalid",
-    reason: validator.errorsText(validator.errors, { dataVar: "inputSchema" }),
-  };
+  if (!JSON.stringify(schema).includes('"$ref":')) return undefined;
+
+  // Resolve references synchronously, without a schema loader. Each tool gets
+  // its own resolver so another tool's $id cannot satisfy its references.
+  const resolutionOptions = { ...options, validateSchema: false };
+  try {
+    if (dialect === "draft2020") {
+      new Ajv2020(resolutionOptions).compile(schema);
+    } else {
+      new Ajv(resolutionOptions).compile(schema);
+    }
+    return undefined;
+  } catch (error) {
+    return {
+      status: "unsupported",
+      reason: `inputSchema references could not be checked locally: ${errorMessage(error)}`,
+    };
+  }
 }
