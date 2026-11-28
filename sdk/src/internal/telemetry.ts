@@ -23,6 +23,37 @@ const CLASSES = [
   "SyntaxError",
   "AbortError",
   "EvalReportingError",
+  // Built-ins and dependency classes our code never declares, so the catalog
+  // cannot list them. Each is a fixed name, never an open shape: an exception
+  // type can carry a value someone set, which is why it is matched exactly.
+  // Unlisted, all of them read as one `UnknownError` group.
+  "AggregateError",
+  "EvalError",
+  "URIError",
+  // undici, under Node's fetch and our dispatchers (`lib/core/errors.js`).
+  "BodyTimeoutError",
+  "ClientClosedError",
+  "ClientDestroyedError",
+  "ConnectTimeoutError",
+  "HTTPParserError",
+  "HeadersOverflowError",
+  "HeadersTimeoutError",
+  "InformationalError",
+  "InvalidArgumentError",
+  "InvalidReturnValueError",
+  "MaxOriginsReachedError",
+  "MessageSizeExceededError",
+  "MissingUpstreamError",
+  "NotSupportedError",
+  "RequestContentLengthMismatchError",
+  "RequestRetryError",
+  "ResponseContentLengthMismatchError",
+  "ResponseError",
+  "ResponseExceededMaxSizeError",
+  "SecureProxyConnectionError",
+  "Socks5ProxyError",
+  "SocketError",
+  "UndiciError",
 ];
 const LEVELS = ["fatal", "error", "warning", "info", "debug", "log"];
 const TAGS: Record<string, readonly string[]> = {
