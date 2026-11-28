@@ -13,7 +13,10 @@ const click: RecordedAppAction = {
   target: { role: "button", name: "Save" },
 };
 
-function compile(actions: RecordedAppAction[]) {
+function compile(
+  actions: RecordedAppAction[],
+  args: Record<string, unknown> = {}
+) {
   return compileRecordedAppCase({
     id: "case-form",
     title: "Save form",
@@ -21,7 +24,7 @@ function compile(actions: RecordedAppAction[]) {
       toolCallId: "open-1",
       serverName: "Forms",
       toolName: "open_form",
-      arguments: {},
+      arguments: args,
     },
     actions,
     assertions: [
@@ -45,6 +48,12 @@ describe("compileRecordedAppCase", () => {
       "interact",
       "assert",
     ]);
+  });
+
+  it("refuses opening inputs redacted in the transcript", () => {
+    expect(() =>
+      compile([click], { account: { id: "[secret:ACCOUNT]" } })
+    ).toThrow("Opening call arguments contain redacted or truncated values.");
   });
 
   it.each([

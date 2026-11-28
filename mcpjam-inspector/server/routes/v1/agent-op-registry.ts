@@ -39,6 +39,8 @@ import {
   renderServerWidgetOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
+  compileRecordedAppCaseOperation,
+  summarizeRecordedAppActionsOperation,
   sendChatMessageOperation,
   driveChatSessionBrowserOperation,
   observeChatSessionBrowserOperation,
@@ -2023,6 +2025,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: getChatSessionTraceOperation,
     tier: "direct",
   },
+  { operation: compileRecordedAppCaseOperation, tier: "direct" },
+  { operation: summarizeRecordedAppActionsOperation, tier: "direct" },
   {
     operation: runEvalSuiteOperation,
     tier: "gated",

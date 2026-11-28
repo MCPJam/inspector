@@ -1,3 +1,4 @@
+import { projectRecordedAppTrace } from "@mcpjam/sdk/contract";
 import { registerChatSessionBrowserRoutes } from "./chat-session-browser-routes";
 import type { ModelReasoningEffort } from "@mcpjam/sdk";
 /**
@@ -388,6 +389,7 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     intQuery(c, "limit", { min: 1, max: MAX_TRACE_TURNS }) ??
     DEFAULT_TRACE_TURNS;
   const includeSpans = boolQuery(c, "includeSpans") ?? true;
+  const includeAppRecording = boolQuery(c, "includeAppRecording") ?? false;
 
   let rows: TurnTraceRow[];
   try {
@@ -442,17 +444,23 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     screenshotUrl?: string;
     ts: number;
   };
+  const includeBrowserScreenshots = selected.some((row) => row.browserAtTurn);
   let artifacts: Artifact[] = [];
-  if (selected.some((row) => row.browserAtTurn)) {
+  let appRecording: ReturnType<typeof projectRecordedAppTrace>;
+  if (includeBrowserScreenshots || includeAppRecording) {
     const evidence = (await client.query(
       "chatSessions:getBrowserArtifacts" as never,
       { sessionId: session._id } as never,
-    )) as { browserInteractionSteps?: Artifact[] };
-    // Screenshot links only as signed `/web/artifact` links (MJ-005).
-    artifacts = (evidence?.browserInteractionSteps ?? []).map((step) => ({
-      ...step,
-      screenshotUrl: publicArtifactLink(step.screenshotUrl) ?? undefined,
-    }));
+    )) as Parameters<typeof projectRecordedAppTrace>[0] & {
+      browserInteractionSteps?: Artifact[];
+    };
+    if (includeAppRecording && evidence) appRecording = projectRecordedAppTrace(evidence);
+    if (includeBrowserScreenshots) {
+      artifacts = (evidence?.browserInteractionSteps ?? []).map((step) => ({
+        ...step,
+        screenshotUrl: publicArtifactLink(step.screenshotUrl) ?? undefined,
+      }));
+    }
   }
   const turns = await Promise.all(
     selected.map(async (row) => {
@@ -533,6 +541,7 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     chatSessionId: session.chatSessionId,
     projectId: session.projectId ?? null,
     traceVersion: 1,
+    ...(appRecording ? { appRecording } : {}),
     turnCount: ordered.length,
     turns,
     ...(ordered.length > 0

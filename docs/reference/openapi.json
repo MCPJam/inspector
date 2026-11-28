@@ -11756,6 +11756,16 @@
               "type": "boolean",
               "default": true
             }
+          },
+          {
+            "name": "includeAppRecording",
+            "in": "query",
+            "required": false,
+            "description": "Include the session's recorded MCP App targets and persona action counts when available.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -29345,6 +29355,7 @@
         ],
         "properties": {
           "projectId": { "type": ["string", "null"] },
+          "appRecording": { "$ref": "#/components/schemas/RecordedAppTrace" },
           "sessionId": {
             "type": "string"
           },
@@ -29376,6 +29387,60 @@
           "chatSessionId": {
             "type": "string"
           }
+        }
+      },
+      "RecordedAppTrace": {
+        "type": "object",
+        "required": ["apps", "actions", "summary", "truncated"],
+        "properties": {
+          "apps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["toolCallId", "toolName"],
+              "properties": {
+                "toolCallId": { "type": "string" },
+                "toolName": { "type": "string" },
+                "serverId": { "type": "string" }
+              }
+            }
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["toolCallId", "stepIndex", "promptIndex", "elapsedMs", "ts", "action", "requiresModelFollowUp"],
+              "properties": {
+                "toolCallId": { "type": "string" },
+                "stepIndex": { "type": "integer", "minimum": 0 },
+                "promptIndex": { "type": "integer", "minimum": 0 },
+                "elapsedMs": { "type": "number", "minimum": 0 },
+                "ts": { "type": "number" },
+                "action": { "type": "string" },
+                "actor": { "type": "string", "enum": ["persona", "model", "scripted"] },
+                "ok": { "type": "boolean" },
+                "target": {
+                  "type": "object",
+                  "required": ["role", "name"],
+                  "properties": {
+                    "role": { "type": "string" },
+                    "name": { "type": "string" }
+                  }
+                },
+                "requiresModelFollowUp": { "type": "boolean" }
+              }
+            }
+          },
+          "summary": {
+            "type": "object",
+            "required": ["attempted", "succeeded", "elapsedMs"],
+            "properties": {
+              "attempted": { "type": "integer", "minimum": 0 },
+              "succeeded": { "type": "integer", "minimum": 0 },
+              "elapsedMs": { "type": "number", "minimum": 0 }
+            }
+          },
+          "truncated": { "type": "boolean" }
         }
       },
       "WidgetSnapshotElement": {

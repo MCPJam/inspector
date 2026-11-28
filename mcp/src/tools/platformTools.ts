@@ -116,6 +116,8 @@ import {
   observeChatSessionBrowserOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
+  compileRecordedAppCaseOperation,
+  summarizeRecordedAppActionsOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
@@ -558,6 +560,8 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   observeChatSessionBrowserOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
+  compileRecordedAppCaseOperation,
+  summarizeRecordedAppActionsOperation,
 
   // ── Swarms and user testing ─────────────────────────────────────────────
   //

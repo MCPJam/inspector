@@ -12,6 +12,7 @@ export interface RecordedAppAction {
   ok?: boolean;
   target?: { role: string; name: string };
   followUps?: readonly string[];
+  requiresModelFollowUp?: boolean;
 }
 
 /**
@@ -27,6 +28,17 @@ export function compileRecordedAppCase(input: {
   assertions: readonly WidgetAssertion[];
 }): EvalSuiteFileCaseV2 {
   const { toolCallId, ...openingCall } = input.openingCall;
+  const encodedArgs = JSON.stringify(openingCall.arguments);
+  if (
+    encodedArgs &&
+    /\[REDACTED\]|<redacted>|\[secret:[^\]]+\]|\[truncated: max depth\]/.test(
+      encodedArgs
+    )
+  ) {
+    throw new Error(
+      "Opening call arguments contain redacted or truncated values."
+    );
+  }
   const sortedActions = [...input.actions].sort(
     (a, b) => a.stepIndex - b.stepIndex
   );
@@ -48,7 +60,7 @@ export function compileRecordedAppCase(input: {
         `${label} needs a successful persona click with a named target.`
       );
     }
-    if (step.followUps?.length) {
+    if (step.requiresModelFollowUp || step.followUps?.length) {
       throw new Error(`${label} sent a message that requires a model turn.`);
     }
     clicks.push({

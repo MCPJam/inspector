@@ -1216,3 +1216,4 @@ export * from "./swarm-finding.js";
 export * from "./eval-lifecycle.js";
 
 export * from "./recorded-app-case.js";
+export * from "./recorded-app-trace.js";

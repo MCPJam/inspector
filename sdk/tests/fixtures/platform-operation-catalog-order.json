@@ -142,6 +142,8 @@
   "observe_chat_session_browser",
   "get_chat_session",
   "get_chat_session_trace",
+  "compile_recorded_app_case",
+  "summarize_recorded_app_actions",
   "list_goals",
   "list_goal_runs",
   "get_goal_run",

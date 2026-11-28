@@ -56,6 +56,8 @@ const CLOSED_WORLD_OPERATIONS: ReadonlySet<string> = new Set([
   "list_chat_sessions",
   "get_chat_session",
   "get_chat_session_trace",
+  "compile_recorded_app_case",
+  "summarize_recorded_app_actions",
   "list_goals",
   "get_goal",
   "create_goal",
