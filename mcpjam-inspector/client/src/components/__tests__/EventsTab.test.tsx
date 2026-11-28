@@ -333,6 +333,9 @@ describe("EventsTab (local)", () => {
     await openEventType("issue.created");
     const repo = await screen.findByPlaceholderText("Enter repo");
     fireEvent.change(repo, { target: { value: "octo/hello" } });
+    // A server with no sign-in defaults to push, then the user picks poll.
+    expect(screen.getByRole("radio", { name: /Push/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /Poll/ }));
     expect(screen.getByRole("radio", { name: /Poll/ })).toBeChecked();
     openSection(/Advanced settings/);
     fireEvent.change(screen.getByLabelText("maxAgeMs"), {
