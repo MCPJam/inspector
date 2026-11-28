@@ -57,11 +57,6 @@
       "import": "./dist/mocks/index.js",
       "default": "./dist/mocks/index.js"
     },
-    "./server": {
-      "types": "./dist/server/index.d.ts",
-      "import": "./dist/server/index.js",
-      "default": "./dist/server/index.js"
-    },
     "./mocks/definition": {
       "types": "./dist/mocks/definition.d.ts",
       "import": "./dist/mocks/definition.js",

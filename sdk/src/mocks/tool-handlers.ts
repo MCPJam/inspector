@@ -16,7 +16,6 @@ import type { MockNotifier } from "./notifier.js";
 import {
   bindingError,
   forwardBlockedError,
-  invalidMockCursorError,
   isRealUnreachable,
   toolNotFoundError,
   unknownMethodError,
@@ -27,9 +26,9 @@ import {
   type MockRealServer,
 } from "./real-server.js";
 import type { MockObserver } from "./mock-observer.js";
-import { pageOf } from "../server/paging.js";
+import { pageOf } from "./paging.js";
 import { callerLogLevel, relayDuringCall } from "./relay.js";
-import { MODERN_REVISION } from "../server/revision.js";
+import { MODERN_REVISION } from "./revision.js";
 import { planToolCall, resolveMockTools } from "./resolve-tools.js";
 import type { MockRecords } from "./record-store.js";
 import { answerItself, toolErrorResult } from "./self-answer.js";
@@ -160,9 +159,7 @@ export function registerToolHandlers(
               : tool
           )
         : tools;
-    const page = pageOf(listed, request.params?.cursor, definition.pageSize, {
-      invalidCursor: invalidMockCursorError,
-    });
+    const page = pageOf(listed, request.params?.cursor, definition.pageSize);
     return {
       tools: page.items,
       ...(page.nextCursor && { nextCursor: page.nextCursor }),

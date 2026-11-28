@@ -1,6 +1,10 @@
-import { splitSkillMarkdown } from "../mcp-client-manager/index.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import {
+  MCP_SKILLS_EXTENSION_ID,
+  sha256HexOfBytes,
+  splitSkillMarkdown,
+} from "../mcp-client-manager/index.js";
 import type { SkillEntry } from "../mcp-client-manager/index.js";
-import { skillManifestEntry } from "../server/skills.js";
 import type { MockDefinition, MockResource } from "./definition-types.js";
 
 /**
@@ -44,8 +48,14 @@ export function definitionServesSkills(definition: MockDefinition): boolean {
   );
 }
 
-const manifestEntry = (uri: string, entry: MockResource) =>
-  skillManifestEntry(uri, bytesOf(entry));
+async function manifestEntry(uri: string, entry: MockResource) {
+  const bytes = bytesOf(entry);
+  return {
+    uri,
+    digest: `sha256:${await sha256HexOfBytes(bytes)}`,
+    size: bytes.byteLength,
+  };
+}
 
 async function ownSkills(definition: MockDefinition): Promise<SkillEntry[]> {
   const files = Object.entries(definition.resources ?? {}).filter(
@@ -108,3 +118,15 @@ export async function listMockSkills(
   ];
 }
 
+export function skillNotFoundError(uri: string): ProtocolError {
+  return new ProtocolError(
+    ProtocolErrorCode.InvalidParams,
+    `Skill ${uri} not found`,
+    { mockCode: "mock_skill_not_found", uri }
+  );
+}
+
+/** What the extension is declared as when the definition serves skills and the real server did not declare it. */
+export function skillsCapability(): Record<string, object> {
+  return { [MCP_SKILLS_EXTENSION_ID]: {} };
+}

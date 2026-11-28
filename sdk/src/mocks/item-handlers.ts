@@ -15,14 +15,13 @@ import type { SkillEntry } from "../mcp-client-manager/index.js";
 import type { MockDefinition } from "./definition-types.js";
 import {
   editedItemMissingError,
-  invalidMockCursorError,
   isRealUnreachable,
   promptNotFoundError,
   resourceNotFoundError,
 } from "./mock-errors.js";
 import type { MockItemKind } from "./mock-errors.js";
 import type { MockListingFamily, MockRealServer } from "./real-server.js";
-import { pageOf } from "../server/paging.js";
+import { pageOf } from "./paging.js";
 import {
   planPromptGet,
   planResourceRead,
@@ -37,8 +36,8 @@ import {
   adjustMockSkill,
   definitionTouchesSkills,
   listMockSkills,
+  skillNotFoundError,
 } from "./mock-skills.js";
-import { skillNotFoundError } from "../server/skills.js";
 import { forRevision } from "./legacy-result.js";
 import { assertRequestForward, decideForward } from "./tool-handlers.js";
 
@@ -159,9 +158,7 @@ async function listPage<T, K extends string>(
     : { items: [] };
   const { items, missing } = spec.resolve(real.items);
   if (missing.length > 0) throw editedItemMissingError(spec.kind, missing);
-  const page = pageOf(items, cursor, c.definition.pageSize ?? real.pageSize, {
-    invalidCursor: invalidMockCursorError,
-  });
+  const page = pageOf(items, cursor, c.definition.pageSize ?? real.pageSize);
   // The computed key is `string` to the compiler; `K` is the field the caller named.
   return {
     [spec.field]: page.items,
@@ -297,8 +294,7 @@ export async function answerSkillsMethod(
     const page = pageOf(
       skills,
       request.params?.cursor as string | undefined,
-      definition.pageSize ?? real.pageSize,
-      { invalidCursor: invalidMockCursorError }
+      definition.pageSize ?? real.pageSize
     );
     return {
       skills: page.items,
@@ -325,5 +321,5 @@ export async function answerSkillsMethod(
       if (!isSkillNotFoundError(error)) throw error;
     }
   }
-  throw skillNotFoundError(uri, { mockCode: "mock_skill_not_found" });
+  throw skillNotFoundError(uri);
 }
