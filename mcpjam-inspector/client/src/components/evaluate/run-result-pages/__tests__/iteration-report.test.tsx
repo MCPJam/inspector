@@ -91,7 +91,7 @@ describe("IterationReport", () => {
     render(<IterationReport iteration={row} target={targetFor(row)} />);
     expect(
       screen.getByText(
-        "The Before the run script exited 127, so no iteration started.",
+        "The Before the run script stopped with an error, so no iteration started.",
       ),
     ).toBeVisible();
     expect(screen.queryByTestId("iteration-details")).toBeNull();

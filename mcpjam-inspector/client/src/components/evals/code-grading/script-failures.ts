@@ -74,9 +74,8 @@ function whatHappened(result: ScriptResult): string {
     case "error":
       return "couldn't start";
     default:
-      return result.exitCode === undefined
-        ? "exited with an error"
-        : `exited ${result.exitCode}`;
+      // The exit code goes in the details, beside the output it explains.
+      return "stopped with an error";
   }
 }
 
@@ -108,6 +107,8 @@ export function scriptFailure(
   if (!result || result.status === "passed") return null;
   const setup = slot === "runSetup" || slot === "iterationSetup";
   const output = redacted(result.output).trim();
+  const exitLine =
+    result.exitCode === undefined ? "" : `Exit code ${result.exitCode}`;
   return {
     slot,
     error: {
@@ -124,11 +125,11 @@ export function scriptFailure(
       severity: setup ? "error" : "warning",
       // The suite's own script failed, not MCPJam: no "MCPJam issue" badge.
       origin: "user_config",
-      rawMessage: [output, redacted(result.error ?? "").trim()]
+      rawMessage: [exitLine, output, redacted(result.error ?? "").trim()]
         .filter(Boolean)
         .join("\n\n"),
     },
-    ...(output ? { rawLabel: "Script output" } : {}),
+    ...(output || exitLine ? { rawLabel: "Script output" } : {}),
   };
 }
 
