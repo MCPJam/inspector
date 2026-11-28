@@ -28,7 +28,12 @@ import { cn } from "@/lib/utils";
 
 const COPY_VARIANT = "not_backed_up_v1";
 const ACTIVITY_THROTTLE_MS = 60 * 1000;
-const ACTIVITY_EVENTS = ["pointerdown", "keydown", "visibilitychange"] as const;
+const ACTIVITY_EVENTS = [
+  "pointerdown",
+  "keydown",
+  "wheel",
+  "visibilitychange",
+] as const;
 
 type Prompt = "dialog" | "notice";
 
