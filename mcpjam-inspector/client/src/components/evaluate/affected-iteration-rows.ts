@@ -7,8 +7,15 @@
  */
 import type { EvalIteration } from "../evals/types";
 import { computeIterationResult } from "../evals/pass-criteria";
-import type { AffectedIterationRow } from "@/components/shared/actionable-insights/affected-iterations-list";
+import {
+  type AffectedIterationRow,
+  unloadedRow,
+} from "@/components/shared/actionable-insights/affected-iterations-list";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type {
+  EvalRunDecisionChain,
+  EvalRunDecisionDiagnostic,
+} from "@mcpjam/sdk/contract";
 import { iterationReasoningEffort } from "../evals/run-metrics";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 
@@ -45,10 +52,30 @@ export function affectedRowFor(
 export function affectedRowsById(
   iterations: readonly EvalIteration[],
   clientLabel?: string | null,
+  chains?: ReadonlyMap<string, EvalRunDecisionChain>,
+  diagnostics: readonly EvalRunDecisionDiagnostic[] = [],
 ): Record<string, AffectedIterationRow> {
+  // The run diagnostic is authoritative, as in the case report; the separate
+  // chain read is page-capped and can miss an iteration it describes.
+  const fromDiagnostics = new Map(
+    diagnostics.map((row) => [row.iterationId, row.chain]),
+  );
   const rows: Record<string, AffectedIterationRow> = {};
   for (const iteration of iterations) {
-    rows[iteration._id] = affectedRowFor(iteration, clientLabel);
+    rows[iteration._id] = {
+      ...affectedRowFor(iteration, clientLabel),
+      chain: fromDiagnostics.get(iteration._id) ?? chains?.get(iteration._id),
+    };
+  }
+  // A diagnostic for an iteration whose metadata did not load still carries
+  // its verified stage, so the rubric can read it by id.
+  // The chain read covers iterations past the diagnostic page; the
+  // diagnostic still wins when both have one.
+  for (const id of [...(chains?.keys() ?? []), ...fromDiagnostics.keys()]) {
+    rows[id] ??= {
+      ...unloadedRow(id),
+      chain: fromDiagnostics.get(id) ?? chains?.get(id),
+    };
   }
   return rows;
 }

@@ -346,6 +346,8 @@ export function CombinedRunContent({
                 key={findingsRun._id}
                 run={findingsRun}
                 view={reports.get(findingsRun._id)?.view}
+                chains={reports.get(findingsRun._id)?.chains}
+                diagnostics={reports.get(findingsRun._id)?.diagnostics}
                 iterations={
                   history.details.get(findingsRun._id)?.iterations ?? []
                 }
@@ -383,12 +385,16 @@ function SelectedRunFindings({
   run,
   view,
   iterations,
+  chains,
+  diagnostics,
   onOpenIteration,
 }: {
   scopeControl?: React.ReactNode;
   run: EvalSuiteRun;
   view?: RunVerdictHeroView;
   iterations: readonly EvalIteration[];
+  chains?: ReadonlyMap<string, EvalRunDecisionChain>;
+  diagnostics?: readonly EvalRunDecisionDiagnostic[];
   onOpenIteration: Parameters<typeof SingleRunContent>[0]["onOpenIteration"];
 }) {
   const generation = useServerQuality(run, { autoRequest: false });
@@ -405,6 +411,8 @@ function SelectedRunFindings({
       scopeControl={scopeControl}
       suiteRunId={run._id}
       iterations={iterations}
+      chains={chains}
+      diagnostics={diagnostics}
       // Before the Findings panel, these columns came directly from the
       // run's diagnostics. Keep them available without requesting AI, scoped
       // to the selected run. With no diagnosis, retain the panel's empty state.

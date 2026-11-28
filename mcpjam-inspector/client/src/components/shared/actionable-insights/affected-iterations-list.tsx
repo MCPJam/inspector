@@ -15,6 +15,7 @@ import { useState } from "react";
 import { ArrowUpRight } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
+import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 import {
   outcomeDotTone,
   outcomeLabel,
@@ -29,7 +30,19 @@ export type AffectedIterationRow = {
   model: string | null;
   result: string;
   canOpen: boolean;
+  chain?: EvalRunDecisionChain;
 };
+
+/** The row for an iteration this page has not loaded. */
+export const unloadedRow = (iterationId: string): AffectedIterationRow => ({
+  iterationId,
+  caseTitle: "Iteration not loaded on this page",
+  iterationNumber: null,
+  client: null,
+  model: null,
+  result: "unknown",
+  canOpen: false,
+});
 
 const INITIAL = 5;
 

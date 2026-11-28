@@ -1,0 +1,406 @@
+/**
+ * A recorded problem's details: up to three options to choose among, with
+ * scope, steps, verification and the copied prompt following the selection.
+ */
+import { useState } from "react";
+import { Check, Copy } from "lucide-react";
+import { Badge } from "@mcpjam/design-system/badge";
+import { Button } from "@mcpjam/design-system/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
+import { copyToClipboard } from "@/lib/clipboard";
+import type {
+  FindingOption,
+  FindingProblem,
+} from "@/lib/insights-envelope-api";
+import { evidenceLabel, type FindingPromptContext } from "./finding-prompts";
+import type { FindingEvidenceLocator } from "./finding-evidence";
+import {
+  AffectedIterationsList,
+  type AffectedIterationRow,
+  unloadedRow,
+} from "./affected-iterations-list";
+import { FindingText } from "./finding-text";
+import { ProblemRubric } from "./problem-rubric";
+import {
+  buildOptionPrompt,
+  OPTION_KIND_LABEL,
+  optionPromptLabel,
+  optionTargetLabel,
+  plural,
+} from "./problem-prompts";
+
+const KIND_BADGE: Record<FindingOption["kind"], string> = {
+  fix: "Fix · not yet verified",
+  experiment: "Experiment · untested",
+  investigation: "Investigation",
+};
+
+/** Why an analysis that ran left this problem without a checked cause. */
+const OUTCOME_LINE: Record<
+  Exclude<
+    NonNullable<FindingProblem["outcome"]>["state"],
+    "explained" | "addressed"
+  >,
+  string
+> = {
+  no_proposal: "Analysis ran and proposed nothing for this problem.",
+  rejected: "Analysis ran; its proposals did not hold up against the evidence.",
+  withheld: "Analysis ran but could not confirm a cause from the evidence.",
+  not_reached: "Analysis ran but did not reach this problem.",
+};
+
+/** Reasons a cause was confirmed but left out of this problem's results. */
+const CONFIRMED_OMISSIONS = new Set([
+  "rank_cap",
+  "verification_cap",
+  "publication_cap",
+  "subsumed",
+  "review_explained_other_observations",
+]);
+
+function outcomeLine(
+  outcome: NonNullable<FindingProblem["outcome"]>,
+): string | undefined {
+  if (outcome.state === "explained" || outcome.state === "addressed")
+    return undefined;
+  if (
+    outcome.state === "withheld" &&
+    outcome.reason &&
+    CONFIRMED_OMISSIONS.has(outcome.reason)
+  )
+    return "Analysis confirmed a cause but did not show it for this problem.";
+  if (outcome.state === "withheld" && outcome.reason === "trimmed")
+    return "Analysis reached a result for this problem, but it was cut to fit the size limit.";
+  return OUTCOME_LINE[outcome.state];
+}
+
+/** What the analysis established about this problem's iterations. */
+export function coverageLine(problem: FindingProblem): string {
+  const { observed, explained, unresolved } = problem.coverage;
+  const parts = [
+    explained > 0
+      ? `Evidence reviewed for ${explained} of ${plural(observed, "iteration")}.`
+      : ((problem.outcome && outcomeLine(problem.outcome)) ??
+        "Cause not established."),
+  ];
+  if (unresolved > 0 && unresolved < observed)
+    parts.push(
+      `${plural(unresolved, "iteration")} ${unresolved === 1 ? "has" : "have"} no checked cause or analysis option.`,
+    );
+  return parts.join(" ");
+}
+
+export function CopyOptionPrompt({
+  problem,
+  option,
+  context,
+}: {
+  problem: FindingProblem;
+  option: FindingOption;
+  context?: FindingPromptContext;
+}) {
+  const [status, setStatus] = useState<"idle" | "copied" | "unavailable">(
+    "idle",
+  );
+  const prompt = buildOptionPrompt(problem, option, context);
+  return (
+    <div className="min-w-0 space-y-3">
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-9 shadow-none"
+        data-testid="problem-copy-prompt"
+        onClick={() => {
+          void copyToClipboard(prompt).then((ok) => {
+            setStatus(ok ? "copied" : "unavailable");
+            if (ok) setTimeout(() => setStatus("idle"), 2000);
+          });
+        }}
+      >
+        {status === "copied" ? (
+          <Check className="size-3.5" />
+        ) : (
+          <Copy className="size-3.5" />
+        )}
+        {status === "copied" ? "Copied" : optionPromptLabel(option)}
+      </Button>
+      {status === "unavailable" ? (
+        <>
+          <p role="status" className="text-xs text-muted-foreground">
+            The clipboard is unavailable. Select the prompt below to copy it.
+          </p>
+          <pre
+            tabIndex={0}
+            className="max-h-80 max-w-[calc(100vw-3rem)] overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--code-bg)] p-3 font-code text-xs text-[var(--code-text)]"
+            data-testid="problem-prompt-text"
+          >
+            {prompt}
+          </pre>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function rowsFor(
+  problem: FindingProblem,
+  iterationRows: Record<string, AffectedIterationRow>,
+): AffectedIterationRow[] {
+  return problem.iterationIds.map((id) => iterationRows[id] ?? unloadedRow(id));
+}
+
+export function ProblemDetailsContent({
+  problem,
+  context,
+  iterationRows = {},
+  caveat = null,
+  onOpenEvidence,
+}: {
+  problem: FindingProblem;
+  /** How the observation was sampled, when it was not measured run-wide. */
+  caveat?: string | null;
+  context?: FindingPromptContext;
+  iterationRows?: Record<string, AffectedIterationRow>;
+  onOpenEvidence?: (locator: FindingEvidenceLocator) => void;
+}) {
+  const [chosen, setChosen] = useState(problem.recommendedOptionId);
+  const option =
+    problem.options.find((row) => row.id === chosen) ?? problem.options[0];
+  const recommended = option?.id === problem.recommendedOptionId;
+  const scope = new Set(option?.iterationIds ?? []);
+  const explained = new Set(
+    problem.explanations.flatMap((e) => e.iterationIds),
+  );
+  const unresolved = new Set(problem.coverage.unresolvedIterationIds);
+  const target = option ? optionTargetLabel(option) : null;
+  // A passing comparison stays visible but is labelled apart, since it is
+  // not one of the affected iterations.
+  const excerpts = problem.evidence.filter((row) => row.excerpt);
+  const status = (id: string) =>
+    explained.has(id)
+      ? "Evidence reviewed"
+      : unresolved.has(id)
+        ? "Unresolved"
+        : "Covered by another option";
+  return (
+    <div className="space-y-6 px-6 pb-8 text-sm leading-relaxed">
+      <section>
+        <ul className="list-disc space-y-2 pl-5">
+          <ProblemRubric problem={problem} iterationRows={iterationRows} />
+          <li>
+            <details>
+              <summary className="cursor-pointer">
+                <strong>Evidence:</strong> View recorded result
+              </summary>
+              <p className="mt-2 break-words">
+                <FindingText text={problem.observed} />
+              </p>
+              {caveat ? (
+                <p
+                  className="mt-1 text-xs text-muted-foreground"
+                  data-testid="problem-sampling-caveat"
+                >
+                  <FindingText text={caveat} />
+                </p>
+              ) : null}
+              {excerpts.map((row, index) => (
+                <figure key={index} className="mt-2 min-w-0">
+                  <figcaption className="text-xs text-muted-foreground">
+                    {row.kind === "contrast"
+                      ? `Passing comparison${row.iterationId ? `, iteration ${row.iterationId}` : ""}`
+                      : evidenceLabel(row)}
+                  </figcaption>
+                  <pre
+                    tabIndex={0}
+                    className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--code-bg)] p-2 font-code text-xs text-[var(--code-text)]"
+                    data-testid="problem-evidence-excerpt"
+                  >
+                    {row.excerpt}
+                  </pre>
+                </figure>
+              ))}
+            </details>
+          </li>
+        </ul>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {coverageLine(problem)}
+        </p>
+      </section>
+      {option ? (
+        <section className="space-y-4 border-t border-border/60 pt-5">
+          {problem.options.length > 1 ? (
+            <div>
+              <label
+                className="mb-2 block text-xs font-semibold"
+                htmlFor={`problem-option-${problem.id}`}
+              >
+                Options ({problem.options.length})
+              </label>
+              <Select value={option.id} onValueChange={setChosen}>
+                <SelectTrigger
+                  className="w-full min-w-0 [&>span]:block [&>span]:truncate"
+                  id={`problem-option-${problem.id}`}
+                  aria-label="Choose an option"
+                  data-testid="problem-option-select"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-w-[var(--radix-select-trigger-width)]">
+                  {problem.options.map((row) => (
+                    <SelectItem key={row.id} value={row.id}>
+                      {row.id === problem.recommendedOptionId
+                        ? "Recommended"
+                        : "Alternative"}
+                      : {OPTION_KIND_LABEL[row.kind].toLowerCase()} ·{" "}
+                      {row.change.length > 70
+                        ? `${row.change.slice(0, 69)}…`
+                        : row.change}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <h5 className="font-semibold">{OPTION_KIND_LABEL[option.kind]}</h5>
+            <Badge variant="outline">{KIND_BADGE[option.kind]}</Badge>
+          </div>
+          <ul className="list-disc space-y-2 pl-5 [&>li]:break-words">
+            <li>
+              <strong>Next:</strong> <FindingText text={option.change} />
+            </li>
+            <li>
+              <strong>
+                {recommended ? "Why this option" : "Why consider this option"}:
+              </strong>{" "}
+              <FindingText
+                text={
+                  recommended && problem.recommendationReason
+                    ? problem.recommendationReason
+                    : option.rationale
+                }
+              />
+            </li>
+            <li>
+              <strong>Success check:</strong>{" "}
+              <FindingText text={option.verification} />
+            </li>
+            <li>
+              <strong>Scope:</strong> {option.iterationIds.length} of{" "}
+              {plural(problem.coverage.observed, "affected iteration")}
+              {target ? ` · ${target}` : ""}
+            </li>
+            <li>
+              <strong>Effort:</strong> {option.effort}.{" "}
+              <strong>Compatibility risk:</strong> {option.compatibilityRisk}.
+            </li>
+            {[
+              ["Hypothesis", option.hypothesis],
+              ["Supports it if", option.supportsIf],
+              ["Weakens it if", option.weakensIf],
+            ]
+              .filter((row): row is [string, string] => Boolean(row[1]))
+              .map(([label, text]) => (
+                <li key={label}>
+                  <strong>{label}:</strong> <FindingText text={text} />
+                </li>
+              ))}
+          </ul>
+          {recommended && problem.recommendationReason ? (
+            <details>
+              <summary className="cursor-pointer font-semibold">
+                More reasoning
+              </summary>
+              <p className="mt-2">
+                <FindingText text={option.rationale} />
+              </p>
+            </details>
+          ) : null}
+          {option.citations.length > 0 ? (
+            <p
+              className="break-words text-xs text-muted-foreground"
+              data-testid="problem-option-citations"
+            >
+              Cited trace locations: {option.citations.join(", ")}
+            </p>
+          ) : null}
+          <CopyOptionPrompt
+            key={option.id}
+            problem={problem}
+            option={option}
+            context={context}
+          />
+        </section>
+      ) : null}
+      {problem.explanations.length > 0 ? (
+        <details className="border-t border-border/60 pt-5">
+          <summary className="cursor-pointer font-semibold">
+            Reviewed explanation
+          </summary>
+          <ul className="list-disc space-y-1 pl-5">
+            {problem.explanations.map((row) => (
+              <li key={row.id}>
+                <FindingText text={row.rootCause ?? row.title} />{" "}
+                <span className="break-words text-muted-foreground">
+                  ({plural(row.iterationIds.length, "iteration")}:{" "}
+                  {row.iterationIds.join(", ")}
+                  {row.citations.length
+                    ? `; cited ${row.citations.join(", ")}`
+                    : ""}
+                  )
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      <section className="border-t border-border/60 pt-5">
+        <h5 className="mb-3 font-semibold">
+          Affected iterations · {problem.affected.count} of{" "}
+          {problem.affected.total}
+        </h5>
+        <AffectedIterationsList
+          rows={rowsFor(problem, iterationRows)}
+          total={problem.affected.count}
+          ariaLabel="Affected iterations"
+          detail={(row) =>
+            !option
+              ? status(row.iterationId)
+              : scope.has(row.iterationId)
+                ? [
+                    "In selected option",
+                    explained.has(row.iterationId)
+                      ? "Evidence reviewed"
+                      : unresolved.has(row.iterationId)
+                        ? "Unresolved"
+                        : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
+                : `Not in selected option · ${status(row.iterationId)}`
+          }
+          {...(onOpenEvidence
+            ? {
+                onOpen: (id: string) =>
+                  onOpenEvidence({ kind: "iteration", id }),
+              }
+            : {})}
+        />
+      </section>
+      {option ? (
+        <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
+          {option.source === "analysis"
+            ? "Proposed by the trace analysis from cited evidence. Nothing has been changed or rerun."
+            : "Guidance from the recorded facts alone; no model was asked."}{" "}
+          You decide the next action and start any rerun.
+        </p>
+      ) : null}
+    </div>
+  );
+}

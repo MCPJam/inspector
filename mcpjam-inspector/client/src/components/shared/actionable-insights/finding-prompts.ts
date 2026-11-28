@@ -34,8 +34,8 @@ const FENCE_CLOSE = "<<<END UNTRUSTED>>>";
  * producer already clipped these; this is the render-time backstop. */
 function sanitizeFenced(text: string, max = 600): string {
   const flattened = text
-    .replace(/<<<[^>]*>>>/g, "[…]")
     .replace(/\r/g, "")
+    .replace(/<{3,}|>{3,}/g, "[…]")
     .trim();
   return flattened.length > max ? `${flattened.slice(0, max - 1)}…` : flattened;
 }
@@ -49,9 +49,9 @@ function sanitizeFenced(text: string, max = 600): string {
  * data. So every identifier is flattened to one line, stripped of fence
  * markers and backticks, and bounded before it is interpolated anywhere.
  */
-function sanitizeIdentifier(value: string, max = 120): string {
+export function sanitizeIdentifier(value: string, max = 120): string {
   const flattened = value
-    .replace(/<<<[^>]*>>>/g, "")
+    .replace(/<{3,}|>{3,}/g, "")
     .replace(/[`\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -60,7 +60,7 @@ function sanitizeIdentifier(value: string, max = 120): string {
   return bounded.length > 0 ? bounded : "(unnamed)";
 }
 
-function fence(label: string, body: string): string {
+export function fence(label: string, body: string): string {
   // The label is scaffolding the model reads as ours, so it gets the
   // identifier treatment rather than being trusted.
   return [
@@ -71,7 +71,7 @@ function fence(label: string, body: string): string {
   ].join("\n");
 }
 
-function evidenceLabel(evidence: ActionableFindingEvidence): string {
+export function evidenceLabel(evidence: ActionableFindingEvidence): string {
   const parts = [evidence.kind.replace(/_/g, " ")];
   if (evidence.toolName) {
     parts.push(`tool ${sanitizeIdentifier(evidence.toolName)}`);
@@ -149,13 +149,23 @@ function affectedLine(finding: ActionableFinding): string {
   return `Affected: ${finding.affected.count} of ${finding.affected.total} ${finding.affected.unit}.`;
 }
 
+/** Server surfaces in words, shared by the panel and the prompts. */
+export const SURFACES: Record<string, string> = {
+  description: "Tool description",
+  input_schema: "Input schema",
+  output_schema: "Output schema",
+  handler: "Tool handler",
+  server_instructions: "Server instructions",
+  capability: "Server capability",
+};
+
 export type FindingPromptContext = {
   /** What the reader should re-run to verify, in their words — e.g.
    * "this eval suite", "this swarm wave", "this user-testing study". */
   rerunLabel: string;
 };
 
-const DEFAULT_CONTEXT: FindingPromptContext = {
+export const DEFAULT_CONTEXT: FindingPromptContext = {
   rerunLabel: "the case that surfaced this",
 };
 

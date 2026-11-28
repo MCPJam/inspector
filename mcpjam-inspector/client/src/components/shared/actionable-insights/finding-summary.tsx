@@ -20,11 +20,13 @@ import {
   findingOffersPrompt,
   findingPromptLabel,
   type FindingPromptContext,
+  SURFACES,
 } from "./finding-prompts";
 import { type FindingEvidenceLocator } from "./finding-evidence";
 import {
   AffectedIterationsList,
   type AffectedIterationRow,
+  unloadedRow,
 } from "./affected-iterations-list";
 import { FindingText } from "./finding-text";
 import {
@@ -65,19 +67,11 @@ export function CopyFindingPrompt({
       }}
     >
       {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-      {copied ? "Copied" : "Copy fix prompt"}
+      {copied ? "Copied" : findingPromptLabel(finding)}
     </Button>
   );
 }
 
-const SURFACES: Record<string, string> = {
-  description: "Tool description",
-  input_schema: "Input schema",
-  output_schema: "Output schema",
-  handler: "Tool handler",
-  server_instructions: "Server instructions",
-  capability: "Server capability",
-};
 const OWNERS: Record<string, string> = {
   mcp_server: "MCP server",
   agent_configuration: "Agent / prompt",
@@ -148,16 +142,7 @@ export function FindingDetailsContent({
     ),
   ];
   const affectedRows: AffectedIterationRow[] = affectedIds.map(
-    (id) =>
-      iterationRows[id] ?? {
-        iterationId: id,
-        caseTitle: "Iteration not loaded on this page",
-        iterationNumber: null,
-        client: null,
-        model: null,
-        result: "unknown",
-        canOpen: false,
-      },
+    (id) => iterationRows[id] ?? unloadedRow(id),
   );
   const judgeCoverage = judgeCoverageLine(provenance);
   const caveat = mechanismCaveat(provenance);
