@@ -1301,6 +1301,71 @@ describe("useServerState hosted OAuth callback guards", () => {
     });
   });
 
+  describe("a reconnect that has to sign in again", () => {
+    const signInRequired = {
+      success: false,
+      error:
+        'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
+    };
+    const asanaActions = (dispatch: ReturnType<typeof vi.fn>) =>
+      dispatch.mock.calls
+        .map(([action]) => action)
+        .filter((action) => action.name === "asana");
+    const isSignInState = (action: {
+      type: string;
+      server?: { connectionStatus?: string };
+    }) =>
+      action.type === "UPSERT_SERVER" &&
+      action.server?.connectionStatus === "oauth-flow";
+
+    it("shows the sign-in state once the browser opens, not while OAuth is preparing", async () => {
+      mockReconnectServer.mockResolvedValueOnce(signInRequired);
+      const dispatch = vi.fn();
+      let actionsBeforeBrowser: unknown[] = [];
+      mockEnsureAuthorizedForReconnect.mockImplementationOnce(
+        async (_server, options) => {
+          options.beforeRedirect({ serverUrl: "https://mcp.asana.com/sse" });
+          actionsBeforeBrowser = asanaActions(dispatch);
+          await options.onAuthorizationRedirect({ state: "issued-state" });
+          return { kind: "redirect" };
+        },
+      );
+      const { result } = renderHostedServerState(dispatch);
+
+      await act(async () => {
+        await result.current.handleReconnect("asana");
+      });
+
+      expect(actionsBeforeBrowser.some(isSignInState)).toBe(false);
+      expect(asanaActions(dispatch).at(-1)).toMatchObject({
+        type: "UPSERT_SERVER",
+        server: { connectionStatus: "oauth-flow" },
+      });
+    });
+
+    it("fails without showing the sign-in state when OAuth cannot start", async () => {
+      mockReconnectServer.mockResolvedValueOnce(signInRequired);
+      mockEnsureAuthorizedForReconnect.mockImplementationOnce(
+        async (_server, options) => {
+          options.beforeRedirect({ serverUrl: "https://mcp.asana.com/sse" });
+          return { kind: "error", error: "Discovery failed" };
+        },
+      );
+      const dispatch = vi.fn();
+      const { result } = renderHostedServerState(dispatch);
+
+      await act(async () => {
+        await result.current.handleReconnect("asana");
+      });
+
+      expect(asanaActions(dispatch).some(isSignInState)).toBe(false);
+      expect(asanaActions(dispatch).at(-1)).toMatchObject({
+        type: "CONNECT_FAILURE",
+        error: "Discovery failed",
+      });
+    });
+  });
+
   it("opens the known server's OAuth flow when a user action requests readiness", async () => {
     mockReconnectServer.mockResolvedValueOnce({
       success: false,

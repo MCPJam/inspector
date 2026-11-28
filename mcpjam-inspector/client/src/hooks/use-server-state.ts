@@ -6250,6 +6250,23 @@ export function useServerState({
                 suppressSuccessToast: options?.suppressSuccessToast,
               });
             },
+            // beforeRedirect runs before discovery, which can be slow or fail;
+            // the card says "Authorizing in browser" only once the browser opens.
+            onAuthorizationRedirect: () => {
+              if (options?.connectionIntent || isStaleOp(serverName, token))
+                return;
+              dispatch({
+                type: "UPSERT_SERVER",
+                name: serverName,
+                server: {
+                  ...server,
+                  connectionStatus: "oauth-flow",
+                  enabled: true,
+                  lastError: undefined,
+                  useOAuth: true,
+                },
+              });
+            },
             onTraceUpdate: (oauthTrace: OAuthTrace) => {
               updateServerOAuthTrace(serverName, oauthTrace);
             },
