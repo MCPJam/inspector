@@ -1,6 +1,6 @@
 import { useLayoutEffect } from "react";
 import { act, renderHook } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type {
   EventDescriptorView,
   EventsDeliveryModeView,
@@ -31,7 +31,12 @@ const orderShipped: EventDescriptorView = {
   },
 };
 
-type Props = { event: EventDescriptorView; modes: EventsDeliveryModeView[] };
+type Props = {
+  event: EventDescriptorView;
+  modes: EventsDeliveryModeView[];
+  hosted?: boolean;
+  serverSignedIn?: boolean;
+};
 
 /** Renders the hook and records what each commit would paint. */
 function renderForm(initialProps: Props) {
@@ -42,12 +47,13 @@ function renderForm(initialProps: Props) {
     mode: EventsDeliveryModeView | null;
   }> = [];
   const hook = renderHook(
-    ({ event, modes }: Props) => {
+    ({ event, modes, hosted = false, serverSignedIn = false }: Props) => {
       const form = useSubscribeForm({
         event,
         modes,
         blockedReason: null,
-        hosted: false,
+        hosted,
+        serverSignedIn,
         projectId: "project",
         serverId: "Flights",
         busy: false,
@@ -79,7 +85,7 @@ describe("useSubscribeForm", () => {
       event: "flight.status_changed",
       fields: ["tripId", "flightId", "statuses"],
       rawMode: false,
-      mode: "poll",
+      mode: "push",
     });
     expect(new Set(commits.map((commit) => JSON.stringify(commit))).size).toBe(1);
   });
@@ -112,7 +118,7 @@ describe("useSubscribeForm", () => {
     });
     act(() => {
       result.current.onFieldChange("tripId", "trip-1");
-      result.current.setMode("push");
+      result.current.setMode("poll");
     });
 
     rerender({ event: { ...flightStatus }, modes: ["poll", "push", "webhook"] });
@@ -120,7 +126,66 @@ describe("useSubscribeForm", () => {
     expect(
       result.current.fields.find((field) => field.name === "tripId")?.value,
     ).toBe("trip-1");
-    expect(result.current.mode).toBe("push");
+    expect(result.current.mode).toBe("poll");
+  });
+
+  describe("defaults in the SEP's order", () => {
+    const all: EventsDeliveryModeView[] = ["poll", "push", "webhook"];
+    const receiverKey = `mcpjam-events-callback:${JSON.stringify(["project", "Flights"])}`;
+    afterEach(() => window.localStorage.clear());
+
+    it("hosted, a server that signs in: webhook", () => {
+      const { result } = renderForm({
+        event: flightStatus,
+        modes: ["poll", "webhook"],
+        hosted: true,
+        serverSignedIn: true,
+      });
+      expect(result.current.mode).toBe("webhook");
+    });
+
+    it("hosted, a server with no sign-in: poll", () => {
+      const { result } = renderForm({
+        event: flightStatus,
+        modes: ["poll", "webhook"],
+        hosted: true,
+      });
+      expect(result.current.mode).toBe("poll");
+    });
+
+    it("local, an https receiver saved for a server that signs in: webhook", () => {
+      window.localStorage.setItem(receiverKey, "https://tunnel.example.com/");
+      const { result } = renderForm({
+        event: flightStatus,
+        modes: all,
+        serverSignedIn: true,
+      });
+      expect(result.current.mode).toBe("webhook");
+      expect(result.current.callbackUrl).toContain(
+        "https://tunnel.example.com/",
+      );
+    });
+
+    it("local, a plain-http receiver: push", () => {
+      window.localStorage.setItem(receiverKey, "http://tunnel.example.com/");
+      const { result } = renderForm({
+        event: flightStatus,
+        modes: all,
+        serverSignedIn: true,
+      });
+      expect(result.current.mode).toBe("push");
+    });
+
+    it("keeps the default while the receiver URL is edited", () => {
+      window.localStorage.setItem(receiverKey, "https://tunnel.example.com/");
+      const { result } = renderForm({
+        event: flightStatus,
+        modes: all,
+        serverSignedIn: true,
+      });
+      act(() => result.current.setCustomCallbackUrl("http://"));
+      expect(result.current.mode).toBe("webhook");
+    });
   });
 
   it("uses the first allowed mode while the picked one is refused", () => {

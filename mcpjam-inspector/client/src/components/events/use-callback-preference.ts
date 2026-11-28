@@ -4,6 +4,15 @@ import { checkCallbackUrl, type ReceiverChoice } from "@mcpjam/sdk/browser";
 type Draft = { kind: ReceiverChoice["kind"]; url: string };
 const defaultDraft: Draft = { kind: "local", url: "" };
 
+function preferenceKey(
+  projectId: string | null | undefined,
+  serverId: string | undefined,
+): string | undefined {
+  return serverId
+    ? `mcpjam-events-callback:${JSON.stringify([projectId ?? null, serverId])}`
+    : undefined;
+}
+
 function readPreference(key: string | undefined): Draft {
   if (!key) return defaultDraft;
   try {
@@ -22,9 +31,15 @@ export function useCallbackPreference(
   projectId: string | null | undefined,
   serverId: string | undefined,
 ) {
-  const key = serverId ? `mcpjam-events-callback:${JSON.stringify([projectId ?? null, serverId])}` : undefined;
+  const key = preferenceKey(projectId, serverId);
   const [draft, setDraft] = useState(() => readPreference(key));
-  useEffect(() => setDraft(readPreference(key)), [key]);
+  // The preference as saved for this server, which edits to the draft don't move.
+  const [saved, setSaved] = useState(draft);
+  useEffect(() => {
+    const stored = readPreference(key);
+    setDraft(stored);
+    setSaved(stored);
+  }, [key]);
 
   const remember = (value: ReceiverChoice) => {
     if (!key) return;
@@ -37,5 +52,23 @@ export function useCallbackPreference(
     }
   };
 
-  return { draft, setDraft, remember };
+  return { draft, setDraft, saved, remember };
+}
+
+/**
+ * The `https` receiver saved for a local server, if one is. A plain-`http`
+ * receiver needs the user's consent for each subscription, so it doesn't count.
+ */
+export function savedHttpsReceiver(
+  projectId: string | null | undefined,
+  serverId: string,
+): string | undefined {
+  return httpsReceiverOf(readPreference(preferenceKey(projectId, serverId)));
+}
+
+/** The draft's receiver URL when it is a valid `https` one. */
+export function httpsReceiverOf(draft: Draft): string | undefined {
+  if (draft.kind !== "custom") return undefined;
+  const checked = checkCallbackUrl(draft.url);
+  return checked.ok && !checked.insecure ? checked.url.href : undefined;
 }

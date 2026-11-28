@@ -6,7 +6,11 @@
  *
  * The agent's modes leave out a local webhook: its plain-HTTP receiver needs
  * the user's consent for each subscription, which a model can't give. That
- * matches `pickMode` in the Playground's agent tools.
+ * matches `pickMode` in the Playground's agent tools, which takes a local
+ * webhook only when an `https` receiver is saved for the server.
+ *
+ * `preferredDeliveryModes` is the order a new subscription's mode is chosen in,
+ * by the agent and by Connect event alike.
  */
 import {
   EVENT_DELIVERY_MODES,
@@ -97,4 +101,40 @@ export function describeClientEvents(
         ? { available: true, modes: agentModes }
         : { available: false, reason },
   };
+}
+
+/** What decides which allowed mode a new subscription prefers. */
+export interface DeliveryPreferenceContext {
+  runtime: EventsRuntime;
+  /**
+   * The saved server signs MCPJam in. Without an authenticated principal a
+   * server may not accept webhook (SEP-3415, "Authentication required"), so
+   * webhook goes last.
+   */
+  serverSignedIn: boolean;
+  /** Local: an `https` receiver is saved for the server, so webhook needs no consent. */
+  httpsReceiver: boolean;
+}
+
+/**
+ * `allowed` in the order a new subscription should prefer, after SEP-3415's
+ * client guidance ("Delivery mode selection"): webhook when the server can
+ * reach a receiver and will accept it, then push, then poll. Hosted webhook
+ * goes through the project's inbox (hosted push isn't built); a local one
+ * needs an `https` receiver, since a plain-HTTP one needs the user's consent.
+ * Otherwise webhook goes last.
+ *
+ * Only the order changes: what is allowed stays `subscribableModes`' answer.
+ */
+export function preferredDeliveryModes(
+  allowed: readonly EventDeliveryMode[],
+  context: DeliveryPreferenceContext,
+): EventDeliveryMode[] {
+  const webhookFirst =
+    context.serverSignedIn &&
+    (context.runtime === "hosted" || context.httpsReceiver);
+  const order: readonly EventDeliveryMode[] = webhookFirst
+    ? ["webhook", "push", "poll"]
+    : ["push", "poll", "webhook"];
+  return order.filter((mode) => allowed.includes(mode));
 }

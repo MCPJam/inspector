@@ -78,6 +78,8 @@ interface EventsTabProps {
   activeHostId?: string | null;
   /** Its saved config, which decides the delivery modes it receives. */
   activeHost?: EventsSupportHost | null;
+  /** The server signs MCPJam in (`serverHasSignIn`), so it may accept webhook. */
+  serverSignedIn?: boolean;
 }
 
 export function EventsTab({
@@ -89,6 +91,7 @@ export function EventsTab({
   localProjectId = null,
   activeHostId = null,
   activeHost = null,
+  serverSignedIn = false,
 }: EventsTabProps) {
   const hosted = isHostedMode();
   // The local runtime scopes subscriptions and the feed by project, keyed
@@ -537,6 +540,7 @@ export function EventsTab({
     modes: selectedAvailability?.modes ?? [],
     blockedReason,
     hosted,
+    serverSignedIn,
     projectId,
     serverId: serverName,
     busy: subscribing,

@@ -15,7 +15,12 @@ const mocks = vi.hoisted(() => ({
   catalog: vi.fn(),
   feed: vi.fn(),
   watermark: vi.fn(),
-  servers: { flights: { connectionStatus: "connected" } },
+  servers: {
+    flights: {
+      connectionStatus: "connected",
+      config: { url: new URL("https://flights.example.com/mcp") },
+    },
+  },
 }));
 vi.mock("@/hooks/useEventsEnabled", () => ({
   useEventsEnabledState: () => true,
@@ -157,13 +162,13 @@ describe("the agent's subscription is Connect event's subscription", () => {
       );
     });
     expect(result.isError).toBeUndefined();
-    // The exact request Connect event sends for the built-in client, poll first.
+    // The exact request Connect event sends for the built-in client, push first.
     expect(mocks.create).toHaveBeenCalledWith({
       projectId: "project",
       serverId: "flights",
       eventName: "flight.status_changed",
       arguments: trip,
-      mode: "poll",
+      mode: "push",
       host: null,
     });
     expect(runtime?.bindings).toHaveLength(1);
@@ -239,7 +244,7 @@ describe("the agent's subscription is Connect event's subscription", () => {
       prompt: "Watch trip 2 instead.",
     });
     expect(mocks.create).toHaveBeenLastCalledWith(
-      expect.objectContaining({ arguments: newTrip, mode: "poll" }),
+      expect.objectContaining({ arguments: newTrip, mode: "push" }),
     );
     expect(runtime?.bindings).toHaveLength(1);
     expect(runtime?.bindings[0]).toMatchObject({

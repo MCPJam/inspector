@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EVENT_AGENT_TOOL_NAMES } from "@/shared/event-agent-tools";
 import type { EventDescriptorView } from "@/shared/events-api";
 import {
@@ -77,6 +77,8 @@ function binding(
   };
 }
 
+const FLIGHTS_URL = new URL("https://flights.example.com/mcp");
+const ECHO_URL = new URL("https://echo.example.com/mcp");
 let runtime: EventAgentRuntime;
 beforeEach(() => {
   // The conversation the calls run in; `binding()` defaults to the same scope.
@@ -89,6 +91,7 @@ beforeEach(() => {
   ];
   runtime = {
     hosted: false,
+    projectId: "project",
     host: {
       id: null,
       name: "MCPJam (built-in)",
@@ -96,8 +99,8 @@ beforeEach(() => {
       missing: false,
     },
     servers: {
-      flights: { connectionStatus: "connected" },
-      echo: { connectionStatus: "connected" },
+      flights: { connectionStatus: "connected", config: { url: FLIGHTS_URL } },
+      echo: { connectionStatus: "connected", config: { url: ECHO_URL } },
     } as unknown as EventAgentRuntime["servers"],
     bindings: [],
     catalogs,
@@ -205,7 +208,7 @@ describe("mcpjam_subscribe_to_events", () => {
     expect(runtime.add).toHaveBeenCalledWith(
       catalog("flights", [flightEvent]),
       flightEvent,
-      { arguments: trip, mode: "poll" },
+      { arguments: trip, mode: "push" },
       subscribeInput.prompt,
       {
         title: subscribeInput.title,
@@ -220,7 +223,7 @@ describe("mcpjam_subscribe_to_events", () => {
       triggers: [{ event: "flight.status_changed", params: trip }],
       prompt: subscribeInput.prompt,
       is_enabled: true,
-      delivery: "poll",
+      delivery: "push",
       status: "listening",
       created_by: "agent",
     });
@@ -294,6 +297,67 @@ describe("mcpjam_subscribe_to_events", () => {
     expect(vi.mocked(runtime.add).mock.calls[0][2]).toEqual({
       arguments: trip,
       mode: "webhook",
+    });
+  });
+
+  describe("picks the mode in the SEP's order", () => {
+    const signedIn = {
+      connectionStatus: "connected",
+      config: {
+        url: FLIGHTS_URL,
+        requestInit: { headers: { Authorization: "Bearer token" } },
+      },
+    };
+    const receiverKey = `mcpjam-events-callback:${JSON.stringify(["project", "flights"])}`;
+    const pickedValue = async () => {
+      await runEventAgentTool(
+        runtime,
+        EVENT_AGENT_TOOL_NAMES.subscribe,
+        subscribeInput,
+      );
+      return vi.mocked(runtime.add).mock.calls[0][2];
+    };
+    afterEach(() => window.localStorage.clear());
+
+    it("hosted, a server that signs in: webhook", async () => {
+      runtime.hosted = true;
+      runtime.servers = {
+        ...runtime.servers,
+        flights: signedIn,
+      } as unknown as EventAgentRuntime["servers"];
+      expect(await pickedValue()).toEqual({ arguments: trip, mode: "webhook" });
+    });
+
+    it("hosted, a server with no sign-in: poll", async () => {
+      runtime.hosted = true;
+      expect(await pickedValue()).toEqual({ arguments: trip, mode: "poll" });
+    });
+
+    it("local, an https receiver saved for a server that signs in: webhook through it", async () => {
+      window.localStorage.setItem(receiverKey, "https://tunnel.example.com/");
+      runtime.servers = {
+        ...runtime.servers,
+        flights: signedIn,
+      } as unknown as EventAgentRuntime["servers"];
+      expect(await pickedValue()).toEqual({
+        arguments: trip,
+        mode: "webhook",
+        receiver: { kind: "custom", baseUrl: "https://tunnel.example.com/" },
+      });
+    });
+
+    it("local, a plain-http receiver: push, never webhook", async () => {
+      window.localStorage.setItem(receiverKey, "http://tunnel.example.com/");
+      runtime.servers = {
+        ...runtime.servers,
+        flights: signedIn,
+      } as unknown as EventAgentRuntime["servers"];
+      expect(await pickedValue()).toEqual({ arguments: trip, mode: "push" });
+    });
+
+    it("local, an https receiver but no sign-in: push", async () => {
+      window.localStorage.setItem(receiverKey, "https://tunnel.example.com/");
+      expect(await pickedValue()).toEqual({ arguments: trip, mode: "push" });
     });
   });
 
@@ -453,7 +517,7 @@ describe("managing subscriptions", () => {
       "binding-1",
       catalog("flights", [flightEvent]),
       flightEvent,
-      { arguments: newTrip, mode: "poll" },
+      { arguments: newTrip, mode: "push" },
       { agentScope: "chat:model:" },
     );
     expect(runtime.edit).toHaveBeenCalledWith(

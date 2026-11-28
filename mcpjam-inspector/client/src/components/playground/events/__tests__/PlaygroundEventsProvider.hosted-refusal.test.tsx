@@ -15,7 +15,12 @@ const REFUSAL =
 const mocks = vi.hoisted(() => ({
   createHosted: vi.fn(),
   catalog: vi.fn(),
-  servers: { flights: { connectionStatus: "connected" } },
+  servers: {
+    flights: {
+      connectionStatus: "connected",
+      config: { url: new URL("https://flights.example.com/mcp") },
+    },
+  },
 }));
 vi.mock("@/hooks/useEventsEnabled", () => ({
   useEventsEnabledState: () => true,

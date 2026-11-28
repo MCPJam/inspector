@@ -2,6 +2,7 @@ import {
   consumeCallbackProjectReturn,
   useCallbackProjectReturnRecovery,
 } from "./lib/callback-project-return";
+import { serverHasSignIn } from "./components/connection/server-auth";
 import { projectTransitionRecovery } from "./lib/auth/project-transition-recovery";
 import { useProjectTransitionRecovery } from "./hooks/use-project-transition-recovery";
 import { PricingFeatureSignInGate } from "./components/billing/PricingFeatureSignInGate";
@@ -2550,6 +2551,9 @@ export function EventsRoute() {
         localProjectId={activeProjectId ?? null}
         activeHostId={activeHostId ?? null}
         activeHost={activeHost ?? null}
+        serverSignedIn={serverHasSignIn(
+          appState.servers[appState.selectedServer],
+        )}
       />
     </div>
   );

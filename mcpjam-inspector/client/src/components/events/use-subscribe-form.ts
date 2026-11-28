@@ -4,7 +4,11 @@ import {
   DEFAULT_LOCAL_WEBHOOK_TTL_MS,
   type ReceiverChoice,
 } from "@mcpjam/sdk/browser";
-import { useCallbackPreference } from "./use-callback-preference";
+import {
+  httpsReceiverOf,
+  useCallbackPreference,
+} from "./use-callback-preference";
+import { preferredDeliveryModes } from "@/shared/client-events";
 import {
   buildParametersFromFields,
   generateFormFieldsFromSchema,
@@ -76,7 +80,8 @@ function parseOptionalMs(
  * Arguments come from its `inputSchema` as a generated form (raw JSON when the
  * schema has no describable properties). The mode is limited to `modes`,
  * where the client, the event type and the runtime all agree; with none, or
- * with a `blockedReason`, nothing can be submitted.
+ * with a `blockedReason`, nothing can be submitted. It defaults to the first of
+ * them in `preferredDeliveryModes`' order, as the agent picks.
  *
  * The header's Subscribe button and the form sections share this one
  * controller, so validation lives in one place.
@@ -86,6 +91,7 @@ export function useSubscribeForm({
   modes,
   blockedReason,
   hosted,
+  serverSignedIn,
   projectId,
   serverId,
   busy,
@@ -95,6 +101,8 @@ export function useSubscribeForm({
   modes: EventsDeliveryModeView[];
   blockedReason: string | null;
   hosted: boolean;
+  /** The server signs MCPJam in, so it may accept webhook (`serverHasSignIn`). */
+  serverSignedIn: boolean;
   projectId?: string | null;
   serverId?: string;
   busy: boolean;
@@ -106,7 +114,7 @@ export function useSubscribeForm({
   const [rawJson, setRawJson] = useState("{}");
   const [pickedMode, setMode] = useState<EventsDeliveryModeView | null>(null);
   const callback = useCallbackPreference(projectId, hosted ? undefined : serverId);
-  const { draft } = callback;
+  const { draft, saved } = callback;
   const [acknowledged, setAcknowledged] = useState(false);
   const [maxAgeMs, setMaxAgeMs] = useState("");
   const [ttlMs, setTtlMs] = useState("");
@@ -137,12 +145,18 @@ export function useSubscribeForm({
     setFormError(null);
   }
 
-  // The user's pick while it is still allowed, else the first allowed mode.
-  // Derived, so the first render already names a mode instead of none.
+  // The user's pick while it is still allowed, else the preferred allowed
+  // mode. Derived, so the first render already names a mode instead of none.
+  // The saved receiver, not the draft, decides: editing the URL mustn't flip
+  // the default out from under the field being edited.
   const mode =
     pickedMode !== null && modes.includes(pickedMode)
       ? pickedMode
-      : (modes[0] ?? null);
+      : (preferredDeliveryModes(modes, {
+          runtime: hosted ? "hosted" : "local",
+          serverSignedIn,
+          httpsReceiver: !hosted && httpsReceiverOf(saved) !== undefined,
+        })[0] ?? null);
 
   const localWebhook = !hosted && mode === "webhook";
   const custom = localWebhook && draft.kind === "custom";

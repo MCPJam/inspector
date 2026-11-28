@@ -3,7 +3,7 @@ import {
   MCPJAM_EVENTS_EXTENSION_ID,
   type EventDeliveryMode,
 } from "@mcpjam/sdk/browser";
-import { describeClientEvents } from "../client-events";
+import { describeClientEvents, preferredDeliveryModes } from "../client-events";
 
 function client(
   events: unknown,
@@ -120,4 +120,70 @@ describe("describeClientEvents", () => {
     ).usableModes;
     expect(modes).toEqual(["poll", "webhook"]);
   });
+});
+
+describe("preferredDeliveryModes", () => {
+  const all = ["poll", "push", "webhook"] as const;
+  const cases: Array<
+    [
+      string,
+      Parameters<typeof preferredDeliveryModes>[1],
+      readonly ("poll" | "push" | "webhook")[],
+      string[],
+    ]
+  > = [
+    [
+      "hosted, signed in",
+      { runtime: "hosted", serverSignedIn: true, httpsReceiver: false },
+      ["poll", "webhook"],
+      ["webhook", "poll"],
+    ],
+    [
+      "hosted, no sign-in",
+      { runtime: "hosted", serverSignedIn: false, httpsReceiver: false },
+      ["poll", "webhook"],
+      ["poll", "webhook"],
+    ],
+    [
+      "hosted, no sign-in, webhook only",
+      { runtime: "hosted", serverSignedIn: false, httpsReceiver: false },
+      ["webhook"],
+      ["webhook"],
+    ],
+    [
+      "local",
+      { runtime: "local", serverSignedIn: true, httpsReceiver: false },
+      all,
+      ["push", "poll", "webhook"],
+    ],
+    [
+      "local, https receiver",
+      { runtime: "local", serverSignedIn: true, httpsReceiver: true },
+      all,
+      ["webhook", "push", "poll"],
+    ],
+    [
+      "local, https receiver, no sign-in",
+      { runtime: "local", serverSignedIn: false, httpsReceiver: true },
+      all,
+      ["push", "poll", "webhook"],
+    ],
+    [
+      "local, poll and webhook",
+      { runtime: "local", serverSignedIn: true, httpsReceiver: false },
+      ["poll", "webhook"],
+      ["poll", "webhook"],
+    ],
+    [
+      "nothing allowed",
+      { runtime: "local", serverSignedIn: true, httpsReceiver: true },
+      [],
+      [],
+    ],
+  ];
+  for (const [label, context, allowed, expected] of cases) {
+    it(label, () => {
+      expect(preferredDeliveryModes(allowed, context)).toEqual(expected);
+    });
+  }
 });
