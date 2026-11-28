@@ -117,13 +117,13 @@ describe("codeEvaluatorRunRefusal", () => {
         evaluators: [evaluator()],
         gradingMode: "off",
       }),
-    ).toMatch(/won't start while it has code evaluators/);
+    ).toMatch(/^Remove the code evaluators to run this suite\./);
     expect(
       codeEvaluatorRunRefusal({
         evaluators: [evaluator({ role: "required" })],
         gradingMode: "dual_write",
       }),
-    ).toMatch(/Make it Advisory to run the suite/);
+    ).toMatch(/^Make each Required code evaluator Advisory to run this suite\./);
     expect(
       codeEvaluatorRunRefusal({
         evaluators: [evaluator({ role: "required" })],

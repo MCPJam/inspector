@@ -123,13 +123,13 @@ export function codeEvaluatorRunRefusal(
 ): string | undefined {
   if (code.evaluators.length === 0) return undefined;
   if (!writesScores(code.gradingMode)) {
-    return "Runs of this suite won't start while it has code evaluators, which need the current verdict policy with grading on. Remove them to run the suite.";
+    return "Remove the code evaluators to run this suite. They need the current verdict policy with grading on.";
   }
   if (
     code.gradingMode !== "enforce" &&
     code.evaluators.some((evaluator) => evaluator.role === "required")
   ) {
-    return "Runs of this suite won't start while a code evaluator is Required, which needs grading set to Enforce. Make it Advisory to run the suite.";
+    return "Make each Required code evaluator Advisory to run this suite. Required needs grading set to Enforce.";
   }
   return undefined;
 }
