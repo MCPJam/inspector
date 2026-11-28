@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen, within } from "@/test";
 import { CodeEvaluatorEditor } from "../code-evaluator-editor";
 import type { CodeEvaluator } from "../code-evaluator-model";
+import { CODE_EVALUATOR_STARTERS } from "../code-evaluator-starters";
 
 const SCRIPT = 'import json, os\nprint("graded")\n';
 
@@ -63,7 +64,7 @@ describe("CodeEvaluatorEditor, new", () => {
       screen.getByText("Name the script's file, such as check.py."),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Write the script the evaluator runs."),
+      screen.getByText("Write a script, or pick a starter."),
     ).toBeInTheDocument();
   });
 
@@ -178,6 +179,77 @@ describe("CodeEvaluatorEditor, new", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Remove a code evaluator to add another.",
     );
+  });
+});
+
+describe("CodeEvaluatorEditor, starters", () => {
+  const [PYTHON, TYPESCRIPT] = CODE_EVALUATOR_STARTERS;
+
+  it("offers Python, TypeScript and Bash", () => {
+    renderEditor();
+    const starters = within(screen.getByRole("group", { name: "Starter" }));
+    expect(
+      starters.getAllByRole("button").map((button) => button.textContent),
+    ).toEqual(["Python", "TypeScript", "Bash"]);
+  });
+
+  it("fills the file name and script from a starter", () => {
+    const { onSave } = renderEditor();
+    type("Name", "Calls each tool once");
+    click("Python");
+    expect(textbox("File name")).toHaveValue("check_tool_calls.py");
+    expect(textbox("Script")).toHaveValue(PYTHON.script);
+    expect(screen.getByText("Runs as Python")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Python" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    click("Add evaluator");
+    expect(onSave.mock.calls[0][0]).toMatchObject({
+      id: "check_tool_calls",
+      fileName: "check_tool_calls.py",
+      script: PYTHON.script,
+    });
+  });
+
+  it("switches starters without asking while the script is a starter's", () => {
+    renderEditor();
+    click("Python");
+    click("TypeScript");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(textbox("Script")).toHaveValue(TYPESCRIPT.script);
+    expect(textbox("File name")).toHaveValue("check_tool_calls.ts");
+  });
+
+  it("asks before a starter replaces a script someone wrote", () => {
+    renderEditor();
+    type("File name", "check_totals.py");
+    type("Script", "print('mine')");
+    click("TypeScript");
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Replace your script?",
+    });
+    expect(dialog).toHaveTextContent(
+      "The TypeScript starter replaces the script you wrote.",
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Keep my script" }),
+    );
+    expect(textbox("Script")).toHaveValue("print('mine')");
+
+    click("TypeScript");
+    fireEvent.click(screen.getByRole("button", { name: "Replace script" }));
+    expect(textbox("Script")).toHaveValue(TYPESCRIPT.script);
+    // The file keeps its name and takes the language's extension.
+    expect(textbox("File name")).toHaveValue("check_totals.ts");
+  });
+
+  it("asks before replacing a saved evaluator's script", () => {
+    renderEditor({ evaluator: SAVED });
+    click("Bash");
+    expect(
+      screen.getByRole("alertdialog", { name: "Replace your script?" }),
+    ).toBeInTheDocument();
   });
 });
 

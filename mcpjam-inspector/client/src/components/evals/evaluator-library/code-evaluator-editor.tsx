@@ -16,6 +16,7 @@ import {
   type CodeEvaluator,
   type CodeEvaluatorDraft,
 } from "./code-evaluator-model";
+import { CodeEvaluatorStarterPicker } from "./code-evaluator-starter-picker";
 import { draftChanged, EvaluatorEditorLayout } from "./evaluator-editor-layout";
 
 /** What each role means, in the words the scorer tables use. */
@@ -112,6 +113,12 @@ export function CodeEvaluatorEditor({
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <Label htmlFor={field("script")}>Script</Label>
+          <CodeEvaluatorStarterPicker
+            fileName={draft.fileName}
+            script={draft.script}
+            language={language}
+            onPick={(picked) => setDraft({ ...draft, ...picked })}
+          />
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <Input
@@ -143,7 +150,7 @@ export function CodeEvaluatorEditor({
           id={field("script")}
           value={draft.script}
           spellCheck={false}
-          placeholder="Write a script that reads $MCPJAM_ITERATION and writes a score to $MCPJAM_RESULT."
+          placeholder="Pick a starter, or write a script that reads $MCPJAM_ITERATION and writes a score to $MCPJAM_RESULT."
           aria-invalid={tried && problems.script ? true : undefined}
           aria-describedby={problems.script ? field("script-hint") : undefined}
           onChange={(event) =>

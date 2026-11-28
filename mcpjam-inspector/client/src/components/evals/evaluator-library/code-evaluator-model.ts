@@ -74,7 +74,7 @@ export function fileNameProblem(fileName: string): string | undefined {
 }
 
 export function scriptProblem(script: string): string | undefined {
-  if (!script.trim()) return "Write the script the evaluator runs.";
+  if (!script.trim()) return "Write a script, or pick a starter.";
   return scriptSizeHint(script);
 }
 
