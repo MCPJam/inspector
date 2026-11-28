@@ -18,6 +18,7 @@ export type InFlightKind =
   | "claimed_job"
   | "eval_run"
   | "swarm_run"
+  | "run_group_launch"
   | "doorbell"
   | "quick_run"
   | "conformance_run";
