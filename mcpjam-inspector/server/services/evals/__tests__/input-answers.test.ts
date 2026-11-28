@@ -338,6 +338,9 @@ it("gives a legacy stdio server only its case's tool-scoped reply", async () => 
     createInterface({ input: process.stdin }).on("line", (line) => {
       const message = JSON.parse(line);
       switch (message.method) {
+        case "server/discover":
+          write({ id: message.id, error: { code: -32601, message: "Method not found" } });
+          break;
         case "initialize":
           supportsQuestions = Boolean(message.params.capabilities?.elicitation);
           write({ id: message.id, result: {
@@ -382,6 +385,7 @@ it("gives a legacy stdio server only its case's tool-scoped reply", async () => 
     command: process.execPath,
     args: ["-e", script],
     mcpProtocolVersion: "2025-11-25" as const,
+    timeout: 5000,
   };
   try {
     await Promise.all([
