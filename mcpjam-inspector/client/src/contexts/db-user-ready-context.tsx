@@ -3,21 +3,27 @@ import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 type DbUserReadyContextValue = {
+  accountSetupComplete: boolean;
+  setupFailed: boolean;
   isEnsuringUser: boolean;
   isUserReady: boolean;
 };
 
 const DbUserReadyContext = createContext<DbUserReadyContextValue>({
+  accountSetupComplete: false,
+  setupFailed: false,
   isEnsuringUser: false,
   isUserReady: false,
 });
 
 export function DbUserReadyProvider({
   children,
+  setupFailed = false,
   isEnsuringUser = false,
   isUserReady,
 }: {
   children: ReactNode;
+  setupFailed?: boolean;
   isEnsuringUser?: boolean;
   isUserReady: boolean;
 }) {
@@ -32,7 +38,12 @@ export function DbUserReadyProvider({
   }, [isUserReady, authConfirmed]);
   return (
     <DbUserReadyContext.Provider
-      value={{ isEnsuringUser, isUserReady: isUserReady && !queriesPaused }}
+      value={{
+        accountSetupComplete: isUserReady,
+        setupFailed,
+        isEnsuringUser,
+        isUserReady: isUserReady && !queriesPaused,
+      }}
     >
       {children}
     </DbUserReadyContext.Provider>

@@ -1,7 +1,9 @@
+import { DbUserReadyProvider } from "@/contexts/db-user-ready-context";
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import {
   act,
   fireEvent,
-  render,
+  render as testingRender,
   screen,
   waitFor,
 } from "@testing-library/react";
@@ -66,6 +68,17 @@ const {
   mockPosthogCapture: vi.fn(),
   mockIsEmbeddedPreview: vi.fn<() => boolean>(() => false),
 }));
+
+const dbSetup = { ready: true, failed: false };
+function render(ui: React.ReactElement) {
+  return testingRender(ui, {
+    wrapper: ({ children }) => (
+      <DbUserReadyProvider isUserReady={dbSetup.ready} setupFailed={dbSetup.failed}>
+        {children}
+      </DbUserReadyProvider>
+    ),
+  });
+}
 
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
@@ -583,6 +596,87 @@ describe("ScenarioChatPage", () => {
       "/user-testing/scenario/preview-token?surface=preview",
     );
     expect(readScenarioSession()).toBeNull();
+  });
+
+  it("waits for signed-in account setup before redeeming the tester link", async () => {
+    dbSetup.ready = false;
+    try {
+      const view = render(<ScenarioChatPage pathToken="account-token" />);
+      await act(async () => {});
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+      dbSetup.ready = true;
+      view.rerender(<ScenarioChatPage pathToken="account-token" />);
+      await waitFor(() =>
+        expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"),
+      );
+    } finally {
+      dbSetup.ready = true;
+    }
+  });
+
+  it("keeps a tokenless reload in the loading state during account setup", async () => {
+    const body = await (await mockAuthFetch()).json();
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse({
+        ...body,
+        bootstrap: { ...body.bootstrap, requiresSignIn: true },
+      }),
+    );
+    const initial = render(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.payload.requiresSignIn).toBe(true),
+    );
+    initial.unmount();
+    mockAuthFetch.mockClear();
+    dbSetup.ready = false;
+    try {
+      render(<ScenarioChatPage />);
+      await act(async () => {});
+      expect(screen.queryByText(/link unavailable/i)).not.toBeInTheDocument();
+      expect(document.querySelector(".animate-spin")).toBeInTheDocument();
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+    } finally {
+      dbSetup.ready = true;
+    }
+  });
+
+  it("offers a refresh when signed-in account setup exhausts its retries", async () => {
+    dbSetup.ready = false;
+    dbSetup.failed = true;
+    try {
+      render(<ScenarioChatPage pathToken="account-token" />);
+      expect(
+        await screen.findByRole("button", { name: "Refresh" }),
+      ).toBeVisible();
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+    } finally {
+      dbSetup.ready = true;
+      dbSetup.failed = false;
+    }
+  });
+
+  it("keeps the active tester session through a database readiness pause", async () => {
+    render(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() =>
+      expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"),
+    );
+    const calls = mockAuthFetch.mock.calls.length;
+    const { authConfirmed, queriesPaused } = useSessionRefreshStore.getState();
+    try {
+      await act(async () => useSessionRefreshStore.getState().pauseQueries());
+      expect(useSessionRefreshStore.getState().queriesPaused).toBe(true);
+      await act(async () =>
+        useSessionRefreshStore.setState({ authConfirmed: true }),
+      );
+      expect(useSessionRefreshStore.getState().queriesPaused).toBe(false);
+      await act(async () => {});
+      expect(mockAuthFetch).toHaveBeenCalledTimes(calls);
+      expect(readScenarioSession()?.authenticatedUserId).toBe("user_123");
+    } finally {
+      await act(async () =>
+        useSessionRefreshStore.setState({ authConfirmed, queriesPaused }),
+      );
+    }
   });
 
   it("clears protected preview data on logout and re-redeems after account changes", async () => {

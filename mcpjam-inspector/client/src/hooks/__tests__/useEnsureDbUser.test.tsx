@@ -11,6 +11,7 @@ import {
 import { setSessionPrivacy } from "@/lib/session-privacy";
 
 const mockState = vi.hoisted(() => ({
+  socketSubject: undefined as string | null | undefined,
   actorKey: "guest-1" as string | null,
   auth: {
     user: null as {
@@ -37,6 +38,11 @@ const mockState = vi.hoisted(() => ({
     get_property?: (key: string) => unknown;
     get_distinct_id?: () => string;
   } | null,
+}));
+
+vi.mock("@/stores/session-refresh-store", () => ({
+  useSessionRefreshStore: (select: (state: { confirmedSubject: string | null }) => unknown) =>
+    select({ confirmedSubject: mockState.socketSubject === undefined ? mockState.auth.user?.id ?? null : mockState.socketSubject }),
 }));
 
 vi.mock("convex/react", () => ({
@@ -97,6 +103,7 @@ describe("useEnsureDbUser", () => {
     mockState.getExistingGuestId.mockResolvedValue(null);
     mockState.isGuestActivated.mockReturnValue(false);
     mockState.getActivatedGuestId.mockReturnValue(null);
+    mockState.socketSubject = undefined;
     mockState.actorKey = "guest-1";
     mockState.auth.user = null;
     mockState.convexAuth.isAuthenticated = true;
@@ -107,6 +114,59 @@ describe("useEnsureDbUser", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it("keeps completed setup across refresh but waits for confirmation after switching accounts", async () => {
+    mockState.auth.user = { id: "first" };
+    const { result, rerender } = renderHook(() => useEnsureDbUser());
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
+    mockState.socketSubject = null;
+    rerender();
+    expect(result.current.isUserReady).toBe(true);
+    mockState.socketSubject = "first";
+    rerender();
+    expect(result.current.isUserReady).toBe(true);
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+
+    mockState.socketSubject = null;
+    mockState.auth.user = { id: "second" };
+    rerender();
+    await act(async () => {});
+    expect(result.current.isUserReady).toBe(false);
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+    mockState.socketSubject = "second";
+    rerender();
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers recovery if the socket never confirms this account and accepts a late confirmation", async () => {
+    vi.useFakeTimers();
+    mockState.auth.user = { id: "expected-user" };
+    mockState.socketSubject = "previous-user";
+    const { result, rerender } = renderHook(() => useEnsureDbUser());
+    expect(result.current.setupFailed).toBe(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(result.current.setupFailed).toBe(true);
+    expect(mockState.ensureUser).not.toHaveBeenCalled();
+    mockState.socketSubject = "expected-user";
+    await act(async () => rerender());
+    expect(result.current.setupFailed).toBe(false);
+    expect(result.current.isUserReady).toBe(true);
+  });
+
+  it("waits for the socket to confirm the signed-in account", async () => {
+    mockState.auth.user = { id: "workos-new" };
+    mockState.socketSubject = "previous-account";
+    const { result, rerender } = renderHook(() => useEnsureDbUser());
+    await act(async () => {});
+    expect(mockState.ensureUser).not.toHaveBeenCalled();
+    expect(result.current.isUserReady).toBe(false);
+    mockState.socketSubject = "workos-new";
+    rerender();
+    await waitFor(() => expect(result.current.isUserReady).toBe(true));
   });
 
   it("announces promotion before the mutation and completes after cookie retirement", async () => {
@@ -845,6 +905,8 @@ describe("useEnsureDbUser", () => {
         await vi.advanceTimersByTimeAsync(delayMs);
       });
     }
+
+    expect(result.current.setupFailed).toBe(true);
 
     // Budget spent: setup is genuinely finished and failed, so the error
     // screen is now the right thing to show.

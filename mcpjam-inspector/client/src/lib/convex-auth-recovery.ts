@@ -1,3 +1,4 @@
+import { decodeJwt } from "jose";
 import { flushSync } from "react-dom";
 import type { ConvexReactClient } from "convex/react";
 import * as Sentry from "@sentry/react";
@@ -33,14 +34,9 @@ const RESUME_RENEW_LEEWAY_SECONDS = 60;
 /** At most one resume renewal in this window, however many events fire. */
 const RESUME_RENEW_MIN_INTERVAL_MS = 10_000;
 
-/** The `exp` claim of a JWT, or null. Never logged; memory only. */
-function tokenExpiry(token: string): number | null {
+function tokenClaims(token: string | null) {
   try {
-    const payload = token.split(".")[1];
-    if (!payload) return null;
-    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
-    const exp = (JSON.parse(json) as { exp?: unknown }).exp;
-    return typeof exp === "number" ? exp : null;
+    return token ? decodeJwt(token) : null;
   } catch {
     return null;
   }
@@ -110,12 +106,16 @@ export function installConvexAuthRecovery(client: ConvexReactClient): void {
     authenticated = false;
     rejected = false;
     replacementOffered = false;
-    state.setState({ authConfirmed: false });
+    state.setState({ confirmedSubject: null, authConfirmed: false });
     finish("cancelled");
   };
   const block = () => {
     flushSync(() =>
-      state.setState({ authConfirmed: false, queriesPaused: true }),
+      state.setState({
+        confirmedSubject: null,
+        authConfirmed: false,
+        queriesPaused: true,
+      }),
     );
   };
   const fail = () => {
@@ -211,6 +211,7 @@ export function installConvexAuthRecovery(client: ConvexReactClient): void {
           stage("accepted");
           state.setState((s) => ({
             authConfirmed: true,
+            confirmedSubject: tokenClaims(lastToken)?.sub ?? null,
             authEpoch: s.authEpoch + 1,
           }));
         } else {
@@ -247,7 +248,7 @@ export function installConvexAuthRecovery(client: ConvexReactClient): void {
           // Apps, chats and forms survive a refresh that succeeds; the
           // teardown waits for one that fails (`fail()`), or for the server
           // to refuse the replacement as well (above).
-          state.setState({ authConfirmed: false });
+          state.setState({ confirmedSubject: null, authConfirmed: false });
         } else if (authenticated) {
           // Convex finishes a refresh here only after the server accepted the
           // replacement (a rejection's, or a scheduled one). Failure calls
@@ -259,6 +260,7 @@ export function installConvexAuthRecovery(client: ConvexReactClient): void {
           if (recovering) stage("accepted");
           state.setState((s) => ({
             authConfirmed: true,
+            confirmedSubject: tokenClaims(lastToken)?.sub ?? null,
             authEpoch: s.authEpoch + 1,
           }));
           if (recovering && !state.getState().queriesPaused)
@@ -291,9 +293,9 @@ export function installConvexAuthRecovery(client: ConvexReactClient): void {
     if (document.visibilityState === "hidden") return;
     if (useSignOutStore.getState().isSigningOut) return;
     if (state.getState().status !== "idle") return;
-    const exp = currentToken ? tokenExpiry(currentToken) : null;
+    const exp = tokenClaims(currentToken)?.exp;
     const leewayMs = RESUME_RENEW_LEEWAY_SECONDS * 1000;
-    if (exp === null || exp * 1000 - Date.now() > leewayMs) return;
+    if (typeof exp !== "number" || exp * 1000 - Date.now() > leewayMs) return;
     const now = Date.now();
     if (now - lastResumeRenewal < RESUME_RENEW_MIN_INTERVAL_MS) return;
     lastResumeRenewal = now;

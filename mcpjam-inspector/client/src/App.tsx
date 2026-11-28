@@ -1,3 +1,4 @@
+import { UserSetupError } from "./components/UserSetupError";
 import {
   consumeCallbackProjectReturn,
   useCallbackProjectReturnRecovery,
@@ -596,29 +597,6 @@ function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
 }
 
 const GUEST_ROW_RELOAD_KEY = "mcpjam:guest-row-reload";
-
-function UserSetupError() {
-  return (
-    <div
-      className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center"
-      data-testid="user-setup-error"
-    >
-      <div className="max-w-md space-y-2">
-        <h1 className="text-xl font-semibold">Could not finish setup</h1>
-        <p className="text-sm text-muted-foreground">
-          We could not create your MCPJam user record. Refresh and try again.
-        </p>
-      </div>
-      <button
-        type="button"
-        className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-        onClick={() => window.location.reload()}
-      >
-        Refresh
-      </button>
-    </div>
-  );
-}
 
 function resolveDeletedOrganizationFallbackId(
   organizations: ReadonlyArray<{ _id: string; myRole?: string }>,
@@ -3214,7 +3192,8 @@ export default function App() {
   const locationContext = useContext(UNSAFE_LocationContext);
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
-  const { isEnsuringUser, isUserReady } = useDbUserBootstrapStatus();
+  const { isEnsuringUser, isUserReady, setupFailed } =
+    useDbUserBootstrapStatus();
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
   // The org list once it is authoritative. Its membership key resets the
@@ -6362,6 +6341,15 @@ export default function App() {
     return <StartupScreen />;
   }
 
+  if (
+    setupFailed &&
+    isAuthenticated &&
+    !isHostedChatRoute &&
+    !isFirstRunOAuthReturnActive
+  ) {
+    return <UserSetupError className="min-h-screen" />;
+  }
+
   const shouldShowBillingHandoffOverlay =
     !isHostedChatRoute &&
     !isOAuthCallback &&
@@ -6392,7 +6380,7 @@ export default function App() {
   }
 
   if (!isHostedChatRoute && isAuthenticated && currentUser === null) {
-    return <UserSetupError />;
+    return <UserSetupError className="min-h-screen" />;
   }
 
   if (

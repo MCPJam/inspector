@@ -1,3 +1,5 @@
+import { UserSetupError } from "../UserSetupError";
+import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { ScenarioSignInGate } from "./ScenarioSignInGate";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
@@ -413,6 +415,8 @@ export function ScenarioChatPage({
     isLoading: isWorkOsLoading,
   } = useInspectorAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const { accountSetupComplete, setupFailed } = useDbUserBootstrapStatus();
+  const waitingForAccount = !!workOsUser && !accountSetupComplete;
   const taskOwnerId = useTaskOwnerId();
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
@@ -810,7 +814,7 @@ export function ScenarioChatPage({
   });
 
   useEffect(() => {
-    if (isAuthSettling) {
+    if (isAuthSettling || waitingForAccount) {
       return;
     }
 
@@ -978,6 +982,7 @@ export function ScenarioChatPage({
     };
   }, [
     clearCurrentSession,
+    waitingForAccount,
     isAuthenticated,
     workOsUser?.id,
     isAuthSettling,
@@ -1168,7 +1173,7 @@ export function ScenarioChatPage({
   );
   const landingState: ScenarioLandingState = isAuthSettling
     ? "resolvingAuth"
-    : isBootstrapping
+    : isBootstrapping || (waitingForAccount && !session)
     ? "bootstrapping"
     : session
     ? "ready"
@@ -1373,6 +1378,7 @@ export function ScenarioChatPage({
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
 
   const renderContent = () => {
+    if (waitingForAccount && setupFailed) return <UserSetupError className="flex-1" />;
     if (landingState === "resolvingAuth" || landingState === "bootstrapping") {
       return (
         <div className="flex flex-1 items-center justify-center">

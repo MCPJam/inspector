@@ -1,3 +1,4 @@
+import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
@@ -193,6 +194,7 @@ export function useEnsureDbUser() {
     identityKey: string;
     promise: Promise<void>;
   } | null>(null);
+  const [failedIdentity, setFailedIdentity] = useState<string | null>(null);
   const [isEnsuringUser, setIsEnsuringUser] = useState(false);
   const [ensuredIdentityKey, setEnsuredIdentityKey] = useState<string | null>(
     null
@@ -206,16 +208,41 @@ export function useEnsureDbUser() {
     attempts: number;
   } | null>(null);
   const recoveryTimerRef = useRef<number | null>(null);
+  const confirmedSubject = useSessionRefreshStore(
+    (state) => state.confirmedSubject
+  );
+  const workosKey = workosUserId ? `workos:${workosUserId}` : null;
+  // A refresh can briefly clear the socket subject after setup has succeeded.
+  const workosSetupConfirmed =
+    confirmedSubject === workosUserId ||
+    (confirmedSubject === null && ensuredIdentityKey === workosKey);
   const identityKey =
     !isLoading && isAuthenticated
       ? workosUserId
-        ? `workos:${workosUserId}`
+        ? workosSetupConfirmed
+          ? workosKey
+          : null
         : actorKey
         ? `guest:${actorKey}`
         : null
       : null;
   const isUserReady =
     identityKey !== null && ensuredIdentityKey === identityKey;
+
+  const awaitingConfirmation =
+    !isLoading && isAuthenticated && !workosSetupConfirmed ? workosKey : null;
+  const [confirmationTimedOut, setConfirmationTimedOut] = useState<
+    string | null
+  >(null);
+  useEffect(() => {
+    setConfirmationTimedOut(null);
+    if (!awaitingConfirmation) return;
+    const timer = window.setTimeout(
+      () => setConfirmationTimedOut(awaitingConfirmation),
+      30_000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [awaitingConfirmation]);
 
   // Reset cache on Convex logout so we re-run for the next login in the same session.
   useEffect(() => {
@@ -287,6 +314,7 @@ export function useEnsureDbUser() {
     }
 
     activeEnsureIdentityRef.current = identityKey;
+    setFailedIdentity(null);
     setIsEnsuringUser(true);
     let cancelled = false;
 
@@ -427,6 +455,7 @@ export function useEnsureDbUser() {
           // so dropping it here flashes "Could not finish setup" in the gap
           // between attempts, for a session that goes on to recover.
           if (!scheduleRecovery()) {
+            setFailedIdentity(identityKey);
             setIsEnsuringUser(false);
             // Setup failed for good, so the cleanup after ready never runs;
             // an incidental cookie left here is what sign-out falls back to.
@@ -502,5 +531,13 @@ export function useEnsureDbUser() {
 
   // `hasIdentity` lets the load-stall report tell an actor that never
   // resolved from a user record that is still being set up.
-  return { isEnsuringUser, isUserReady, hasIdentity: identityKey !== null };
+  return {
+    isEnsuringUser,
+    isUserReady,
+    hasIdentity: identityKey !== null,
+    setupFailed:
+      (identityKey !== null && failedIdentity === identityKey) ||
+      (awaitingConfirmation !== null &&
+        confirmationTimedOut === awaitingConfirmation),
+  };
 }
