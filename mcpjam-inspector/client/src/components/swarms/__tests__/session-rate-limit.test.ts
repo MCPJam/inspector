@@ -8,6 +8,7 @@ import {
   describeSwarmAttemptFailure,
   providerLabelForModelId,
 } from "../session-rate-limit";
+import { humanizeSwarmAttemptError } from "@/shared/swarm-attempt-error";
 
 describe("providerLabelForModelId", () => {
   it("names a provider the model id actually declares", () => {
@@ -237,6 +238,60 @@ describe("describeSwarmAttemptFailure credit recovery", () => {
         "Anthropic",
       ).nextSteps,
     ).toEqual([`Buy credits to keep going: ${BILLING_URL}`]);
+  });
+});
+
+// The runner stores only the humanized message and code, so a stored hold or
+// declined-card row must still read as one after a live refusal carried a
+// recovery.
+describe("describeSwarmAttemptFailure stored rows from a refusal with a recovery", () => {
+  const stored = (body: Record<string, unknown>) =>
+    humanizeSwarmAttemptError(
+      `swarm-agent https://x.convex.site/turn failed (429): ${JSON.stringify({
+        ok: false,
+        code: "user_rate_limit",
+        retryAfter: 0,
+        ...body,
+      })}`,
+    ).message;
+
+  it.each([
+    [
+      "hold",
+      {
+        refusalReason: "holds_committed",
+        error:
+          "MCPJam model limit reached for the moment: 3 in-flight request(s) hold the remaining credits and release them as they finish.",
+        recovery: {
+          version: 1,
+          reason: "holds_committed",
+          action: "wait",
+          actor: "caller",
+        },
+      },
+      "Credits temporarily held",
+    ],
+    [
+      "declined card",
+      {
+        refusalReason: "auto_topup_declined",
+        error:
+          "Your card was declined, so auto-reload is paused. Update your payment method to keep going.",
+        recovery: {
+          version: 1,
+          reason: "auto_topup_declined",
+          action: "buy_credits",
+          actor: "caller",
+          url: "https://app.mcpjam.com/billing",
+        },
+      },
+      "Update your declined card",
+    ],
+  ])("recognizes a stored %s row", (_label, body, title) => {
+    expect(
+      describeSwarmAttemptFailure(stored(body), "user_rate_limit", "Anthropic")
+        .title,
+    ).toBe(title);
   });
 });
 
