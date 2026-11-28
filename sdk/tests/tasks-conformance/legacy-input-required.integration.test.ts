@@ -108,6 +108,8 @@ async function serveParkedTask(options: {
   finishAfterMs?: number;
   /** `tasks/get` fails once `tasks/result` has been answered. */
   failGetAfterResult?: boolean;
+  /** `ttl` on every task read. Absent ⇒ 60 s. `null` is "unlimited". */
+  ttl?: unknown;
 }): Promise<Fixture> {
   const methods: string[] = [];
   const answers: ClientAnswer[] = [];
@@ -130,7 +132,7 @@ async function serveParkedTask(options: {
     status,
     createdAt: "2026-07-27T00:00:00Z",
     lastUpdatedAt: "2026-07-27T00:00:00Z",
-    ttl: 60_000,
+    ttl: "ttl" in options ? options.ttl : 60_000,
     pollInterval:
       status === "input_required" && "parkedPollInterval" in options
         ? options.parkedPollInterval
@@ -918,5 +920,36 @@ describe("tasks that are not parked on the 2025-11-25 wire", () => {
     expect(
       fixture.received.filter((request) => request.method === "tasks/result"),
     ).toEqual([]);
+  });
+});
+
+describe("tasks-ttl-shape on the 2025-11-25 wire", () => {
+  // `Task.ttl` is "Actual retention duration from creation in milliseconds,
+  // null for unlimited": `ttl: number | null` (2025-11-25 schema.ts:1378).
+  it("passes a task whose ttl is null (unlimited)", async () => {
+    const fixture = await serveParkedTask({
+      onResult: "hold",
+      neverParks: true,
+      ttl: null,
+    });
+    const result = await run(fixture, { checkIds: ["tasks-ttl-shape"] });
+
+    const ttl = check(result, "tasks-ttl-shape");
+    expect(ttl.status).toBe("passed");
+    expect(ttl.error).toBeUndefined();
+  });
+
+  it("still fails a ttl of another type", async () => {
+    const fixture = await serveParkedTask({
+      onResult: "hold",
+      neverParks: true,
+      ttl: "60000",
+    });
+    const result = await run(fixture, { checkIds: ["tasks-ttl-shape"] });
+
+    expect(check(result, "tasks-ttl-shape")).toMatchObject({
+      status: "failed",
+      details: { violations: ["legacy task ttl must be a number or null"] },
+    });
   });
 });

@@ -299,7 +299,7 @@ export const TASKS_CHECK_CATALOG = {
   "tasks-ttl-shape": {
     title: "TTL And Poll Interval Shapes",
     description:
-      "Task TTL and poll interval use the era-native shapes: `ttlMs: number|null` / `pollIntervalMs` on the extension, `ttl` / `pollInterval` on the legacy wire.",
+      "Task TTL and poll interval use the era-native shapes: `ttlMs: number|null` / `pollIntervalMs` on the extension, `ttl: number|null` / `pollInterval` on the legacy wire.",
   },
   "tasks-inline-result": {
     title: "Completed Task Carries Its Result",

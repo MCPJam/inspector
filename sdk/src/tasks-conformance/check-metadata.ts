@@ -29,7 +29,7 @@ export const CHECK_METADATA: Record<
     category: "lifecycle",
     title: "TTL And Poll Interval Shapes",
     description:
-      "Task TTL and poll interval use the era-native shapes: `ttlMs: number|null` / `pollIntervalMs` on the extension, `ttl` / `pollInterval` on the legacy wire.",
+      "Task TTL and poll interval use the era-native shapes: `ttlMs: number|null` / `pollIntervalMs` on the extension, `ttl: number|null` / `pollInterval` on the legacy wire.",
   },
   "tasks-inline-result": {
     id: "tasks-inline-result",
