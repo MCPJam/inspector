@@ -2,7 +2,8 @@ name: Slop Ratchet
 
 # Fails a PR whose changed source files add more type escapes, swallowed
 # errors, suppressions, server `console` calls or history comments than they
-# remove, or that adds repo litter or pushes a file past 800 lines. The rules live in scripts/slop/rules.mjs; this job only runs them.
+# remove, that raises an ESLint suppression count, or that adds repo litter or
+# pushes a file past 800 lines. The rules live in scripts/slop/rules.mjs; this job only runs them.
 #
 # `labeled` / `unlabeled` re-run the check when a CODEOWNER applies or removes
 # `slop-waiver`, so the waiver takes effect without a new push.
@@ -38,12 +39,20 @@ jobs:
           node-version: "24.22.1"
 
       - name: Test the ratchet
-        run: node --test scripts/slop/slop.test.mjs scripts/git-hooks/git-hooks.test.mjs
+        run: node --test scripts/slop/slop.test.mjs scripts/slop/eslint-suppressions.test.mjs scripts/git-hooks/git-hooks.test.mjs
 
       - name: Compare with the base branch
         env:
           SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') }}
         run: node scripts/slop/ratchet.mjs --base HEAD^1
+
+      # ESLint trusts the suppressions file in the PR, so a raised count or a
+      # new entry would hide a new lint error. Build and Test runs the lint.
+      - name: ESLint suppressions against the base branch
+        if: ${{ !cancelled() }}
+        env:
+          SLOP_WAIVER: ${{ contains(github.event.pull_request.labels.*.name, 'slop-waiver') }}
+        run: npm run slop:suppressions -- --base HEAD^1
 
       # The agent hooks' file rules, for every author: no new root files or
       # scratch notes, and no source file crossing 800 lines.

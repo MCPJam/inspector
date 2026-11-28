@@ -207,8 +207,7 @@ type SupportedSuiteConformanceResult =
   | MCPAppsConformanceSuiteResult;
 
 export type SupportedConformanceResult =
-  | SupportedSingleConformanceResult
-  | SupportedSuiteConformanceResult;
+  SupportedSingleConformanceResult | SupportedSuiteConformanceResult;
 
 function escapeXml(value: string): string {
   return value

@@ -1,0 +1,3503 @@
+{
+  "src/ChatGptAppsRuntime.ts": {
+    "@typescript-eslint/no-unused-expressions": {
+      "count": 7
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 5
+    },
+    "prettier/prettier": {
+      "count": 32
+    }
+  },
+  "src/EvalSuite.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/HostExecutor.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/HostRunner.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/McpAppsOpenAICompatibleRuntime.ts": {
+    "prettier/prettier": {
+      "count": 24
+    }
+  },
+  "src/ai-request-headers.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/apps-conformance/check-results.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/apps-conformance/grading.ts": {
+    "prettier/prettier": {
+      "count": 64
+    }
+  },
+  "src/apps-conformance/runner.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "src/apps-conformance/suite.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/apps-conformance/ui-resource-content.ts": {
+    "prettier/prettier": {
+      "count": 12
+    }
+  },
+  "src/apps-conformance/validation.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/claude-readiness/checks/auth.ts": {
+    "prettier/prettier": {
+      "count": 70
+    }
+  },
+  "src/claude-readiness/checks/endpoint.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/claude-readiness/checks/optional-features.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "src/claude-readiness/checks/submission.ts": {
+    "prettier/prettier": {
+      "count": 34
+    }
+  },
+  "src/claude-readiness/checks/tools.ts": {
+    "prettier/prettier": {
+      "count": 24
+    }
+  },
+  "src/claude-readiness/discovery.ts": {
+    "@typescript-eslint/no-empty-object-type": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 13
+    }
+  },
+  "src/claude-readiness/evidence-adapters.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/claude-readiness/gather.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "src/claude-readiness/intrusive.ts": {
+    "prettier/prettier": {
+      "count": 33
+    }
+  },
+  "src/claude-readiness/manifest.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/claude-readiness/observations.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/claude-readiness/runner.ts": {
+    "prettier/prettier": {
+      "count": 67
+    }
+  },
+  "src/claude-readiness/step-up-probe.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/claude-readiness/submission-profile.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/claude-readiness/types.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/conformance-authorization.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/conformance-outcome.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/conformance-profile.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/conformance-reporting.ts": {
+    "prettier/prettier": {
+      "count": 69
+    }
+  },
+  "src/conformance-run-reporter.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/conformance-run-types.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/conformance-run.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/conformance-score.ts": {
+    "prettier/prettier": {
+      "count": 15
+    }
+  },
+  "src/contract/__tests__/tool-policy.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/contract/friction-signals.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/contract/schemas.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/contract/scorer-rollup.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "src/contract/server-facts.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/contract/stage-analytics-aggregate.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/contract/stage-analytics.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/contract/stage-derivation.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/contract/stage-measurements.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/contract/standard-checks.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/contract/suite-gate.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "src/contract/suite-grading-labels.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/contract/swarm-report.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "src/contract/verdict-policy.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/corpus.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/directory-readiness/discovery.ts": {
+    "prettier/prettier": {
+      "count": 15
+    }
+  },
+  "src/directory-readiness/evidence-reuse.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/directory-readiness/flows/place.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/directory-readiness/handoff-markdown.ts": {
+    "prettier/prettier": {
+      "count": 13
+    }
+  },
+  "src/directory-readiness/handoff.ts": {
+    "prettier/prettier": {
+      "count": 87
+    }
+  },
+  "src/directory-readiness/helpers.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "src/directory-readiness/mcp-dial.ts": {
+    "prettier/prettier": {
+      "count": 16
+    }
+  },
+  "src/directory-readiness/observations.ts": {
+    "prettier/prettier": {
+      "count": 30
+    }
+  },
+  "src/directory-readiness/reviewer/grade.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/directory-readiness/tool-directions.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/directory-readiness/types.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "src/error-describer/catalog.ts": {
+    "prettier/prettier": {
+      "count": 76
+    }
+  },
+  "src/error-describer/describe.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 25
+    }
+  },
+  "src/error-describer/node-errno.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/error-describer/org-policy-catalog.ts": {
+    "prettier/prettier": {
+      "count": 12
+    }
+  },
+  "src/eval-decision-summary.ts": {
+    "prettier/prettier": {
+      "count": 13
+    }
+  },
+  "src/eval-result-mapping.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/eval-run-credentials.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/eval-run-start.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/eval-summary.ts": {
+    "no-control-regex": {
+      "count": 1
+    }
+  },
+  "src/events-conformance/receiver.ts": {
+    "prefer-const": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "src/events-conformance/runner.ts": {
+    "prettier/prettier": {
+      "count": 89
+    }
+  },
+  "src/events-conformance/types.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/events/__tests__/event-turn.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/events/__tests__/events-units.test.ts": {
+    "prettier/prettier": {
+      "count": 20
+    }
+  },
+  "src/events/__tests__/identity.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/events/__tests__/standard-webhooks.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/events/coordinator-policy.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/events/coordinator-removal.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/events/coordinator.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/events/event-turn.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "src/events/memory-inbox.ts": {
+    "prettier/prettier": {
+      "count": 76
+    }
+  },
+  "src/events/probe-observations.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "src/events/profiles.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/events/push.ts": {
+    "prettier/prettier": {
+      "count": 23
+    }
+  },
+  "src/events/standard-webhooks.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/events/types.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-compat/catalog-schema.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-compat/catalog.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/host-compat/evaluator.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/host-compat/server-requirements.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-compat/ui-detection.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-config/app-only-tool.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-config/canonicalize.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/host-config/execution-record.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "src/host-config/hash.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-config/host-runtime.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-config/host.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-config/index.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-config/reasoning-effort.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-config/sdk-evals-normalizer.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-config/templates/empty-input.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/host-config/templates/goose-style.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/host-config/templates/mcpjam-style.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/host-config/tool-visibility.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/http-server-doctor.ts": {
+    "preserve-caught-error": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/internal/inspector/__tests__/embed.test.ts": {
+    "prettier/prettier": {
+      "count": 38
+    }
+  },
+  "src/internal/inspector/attach-client.ts": {
+    "prettier/prettier": {
+      "count": 17
+    }
+  },
+  "src/internal/inspector/embed.ts": {
+    "prettier/prettier": {
+      "count": 36
+    }
+  },
+  "src/internal/inspector/ensure.ts": {
+    "prettier/prettier": {
+      "count": 13
+    }
+  },
+  "src/internal/inspector/frontend.ts": {
+    "prettier/prettier": {
+      "count": 29
+    }
+  },
+  "src/internal/inspector/health.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/internal/inspector/holders.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/internal/inspector/launch.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/internal/inspector/ports.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/internal/inspector/session-token.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/internal/inspector/urls.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "src/internal/telemetry.ts": {
+    "prettier/prettier": {
+      "count": 31
+    }
+  },
+  "src/json-safe.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/mcp-client-manager/MCPClientManager.ts": {
+    "prettier/prettier": {
+      "count": 38
+    }
+  },
+  "src/mcp-client-manager/auth-challenge.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/mcp-client-manager/connection-error-message.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/mcp-client-manager/dialect-dispatch-json-schema-validator.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-client-manager/elicitation.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/mcp-client-manager/errors.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "src/mcp-client-manager/events-ext-guards.ts": {
+    "no-control-regex": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/mcp-client-manager/events-ext-schemas.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "src/mcp-client-manager/events-stream-tap.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/mcp-client-manager/http-error-fetch.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-client-manager/http-exchange-log.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/mcp-client-manager/log-level-meta-client.ts": {
+    "prettier/prettier": {
+      "count": 23
+    }
+  },
+  "src/mcp-client-manager/managed-mcp-client-factory.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/mcp-client-manager/mcp-header-mirror.ts": {
+    "prettier/prettier": {
+      "count": 13
+    }
+  },
+  "src/mcp-client-manager/mrtr-driver.ts": {
+    "prettier/prettier": {
+      "count": 21
+    }
+  },
+  "src/mcp-client-manager/notification-handlers.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/mcp-client-manager/observable-response-cache.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-client-manager/official-sdk-client-adapter.ts": {
+    "prettier/prettier": {
+      "count": 19
+    }
+  },
+  "src/mcp-client-manager/result-guards.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-client-manager/rpc-log-redaction.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/mcp-client-manager/skills-ext-guards.ts": {
+    "no-control-regex": {
+      "count": 1
+    }
+  },
+  "src/mcp-client-manager/subscription-coordinator.ts": {
+    "prettier/prettier": {
+      "count": 12
+    }
+  },
+  "src/mcp-client-manager/task-created-event.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-client-manager/task-input-driver.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-client-manager/task-lifecycle.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-client-manager/tasks-ext-guards.ts": {
+    "@typescript-eslint/prefer-as-const": {
+      "count": 1
+    },
+    "no-control-regex": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-client-manager/tasks-ext-types.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-client-manager/tool-converters.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/mcp-client-manager/tool-declaration-capture.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-client-manager/tool-response-stream.ts": {
+    "prettier/prettier": {
+      "count": 27
+    }
+  },
+  "src/mcp-client-manager/tool-task-seam.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/mcp-client-manager/trace-context-meta-client.ts": {
+    "prettier/prettier": {
+      "count": 23
+    }
+  },
+  "src/mcp-client-manager/trace-context.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/mcp-client-manager/transport-utils.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/mcp-client-manager/types.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-conformance/checks/core.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "src/mcp-conformance/checks/helpers.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/mcp-conformance/checks/modern.ts": {
+    "prettier/prettier": {
+      "count": 18
+    }
+  },
+  "src/mcp-conformance/checks/prompts.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-conformance/checks/protocol.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "src/mcp-conformance/checks/resources.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/mcp-conformance/checks/security.ts": {
+    "prettier/prettier": {
+      "count": 24
+    }
+  },
+  "src/mcp-conformance/checks/tools.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/mcp-conformance/checks/transport.ts": {
+    "prettier/prettier": {
+      "count": 100
+    }
+  },
+  "src/mcp-conformance/checks/wire.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/mcp-conformance/index.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-conformance/raw-capture.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/mcp-conformance/raw-http.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/mcp-conformance/raw-listen.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/mcp-conformance/readiness.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/mcp-conformance/runner.ts": {
+    "prettier/prettier": {
+      "count": 35
+    }
+  },
+  "src/mcp-conformance/schemas/index.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/mcp-conformance/suite.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/mcp-conformance/transport-support.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/mcp-conformance/validation.ts": {
+    "prettier/prettier": {
+      "count": 21
+    }
+  },
+  "src/mcp-conformance/wire-observations.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/mcp-conformance/wire-schema.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "src/mcpjam-model-lease.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/model-factory.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/model-native-ids.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/oauth-conformance/auth-strategies/client-credentials.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/oauth-conformance/auth-strategies/headless.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "src/oauth-conformance/auth-strategies/interactive.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/oauth-conformance/auth-strategies/remote-browser.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "src/oauth-conformance/checks/oauth-negative.ts": {
+    "prettier/prettier": {
+      "count": 24
+    }
+  },
+  "src/oauth-conformance/checks/oauth-server-obligations.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "src/oauth-conformance/checks/oauth-token-format.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/oauth-conformance/formatter.ts": {
+    "prettier/prettier": {
+      "count": 17
+    }
+  },
+  "src/oauth-conformance/profile-schema.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/oauth-conformance/runner.ts": {
+    "prefer-const": {
+      "count": 1
+    },
+    "preserve-caught-error": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 95
+    }
+  },
+  "src/oauth-conformance/suite.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/oauth-conformance/types.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/oauth-conformance/validation.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "src/oauth-login.ts": {
+    "preserve-caught-error": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 41
+    }
+  },
+  "src/oauth-proxy.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 24
+    }
+  },
+  "src/oauth/authorization-plan.ts": {
+    "prettier/prettier": {
+      "count": 34
+    }
+  },
+  "src/oauth/browser-auth.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 75
+    }
+  },
+  "src/oauth/client-identity.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "src/oauth/emulation/preflight.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/oauth/metadata-candidates.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/oauth/metadata-discovery.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/oauth/pinned-dns.ts": {
+    "prettier/prettier": {
+      "count": 13
+    }
+  },
+  "src/oauth/pinned-stream-fetch.ts": {
+    "prettier/prettier": {
+      "count": 37
+    }
+  },
+  "src/oauth/resource-policy.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/oauth/sequence-actions.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/oauth/ssrf-guard.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "src/oauth/state-machines/debug-oauth-2025-03-26.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "no-case-declarations": {
+      "count": 17
+    },
+    "preserve-caught-error": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 65
+    }
+  },
+  "src/oauth/state-machines/debug-oauth-2025-06-18.ts": {
+    "no-case-declarations": {
+      "count": 24
+    },
+    "preserve-caught-error": {
+      "count": 2
+    },
+    "prettier/prettier": {
+      "count": 76
+    }
+  },
+  "src/oauth/state-machines/debug-oauth-2025-11-25.ts": {
+    "no-case-declarations": {
+      "count": 25
+    },
+    "preserve-caught-error": {
+      "count": 2
+    },
+    "prettier/prettier": {
+      "count": 37
+    }
+  },
+  "src/oauth/state-machines/debug-oauth-2026-07-28.ts": {
+    "no-case-declarations": {
+      "count": 25
+    },
+    "no-control-regex": {
+      "count": 1
+    },
+    "preserve-caught-error": {
+      "count": 2
+    },
+    "prettier/prettier": {
+      "count": 54
+    }
+  },
+  "src/oauth/state-machines/factory.ts": {
+    "no-case-declarations": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/oauth/state-machines/runner.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/oauth/state-machines/shared/challenges.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/oauth/state-machines/shared/client-auth.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/oauth/state-machines/shared/client-id-metadata.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/oauth/state-machines/shared/dynamic-client-registration.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/oauth/state-machines/shared/emulation.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/oauth/state-machines/shared/headers.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/oauth/state-machines/shared/initialize.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/oauth/state-machines/shared/logging.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/oauth/state-machines/shared/pkce.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/oauth/state-machines/shared/required-metadata.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/oauth/state-machines/shared/resource-indicator.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "src/oauth/state-machines/shared/resource-metadata-error.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/oauth/state-machines/shared/sequence-diagram.ts": {
+    "prettier/prettier": {
+      "count": 22
+    }
+  },
+  "src/oauth/state-machines/trace-redaction.ts": {
+    "prettier/prettier": {
+      "count": 15
+    }
+  },
+  "src/oauth/state-machines/trace.ts": {
+    "prettier/prettier": {
+      "count": 33
+    }
+  },
+  "src/oauth/state-machines/types.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/openai-profile/profile.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/openai-readiness/auth-discovery.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/openai-readiness/checks/annotations.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/openai-readiness/checks/apps-ui.ts": {
+    "prettier/prettier": {
+      "count": 37
+    }
+  },
+  "src/openai-readiness/checks/auth.ts": {
+    "prettier/prettier": {
+      "count": 67
+    }
+  },
+  "src/openai-readiness/checks/domain-verification.ts": {
+    "prettier/prettier": {
+      "count": 27
+    }
+  },
+  "src/openai-readiness/checks/endpoint.ts": {
+    "prettier/prettier": {
+      "count": 19
+    }
+  },
+  "src/openai-readiness/checks/helpers.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/openai-readiness/checks/mcp-skills.ts": {
+    "prettier/prettier": {
+      "count": 37
+    }
+  },
+  "src/openai-readiness/checks/migration.ts": {
+    "prettier/prettier": {
+      "count": 20
+    }
+  },
+  "src/openai-readiness/checks/optional-features.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/openai-readiness/checks/package.ts": {
+    "prettier/prettier": {
+      "count": 21
+    }
+  },
+  "src/openai-readiness/checks/policy.ts": {
+    "prettier/prettier": {
+      "count": 34
+    }
+  },
+  "src/openai-readiness/checks/profile.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/openai-readiness/checks/release-contract.ts": {
+    "prettier/prettier": {
+      "count": 20
+    }
+  },
+  "src/openai-readiness/checks/submission.ts": {
+    "prettier/prettier": {
+      "count": 41
+    }
+  },
+  "src/openai-readiness/discovery.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "src/openai-readiness/evidence-adapters.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/openai-readiness/manifest.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/openai-readiness/observations.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/openai-readiness/package/color.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/openai-readiness/package/image-dimensions.ts": {
+    "no-irregular-whitespace": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "src/openai-readiness/package/openai-agent-metadata.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "src/openai-readiness/package/plugin-manifest.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/openai-readiness/package/reader.ts": {
+    "prettier/prettier": {
+      "count": 30
+    }
+  },
+  "src/openai-readiness/package/supported-text.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/openai-readiness/portal-errors.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/openai-readiness/runner.ts": {
+    "prettier/prettier": {
+      "count": 19
+    }
+  },
+  "src/openai-readiness/submission-profile.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/openai-readiness/types.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/operations.ts": {
+    "prettier/prettier": {
+      "count": 12
+    }
+  },
+  "src/platform-auth.ts": {
+    "preserve-caught-error": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/platform/__tests__/operation-permalink-coverage.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/platform/browser-agent-contract.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/platform/client.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/platform/diagnose-server.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/platform/directory-reviewer-attempt-client.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "src/platform/directory-reviewer-attempt-operations.ts": {
+    "prettier/prettier": {
+      "count": 43
+    }
+  },
+  "src/platform/directory-submission-client.ts": {
+    "prettier/prettier": {
+      "count": 19
+    }
+  },
+  "src/platform/directory-submission-eval-operations.ts": {
+    "prettier/prettier": {
+      "count": 25
+    }
+  },
+  "src/platform/directory-submission-eval-types.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/platform/directory-submission-handoff-operations.ts": {
+    "prettier/prettier": {
+      "count": 65
+    }
+  },
+  "src/platform/directory-submission-handoff-types.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "src/platform/directory-submission-operation-support.ts": {
+    "prettier/prettier": {
+      "count": 19
+    }
+  },
+  "src/platform/directory-submission-operations.ts": {
+    "prettier/prettier": {
+      "count": 57
+    }
+  },
+  "src/platform/directory-submission-types.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/platform/directory-test-plan-operations.ts": {
+    "prettier/prettier": {
+      "count": 17
+    }
+  },
+  "src/platform/errors.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/platform/operations.ts": {
+    "prettier/prettier": {
+      "count": 27
+    }
+  },
+  "src/platform/permalinks.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/platform/server-revision-types.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/platform/suite-run-plans.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/platform/types.ts": {
+    "prettier/prettier": {
+      "count": 27
+    }
+  },
+  "src/plugin-bundle/app-config.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/plugin-bundle/index.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/plugin-bundle/manifest.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/plugin-bundle/mcp-config.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "src/plugin-bundle/mcp-entry-values.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/plugin-bundle/node-file-sources.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/plugin-bundle/parse.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/plugin-bundle/types.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/plugin-host/capabilities.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/plugin-host/session.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/progressive-discovery/discovery.ts": {
+    "prettier/prettier": {
+      "count": 19
+    }
+  },
+  "src/registration.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/report-conformance-run.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/response-validation.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/sandbox-policy.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/scorers/goal-completion-scorer.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/sentry.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/server-card/__tests__/server-card.test.ts": {
+    "prettier/prettier": {
+      "count": 28
+    }
+  },
+  "src/server-card/probe.ts": {
+    "prettier/prettier": {
+      "count": 19
+    }
+  },
+  "src/server-card/validate.ts": {
+    "prettier/prettier": {
+      "count": 16
+    }
+  },
+  "src/server-doctor-core.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/server-doctor.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/server-features/__tests__/catalog-evaluation.test.ts": {
+    "prettier/prettier": {
+      "count": 20
+    }
+  },
+  "src/server-features/__tests__/check-intrusiveness.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "src/server-features/__tests__/declared-surface.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "src/server-features/__tests__/evaluate.test.ts": {
+    "prettier/prettier": {
+      "count": 25
+    }
+  },
+  "src/server-features/__tests__/evidence-input.test.ts": {
+    "prettier/prettier": {
+      "count": 40
+    }
+  },
+  "src/server-features/__tests__/fixtures.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/server-features/applicability.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/server-features/catalog/__tests__/catalog-guard.test.ts": {
+    "no-useless-escape": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/server-features/catalog/core/server-utilities.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/server-features/catalog/extensions/authorization.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/server-features/catalog/extensions/events.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/server-features/catalog/extensions/skills.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/server-features/catalog/spec-refs.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/server-features/check-evidence.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/server-features/check-intrusiveness.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/server-features/check-map/index.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/server-features/context.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/server-features/declared-surface.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "src/server-features/evaluate.ts": {
+    "prettier/prettier": {
+      "count": 26
+    }
+  },
+  "src/server-features/evidence-input.ts": {
+    "prettier/prettier": {
+      "count": 31
+    }
+  },
+  "src/server-features/families.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/server-features/index.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/server-features/next-step.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "src/server-features/probe-value-keys.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "src/server-features/snapshot.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/server-features/types.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/server-list-reads.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/server-probe.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/server-skills.ts": {
+    "no-control-regex": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/structured-reporting.ts": {
+    "no-control-regex": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 33
+    }
+  },
+  "src/suite-file-run/inference.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/suite-file-run/preflight.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/suite-file-run/run-suite-file.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "src/suite-file-run/types.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/tasks-conformance/shapes.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/telemetry.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/tool-extraction.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/widget-helpers.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "src/widget-runtime/json-utils.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/widget-runtime/logging-transport.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/widget-runtime/tool-result-policy.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/widget-runtime/tool-ui-resource.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/widget-runtime/tool-visibility.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "src/xaa/discovery.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/xaa/enterprise-policy.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/xaa/in-process-executor.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/xaa/mcp-init.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/xaa/mint/client-assertion.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/xaa/mint/client-keypair.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "src/xaa/mint/handlers.ts": {
+    "preserve-caught-error": {
+      "count": 1
+    }
+  },
+  "src/xaa/mint/jwt-bearer.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/xaa/mint/keypair.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "src/xaa/mint/saml.ts": {
+    "no-control-regex": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "preserve-caught-error": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/xaa/mint/signer.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/xaa/run-xaa-flow.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "src/xaa/state-machines/capability-preflight.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "src/xaa/state-machines/runner.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/xaa/state-machines/state-machine.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "src/xaa/state-machines/types.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/HostRunner.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/HostRuntime.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/MCPClientManager.auto-protocol-reconnect.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/MCPClientManager.base-fetch.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/MCPClientManager.redirects.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/MCPClientManager.server-mgmt.test.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "tests/MCPClientManager.sse-fallback.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/MCPClientManager.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/MCPClientManager.tool-metadata.test.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "tests/advisory-exclusion.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/ai-request-headers.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/apps-conformance/grading.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/apps-conformance/runner-2026.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/apps-conformance/runner.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/apps-conformance/suite.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/apps-conformance/validation.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/auth-challenge.test.ts": {
+    "prettier/prettier": {
+      "count": 21
+    }
+  },
+  "tests/browser-entry.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/browser-no-node-imports.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/cache-policy.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "tests/cancellation-sequence.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/check-attribution.test.ts": {
+    "prettier/prettier": {
+      "count": 17
+    }
+  },
+  "tests/claude-readiness/auth-checks.test.ts": {
+    "prettier/prettier": {
+      "count": 78
+    }
+  },
+  "tests/claude-readiness/discovery.test.ts": {
+    "prettier/prettier": {
+      "count": 12
+    }
+  },
+  "tests/claude-readiness/endpoint-checks.test.ts": {
+    "prettier/prettier": {
+      "count": 23
+    }
+  },
+  "tests/claude-readiness/gather-and-adapters.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/claude-readiness/intrusive.test.ts": {
+    "prettier/prettier": {
+      "count": 58
+    }
+  },
+  "tests/claude-readiness/model.test.ts": {
+    "prettier/prettier": {
+      "count": 17
+    }
+  },
+  "tests/claude-readiness/optional-features.test.ts": {
+    "prettier/prettier": {
+      "count": 31
+    }
+  },
+  "tests/claude-readiness/policy-text.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/claude-readiness/report.test.ts": {
+    "prettier/prettier": {
+      "count": 18
+    }
+  },
+  "tests/claude-readiness/runner.test.ts": {
+    "prettier/prettier": {
+      "count": 35
+    }
+  },
+  "tests/claude-readiness/submission-checks.test.ts": {
+    "prettier/prettier": {
+      "count": 26
+    }
+  },
+  "tests/claude-readiness/tool-checks.test.ts": {
+    "prettier/prettier": {
+      "count": 46
+    }
+  },
+  "tests/compat-runtime-bundle-fresh.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/conformance-authorization.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/conformance-catalog.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/conformance-profile.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/conformance-redaction.readiness.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/conformance-reporting.test.ts": {
+    "no-regex-spaces": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 20
+    }
+  },
+  "tests/conformance-run.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/conformance-score.test.ts": {
+    "prettier/prettier": {
+      "count": 21
+    }
+  },
+  "tests/conformance-telemetry.test.ts": {
+    "prettier/prettier": {
+      "count": 13
+    }
+  },
+  "tests/connection-error-message.test.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "tests/contract-verdict-policy.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/corpus.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/directory-readiness/credential-scope.test.ts": {
+    "prettier/prettier": {
+      "count": 18
+    }
+  },
+  "tests/directory-readiness/handoff-export.test.ts": {
+    "prettier/prettier": {
+      "count": 22
+    }
+  },
+  "tests/directory-readiness/handoff.test.ts": {
+    "prettier/prettier": {
+      "count": 62
+    }
+  },
+  "tests/directory-readiness/mcp-dial.test.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "tests/directory-readiness/model.test.ts": {
+    "prettier/prettier": {
+      "count": 22
+    }
+  },
+  "tests/directory-readiness/observations.test.ts": {
+    "prettier/prettier": {
+      "count": 23
+    }
+  },
+  "tests/directory-readiness/reviewer-findings.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/directory-readiness/sse-json-rpc.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/directory-readiness/test-plan-outcomes.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/era-negotiation-unwrap.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/error-describer/challenge.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/error-describer/describe.test.ts": {
+    "prettier/prettier": {
+      "count": 77
+    }
+  },
+  "tests/errors.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/eval-decision-summary.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/eval-execution-variants.test.ts": {
+    "prefer-const": {
+      "count": 1
+    }
+  },
+  "tests/eval-result-mapping.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/eval-run-decision-summary.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/eval-run-start.test.ts": {
+    "prettier/prettier": {
+      "count": 56
+    }
+  },
+  "tests/eval-suite-schema-json.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/evaluator-vocabulary-golden.test.ts": {
+    "prettier/prettier": {
+      "count": 52
+    }
+  },
+  "tests/events-conformance.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 22
+    }
+  },
+  "tests/events-lifecycle.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/events-push.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 23
+    }
+  },
+  "tests/events-wire.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 27
+    }
+  },
+  "tests/extension-tasks-wire.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/first-page-only.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/friction-signals.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/gate-parity-hosted-dual-write.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/gate-waivers.test.ts": {
+    "no-control-regex": {
+      "count": 1
+    }
+  },
+  "tests/github-action-receipt.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/goal-completion-scorer.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/goal-judge-auth.test.ts": {
+    "prettier/prettier": {
+      "count": 44
+    }
+  },
+  "tests/historical-parity.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/host-compat-market-hosts.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/host-config-canonicalize.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/host-config-execution-record.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/host-config-oauth-profile-v2.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/host-config-parity.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/host-config-plugin-extensions.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/host-config-seed-host-template.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/host-config-tool-visibility.test.ts": {
+    "vitest/no-disabled-tests": {
+      "count": 1
+    }
+  },
+  "tests/host-connection.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/http-error-fetch.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/http-exchange-log.test.ts": {
+    "prettier/prettier": {
+      "count": 18
+    }
+  },
+  "tests/logging-dual-era.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 16
+    }
+  },
+  "tests/matchers.test.ts": {
+    "prettier/prettier": {
+      "count": 72
+    }
+  },
+  "tests/mcp-client-manager-fixture.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/mcp-client-manager.connect-error-cause.test.ts": {
+    "prettier/prettier": {
+      "count": 22
+    }
+  },
+  "tests/mcp-client-manager.connect-rejection.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/mcp-client-manager.elicitation.test.ts": {
+    "prettier/prettier": {
+      "count": 15
+    }
+  },
+  "tests/mcp-client-manager.step-up.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/mcp-client-manager.stream-close.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 63
+    }
+  },
+  "tests/mcp-client-manager/multi-connection-tools.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/mcp-conformance/caching-depth.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 40
+    }
+  },
+  "tests/mcp-conformance/checks.test.ts": {
+    "prettier/prettier": {
+      "count": 244
+    }
+  },
+  "tests/mcp-conformance/era.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "tests/mcp-conformance/era.unit.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/mcp-conformance/fixtures.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 40
+    }
+  },
+  "tests/mcp-conformance/header-cases.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/mcp-conformance/pagination-empty-cursor.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/mcp-conformance/readiness-tool-order.integration.test.ts": {
+    "prefer-const": {
+      "count": 1
+    }
+  },
+  "tests/mcp-conformance/readiness.unit.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/mcp-conformance/retired-check-ids.unit.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/mcp-conformance/runner.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/mcp-conformance/security-origin.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/mcp-conformance/server-discover-identity.test.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "tests/mcp-conformance/unsupported-version-stop.unit.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/mcp-conformance/vendored-schema-integrity.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/mcp-conformance/wire-observations.test.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/mcp-conformance/wire-schema.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 65
+    }
+  },
+  "tests/mcp-conformance/wire-schema.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/mcp-conformance/x-mcp-header-declarations.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/mcp-header-mirror.test.ts": {
+    "prettier/prettier": {
+      "count": 69
+    }
+  },
+  "tests/mcp-protocol-version.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/mcpjam-auth-threading.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/mcpjam-model-lease.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/mock-servers/conformance-mcp-server.ts": {
+    "prefer-const": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 67
+    }
+  },
+  "tests/model-native-ids.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/modern-evidence.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/mrtr-driver.test.ts": {
+    "prettier/prettier": {
+      "count": 31
+    }
+  },
+  "tests/mrtr-manager.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "tests/mrtr-seam.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/oauth-conformance/checks.test.ts": {
+    "prettier/prettier": {
+      "count": 16
+    }
+  },
+  "tests/oauth-conformance/formatter.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/oauth-conformance/interactive.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/oauth-conformance/remote-browser.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/oauth-conformance/runner.test.ts": {
+    "prettier/prettier": {
+      "count": 77
+    }
+  },
+  "tests/oauth-conformance/suite.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/oauth-conformance/validation.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/oauth-login.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/oauth-proxy-pinned-lookup.test.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/oauth-proxy.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/oauth/authorization-header-stripping.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/oauth/authorization-plan.test.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "tests/oauth/client-metadata.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/oauth/debug-oauth-2026.test.ts": {
+    "prettier/prettier": {
+      "count": 21
+    }
+  },
+  "tests/oauth/discovery-challenge-conformance.test.ts": {
+    "prefer-const": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/oauth/dynamic-client-registration.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/oauth/emulation-derive.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/oauth/emulation-preflight.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/oauth/emulation-wire-knobs.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/oauth/era-differential-goldens.test.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 29
+    }
+  },
+  "tests/oauth/executor-redaction-sentinel.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/oauth/hardening-shared-pass.test.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/oauth/headers.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/oauth/metadata-candidates.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/oauth/metadata-discovery-fixtures.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/oauth/no-emulation-goldens.test.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "tests/oauth/required-metadata-conformance.test.ts": {
+    "prettier/prettier": {
+      "count": 36
+    }
+  },
+  "tests/oauth/resource-metadata-error.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/oauth/sanitized-trace-contains-no-secrets.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/oauth/scope-step-up.test.ts": {
+    "prettier/prettier": {
+      "count": 16
+    }
+  },
+  "tests/oauth/sequence-actions-goldens.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/oauth/ssrf-guard.test.ts": {
+    "prettier/prettier": {
+      "count": 19
+    }
+  },
+  "tests/oauth/state-machine-regressions.test.ts": {
+    "prettier/prettier": {
+      "count": 73
+    }
+  },
+  "tests/oauth/trace-error-redaction.test.ts": {
+    "prettier/prettier": {
+      "count": 22
+    }
+  },
+  "tests/oauth/trace-projection.test.ts": {
+    "prettier/prettier": {
+      "count": 13
+    }
+  },
+  "tests/oauth/trace-state-policy.test.ts": {
+    "prettier/prettier": {
+      "count": 25
+    }
+  },
+  "tests/observable-response-cache.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/openai-readiness/end-to-end.test.ts": {
+    "prettier/prettier": {
+      "count": 16
+    }
+  },
+  "tests/openai-readiness/image-dimensions.test.ts": {
+    "prettier/prettier": {
+      "count": 26
+    }
+  },
+  "tests/openai-readiness/manifest.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/openai-readiness/observations-and-dial.test.ts": {
+    "prettier/prettier": {
+      "count": 12
+    }
+  },
+  "tests/openai-readiness/package-fixtures.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/openai-readiness/package-primitives.test.ts": {
+    "prettier/prettier": {
+      "count": 18
+    }
+  },
+  "tests/openai-readiness/package-reader.test.ts": {
+    "prettier/prettier": {
+      "count": 19
+    }
+  },
+  "tests/openai-readiness/policy-sync.test.ts": {
+    "prettier/prettier": {
+      "count": 23
+    }
+  },
+  "tests/openai-readiness/portal-errors.test.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/openai-readiness/release-contract.test.ts": {
+    "prettier/prettier": {
+      "count": 20
+    }
+  },
+  "tests/openai-readiness/report.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/openai-readiness/runner.test.ts": {
+    "prettier/prettier": {
+      "count": 29
+    }
+  },
+  "tests/openai-readiness/submission-answers.test.ts": {
+    "prettier/prettier": {
+      "count": 21
+    }
+  },
+  "tests/openai-readiness/submission-checks.test.ts": {
+    "prettier/prettier": {
+      "count": 29
+    }
+  },
+  "tests/openai-readiness/submission-fixtures.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/openai-readiness/wire-checks.test.ts": {
+    "prettier/prettier": {
+      "count": 81
+    }
+  },
+  "tests/operations.test.ts": {
+    "prettier/prettier": {
+      "count": 20
+    }
+  },
+  "tests/packaged-telemetry.test.ts": {
+    "prettier/prettier": {
+      "count": 40
+    }
+  },
+  "tests/pagination-parity.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 26
+    }
+  },
+  "tests/pinned-stream-fetch-admission.test.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "tests/pinned-stream-fetch.test.ts": {
+    "prettier/prettier": {
+      "count": 17
+    }
+  },
+  "tests/platform-step-evidence.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/platform/check-host-compatibility.test.ts": {
+    "prettier/prettier": {
+      "count": 42
+    }
+  },
+  "tests/platform/client-directory-reviewer-attempts.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/platform/client-directory-submission-evals.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/platform/client-directory-submission-handoff.test.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "tests/platform/client-directory-submissions.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/platform/client-extra-headers.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/platform/client-launch-context.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/platform/client.test.ts": {
+    "prettier/prettier": {
+      "count": 35
+    }
+  },
+  "tests/platform/operations-compose.test.ts": {
+    "prettier/prettier": {
+      "count": 92
+    }
+  },
+  "tests/platform/operations-directory-submission-evals.test.ts": {
+    "prettier/prettier": {
+      "count": 21
+    }
+  },
+  "tests/platform/operations-directory-submission-handoff.test.ts": {
+    "prettier/prettier": {
+      "count": 28
+    }
+  },
+  "tests/platform/operations-directory-submissions.test.ts": {
+    "prettier/prettier": {
+      "count": 16
+    }
+  },
+  "tests/platform/operations-directory-test-plans.test.ts": {
+    "prettier/prettier": {
+      "count": 35
+    }
+  },
+  "tests/platform/operations-eval-decision-summary.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/platform/operations-model-selection-effort.test.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/platform/operations-reviewer-attempts.test.ts": {
+    "prettier/prettier": {
+      "count": 15
+    }
+  },
+  "tests/platform/operations-run-targets.test.ts": {
+    "prettier/prettier": {
+      "count": 70
+    }
+  },
+  "tests/platform/operations.test.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "tests/platform/show-servers.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/plugin-bundle-node-file-sources.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/plugin-bundle/manifest.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/plugin-bundle/mcp-config.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/plugin-bundle/mcp-shape-primitives.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/plugin-bundle/openai-interface-icons.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/plugin-bundle/parse-plugin-bundle.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/predicate-argMatcher.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/predicate-turn-checks.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/predicates-parity.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/progressive-discovery.test.ts": {
+    "@typescript-eslint/no-unsafe-function-type": {
+      "count": 4
+    },
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/reasoning-effort.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/reasoning-effort.wire.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/registration.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/report-eval-results-host-config.test.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 5
+    }
+  },
+  "tests/report-eval-results.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/response-checks-evidence.test.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "tests/response-validation.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/route-facts-golden.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/route-facts.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/run-compare-report.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/sandbox-policy.test.ts": {
+    "prettier/prettier": {
+      "count": 12
+    }
+  },
+  "tests/saved-client-runner.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/score-contract-parity.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/score-contract.test.ts": {
+    "no-sparse-arrays": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/scorer-rollup.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/sdk-run-telemetry.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/sentry-boundary.test.ts": {
+    "prettier/prettier": {
+      "count": 24
+    }
+  },
+  "tests/server-diff.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/server-doctor.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/server-facts.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/server-list-reads.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/server-probe.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/server-skills-cache.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/server-skills.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/skills-wire.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/stage-derivation-judge.test.ts": {
+    "prettier/prettier": {
+      "count": 12
+    }
+  },
+  "tests/stage-derivation-metadata-attribution.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/stage-measurements.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/stdio-auto-negotiation.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/strict-telemetry.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/structured-reporting.test.ts": {
+    "no-control-regex": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/subscription-coordinator.test.ts": {
+    "prettier/prettier": {
+      "count": 10
+    }
+  },
+  "tests/suite-file-run.authorization.test.ts": {
+    "@typescript-eslint/no-unsafe-function-type": {
+      "count": 3
+    }
+  },
+  "tests/suite-file-run.exports.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/suite-file-run.inference.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/suite-gate.test.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "tests/support/apps-capability-carrier.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/support/cache-fixture.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/support/directory-handoff.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/support/directory-submission-client.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/support/dual-era-fixture-apps.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 13
+    }
+  },
+  "tests/support/dual-era-fixture.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/support/events-fixture.ts": {
+    "prettier/prettier": {
+      "count": 279
+    }
+  },
+  "tests/support/events-lifecycle-suite.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 31
+    }
+  },
+  "tests/support/events-tls.ts": {
+    "prefer-const": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/support/extension-tasks-fixture.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/support/json-rpc-fixture.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/support/legacy-tasks-fixture.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/support/logging-fixture.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/support/mock-oauth-as.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/support/mrtr-fixture.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/support/multi-page-fixture.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "tests/support/node-builtin-guard.ts": {
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "tests/support/oauth-profiles.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/support/oauth-proxy-fetch-mock.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/support/raw-capture.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/support/wire-schema-fixture.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/system-prompt-default.test.ts": {
+    "prettier/prettier": {
+      "count": 16
+    }
+  },
+  "tests/task-await-driver.test.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "tests/task-created-event.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/task-input-driver.test.ts": {
+    "prettier/prettier": {
+      "count": 19
+    }
+  },
+  "tests/tasks-conformance/runner-fixture.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/tasks-conformance/runner.test.ts": {
+    "prettier/prettier": {
+      "count": 27
+    }
+  },
+  "tests/tasks-conformance/scenarios.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 38
+    }
+  },
+  "tests/tasks-ext-era-gate.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/tasks-ext-listen-meta.test.ts": {
+    "prettier/prettier": {
+      "count": 9
+    }
+  },
+  "tests/tasks-extension-wire.test.ts": {
+    "prettier/prettier": {
+      "count": 17
+    }
+  },
+  "tests/tasks-legacy-wire.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/tasks-policy.test.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/telemetry.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/token-request-client-auth.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/tool-list-changed.integration.test.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "tests/tool-ui-resource.test.ts": {
+    "prettier/prettier": {
+      "count": 5
+    }
+  },
+  "tests/trace-context-meta-client.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  },
+  "tests/trace-context-wire.integration.test.ts": {
+    "prettier/prettier": {
+      "count": 15
+    }
+  },
+  "tests/trace-context.test.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/unsupported-version-failure.test.ts": {
+    "prettier/prettier": {
+      "count": 14
+    }
+  },
+  "tests/uvc-corpus-harness.ts": {
+    "prettier/prettier": {
+      "count": 11
+    }
+  },
+  "tests/uvc-corpus.test.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "tests/vitest.setup.ts": {
+    "prettier/prettier": {
+      "count": 13
+    }
+  },
+  "tests/widget-helpers.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/widget-runtime/host-app-bridge.test.ts": {
+    "prettier/prettier": {
+      "count": 4
+    }
+  },
+  "tests/widget-runtime/tool-result-policy.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/xaa/capability-preflight.test.ts": {
+    "prettier/prettier": {
+      "count": 7
+    }
+  },
+  "tests/xaa/diagnostic-redaction-keys.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/xaa/discovery.test.ts": {
+    "prettier/prettier": {
+      "count": 13
+    }
+  },
+  "tests/xaa/enterprise-policy.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/xaa/in-process-executor.test.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "tests/xaa/jwt-bearer.test.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "tests/xaa/keypair.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/xaa/mcp-init.test.ts": {
+    "prettier/prettier": {
+      "count": 8
+    }
+  },
+  "tests/xaa/run-xaa-flow-registration.test.ts": {
+    "prettier/prettier": {
+      "count": 6
+    }
+  },
+  "tests/xaa/run-xaa-flow.test.ts": {
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/xaa/state-machine.test.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "prefer-const": {
+      "count": 1
+    },
+    "prettier/prettier": {
+      "count": 2
+    }
+  },
+  "tests/zod-describe-preservation.test.ts": {
+    "prettier/prettier": {
+      "count": 3
+    }
+  }
+}
