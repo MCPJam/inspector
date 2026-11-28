@@ -120,4 +120,29 @@ describe("CanvasShell", () => {
       clearTimeoutSpy.mockRestore();
     },
   );
+
+  // ReactFlow queues onInit on a 1ms timer it never cancels, so a canvas that
+  // unmounts inside that window still gets onInit, after its cleanup ran.
+  it.each([
+    { alignTopAfterFit: false, delay: 60 },
+    { alignTopAfterFit: true, delay: 400 },
+  ])(
+    "schedules no reveal when it unmounts before onInit runs (alignTopAfterFit: $alignTopAfterFit)",
+    async ({ alignTopAfterFit, delay }) => {
+      vi.useFakeTimers();
+      const setTimeoutSpy = vi.spyOn(window, "setTimeout");
+      const { unmount } = renderShell({ alignTopAfterFit });
+      expect(setTimeoutSpy.mock.calls.some(([, ms]) => ms === 1)).toBe(true);
+
+      unmount();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(delay);
+      });
+
+      expect(setTimeoutSpy.mock.calls.some(([, ms]) => ms === delay)).toBe(
+        false,
+      );
+      setTimeoutSpy.mockRestore();
+    },
+  );
 });

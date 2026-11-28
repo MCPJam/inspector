@@ -134,7 +134,9 @@ export function CanvasShell<N extends Node, E extends Edge>({
             duration: 0,
           }}
           onInit={(instance) => {
-            // React Flow can deliver its queued onInit after unmount.
+            // ReactFlow calls onInit from a timer it never cancels, so it can
+            // arrive after the unmount cleanup; a reveal scheduled then would
+            // never be cleared.
             if (!mounted.current) return;
             // Fit again and flip visibility a few frames later: a single
             // requestAnimationFrame fires before ReactFlow's first
