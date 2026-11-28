@@ -21,8 +21,8 @@ import { derivePermalinks, noPermalink } from "./permalinks.js";
 import type { SelectedProjectInfo } from "./show-servers.js";
 import type {
   PlatformMockForwardingPolicy,
+  PlatformMockRead,
   PlatformMockWritten,
-  PlatformMockServer,
 } from "./mock-types.js";
 
 const text = z.string().trim().min(1);
@@ -58,10 +58,25 @@ const updateInput = z
     message: "Give exactly one of `definition` and `patch`.",
   });
 
+const family = z
+  .enum(["tools", "prompts", "resources", "resourceTemplates"])
+  .describe("The kind of entry: tools, prompts, resources (by URI) or resourceTemplates (by URI template).");
+const pathInput = z
+  .union([text, z.array(text).min(1)])
+  .describe(
+    'A path inside the entry (or inside the definition without a family): dotted like "inputSchema.properties.query.description", or a list of keys when a key contains a dot.'
+  );
+
 const getInput = z.object({
   project,
   mock,
-  version: positive.optional().describe("The version to read. Defaults to the head."),
+  version: positive.optional().describe("The version to read. Defaults to the head. A cursor stays on the version its first page read."),
+  family: family.optional().describe("List this kind of entry (a page of names), or name one with `name`."),
+  name: text.optional().describe("Read exactly this entry (with `family`)."),
+  path: pathInput.optional().describe("Read one field or nested path. A long string comes in ordered chunks: join `value` across pages until page.end."),
+  search: text.optional().describe("List only names containing this text (with `family`)."),
+  limit: z.number().int().min(1).max(200).optional().describe("Most names per page; fewer come back when the page would not fit."),
+  cursor: text.optional().describe("`page.nextCursor` from the previous page of the same read, as the same caller."),
 });
 
 const policyReadInput = z.object({
@@ -86,16 +101,16 @@ export type SetMockForwardingPolicyInput = z.infer<typeof policySetInput>;
 type Scoped<T> = T & { project: SelectedProjectInfo };
 export type CreateMockServerResult = Scoped<PlatformMockWritten>;
 export type UpdateMockServerResult = Scoped<PlatformMockWritten>;
-export type GetMockServerResult = Scoped<PlatformMockServer>;
+export type GetMockServerResult = Scoped<PlatformMockRead>;
 export type MockForwardingPolicyResult = Scoped<PlatformMockForwardingPolicy>;
 
 const permalink = derivePermalinks(
-  (result: { id: string; name: string; project?: { id: string } }) => [
+  (result: { id: string; name?: string; mockName?: string; project?: { id: string } }) => [
     {
       type: "project_server" as const,
       id: result.id,
       projectId: result.project?.id,
-      label: `Open ${result.name}`,
+      label: `Open ${result.mockName ?? result.name ?? "mock server"}`,
     },
   ]
 );
@@ -155,14 +170,15 @@ export const getMockServerOperation: PlatformOperation<GetMockServerInput, GetMo
   name: "get_mock_server",
   title: "Get a mock server",
   description:
-    "Read one version of a mock server (the head by default): its id, address, version, base server, the forwarding policy in force, how many tools, prompts, resources and templates its definition states, and the paths it changes. The read is small by design; it does not return the definition. headVersion is the version to name in update_mock_server's expectedVersion.",
+    "Read a mock server in bounded pages, so a mock with hundreds of tools or a very long description fits any response. With no selector: id, address, version, base server, the forwarding policy in force, counts, and a page of its changes (a change is a tool, prompt, resource or template it adds, edits or hides, or a server-wide setting). With `family`: a page of that kind's names (the real server's saved listing with the mock's edits), narrowed by `search`. With `family` and `name`: that entry, what the mock states and what a client sees. With `path` too: one field or nested path; a long string comes in ordered chunks, so join `value` across pages. Continue any page with `page.nextCursor`; a cursor stays on the version it started on, is bound to your account and to the read, and the last page says `end: true`. headVersion is the version to name in update_mock_server's expectedVersion.",
   readOnly: true,
   permalink,
   inputSchema: getInput,
   async execute(input, context) {
     const { project, mockId, info } = await resolveMock(context, input);
+    const { project: _project, mock: _mock, ...selector } = input;
     const read = await context.client.getMockServer(
-      { projectId: project.id, mockId, version: input.version },
+      { projectId: project.id, mockId, ...selector },
       { signal: context.signal }
     );
     return { ...read, project: info };

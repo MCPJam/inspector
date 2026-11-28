@@ -58,6 +58,9 @@ vi.mock("../../web/auth.js", async () => {
   };
 });
 
+import { readFileSync } from "node:fs";
+import { MOCK_READ_LIMIT } from "@mcpjam/sdk/mocks";
+import { MANY_TOOLS, generateTools } from "../../mcp/__tests__/helpers/many-tools-server.js";
 import v1Routes from "../index.js";
 
 const PROJECT = "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
@@ -81,12 +84,12 @@ const nameOf = (value: unknown) => getFunctionName(value as never);
 const calls = (mock: typeof mocks.mutation, name: string) =>
   mock.mock.calls.filter(([fn]) => nameOf(fn) === name).map(([, args]) => args);
 
-function request(method: string, path: string, opts: { body?: unknown } = {}) {
+function request(method: string, path: string, opts: { body?: unknown; token?: string } = {}) {
   const app = new Hono();
   app.route("/api/v1", v1Routes);
   return app.request(`https://inspector.test${path}`, {
     method,
-    headers: { "Content-Type": "application/json", Authorization: "Bearer tok" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.token ?? "tok"}` },
     ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
   });
 }
@@ -296,7 +299,7 @@ describe("POST /mock-servers/:mockId/versions", () => {
 });
 
 describe("GET /mock-servers/:mockId", () => {
-  it("is small: identity, version, base, policy, counts and the changed paths, with no definition", async () => {
+  it("is small: identity, version, base, policy, counts and a page of changes, with no definition", async () => {
     queries["mockServers:getMock"] = () =>
       stored({
         instructions: "Hi",
@@ -307,28 +310,20 @@ describe("GET /mock-servers/:mockId", () => {
       });
     const body = await json(request("GET", `${MOCKS}/${MOCK}`));
     expect(body).toMatchObject({
+      view: "summary",
       id: MOCK,
       version: 2,
       headVersion: 2,
       baseServerId: BASE,
       policy: POLICY,
-      counts: { tools: 2, prompts: 0, resources: 0, resourceTemplates: 0 },
-      changedPaths: {
-        paths: ["instructions", "tools.search.description", "tools.search.annotations.readOnlyHint", "tools.search.params.q.fixed", "tools.old.hidden"],
-        total: 5,
-        truncated: false,
-      },
+      // One change is one entry or one server-wide setting, not one leaf field.
+      counts: { changes: 3, tools: 2, prompts: 0, resources: 0, resourceTemplates: 0 },
+      changes: { page: { total: 3, end: true } },
     });
+    expect(body.changes.items.map((c: { path: string }) => c.path)).toEqual(["instructions", "tools.old", "tools.search"]);
+    expect(body.changes.items[2].fields).toEqual(["annotations.readOnlyHint", "description", "params.q.fixed"]);
     expect(body).not.toHaveProperty("definition");
     expect(mocks.connect).not.toHaveBeenCalled();
-  });
-
-  it("bounds the changed paths and says so", async () => {
-    const tools = Object.fromEntries(Array.from({ length: 150 }, (_, i) => [`t${i}`, { hidden: true }]));
-    queries["mockServers:getMock"] = () => stored({ tools });
-    const big = await json(request("GET", `${MOCKS}/${MOCK}`));
-    expect(big.changedPaths).toMatchObject({ total: 150, truncated: true });
-    expect(big.changedPaths.paths).toHaveLength(100);
   });
 
   it("reads a named version", async () => {
@@ -386,5 +381,146 @@ describe("the forwarding policy", () => {
   it("refuses a value that is not allow or block", async () => {
     expect((await request("PUT", POLICY_PATH, { body: { forwarding: "maybe" } })).status).toBe(400);
     expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+});
+
+// ---- Bounded reads (I6a) ----
+
+const LISTING = (tools: unknown[]) => ({ visibility: "project", listingJson: JSON.stringify({ tools }) });
+const LAST = "tool_202";
+const readLimit = MOCK_READ_LIMIT;
+
+/** A 202-tool mock with three changes, the last tool's description among them. */
+function bigMock(over: Record<string, unknown> = {}) {
+  const tools = generateTools(MANY_TOOLS);
+  queries["mockServers:getMock"] = (args) =>
+    stored(
+      { instructions: "Use the tools.", tools: { tool_001: { description: "First." }, [LAST]: { description: "Old last." } } },
+      { discovery: LISTING(tools), version: args.version ?? 2, ...over },
+    );
+}
+
+describe("bounded reads of a 202-tool mock", () => {
+  beforeEach(() => bigMock());
+
+  it("finds the last tool by name and by search, then reads its description by path", async () => {
+    const found = await json(request("GET", `${MOCKS}/${MOCK}?family=tools&search=202`));
+    expect(found).toMatchObject({ view: "list", listing: "saved", entries: [{ name: LAST, kind: "edited" }], page: { end: true, total: 1 } });
+    const entry = await json(request("GET", `${MOCKS}/${MOCK}?family=tools&name=${LAST}`));
+    expect(entry).toMatchObject({ view: "entry", name: LAST, stated: { description: "Old last." } });
+    const value = await json(request("GET", `${MOCKS}/${MOCK}?family=tools&name=${LAST}&path=description`));
+    expect(value).toMatchObject({ view: "value", value: "Old last.", stated: true, path: ["description"] });
+    expect((await request("GET", `${MOCKS}/${MOCK}?family=tools&name=nope`)).status).toBe(404);
+  });
+
+  it("pages the whole listing within the budget, ending explicitly, on the version it started on", async () => {
+    const names: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    for (;;) {
+      const response = await request("GET", `${MOCKS}/${MOCK}?family=tools${cursor ? `&cursor=${cursor}` : ""}`);
+      const raw = await response.text();
+      expect(JSON.stringify(JSON.parse(raw), null, 2).length).toBeLessThanOrEqual(readLimit + 300);
+      const page = JSON.parse(raw);
+      names.push(...page.entries.map((e: { name: string }) => e.name));
+      pages += 1;
+      // The head moves on after the first page; the rest still reads version 2.
+      queries["mockServers:getMock"] = (args) =>
+        stored({}, { discovery: LISTING(generateTools(MANY_TOOLS)), version: args.version ?? 3, headVersion: 3 });
+      if (page.page.end) {
+        expect(page.page.nextCursor).toBeUndefined();
+        break;
+      }
+      cursor = page.page.nextCursor;
+    }
+    expect(pages).toBeGreaterThan(1);
+    expect(new Set(names).size).toBe(MANY_TOOLS);
+    const versions = calls(mocks.query, "mockServers:getMock").map((a) => a.version);
+    expect(versions[0]).toBeUndefined();
+    expect(versions.slice(1).every((v) => v === 2)).toBe(true);
+  });
+
+  it("reconstructs an oversized field across chunks without loss", async () => {
+    const long = `${'say "x"\n\ttab 😀 '.repeat(9000)}end`;
+    queries["mockServers:getMock"] = () =>
+      stored({ tools: { [LAST]: { description: long } } }, { discovery: LISTING(generateTools(MANY_TOOLS)) });
+    let joined = "";
+    let cursor: string | undefined;
+    for (;;) {
+      const response = await request("GET", `${MOCKS}/${MOCK}?family=tools&name=${LAST}&path=description${cursor ? `&cursor=${cursor}` : ""}`);
+      const page = (await response.json()) as Record<string, any>;
+      expect(JSON.stringify(page, null, 2).length).toBeLessThanOrEqual(readLimit + 300);
+      joined += page.value;
+      if (page.page.end) break;
+      cursor = page.page.nextCursor;
+    }
+    expect(joined).toBe(long);
+  });
+
+  it("refuses a cursor from another caller or with another query", async () => {
+    const first = await json(request("GET", `${MOCKS}/${MOCK}?family=tools`));
+    const cursor = first.page.nextCursor;
+    const other = await request("GET", `${MOCKS}/${MOCK}?family=tools&cursor=${cursor}`, { token: "someone-else" });
+    expect(other.status).toBe(400);
+    expect((await json(other)).details).toMatchObject({ code: "MOCK_CURSOR_REFUSED", reason: "other_caller" });
+    const query = await request("GET", `${MOCKS}/${MOCK}?family=tools&search=tool&cursor=${cursor}`);
+    expect((await json(query)).details).toMatchObject({ reason: "other_query" });
+    const bad = await request("GET", `${MOCKS}/${MOCK}?family=tools&cursor=garbage`);
+    expect((await json(bad)).details).toMatchObject({ reason: "malformed" });
+  });
+
+  it("says what is wrong with a selector", async () => {
+    expect((await request("GET", `${MOCKS}/${MOCK}?name=a`)).status).toBe(400);
+    expect((await request("GET", `${MOCKS}/${MOCK}?search=a`)).status).toBe(400);
+  });
+
+  it("reads a mock whose listing is another member's as definition only, and says so", async () => {
+    queries["mockServers:getMock"] = () => stored({ tools: { a: { description: "x" } } }, { discovery: null, hasDiscovery: true });
+    expect(await json(request("GET", `${MOCKS}/${MOCK}?family=tools`))).toMatchObject({ listing: "private", entries: [{ name: "a", kind: "added" }] });
+  });
+});
+
+// The other surfaces (SDK, CLI, MCP) are tested against these same bodies, so
+// create and read return the same result on every one.
+describe("the shared surface fixture", () => {
+  const fixture = JSON.parse(
+    readFileSync(new URL("../../../../../sdk/tests/fixtures/mock-surfaces.json", import.meta.url), "utf8"),
+  ) as Record<string, any>;
+
+  beforeEach(() => {
+    queries["mockServers:getMock"] = () =>
+      stored(
+        { instructions: "Use the tools.", tools: { tool_001: { description: "First." } } },
+        { discovery: LISTING(generateTools(3)) },
+      );
+  });
+
+  it("uses the ids the fixture names", () => {
+    expect(fixture.ids).toEqual({ project: PROJECT, base: BASE, mock: MOCK });
+  });
+
+  it("creates", async () => {
+    const response = await request("POST", MOCKS, {
+      body: { name: "markets (mock)", serverId: BASE, definition: { instructions: "Use the tools." } },
+    });
+    expect(await json(response)).toEqual(fixture.created);
+  });
+
+  it("answers a create and a save with the counts and a bounded change page a read can continue", async () => {
+    const tools = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`t${i}`, { hidden: true }]));
+    const created = await json(request("POST", MOCKS, { body: { name: "m", definition: { tools } } }));
+    expect(created.counts).toMatchObject({ changes: 60, tools: 60 });
+    expect(created.changes.page).toMatchObject({ offset: 0, count: 50, total: 60, end: false });
+    expect(created.changes.items).toHaveLength(50);
+    queries["mockServers:getMock"] = () => stored({ tools }, { version: 1, headVersion: 1 });
+    const next = await json(request("GET", `${MOCKS}/${MOCK}?cursor=${created.changes.page.nextCursor}`));
+    expect(next.changes.page).toMatchObject({ offset: 50, count: 10, end: true });
+    const saved = await json(request("POST", `${MOCKS}/${MOCK}/versions`, { body: { definition: { tools }, expectedVersion: 2 } }));
+    expect(saved).toMatchObject({ version: 3, policy: { forwarding: "block" }, counts: { changes: 60 } });
+  });
+
+  it("reads the summary and one field", async () => {
+    expect(await json(request("GET", `${MOCKS}/${MOCK}`))).toEqual(fixture.summary);
+    expect(await json(request("GET", `${MOCKS}/${MOCK}?family=tools&name=tool_001&path=description`))).toEqual(fixture.value);
   });
 });

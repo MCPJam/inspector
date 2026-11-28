@@ -8,57 +8,23 @@
  */
 import { Hono, type Context } from "hono";
 import { z } from "zod";
-import { makeFunctionReference } from "convex/server";
-import type { MockDefinition } from "@mcpjam/sdk/mocks";
-import { listAllPrompts, listAllResources, listAllResourceTemplates, listAllTools } from "@mcpjam/sdk/operations";
-import type {
-  PlatformMockForwardingPolicy,
-  PlatformMockLoosened,
-  PlatformMockSaved,
-  PlatformMockServer,
-} from "@mcpjam/sdk/platform";
-import { projectServerSchema, runEphemeralConnection } from "../web/auth.js";
-import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
+import type { PlatformMockForwardingPolicy, PlatformMockLoosened } from "@mcpjam/sdk/platform";
+import { parseWithSchema } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
-import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { mockServerAddress } from "../../services/mock/address.js";
 import { readJsonObjectBody } from "./adapter.js";
-import { createConvexClient } from "./convex-client.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
 import { v1Resource } from "./envelope.js";
+import { bearerOf, createConvexClient, fn, readMock, readRealServer, saved } from "./mock-server-io.js";
+import { readMockPage, readQuery, writeSummary } from "./mock-server-reads.js";
 import { readMockPolicy, readProjectPolicy, writeProjectPolicy } from "./mock-policy-backend.js";
 import {
   applyMergePatch,
-  changedPathsOf,
-  countsOf,
   discoveryOf,
-  translateMockReadError,
   translateMockWriteError,
   validatedDefinition,
-  type RealServerRead,
 } from "./mock-server-support.js";
 
 const mockServers = new Hono();
-
-const fn = {
-  create: makeFunctionReference<"mutation">("mockServers:createMock"),
-  save: makeFunctionReference<"mutation">("mockServers:saveMockVersion"),
-  get: makeFunctionReference<"query">("mockServers:getMock"),
-};
-
-/** `mockServers:getMock`'s row. The definition crosses Convex as JSON text. */
-type MockRow = {
-  mockId: string;
-  projectId: string;
-  name: string;
-  baseServerId: string | null;
-  headVersion: number;
-  version: number;
-  contentHash: string;
-  definitionJson: string;
-  loosened?: PlatformMockLoosened[];
-  createdAt?: number;
-};
 
 const object = z.record(z.string(), z.unknown());
 const createBody = z.strictObject({
@@ -75,26 +41,12 @@ const saveBody = z
   .refine((body) => (body.definition === undefined) !== (body.patch === undefined), {
     message: "Give exactly one of `definition` and `patch`.",
   });
-const versionQuery = z.object({ version: z.coerce.number().int().min(1).optional() });
 const policyBody = z.strictObject({ forwarding: z.enum(["allow", "block"]) });
 
 function projectIdOf(c: Context): string {
   const projectId = c.req.param("projectId") ?? "";
   requireProjectIdArg(projectId, "v1.mock-servers");
   return projectId;
-}
-
-async function readMock(c: Context, projectId: string, mockId: string, version?: number): Promise<MockRow> {
-  const convex = createConvexClient(await getConvexBearerForRequest(c));
-  let row: MockRow;
-  try {
-    row = await convex.query(fn.get, { mockId, ...(version !== undefined ? { version } : {}) });
-  } catch (error) {
-    throw translateMockReadError(error);
-  }
-  // The path names a project; a mock in another one is not found here.
-  if (row.projectId !== projectId) throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Mock server not found");
-  return row;
 }
 
 /** A policy read or write, with the backend's refusals as public errors. */
@@ -104,39 +56,6 @@ async function policyOf<T>(run: () => Promise<T>): Promise<T> {
   } catch (error) {
     throw translateMockWriteError(error);
   }
-}
-
-/** The real server as it is now, read on a connection made as the caller. */
-async function readRealServer(c: Context, projectId: string, serverId: string): Promise<RealServerRead> {
-  return runEphemeralConnection<typeof projectServerSchema, RealServerRead>(c, { projectId, serverId }, projectServerSchema, async (manager, body) => {
-    const id = body.serverId;
-    const { tools } = await listAllTools(manager, { serverId: id, cacheMode: "bypass" });
-    const info = manager.getInitializationInfo(id);
-    const capabilities = info?.serverCapabilities;
-    // A family the real server does not declare has nothing to read.
-    return {
-      tools,
-      serverInfo: info?.serverVersion,
-      instructions: info?.instructions,
-      capabilities,
-      ...(capabilities?.prompts
-        ? { prompts: (await listAllPrompts(manager, { serverId: id, cacheMode: "bypass" })).prompts }
-        : {}),
-      ...(capabilities?.resources
-        ? {
-            resources: (await listAllResources(manager, { serverId: id, cacheMode: "bypass" })).resources,
-            resourceTemplates: (await listAllResourceTemplates(manager, { serverId: id, cacheMode: "bypass" }))
-              .resourceTemplates,
-          }
-        : {}),
-    };
-  });
-}
-
-type SavedFields = Omit<PlatformMockSaved, "address" | "created" | "loosened">;
-
-function saved(fields: SavedFields, result: { created: boolean; loosened?: PlatformMockLoosened[] }): PlatformMockSaved {
-  return { ...fields, address: mockServerAddress(fields.id), created: result.created, loosened: result.loosened ?? [] };
 }
 
 // POST /v1/projects/:projectId/mock-servers: create a mock, version 1.
@@ -150,7 +69,7 @@ mockServers.post("/projects/:projectId/mock-servers", async (c) => {
   const discoveryJson = real ? discoveryOf(real) : undefined;
   let created: { mockId: string; version: number; contentHash: string; created: boolean; loosened?: PlatformMockLoosened[] };
   try {
-    created = await createConvexClient(await getConvexBearerForRequest(c)).mutation(fn.create, {
+    created = await createConvexClient(await bearerOf(c)).mutation(fn.create, {
       projectId,
       ...(body.serverId ? { baseServerId: body.serverId } : {}),
       name: body.name,
@@ -168,8 +87,10 @@ mockServers.post("/projects/:projectId/mock-servers", async (c) => {
     version: created.version,
     contentHash: created.contentHash,
   };
-  const policy = await policyOf(async () => readMockPolicy(await getConvexBearerForRequest(c), created.mockId));
-  return v1Resource(c, { ...saved(fields, created), policy }, created.created ? 201 : 200);
+  const policy = await policyOf(async () => readMockPolicy(await bearerOf(c), created.mockId));
+  const written = { ...saved(fields, created), policy };
+  const summary = await writeSummary(c, created.mockId, created.version, definition, written);
+  return v1Resource(c, { ...written, ...summary }, created.created ? 201 : 200);
 });
 
 // POST /v1/projects/:projectId/mock-servers/:mockId/versions: save the next
@@ -183,12 +104,12 @@ mockServers.post("/projects/:projectId/mock-servers/:mockId/versions", async (c)
   const head = await readMock(c, projectId, mockId);
   // A patch is applied here so the checks run on exactly what will be stored;
   // the backend merges the same patch against its own head.
-  validatedDefinition(
+  const definition = validatedDefinition(
     body.patch !== undefined ? applyMergePatch(JSON.parse(head.definitionJson), body.patch) : body.definition,
   );
   let result: { version: number; contentHash: string; created: boolean; loosened?: PlatformMockLoosened[] };
   try {
-    result = await createConvexClient(await getConvexBearerForRequest(c)).mutation(fn.save, {
+    result = await createConvexClient(await bearerOf(c)).mutation(fn.save, {
       mockId,
       expectedVersion: body.expectedVersion,
       ...(body.patch !== undefined
@@ -206,34 +127,19 @@ mockServers.post("/projects/:projectId/mock-servers/:mockId/versions", async (c)
     version: result.version,
     contentHash: result.contentHash,
   };
-  const policy = await policyOf(async () => readMockPolicy(await getConvexBearerForRequest(c), head.mockId));
-  return v1Resource(c, { ...saved(fields, result), policy }, result.created ? 201 : 200);
+  const policy = await policyOf(async () => readMockPolicy(await bearerOf(c), head.mockId));
+  const written = { ...saved(fields, result), policy };
+  const summary = await writeSummary(c, head.mockId, result.version, definition, written);
+  return v1Resource(c, { ...written, ...summary }, result.created ? 201 : 200);
 });
 
-// GET /v1/projects/:projectId/mock-servers/:mockId?version=
+// GET /v1/projects/:projectId/mock-servers/:mockId: a bounded read. With no
+// selector the summary; `family` lists names, `family` and `name` read one
+// entry, `path` one field, and `cursor` continues a page.
 mockServers.get("/projects/:projectId/mock-servers/:mockId", async (c) => {
   const projectId = projectIdOf(c);
   const mockId = c.req.param("mockId") ?? "";
-  const { version } = parseWithSchema(versionQuery, c.req.query());
-  const row = await readMock(c, projectId, mockId, version);
-  const definition: MockDefinition = JSON.parse(row.definitionJson);
-  const token = await getConvexBearerForRequest(c);
-  const dto: PlatformMockServer = {
-    id: row.mockId,
-    name: row.name,
-    projectId,
-    baseServerId: row.baseServerId,
-    address: mockServerAddress(row.mockId),
-    version: row.version,
-    headVersion: row.headVersion,
-    contentHash: row.contentHash,
-    loosened: row.loosened ?? [],
-    policy: await policyOf(() => readMockPolicy(token, row.mockId)),
-    counts: countsOf(definition),
-    changedPaths: changedPathsOf(definition),
-    createdAt: row.createdAt ?? null,
-  };
-  return v1Resource(c, dto);
+  return v1Resource(c, await readMockPage(c, projectId, mockId, parseWithSchema(readQuery, c.req.query())));
 });
 
 // GET /v1/projects/:projectId/mock-servers/:mockId/forwarding-policy: the
@@ -242,7 +148,7 @@ mockServers.get("/projects/:projectId/mock-servers/:mockId/forwarding-policy", a
   const projectId = projectIdOf(c);
   const mockId = c.req.param("mockId") ?? "";
   await readMock(c, projectId, mockId);
-  const policy = await policyOf(async () => readMockPolicy(await getConvexBearerForRequest(c), mockId));
+  const policy = await policyOf(async () => readMockPolicy(await bearerOf(c), mockId));
   const dto: PlatformMockForwardingPolicy = { ...policy, projectId, mockId };
   return v1Resource(c, dto);
 });
@@ -250,7 +156,7 @@ mockServers.get("/projects/:projectId/mock-servers/:mockId/forwarding-policy", a
 // GET /v1/projects/:projectId/mock-forwarding-policy: the workspace's setting.
 mockServers.get("/projects/:projectId/mock-forwarding-policy", async (c) => {
   const projectId = projectIdOf(c);
-  const policy = await policyOf(async () => readProjectPolicy(await getConvexBearerForRequest(c), projectId));
+  const policy = await policyOf(async () => readProjectPolicy(await bearerOf(c), projectId));
   const dto: PlatformMockForwardingPolicy = { ...policy, projectId };
   return v1Resource(c, dto);
 });
@@ -260,7 +166,7 @@ mockServers.put("/projects/:projectId/mock-forwarding-policy", async (c) => {
   const projectId = projectIdOf(c);
   const body = parseWithSchema(policyBody, await readJsonObjectBody(c));
   const policy = await policyOf(async () =>
-    writeProjectPolicy(await getConvexBearerForRequest(c), projectId, body.forwarding),
+    writeProjectPolicy(await bearerOf(c), projectId, body.forwarding),
   );
   logger.info("[v1.mock-servers] forwarding policy set", { projectId, forwarding: body.forwarding });
   const dto: PlatformMockForwardingPolicy = { ...policy, projectId };

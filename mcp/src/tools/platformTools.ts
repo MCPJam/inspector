@@ -804,7 +804,8 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   get_trace_destination:
     "Same as list_trace_destinations: admin configuration. Available on REST, the SDK and the CLI.",
   list_trace_destination_backfills:
-    "Operational detail for an admin diagnosing an export. Available on REST, the SDK and the CLI.",  // Mock servers: the MCP tools come with the bounded reads, which keep a mock's
+    "Operational detail for an admin diagnosing an export. Available on REST, the SDK and the CLI.",
+  // Mock servers: the MCP tools come with the bounded reads, which keep a mock's
   // definition inside this server's response budget. Until then the surface is
   // REST and the SDK.
   create_mock_server:

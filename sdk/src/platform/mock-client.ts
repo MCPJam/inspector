@@ -9,8 +9,9 @@ import type {
   PlatformMockDefinition,
   PlatformMockForwarding,
   PlatformMockForwardingPolicy,
+  PlatformMockRead,
+  PlatformMockReadSelector,
   PlatformMockWritten,
-  PlatformMockServer,
 } from "./mock-types.js";
 
 type Options = { signal?: AbortSignal };
@@ -52,13 +53,22 @@ export abstract class MockServerClient extends DirectoryReviewerAttemptClient {
     return this.request("POST", path, { body }, options);
   }
 
-  /** One version (the head by default), small: no definition body. */
+  /**
+   * One bounded read of a version (the head by default): the summary, or with a
+   * selector a page of names, one entry, or one field or nested path.
+   */
   getMockServer(
-    params: { projectId: string; mockId: string; version?: number },
+    params: { projectId: string; mockId: string } & PlatformMockReadSelector,
     options?: Options
-  ): Promise<PlatformMockServer> {
-    const path = mocksPath(params.projectId, `/${encodeURIComponent(params.mockId)}`);
-    return this.request("GET", path, { query: { version: params.version } }, options);
+  ): Promise<PlatformMockRead> {
+    const { projectId, mockId, path, ...query } = params;
+    const encoded = Array.isArray(path) ? JSON.stringify(path) : path;
+    return this.request(
+      "GET",
+      mocksPath(projectId, `/${encodeURIComponent(mockId)}`),
+      { query: { ...query, path: encoded } },
+      options
+    );
   }
 
   /** The policy in force for a mock, or for the project's workspace when no mock is named. */
