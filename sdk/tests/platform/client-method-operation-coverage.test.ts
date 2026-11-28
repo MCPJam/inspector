@@ -38,6 +38,8 @@ const CLIENT_METHODS_WITHOUT_OPERATION: Readonly<Record<string, string>> = {
     "Backlog (eval authoring): `cloud eval rerun` calls it directly; no operation yet.",
   rerunEvalRun:
     "Backlog (eval authoring): `cloud eval rerun` calls it directly; no operation yet.",
+  testEvalCodeEvaluator:
+    "Backlog (code evaluators): the test_eval_code_evaluator operation lands with its MCP tool and CLI command, stacked on the route.",
   listEvalDescriptionExperimentsForRun:
     "Backlog (eval analyzers): get_eval_description_experiment reads one experiment by id; no operation lists a run's experiments yet.",
   getSpendBudget:

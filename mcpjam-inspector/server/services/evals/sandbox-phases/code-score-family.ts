@@ -37,6 +37,13 @@ export function codeScorerId(evaluatorId: string): string {
   return `${CODE_SCORER_PREFIX}${evaluatorId}`;
 }
 
+/** The score an iteration needs to pass: the author's, or 1. */
+export function codeEvaluatorPassThreshold(
+  evaluator: Pick<FrozenCodeEvaluator, "threshold">,
+): number {
+  return evaluator.threshold ?? 1;
+}
+
 export function codeEvaluatorScoreDefinition(
   evaluator: FrozenCodeEvaluator,
 ): ScoreDefinition {
@@ -53,7 +60,7 @@ export function codeEvaluatorScoreDefinition(
     }),
     label: evaluator.name ?? evaluator.id,
     deterministic: true,
-    passThreshold: evaluator.threshold ?? 1,
+    passThreshold: codeEvaluatorPassThreshold(evaluator),
     role: required ? authoredRequiredRole() : "advisory",
     // Stated rather than defaulted: the backend's ingest check requires a
     // Required code evaluator to fail closed on both.

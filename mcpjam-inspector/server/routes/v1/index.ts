@@ -50,6 +50,7 @@ import studies from "./studies.js";
 import shares from "./shares.js";
 import sandboxImages from "./images.js";
 import evalBacktest from "./eval-backtest.js";
+import codeEvaluatorTest from "./code-evaluator-test.js";
 import evalRunInsights from "./eval-run-insights.js";
 import evalIngest from "./eval-ingest.js";
 import modelLeases from "./model-leases.js";
@@ -296,6 +297,8 @@ v1.route("/", shares);
 // project-scoped caller.
 v1.route("/", sandboxImages);
 v1.route("/", evalBacktest);
+// Boots a paid box per test; guest-denied (no GUEST_ALLOWED_V1_RULES entry).
+v1.route("/", codeEvaluatorTest);
 v1.route("/", evalRunInsights);
 v1.route("/", evalIngest);
 // Model leases for SDK evals running outside the platform. Guest-DENIED by

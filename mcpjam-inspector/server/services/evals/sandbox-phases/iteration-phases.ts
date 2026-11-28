@@ -88,18 +88,33 @@ export type GradingBoxInput = {
   files: readonly GradingFileEntry[];
 };
 
+/** The iteration an evaluator grades, and how long it may take. */
+export type CodeEvaluatorRunContext = {
+  runId: string;
+  iterationId: string;
+  caseId?: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+};
+
+/** What a run or a test hands {@link runCodeEvaluator}. */
+export type GradedCodeEvaluator = Pick<
+  FrozenCodeEvaluator,
+  "id" | "fileName" | "script"
+>;
+
 function remaining(ctx: IterationPhaseContext, limit: number): number {
   return Math.max(0, Math.min(limit, ctx.deadlineAt - Date.now()));
 }
 
 function phaseEnv(
-  ctx: IterationPhaseContext,
+  ids: Pick<IterationPhaseContext, "runId" | "iterationId" | "caseId">,
   phase: string,
 ): Record<string, string> {
   return {
-    MCPJAM_RUN_ID: ctx.runId,
-    MCPJAM_ITERATION_ID: ctx.iterationId,
-    ...(ctx.caseId ? { MCPJAM_CASE_ID: ctx.caseId } : {}),
+    MCPJAM_RUN_ID: ids.runId,
+    MCPJAM_ITERATION_ID: ids.iterationId,
+    ...(ids.caseId ? { MCPJAM_CASE_ID: ids.caseId } : {}),
     MCPJAM_PHASE: phase,
   };
 }
@@ -252,10 +267,15 @@ export function parseEvaluatorResult(
   };
 }
 
-async function runEvaluator(
-  ctx: IterationPhaseContext,
+/**
+ * Run one evaluator in a box {@link prepareGradingBox} prepared, and read its
+ * score. Never throws for anything the evaluator does: a timeout, a non-zero
+ * exit, a missing or malformed result is an error outcome with its output.
+ */
+export async function runCodeEvaluator(
   sandbox: PhaseSandbox,
-  evaluator: FrozenCodeEvaluator,
+  evaluator: GradedCodeEvaluator,
+  context: CodeEvaluatorRunContext,
 ): Promise<CodeEvaluatorOutcome> {
   const resultPath = `${GRADING_ROOT}/results/${evaluator.id}.json`;
   const run = await runPhaseScript({
@@ -264,14 +284,14 @@ async function runEvaluator(
     script: evaluator.script,
     fileName: evaluator.fileName,
     env: {
-      ...phaseEnv(ctx, "grading"),
+      ...phaseEnv(context, "grading"),
       MCPJAM_ITERATION: `${GRADING_ROOT}/iteration.json`,
       MCPJAM_RESULT: resultPath,
     },
     cwd: WORKDIR,
-    timeoutMs: remaining(ctx, PHASE_LIMITS_MS.evaluator),
+    timeoutMs: context.timeoutMs,
     cleanHome: `/tmp/mcpjam-home/${evaluator.id}`,
-    ...(ctx.signal ? { signal: ctx.signal } : {}),
+    ...(context.signal ? { signal: context.signal } : {}),
   });
   const base = {
     output: run.output,
@@ -309,9 +329,9 @@ async function runEvaluator(
 
 /**
  * Restore the declared files, make `/mcpjam` the box user's, then write the
- * input every evaluator reads.
+ * input every evaluator reads. A throw means the box itself failed.
  */
-async function prepareGradingBox(
+export async function prepareGradingBox(
   sandbox: PhaseSandbox,
   input: GradingBoxInput,
 ): Promise<void> {
@@ -373,7 +393,15 @@ export async function gradeIteration(
       async (sandbox) => {
         await prepareGradingBox(sandbox, boxInput);
         const outcomes = await Promise.all(
-          evaluators.map((evaluator) => runEvaluator(ctx, sandbox, evaluator)),
+          evaluators.map((evaluator) =>
+            runCodeEvaluator(sandbox, evaluator, {
+              runId: ctx.runId,
+              iterationId: ctx.iterationId,
+              ...(ctx.caseId ? { caseId: ctx.caseId } : {}),
+              timeoutMs: remaining(ctx, PHASE_LIMITS_MS.evaluator),
+              ...(ctx.signal ? { signal: ctx.signal } : {}),
+            }),
+          ),
         );
         return Object.fromEntries(
           evaluators.map((evaluator, index) => [evaluator.id, outcomes[index]]),
