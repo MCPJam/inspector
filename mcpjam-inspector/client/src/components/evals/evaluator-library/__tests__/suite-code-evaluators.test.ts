@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { codeGradingGate } from "../../code-grading/code-grading-flags";
+import {
+  initSuiteSettingsDraft,
+  readSuiteSettingsValues,
+} from "../../suite-settings-draft";
 import type { CodeEvaluator } from "../code-evaluator-model";
 import {
   CODE_EVALUATORS_NEED_GRADING_COPY,
   codeEvaluatorRunRefusal,
   codeMethodAvailability,
   requiredRoleRefusal,
+  suiteCodeEvaluators,
   suiteGradingMode,
   type SuiteCodeEvaluators,
 } from "../suite-code-evaluators";
@@ -130,5 +135,55 @@ describe("codeEvaluatorRunRefusal", () => {
         gradingMode: "enforce",
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("suiteCodeEvaluators", () => {
+  const draftFor = (grading?: { network: "web" }) =>
+    initSuiteSettingsDraft({
+      suiteId: "suite-1",
+      values: readSuiteSettingsValues({
+        codeEvaluators: [evaluator()],
+        ...(grading ? { grading } : {}),
+      }),
+    });
+
+  it("tests on the suite's project with the network the draft would save", () => {
+    const code = suiteCodeEvaluators({
+      suite: { _id: "suite-1", projectId: "project-1" },
+      draft: draftFor({ network: "web" }),
+      dispatch: vi.fn(),
+      gate: ON,
+    });
+    expect(code.evaluators).toEqual([evaluator()]);
+    expect(code.test).toEqual({
+      projectId: "project-1",
+      suiteId: "suite-1",
+      network: "web",
+    });
+    expect(
+      suiteCodeEvaluators({
+        suite: { _id: "suite-1" },
+        draft: draftFor(),
+        dispatch: vi.fn(),
+        gate: ON,
+      }).test,
+    ).toBeUndefined();
+  });
+
+  it("writes an emptied list as none", () => {
+    const dispatch = vi.fn();
+    const code = suiteCodeEvaluators({
+      suite: { _id: "suite-1" },
+      draft: draftFor(),
+      dispatch,
+      gate: ON,
+    });
+    code.onChange([]);
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "edit",
+      key: "codeEvaluators",
+      value: undefined,
+    });
   });
 });

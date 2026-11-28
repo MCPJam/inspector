@@ -15,15 +15,8 @@ import { makeFunctionReference } from "convex/server";
 import { useState } from "react";
 import { convexErrorCode } from "@/lib/convex-error";
 import { customJudgeFailureCopy } from "./custom-judge-failure-copy";
+import { listPastIterationsRef, pastIterationLabel } from "./past-iterations";
 import { VerdictPill, type VerdictStatus } from "./verdict-pill";
-
-type PreviewIteration = {
-  iterationId: string;
-  runNumber: number | null;
-  title: string;
-  result: string | null;
-  createdAt: number;
-};
 
 type PreviewResult =
   | { ok: false; reason: string }
@@ -39,12 +32,6 @@ type PreviewResult =
         error?: string;
       };
     };
-
-const listIterationsRef = makeFunctionReference<
-  "query",
-  { suiteId: string },
-  PreviewIteration[]
->("customJudgePreviewAuth:listCustomJudgePreviewIterations");
 
 const previewRef = makeFunctionReference<
   "action",
@@ -69,7 +56,7 @@ export function CustomJudgePreview({
   disabledReason?: string;
   inDialog?: boolean;
 }) {
-  const iterations = useQuery(listIterationsRef, { suiteId });
+  const iterations = useQuery(listPastIterationsRef, { suiteId });
   const preview = useAction(previewRef);
   const [iterationId, setIterationId] = useState<string>("");
   const [running, setRunning] = useState(false);
@@ -131,11 +118,7 @@ export function CustomJudgePreview({
           <SelectContent>
             {(iterations ?? []).map((t, index) => (
               <SelectItem key={t.iterationId} value={t.iterationId} title={t.iterationId}>
-                {`Recent iteration ${index + 1} · `}
-                {t.runNumber !== null ? `Run #${t.runNumber} · ` : ""}
-                {t.title}
-                {t.result ? ` · ${t.result}` : ""}
-                {` · ${new Date(t.createdAt).toLocaleString()}`}
+                {pastIterationLabel(t, index)}
               </SelectItem>
             ))}
           </SelectContent>
