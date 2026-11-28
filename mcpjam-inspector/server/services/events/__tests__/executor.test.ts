@@ -504,7 +504,7 @@ describe("executeClaimedEventRun", () => {
       new WebRouteError(
         401,
         ErrorCode.UNAUTHORIZED,
-        'Server "events" requires OAuth authentication. Please complete the OAuth flow first.',
+        'Server "events" requires OAuth authentication. Go to the Connect tab to complete the OAuth flow and try again.',
         { oauthRequired: true, serverId: SERVER_ID },
       ),
     );

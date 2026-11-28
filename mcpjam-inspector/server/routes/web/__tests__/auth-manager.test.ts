@@ -1884,7 +1884,7 @@ describe("web auth manager batching", () => {
     // an authorization server on the user's machine — so it reports why. Without
     // this pre-connect pass the fallback only ever covered a mid-session 401,
     // and the FIRST connect after expiry failed with "requires OAuth
-    // authentication. Please complete the OAuth flow first", to a user who had.
+    // authentication. Go to the Connect tab...", to a user who had.
     global.fetch = vi.fn(async (input, init) => {
       const url = fetchUrl(input);
       if (url.endsWith("/web/authorize-batch")) {
@@ -2162,7 +2162,7 @@ describe("web auth manager batching", () => {
         serverUrl: "https://server-1.example.com/mcp",
       },
     });
-    expect(error.message).not.toContain("complete the OAuth flow first");
+    expect(error.message).not.toContain("Go to the Connect tab");
   });
 
   it("names the organization's export policy instead of asking for a reauthorize", async () => {
@@ -2231,7 +2231,7 @@ describe("web auth manager batching", () => {
         serverUrl: "https://server-1.example.com/mcp",
       },
     });
-    expect(error.message).not.toContain("complete the OAuth flow first");
+    expect(error.message).not.toContain("Go to the Connect tab");
     expect(error.details?.oauthRequired).toBeUndefined();
   });
 
@@ -2249,7 +2249,7 @@ describe("web auth manager batching", () => {
         'Credentials for "Asana" are being refreshed by another request. Try again in 5 seconds.',
     });
     expect(error.headers).toEqual({ "Retry-After": "5" });
-    expect(error.message).not.toContain("complete the OAuth flow first");
+    expect(error.message).not.toContain("Go to the Connect tab");
   });
 
   it("omits the retry delay when the backend sends no oauthRetryAfterMs", async () => {

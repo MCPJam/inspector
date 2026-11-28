@@ -2139,7 +2139,7 @@ export async function createAuthorizedManager(
       // server is on an address only this machine can reach. Not a verdict at
       // all — in local mode it is recoverable, so it is deferred to the recovery
       // pass below rather than decided here. Hosted, it is a real refusal, but
-      // "complete the OAuth flow first" is the wrong thing to say to someone who
+      // "go to the Connect tab to complete the OAuth flow" is the wrong thing to say to someone who
       // already did; the recovery pass raises the actionable message instead.
       const privateAuthorizationServer =
         auth.oauthUnavailableReason === "private_authorization_server" &&
@@ -2263,7 +2263,7 @@ export async function createAuthorizedManager(
             throw new WebRouteError(
               401,
               ErrorCode.UNAUTHORIZED,
-              `Server "${displayServerName}" requires OAuth authentication. Please complete the OAuth flow first.`,
+              `Server "${displayServerName}" requires OAuth authentication. Go to the Connect tab to complete the OAuth flow and try again.`,
               { oauthRequired: true, ...errorDetails },
             );
         }
