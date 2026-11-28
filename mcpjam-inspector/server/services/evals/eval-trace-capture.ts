@@ -3,6 +3,8 @@ import {
   withMockAnswerSink,
 } from "../mock/answer-marks.js";
 import type { MockCallMark } from "../../../shared/mock-answer-span.js";
+import { withToolCallScope } from "./input-answers.js";
+import { exchangeSpan } from "../../../shared/eval-input-exchange.js";
 import { toolOrigin } from "@/shared/tool-origin";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
@@ -294,10 +296,30 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
         let authChallenge: ToolAuthChallengeFinding | undefined;
         // What a mock did with this call, read off the connection's responses.
         const mockMarks: MockCallMark[] = [];
+        let asked = 0;
         try {
           const result = await withMockAnswerSink(
             (marks) => mockMarks.push(...marks),
+          () => withToolCallScope(
+            {
+              tool: name,
+              serverId,
+              record: (exchange) => {
+                const at = Date.now();
+                ctx.recordedSpans.push(
+                  exchangeSpan(exchange, {
+                    id: `ask-${toolCallId}-${asked++}`,
+                    parentId: `tool-${toolCallId}`,
+                    promptIndex: resolvedPromptIndex,
+                    stepIndex: stepNumber,
+                    serverId,
+                    ...createOffsetInterval(ctx.runStartedAt, at, at),
+                  }),
+                );
+              },
+            },
             () => origExecute(input, options),
+            ),
           );
           policyBlocked = isToolPolicyBlockResult(result);
           if (policyBlocked) return result;

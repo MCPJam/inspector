@@ -16,6 +16,7 @@
 import type { Context } from "hono";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import type { ConvexHttpClient } from "convex/browser";
+import { inputAnswerResolverFor } from "./input-answers.js";
 import { makeFunctionReference } from "convex/server";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
@@ -348,6 +349,10 @@ export async function openLocalEvalRun(
       // An eval has no iteration sandbox and cannot reserve a personal Computer.
       pluginComputerRuntime: false,
       ...(connectionIdSets ? { connectionIdSets } : {}),
+      // Loaded before connect: the capability to be asked is declared there.
+      inputAnswers: await inputAnswerResolverFor(convex, {
+        suiteId: target.suiteId,
+      }),
       serverNames: servers.serverNames,
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
       ...(host ? { xaaPolicy: xaaPolicyFromMcpProfile(host.mcpProfile) } : {}),

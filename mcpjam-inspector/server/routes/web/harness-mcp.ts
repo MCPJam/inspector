@@ -18,6 +18,10 @@
  * `application/json`; the optional GET returns a minimal server-stream the
  * client probes then closes; no `Mcp-Session-Id` (stateless).
  */
+import {
+  createInputAnswerResolver,
+  loadPinnedInputAnswers,
+} from "../../services/evals/input-answers.js";
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -391,6 +395,17 @@ async function handle(c: any) {
   };
 
   try {
+    // An eval's iteration may have replies for a server that asks; they are
+    // read here, before the connection that declares the capability.
+    const inputAnswers =
+      claims.runId && claims.iterationId
+        ? createInputAnswerResolver({
+            answers: await loadPinnedInputAnswers({
+              runId: claims.runId,
+              iterationId: claims.iterationId,
+            }),
+          })
+        : undefined;
     const createAuthorized = () =>
       createAuthorizedManager(
         caller,
@@ -402,6 +417,7 @@ async function handle(c: any) {
         sealed?.profile?.clientCapabilities,
         {
           ...(sealed?.profile ? { initializePins: sealed.profile } : {}),
+          ...(inputAnswers ? { inputAnswers } : {}),
           // Per-server XAA works on the harness proxy (configured servers
           // mint instead of 500ing). KNOWN LIMITATION: the host's
           // enterprise-managed POLICY is NOT enforced here — the harness

@@ -23,6 +23,13 @@ const { mockManager } = vi.hoisted(() => ({
   },
 }));
 
+// The replies an eval iteration pinned are read from the backend per request.
+const loadPinned = vi.hoisted(() => vi.fn(async () => [] as unknown[]));
+vi.mock("../../../services/evals/input-answers.js", async () => ({
+  ...(await vi.importActual<object>("../../../services/evals/input-answers.js")),
+  loadPinnedInputAnswers: loadPinned,
+}));
+
 vi.mock("../auth", () => ({
   createAuthorizedManager: vi.fn().mockResolvedValue({ manager: mockManager }),
   withManager: async (
@@ -96,6 +103,15 @@ describe("/api/web/harness-mcp", () => {
       profile.clientCapabilities,
       expect.objectContaining({ initializePins: profile }),
     );
+  });
+  it("passes an eval iteration's pinned replies to the connection", async () => {
+    const scoped = signTestProxyToken({
+      serverId: "srv-a", projectId: "p1", externalId: "user_ext_1",
+      orgId: "org_1", runId: "run-77", iterationId: "iter-1",
+    });
+    expect((await post("srv-a", { "X-MCPJam-Proxy-Token": scoped })).status).toBe(200);
+    expect(loadPinned).toHaveBeenCalledWith({ runId: "run-77", iterationId: "iter-1" });
+    expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).toHaveProperty("inputAnswers");
   });
   it("401s without a token (token IS the auth here)", async () => {
     expect((await post("srv-a")).status).toBe(401);

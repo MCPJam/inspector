@@ -1,3 +1,4 @@
+import { inputAnswerResolverFor } from "../../services/evals/input-answers.js";
 import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
 import {
   loadEvalRunAccountPlan,
@@ -4405,6 +4406,7 @@ async function launchEvalRun(params: {
         ...(runAccounts ? { runAccounts } : {}),
       })
     : null;
+  const inputAnswers = await inputAnswerResolverFor(convexClient, { suiteId: body.suiteId });
   const open = (connectionIdSets?: ConnectionIdSets) => createAuthorizedManager(
     params.callerContext,
     convexAuthToken,
@@ -4417,6 +4419,7 @@ async function launchEvalRun(params: {
       // Eval setup has no iteration sandbox and cannot reserve a personal Computer.
       pluginComputerRuntime: false,
       ...(connectionIdSets ? { connectionIdSets } : {}),
+      inputAnswers,
       serverNames,
       // The issuer makes per-server XAA servers mint instead of failing with
       // 'Missing XAA issuer'. The enterprise policy now comes from the run's
