@@ -1,5 +1,6 @@
 import { describeEvalIterationError } from "@/lib/eval-iteration-error";
 import { IterationErrorCards } from "./code-grading/script-failure-cards";
+import { parseCodeEvaluatorLogs } from "./code-grading/code-evaluator-score-logs";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import { useAction, useQuery } from "convex/react";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
@@ -276,6 +277,7 @@ export function IterationDetails({
   onTabChange,
   executionEngine,
   onEditScripts,
+  codeEvaluators,
 }: {
   iteration: EvalIteration;
   /** undefined preserves ambient styling for existing chat callers. */
@@ -342,6 +344,8 @@ export function IterationDetails({
   executionEngine?: string;
   /** Opens suite settings from a failed setup or cleanup script's card. */
   onEditScripts?: () => void;
+  /** The run's frozen code evaluators, when the host has the run: logs name each file. */
+  codeEvaluators?: ReadonlyArray<{ id: string; fileName: string }>;
 }) {
   const evaluatorLibraryEnabled = useEvaluatorLibraryEnabled();
   // The Scores list prints the same judge number the review panel hides.
@@ -1114,6 +1118,10 @@ export function IterationDetails({
           evaluationConfig={parseEvaluationConfig(iteration.metadata)}
           integrity={integrity}
           hideJudgeRows={reviewActive && judgeHidden}
+          codeEvaluatorLogs={parseCodeEvaluatorLogs(
+            iteration.metadata,
+            codeEvaluators,
+          )}
         />
       </div>
     );

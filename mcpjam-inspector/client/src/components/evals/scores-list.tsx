@@ -24,6 +24,11 @@ import {
   EVAL_FAILED_BADGE_STRONG_CLASS,
   EVAL_PASSED_BADGE_STRONG_CLASS,
 } from "./constants";
+import { CodeEvaluatorLogs } from "./code-grading/code-evaluator-logs";
+import {
+  isCodeScorerId,
+  type CodeEvaluatorLog,
+} from "./code-grading/code-evaluator-score-logs";
 import type { EvalIteration } from "./types";
 
 /**
@@ -116,6 +121,27 @@ function joinScores(
 
 function isGating(joined: JoinedScore): boolean {
   return isRequiredRole(joined.definition?.role);
+}
+
+function isCodeRow(joined: JoinedScore): boolean {
+  return joined.definition !== null && isCodeScorerId(joined.score.scorerId);
+}
+
+/**
+ * A Required code evaluator that errored, or was skipped, under a fail
+ * policy. The iteration is then an evaluator error: left out of the pass
+ * rate, never failed, as the run's verdict counts it.
+ */
+function isUnresolvedCodeRow(joined: JoinedScore): boolean {
+  if (!isCodeRow(joined) || !isGating(joined)) return false;
+  const { status } = joined.score;
+  const policy =
+    status === "error"
+      ? joined.definition?.onError
+      : status === "skipped"
+        ? joined.definition?.onSkipped
+        : undefined;
+  return policy === "fail";
 }
 
 /**
@@ -244,6 +270,10 @@ const SUMMARY_TONE = {
     icon: MinusCircle,
     className: "bg-muted text-muted-foreground border border-border/40",
   },
+  unresolved: {
+    icon: AlertTriangle,
+    className: "bg-warning/15 text-foreground border border-warning/30",
+  },
 } as const;
 
 /**
@@ -273,10 +303,13 @@ export function ScoresList({
   evaluationConfig,
   integrity,
   hideJudgeRows = false,
+  codeEvaluatorLogs,
 }: {
   scores: ScoreResult[];
   evaluationConfig: EvaluationConfigSnapshot | null;
   integrity?: "score_integrity_invalid" | null;
+  /** Each code evaluator's output, by scorer id, for its row's Logs. */
+  codeEvaluatorLogs?: Readonly<Record<string, CodeEvaluatorLog>>;
   /**
    * Hide judge values until the reviewer has labelled (or revealed) this
    * trial. Presentation only: the stored rows, `isGatingScore`, and
@@ -291,9 +324,10 @@ export function ScoresList({
     return null;
   }
   const joined = joinScores(scores, evaluationConfig);
-  const gating = joined.filter(isGating);
+  const code = joined.filter(isCodeRow);
+  const gating = joined.filter((row) => isGating(row) && !isCodeRow(row));
   const advisory = joined.filter(
-    (row) => row.definition !== null && !isGating(row),
+    (row) => row.definition !== null && !isGating(row) && !isCodeRow(row),
   );
   const unjoinable = joined.filter((row) => row.definition === null);
 
@@ -319,6 +353,8 @@ export function ScoresList({
   const summary: { tone: keyof typeof SUMMARY_TONE; label: string } =
     integrityInvalid
       ? { tone: "failed", label: "evaluator evidence did not verify" }
+      : counted.some(isUnresolvedCodeRow)
+      ? { tone: "unresolved", label: "unresolved, left out of the pass rate" }
       : counted.length === 0
       ? { tone: "none", label: "no required evaluators" }
       : {
@@ -379,6 +415,27 @@ export function ScoresList({
         keyPrefix="advisory"
         hideJudgeRows={hidingJudges}
       />
+      {code.length > 0 ? (
+        <section aria-label="Code evaluators" className="space-y-1.5">
+          <div className="text-[11px] font-semibold text-foreground">
+            Code evaluators
+          </div>
+          <ScoreGroup
+            title="Required"
+            rows={code.filter(isGating)}
+            keyPrefix="code-required"
+            hideJudgeRows={false}
+            logs={codeEvaluatorLogs}
+          />
+          <ScoreGroup
+            title="Advisory"
+            rows={code.filter((row) => !isGating(row))}
+            keyPrefix="code-advisory"
+            hideJudgeRows={false}
+            logs={codeEvaluatorLogs}
+          />
+        </section>
+      ) : null}
       <ScoreGroup
         title="Unresolved (no matching definition)"
         rows={unjoinable}
@@ -394,11 +451,13 @@ function ScoreGroup({
   rows,
   keyPrefix,
   hideJudgeRows,
+  logs,
 }: {
   title: string;
   rows: JoinedScore[];
   keyPrefix: string;
   hideJudgeRows: boolean;
+  logs?: Readonly<Record<string, CodeEvaluatorLog>>;
 }) {
   if (rows.length === 0) return null;
   return (
@@ -417,7 +476,11 @@ function ScoreGroup({
               Judge score hidden until you label this iteration
             </li>
           ) : (
-            <ScoreRow key={`${keyPrefix}-${index}`} row={row} />
+            <ScoreRow
+              key={`${keyPrefix}-${index}`}
+              row={row}
+              logs={logs?.[row.score.scorerId]}
+            />
           ),
         )}
       </ul>
@@ -438,10 +501,18 @@ function rubricCheckAnsweredBy(score: ScoreResult): string | null {
   return `Answered by ${score.model === HOSTED_RUBRIC_CHECKS_MODEL ? "Jev" : score.model}`;
 }
 
-function ScoreRow({ row }: { row: JoinedScore }) {
+function ScoreRow({
+  row,
+  logs,
+}: {
+  row: JoinedScore;
+  logs?: CodeEvaluatorLog;
+}) {
   const badge = statusBadge(row);
   const Icon = badge.icon;
-  const failing = failsGate(row);
+  const code = isCodeRow(row);
+  // Unresolved leaves the iteration out of the pass rate; it fails nothing.
+  const failing = failsGate(row) && !isUnresolvedCodeRow(row);
   const value = formatValue(row.score);
   const label = row.definition?.label ?? row.score.scorerId;
   const answeredBy = rubricCheckAnsweredBy(row.score);
@@ -454,7 +525,7 @@ function ScoreRow({ row }: { row: JoinedScore }) {
           : "border-border/40 bg-background/40"
       }`}
     >
-      <details className="group" open={failing}>
+      <details className="group" open={failing || code}>
         <summary className="flex cursor-pointer list-none items-start gap-2 p-2 [&::-webkit-details-marker]:hidden">
           <span
             className={`mt-0.5 flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${badge.className}`}
@@ -490,8 +561,12 @@ function ScoreRow({ row }: { row: JoinedScore }) {
           {row.score.error ? (
             <div className="text-warning">{row.score.error}</div>
           ) : null}
+          {code && row.score.status === "error" ? (
+            <div>Not counted as a failure.</div>
+          ) : null}
           {row.score.rationale ? <div>{row.score.rationale}</div> : null}
-          {row.score.evidence?.length ? (
+          {/* A code row's evidence is the last line of the logs below. */}
+          {row.score.evidence?.length && !logs ? (
             <ul className="list-disc space-y-0.5 pl-4">
               {row.score.evidence.map((entry, index) => (
                 <li key={index}>{entry}</li>
@@ -507,6 +582,9 @@ function ScoreRow({ row }: { row: JoinedScore }) {
           ) : null}
           {row.score.model && !answeredBy ? (
             <div>model: {row.score.model}</div>
+          ) : null}
+          {logs ? (
+            <CodeEvaluatorLogs output={logs.output} fileName={logs.fileName} />
           ) : null}
         </div>
       </details>
