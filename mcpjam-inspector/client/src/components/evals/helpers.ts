@@ -24,6 +24,12 @@ import {
   getScenarioHostLabel,
   getScenarioHostLogo,
 } from "@/lib/scenario-client-style";
+import {
+  agentBoxNeeds,
+  joinNeeds,
+  sandboxPhaseNeeds,
+  type CodeGradingConfig,
+} from "./code-grading/code-grading-values";
 
 /**
  * What servers can this suite see at run-time? Mirrors the precedence
@@ -1420,6 +1426,39 @@ export function evalSuitePinsSandboxImage(
       )?.computerEnvironmentId,
     ),
   );
+}
+
+/**
+ * The same early message for setup and cleanup scripts and code evaluators
+ * (EFTW-90): why the backend will refuse this suite's next run, or this run's
+ * replay, before creating anything, or null. It mirrors the two rules of
+ * `EVAL_CODE_EVALUATORS_UNAVAILABLE` that only MCPJam's own runners lift
+ * (`CODE_EVALUATOR_RULES_FOR_MCPJAM`): `runner_without_sandboxes`, an
+ * Inspector that can't start eval sandboxes, refuses every script and
+ * Required code evaluator; `local_run`, an agent on the member's machine,
+ * refuses what needs the agent's box. Pass `localRun` only when it is known;
+ * the launch still refuses whatever this misses.
+ */
+export function evalSandboxPhaseRefusal(
+  subject: "suite" | "run",
+  config: CodeGradingConfig | null | undefined,
+  runner: { ephemeralCloudAvailable: boolean | undefined; localRun?: boolean },
+): { rule: "runner_without_sandboxes" | "local_run"; message: string } | null {
+  const withoutSandboxes =
+    runner.ephemeralCloudAvailable === false ? sandboxPhaseNeeds(config) : [];
+  if (withoutSandboxes.length > 0) {
+    return {
+      rule: "runner_without_sandboxes",
+      message: `This ${subject} has ${joinNeeds(withoutSandboxes)}, but this inspector can't run MCPJam cloud sandboxes.`,
+    };
+  }
+  const onThisMachine = runner.localRun ? agentBoxNeeds(config) : [];
+  return onThisMachine.length > 0
+    ? {
+        rule: "local_run",
+        message: `This ${subject} has ${joinNeeds(onThisMachine)}, which can't run while its agent runs on this machine.`,
+      }
+    : null;
 }
 
 // ── Cost ────────────────────────────────────────────────────────────────────

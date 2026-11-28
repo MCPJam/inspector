@@ -69,6 +69,7 @@ import { GradingRow } from "./code-grading/grading-row";
 import {
   buildHostNamesById,
   compareRunsBySequence,
+  evalSandboxPhaseRefusal,
   evalSuitePinsSandboxImage,
   generationEnvironmentChoices,
   generationEnvironmentId,
@@ -1383,11 +1384,14 @@ export function SuiteIterationsView({
     projectId: projectId ?? null,
     includePrivateBacking: true,
   });
+  const sandboxPhaseRefusal = evalSandboxPhaseRefusal("suite", suite, {
+    ephemeralCloudAvailable,
+  });
   const evalRunsDisabledReason =
     evalRunsDisabledReasonProp ??
     (suitePinsSandboxImage && ephemeralCloudAvailable === false
       ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
-      : null);
+      : (sandboxPhaseRefusal?.message ?? null));
   // Out of credits, a run whose every model is a locked MCPJam one could only
   // be refused, so its buttons say so before the click. Each control asks
   // about the cases it launches: the suite for Run all, one case for its Run.
@@ -3302,6 +3306,7 @@ export function SuiteIterationsView({
                 draft={draft}
                 dispatch={dispatchDraft}
                 gate={codeGradingGates.scripts}
+                runRefusal={sandboxPhaseRefusal?.message}
                 accessory={
                   <LedgerRowChips
                     dirty={rowIsDirty("scripts")}

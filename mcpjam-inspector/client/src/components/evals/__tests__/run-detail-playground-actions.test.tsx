@@ -126,4 +126,61 @@ describe("RunDetailPlaygroundActions", () => {
       screen.getByRole("button", { name: /replay this run/i }),
     ).toBeDisabled();
   });
+
+  it("blocks replay of a run whose frozen scripts need sandboxes this inspector can't start", () => {
+    // The replay runs the run's own scripts, whatever the suite holds now.
+    cloudState.ephemeralAvailable = false;
+    const onReplayRun = vi.fn();
+    render(
+      <RunDetailPlaygroundActions
+        suite={suite}
+        selectedRun={{
+          ...baseRun,
+          configSnapshot: {
+            ...baseRun.configSnapshot,
+            scripts: { runSetup: "seed" },
+          },
+        }}
+        readOnlyConfig
+        onReplayRun={onReplayRun}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        rerunningSuiteId={null}
+        replayingRunId={null}
+        cancellingRunId={null}
+        hasServersConfigured
+        missingServers={[]}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /replay this run/i }),
+    ).toBeDisabled();
+  });
+
+  it("allows that replay once cloud sandboxes are available", () => {
+    render(
+      <RunDetailPlaygroundActions
+        suite={suite}
+        selectedRun={{
+          ...baseRun,
+          configSnapshot: {
+            ...baseRun.configSnapshot,
+            scripts: { runSetup: "seed" },
+          },
+        }}
+        readOnlyConfig
+        onReplayRun={vi.fn()}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        rerunningSuiteId={null}
+        replayingRunId={null}
+        cancellingRunId={null}
+        hasServersConfigured
+        missingServers={[]}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /replay this run/i }),
+    ).toBeEnabled();
+  });
 });
