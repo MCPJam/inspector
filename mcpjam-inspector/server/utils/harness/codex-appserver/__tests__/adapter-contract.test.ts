@@ -69,7 +69,7 @@ describe("builtin tool catalog", () => {
     // `exec_command`, not `shell`. codex app-server 0.149.1 declares a
     // PTY-backed unified exec taking `{cmd: string}`; the `shell` name belongs
     // to the exec transport. Copying that catalog would put a tool on the trace
-    // that never runs. See `.spike-codex-appserver/RESULTS.md`.
+    // that never runs.
     expect(CODEX_APPSERVER_NATIVE_TOOL_NAMES.commandExecution).toBe(
       "exec_command",
     );

@@ -8,9 +8,7 @@ framework's own `harnessV1StreamPartSchema`.
 They are recordings, not hand-written mocks, and that distinction is the point:
 a hand-written fixture encodes what we BELIEVE codex sends, and agrees with the
 code for exactly as long as the belief holds. These were captured from the
-pinned 0.149.1 binary by `.spike-codex-appserver/probe/run-gates.mjs`, which
-writes `artifacts/<gate>.ndjson`; the capture script's `direction: "in"` frames
-are what appear here, with volatile ids left as recorded.
+pinned 0.149.1 binary: inbound frames, with volatile ids left as recorded.
 
 Server REQUESTS (the approval calls) are kept inline rather than filtered out,
 because their position in the stream is part of what the fixture pins: codex
@@ -18,13 +16,6 @@ sends `item/commandExecution/requestApproval` and the matching `item/started`
 in the same millisecond, with the item first in every recording here. The
 protocol orders neither, so the translator seeds the tool call from whichever
 arrives first — these fixtures pin the order actually observed.
-
-To re-record after a codex bump:
-
-```sh
-cd .spike-codex-appserver
-node probe/record-fixtures.mjs --codex <path-to-codex>
-```
 
 ## What is here, and what is not
 

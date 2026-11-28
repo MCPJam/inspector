@@ -175,9 +175,9 @@ describe("checkHarnessRuntimeAvailable", () => {
   });
 
   // The gpt-5.6 line is hosted, Codex-mappable by the OLD `gpt-5` prefix rule,
-  // and equipped with ZERO tools by the pinned CLI (measured: gate P5 in
-  // `.spike-codex-appserver`). Left admitted it produces the worst outcome this
-  // gate exists to prevent — not an error, a confident chat-only answer from a
+  // and equipped with ZERO tools by the pinned 0.149.x CLI. Left admitted it
+  // produces the worst outcome this gate exists to prevent — not an error, a
+  // confident chat-only answer from a
   // host the user believes can act. The refusal has to come out as
   // `model-unsupported` so eval admission keeps treating it as a re-decidable
   // MODEL refusal rather than a host-level one.

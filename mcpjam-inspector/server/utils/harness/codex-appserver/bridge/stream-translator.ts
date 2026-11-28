@@ -12,8 +12,8 @@
  *  1. A `tool-approval-request` MUST follow a `tool-call` with the same
  *     `toolCallId` — the framework throws on an approval for an unknown call.
  *     The protocol does NOT order the two. In every capture taken so far
- *     `item/started` lands first, in the same millisecond as the approval
- *     (see `.spike-codex-appserver/RESULTS.md`), but nothing in the schema
+ *     `item/started` lands first, in the same millisecond as the approval,
+ *     but nothing in the schema
  *     promises that and a same-millisecond pair is exactly the kind of order
  *     that flips. {@link Translator.ensureToolCall} is therefore idempotent
  *     and callable from EITHER path: whichever arrives first synthesizes the

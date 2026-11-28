@@ -2,7 +2,7 @@
  * The translator, replayed against streams RECORDED FROM THE REAL BINARY.
  *
  * The fixtures under `fixtures/` came out of `codex app-server` 0.149.1 driven
- * by a scripted model (`.spike-codex-appserver/probe/record-fixtures.mjs`), so
+ * by a scripted model, so
  * these assertions are about what codex actually sends, not what we imagined it
  * sends. That distinction has bitten this repo before: a hand-written fixture
  * agrees with the code and both can be wrong about the world.

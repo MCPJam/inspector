@@ -14,8 +14,8 @@ User namespaces available; codex used its bundled `bwrap`.
 **Model:** a scripted fake Responses server (no credential). It logs every
 request and can emit namespaced `function_call` items.
 
-**Scripts:** `.spike-codex-appserver/probe/2026-10-02-linux/` (`lib.mjs` is the
-rig; one `probe-*.mjs` per question). Raw wire logs were not committed.
+**Scripts:** this file is the record of that run. Raw wire logs were not
+committed.
 
 ## What this evidence does and does not establish
 
@@ -310,19 +310,5 @@ Recorded before any change; "What changed in the product because of it" above li
 
 ## Reproduce
 
-```sh
-cd .spike-codex-appserver/probe/2026-10-02-linux
-npm install --ignore-scripts @openai/codex@0.149.1
-node probe-a-url-shape.mjs
-node probe-a2-egress.mjs
-node probe-a3-plugin-sync.mjs
-node probe-b-config-layers.mjs [scenario…]
-sudo node probe-b4-system-layers.mjs   # plants and removes /etc/codex; refuses if it already exists
-node probe-c0-toollist.mjs
-node probe-c-sandbox.mjs [control ws ws-symlink fail-pathbwrap fail-userns fail-userns-attended attended attended-login-false]
-node probe-d-relay-timeout.mjs [callform gate-* t5-sleep15 t3600-sleep70 t0-instant t0-sleep2 default-sleep70 default-find]
-node probe-e-processes.mjs [danger-termkill danger-kill ws-termkill ws-kill]
-node probe-f-checksums.mjs
-```
-
-`lib.mjs` holds the shared rig: the fake server, the app-server client with `detached` support, and fresh-dir helpers. `mcp-server.mjs` is the spawn-logging stdio MCP server, with `echo` and `slow_echo` and optional `MCP_ANNOTATE`. `schema-gen/` is `codex app-server generate-json-schema` output from this binary.
+The probe scripts are not in this repo. The sections above are the record of
+the 2026-10-02 linux-x64 run against `@openai/codex@0.149.1`.

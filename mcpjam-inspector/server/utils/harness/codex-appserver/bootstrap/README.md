@@ -10,16 +10,18 @@ copied in by `getCodexAppServerBootstrap()` alongside its committed
 `@openai/codex` is pinned to an exact version, not a range, for three reasons
 that all point the same way:
 
-1. The committed protocol snapshot in `.spike-codex-appserver/schema/` describes
+1. The committed protocol snapshot in `__fixtures__/schema/<version>/` describes
    **that** version. A range would let the box run a protocol the adapter was
    not written against.
-2. The tool-less model list in `registry.ts` was measured against that binary.
+2. The tool-less model rows in the harness evidence table were measured against
+   that binary.
 3. The version participates in the bootstrap identity, so a bump forks existing
    sessions cleanly instead of resuming them onto a different runtime.
 
-Bumping it means: regenerate the schema (`.spike-codex-appserver/schema/regen.sh
-<version> --diff`), re-run the P5 model matrix, refresh `pnpm-lock.yaml`, and
-update `PINNED_CODEX_VERSION` in `bridge/app-server-protocol.ts`.
+Bumping it means: commit a new `__fixtures__/schema/<version>/` snapshot from
+`codex app-server generate-json-schema` (schema-snapshot.test.ts checks the
+methods the bridge uses), refresh `pnpm-lock.yaml`, and update
+`PINNED_CODEX_VERSION` in `bridge/app-server-protocol.ts`.
 
 ## The lockfile is committed
 

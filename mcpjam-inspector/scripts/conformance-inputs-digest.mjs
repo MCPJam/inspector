@@ -40,7 +40,6 @@ export const NOT_CONFORMANCE_INPUTS = Object.freeze([
   ".github/**",
   ".mcpjam/**",
   ".release-plan/**",
-  ".spike-codex-appserver/**",
   "*.md",
   "LICENSE",
   "railway.json",
