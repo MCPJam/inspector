@@ -330,7 +330,7 @@ describe("CodeEvaluatorsSection", () => {
     );
     expect(
       screen.getByText(
-        "Runs of this suite won't start while a code evaluator is Required, which needs grading set to Enforce. Make it Advisory to run the suite.",
+        "Make each Required code evaluator Advisory to run this suite. Required needs grading set to Enforce.",
       ),
     ).toBeInTheDocument();
   });
