@@ -3,7 +3,8 @@ import type { HostTerminalPresentation } from "./types";
 export const CLAUDE_CODE_TERMINAL: HostTerminalPresentation = {
   variant: "claude-code",
   prompt: "❯",
-  reply: "⏺",
+  // The filled circle is supported by the terminal monospace fallback.
+  reply: "●",
   tool: "└",
 };
 

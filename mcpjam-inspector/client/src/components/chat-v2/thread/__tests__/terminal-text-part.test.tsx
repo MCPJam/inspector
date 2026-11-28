@@ -6,7 +6,7 @@ import { TextPart } from "../parts/text-part";
 
 describe("terminal replies", () => {
   it.each([
-    ["claude-code", "claude-code", "⏺"],
+    ["claude-code", "claude-code", "●"],
     ["codex", "codex", "•"],
     ["codex-cli", "codex", "•"],
   ])(
@@ -70,6 +70,6 @@ describe("terminal replies", () => {
     expect(
       screen.getByText("AirPods").closest("[data-terminal-markdown]"),
     ).toBeNull();
-    expect(screen.queryByText("⏺")).not.toBeInTheDocument();
+    expect(screen.queryByText("●")).not.toBeInTheDocument();
   });
 });
