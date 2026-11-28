@@ -29,6 +29,8 @@ import {
 import { logger } from "../../logger.js";
 
 const ACTION_TIMEOUT_MS = 15_000;
+/** How long a control may take to render after the action that opens it. */
+const APPEAR_TIMEOUT_MS = 5_000;
 const READ_TIMEOUT_MS = 2_000;
 const VANISHED = /TimeoutError|Execution context was destroyed|frame was detached/;
 
@@ -165,7 +167,20 @@ export async function createPlaywrightDriver(
   const locate = (selector: string) => page.locator(selector).first();
   const act = async (selector: string, run: () => Promise<void>) => {
     stayOnSites();
-    if ((await page.locator(selector).count()) === 0) {
+    // A control a click just opened (a menu item, a dialog's button) renders
+    // a moment later, so it gets a short wait before it counts as missing.
+    const present = await locate(selector)
+      .waitFor({ state: "attached", timeout: APPEAR_TIMEOUT_MS })
+      .then(
+        () => true,
+        (error: unknown) => {
+          // Only the wait running out means missing; a selector that doesn't
+          // parse, or a page that closed, is the caller's failure as it was.
+          if (error instanceof Error && error.name === "TimeoutError") return false;
+          throw error;
+        },
+      );
+    if (!present) {
       throw new PageDriverError("not_found", `Nothing on the page matches ${selector}.`);
     }
     await run();

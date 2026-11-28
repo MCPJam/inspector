@@ -533,6 +533,32 @@ inChromium("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     },
   );
 
+  it("clicks a control that renders a moment after the click that opens it, and still reports one that never does", async () => {
+    const page = await newPage();
+    const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
+    await driver.navigate(`${vendor.url}/sign-in?as=runner@example.com`);
+    // A menu that renders its items a moment after it opens, as claude.ai's does.
+    await page.evaluate(() => {
+      setTimeout(() => {
+        const item = Object.assign(document.createElement("button"), {
+          id: "late",
+          textContent: "Add custom connector",
+          onclick: () => {
+            document.title = "opened";
+          },
+        });
+        document.body.append(item);
+      }, 500);
+    });
+    await driver.click("#late");
+    expect(await page.title()).toBe("opened");
+    await expect(driver.click("#never")).rejects.toMatchObject({ code: "not_found" });
+    // A selector that doesn't parse is still a driver failure, not a missing control.
+    const unparsed = await driver.click("role=button[").catch((error: unknown) => error);
+    expect(unparsed).toBeInstanceOf(Error);
+    expect(unparsed).not.toMatchObject({ code: "not_found" });
+  });
+
   it("stops a redirect off its sites before the other site gets the request", async () => {
     const page = await newPage();
     const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
