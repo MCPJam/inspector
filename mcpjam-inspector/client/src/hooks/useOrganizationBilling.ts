@@ -112,6 +112,8 @@ export interface OrganizationBillingStatus {
   billingConfigured: boolean;
   subscriptionStatus: string | null;
   canManageBilling: boolean;
+  /** Owners and admins. Absent from backends that predate it. */
+  canUpgradePlan?: boolean;
   canCancelScheduledBillingChange: boolean;
   isOwner: boolean;
   hasCustomer: boolean;
