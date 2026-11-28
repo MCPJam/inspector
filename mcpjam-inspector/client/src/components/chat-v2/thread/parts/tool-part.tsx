@@ -901,7 +901,10 @@ export function ToolPart({
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
           Error
         </div>
-        <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+        <div
+          data-ph-no-capture
+          className="ph-no-capture rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive"
+        >
           {errorText}
         </div>
       </div>

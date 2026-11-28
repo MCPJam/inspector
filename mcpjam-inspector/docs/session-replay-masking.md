@@ -40,7 +40,7 @@ telemetry exit, at every level, and never recorded at all. See
 | -------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
 | `off`    | Nothing. No recorder runs.                                         | Unchanged on an `off` surface; masked when the backend answered `off` |
 | `masked` | Layout and interaction only (see [Masked profile](#masked-profile)) | Element text and attributes masked; names scrubbed from URLs |
-| `full`   | Layout, interaction and interface text (`maskReplayTextFull`). Secret text is masked: annotated surfaces, `pre`, `code`, `textarea`, `.font-mono` and editable text. Credential URLs are scrubbed. Inputs, media and attributes are masked as at `masked`; network requests keep their path minus credentials | Unchanged                                            |
+| `full`   | Layout, interaction and interface text (`maskReplayTextFull`). Secret text is masked: annotated surfaces (chat messages, model replies and tool results among them), `pre`, `code`, `textarea`, `.font-mono` and editable text. Credential URLs are scrubbed. Inputs, media and attributes are masked as at `masked`; network requests keep their path minus credentials | Unchanged                                            |
 
 ## Who gets which level
 
@@ -511,6 +511,11 @@ material.
   traces and the logger.
 - `client/src/components/evals/copyable-code-block.tsx`: the `sensitive` prop.
 - `client/src/components/billing/PaymentsHistorySection.tsx`: invoice links.
+- `client/src/components/chat-v2/thread/parts/text-part.tsx` (through
+  `MemoizedMarkdown`'s `hideFromReplay`): the text of user messages, model
+  replies and plain-text tool results in chat, the Playground and Ask MCPJam.
+- `client/src/components/chat-v2/thread/parts/tool-part.tsx`: a tool call's
+  error text. Tool names, headers and buttons around it stay recorded.
 
 ## Two recorders, one boundary
 
