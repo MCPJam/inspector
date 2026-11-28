@@ -1,16 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   autoOAuthEscalation,
-  confirmAutoOAuthEscalation,
   type AutoEscalationIdentity,
 } from "../auto-oauth-escalation";
-import { toast } from "@/lib/toast";
-
-vi.mock("@/lib/toast", () => ({
-  toast: vi.fn(),
-}));
-
-const toastMock = vi.mocked(toast);
 
 const asana: AutoEscalationIdentity = {
   projectId: "project-1",
@@ -22,7 +14,6 @@ describe("autoOAuthEscalation marker lifecycle", () => {
   beforeEach(() => {
     sessionStorage.clear();
     vi.restoreAllMocks();
-    toastMock.mockReset();
   });
 
   it("markPending → hasPendingAttempt; succeeded and failed both clear", () => {
@@ -102,58 +93,5 @@ describe("autoOAuthEscalation marker lifecycle", () => {
     expect(autoOAuthEscalation.hasPendingAttempt(asana)).toBe(false);
     autoOAuthEscalation.markPending(asana);
     expect(autoOAuthEscalation.hasPendingAttempt(asana)).toBe(true);
-  });
-});
-
-describe("confirmAutoOAuthEscalation", () => {
-  beforeEach(() => {
-    toastMock.mockReset();
-  });
-
-  function capturedToastOptions() {
-    expect(toastMock).toHaveBeenCalledTimes(1);
-    return toastMock.mock.calls[0][1] as {
-      action: { onClick: () => void };
-      cancel: { onClick: () => void };
-      onDismiss: () => void;
-      onAutoClose: () => void;
-      duration: number;
-    };
-  }
-
-  it("resolves true when the user continues", async () => {
-    const promise = confirmAutoOAuthEscalation("Asana");
-    expect(toastMock).toHaveBeenCalledWith(
-      'Authorize "Asana"?',
-      expect.objectContaining({
-        duration: Infinity,
-        action: expect.objectContaining({ label: "Continue" }),
-        cancel: expect.objectContaining({ label: "Not now" }),
-      }),
-    );
-    expect(capturedToastOptions()).not.toHaveProperty("description");
-    capturedToastOptions().action.onClick();
-    await expect(promise).resolves.toBe(true);
-  });
-
-  it("resolves false on cancel", async () => {
-    const promise = confirmAutoOAuthEscalation("Asana");
-    capturedToastOptions().cancel.onClick();
-    await expect(promise).resolves.toBe(false);
-  });
-
-  it("treats dismissal as not-now", async () => {
-    const promise = confirmAutoOAuthEscalation("Asana");
-    capturedToastOptions().onDismiss();
-    await expect(promise).resolves.toBe(false);
-  });
-
-  it("settles exactly once — a late dismiss cannot flip a confirm", async () => {
-    const promise = confirmAutoOAuthEscalation("Asana");
-    const options = capturedToastOptions();
-    options.action.onClick();
-    options.onDismiss();
-    options.cancel.onClick();
-    await expect(promise).resolves.toBe(true);
   });
 });

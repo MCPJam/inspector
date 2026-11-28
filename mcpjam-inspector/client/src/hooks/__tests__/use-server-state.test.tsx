@@ -21,6 +21,7 @@ import { useClientConfigStore } from "@/stores/client-config-store";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { authFetch } from "@/lib/session-token";
 import { readCliSignInReturnPath } from "@/lib/cli-signin-return-path";
+import { useAutoOAuthAuthorizationStore } from "@/lib/oauth/auto-oauth-escalation";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
 import {
   captureOAuthCallbackFromUrl,
@@ -4272,6 +4273,128 @@ describe("useServerState auth mode regressions", () => {
     unmount();
   });
 
+  it("cancels a pending Auto authorization when the server disconnects", async () => {
+    const { deleteServer } = await import("@/state/mcp-api");
+    vi.mocked(deleteServer).mockResolvedValue({ success: true });
+    testConnectionMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+    let connect: Promise<void> | undefined;
+    act(() => {
+      connect = result.current.handleConnect({
+        name: "auto-server",
+        type: "http",
+        url: "https://auto.example.com/mcp",
+        useOAuth: true,
+        authMethod: "auto",
+      });
+    });
+    await waitFor(() => {
+      expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(1);
+    });
+
+    await act(async () => {
+      await result.current.handleDisconnect("auto-server");
+      await connect;
+    });
+
+    expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(0);
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CONNECT_FAILURE" }),
+    );
+  });
+
+  it("does not ask for Auto authorization when a probe finishes after unmount", async () => {
+    type ProbeResult = {
+      success: false;
+      error: string;
+      oauthRequired: true;
+    };
+    let resolveProbe!: (result: ProbeResult) => void;
+    reconnectServerMock.mockReturnValueOnce(
+      new Promise<ProbeResult>((resolve) => {
+        resolveProbe = resolve;
+      }),
+    );
+    const appState = createAppState();
+    appState.projects.default.servers["demo-server"].authMethod = "auto";
+    const { result, unmount } = renderUseServerState(vi.fn(), appState);
+
+    let reconnect:
+      | ReturnType<typeof result.current.reconnectServerWithResult>
+      | undefined;
+    act(() => {
+      reconnect = result.current.reconnectServerWithResult("demo-server");
+    });
+    await waitFor(() => expect(reconnectServerMock).toHaveBeenCalledOnce());
+
+    unmount();
+    await act(async () => {
+      resolveProbe({
+        success: false,
+        error: "Authorization required",
+        oauthRequired: true,
+      });
+    });
+
+    expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(0);
+    await expect(reconnect).resolves.toMatchObject({ status: "superseded" });
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels Auto authorization only when the displayed server disappears from the catalog", async () => {
+    reconnectServerMock.mockResolvedValueOnce({
+      success: false,
+      error: "Authorization required",
+      oauthRequired: true,
+    });
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    appState.projects.default.servers["demo-server"].authMethod = "auto";
+    const server = {
+      _id: "srv_demo",
+      name: "demo-server",
+      projectId: "project_default",
+    };
+    const sibling = { ...server, _id: "srv_sibling", projectId: "project_sibling" };
+    const options = {
+      activeProjectServersFlat: [sibling, server],
+    };
+    const dispatch = vi.fn();
+    const { result, rerender } = renderUseServerState(
+      dispatch,
+      appState,
+      options,
+    );
+    let reconnect:
+      | ReturnType<typeof result.current.reconnectServerWithResult>
+      | undefined;
+    act(() => {
+      reconnect = result.current.reconnectServerWithResult("demo-server");
+    });
+    await waitFor(() => {
+      expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(1);
+    });
+
+    options.activeProjectServersFlat = [server];
+    rerender();
+    expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(1);
+
+    options.activeProjectServersFlat = [sibling, server];
+    rerender();
+    options.activeProjectServersFlat = [sibling];
+    rerender();
+
+    expect(useAutoOAuthAuthorizationStore.getState().queue).toHaveLength(0);
+    await expect(reconnect).resolves.toMatchObject({ status: "superseded" });
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+  });
+
   it("lets an inline surface own Auto's OAuth authorization prompt", async () => {
     testConnectionMock.mockResolvedValueOnce({
       success: false,
@@ -6868,4 +6991,3 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
     expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 });
-

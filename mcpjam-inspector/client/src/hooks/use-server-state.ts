@@ -81,7 +81,6 @@ import {
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
   autoOAuthEscalation,
-  confirmAutoOAuthEscalation,
   type AutoEscalationIdentity,
 } from "@/lib/oauth/auto-oauth-escalation";
 import {
@@ -128,6 +127,7 @@ import {
 import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
+import { useServerConnectionOperations } from "./use-server-connection-operations";
 import { indexProjectServersByName } from "@/lib/project-servers-by-name";
 import { writeCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 import {
@@ -1018,7 +1018,12 @@ export function useServerState({
   }
 
   const oauthCallbackHandledRef = useRef(new Set<string>());
-  const opTokenRef = useRef<Map<string, number>>(new Map());
+  const { getOpToken, nextOpToken, isStaleOp, requestAutoOAuthAuthorization } =
+    useServerConnectionOperations(
+      effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ??
+        effectiveActiveProjectId,
+      activeProjectServersFlat,
+    );
   // The op token each project's server was removed at. A connect holding that
   // token deletes the row its in-flight save creates, which the removal missed.
   // A later connect for it clears that: both saves land on one row.
@@ -1027,7 +1032,7 @@ export function useServerState({
   useEffect(
     () =>
       serverCheckQueue.onCancel((_projectId, name) => {
-        opTokenRef.current.set(name, (opTokenRef.current.get(name) ?? 0) + 1);
+        nextOpToken(name);
         const currentScope = tryResolveProjectServer(name);
         if (currentScope?.projectId === _projectId)
           dispatch({
@@ -1036,14 +1041,8 @@ export function useServerState({
             wasConnected: checkWasConnectedRef.current.get(name) ?? false,
           });
       }),
-    [dispatch],
+    [dispatch, nextOpToken],
   );
-  const nextOpToken = (name: string) => {
-    const current = opTokenRef.current.get(name) ?? 0;
-    const next = current + 1;
-    opTokenRef.current.set(name, next);
-    return next;
-  };
 
   const failPendingOAuthConnection = useCallback(
     (errorMessage: string, oauthTrace?: OAuthTrace) => {
@@ -1123,8 +1122,6 @@ export function useServerState({
     },
     [dispatch],
   );
-  const isStaleOp = (name: string, token: number) =>
-    (opTokenRef.current.get(name) ?? 0) !== token;
 
   // Pins the org/project/server the OAuth flow starts from so the callback
   // can write back to the same rows. Written in BOTH hosted and local modes:
@@ -3026,6 +3023,8 @@ export function useServerState({
     activeHostConfig,
     dispatch,
     guardedReconnectServer,
+    isStaleOp,
+    nextOpToken,
     storeInitInfo,
   ]);
 
@@ -4208,9 +4207,9 @@ export function useServerState({
               showConnectionError(errorMessage);
               return;
             }
-            const requestOAuthAuthorization =
-              options?.requestOAuthAuthorization ?? confirmAutoOAuthEscalation;
-            const proceed = await requestOAuthAuthorization(formData.name);
+            const proceed = options?.requestOAuthAuthorization
+              ? await options.requestOAuthAuthorization(formData.name)
+              : await requestAutoOAuthAuthorization(formData.name, token);
             if (isStaleOp(formData.name, token)) return;
             if (!proceed) {
               failWithoutEscalation(
@@ -4626,6 +4625,9 @@ export function useServerState({
       guardedTestConnection,
       updateServerOAuthTrace,
       withProjectConnectionDefaults,
+      isStaleOp,
+      nextOpToken,
+      requestAutoOAuthAuthorization,
     ],
   );
 
@@ -5126,6 +5128,8 @@ export function useServerState({
       withProjectConnectionDefaults,
       convexUpdateServer,
       convex,
+      isStaleOp,
+      nextOpToken,
     ],
   );
 
@@ -5505,7 +5509,7 @@ export function useServerState({
         });
       }
     },
-    [clearAutoOAuthEscalation, dispatch, logger],
+    [clearAutoOAuthEscalation, dispatch, logger, nextOpToken],
   );
 
   // Runtime-only counterpart to `handleDisconnect`. Just flips the in-memory
@@ -5530,7 +5534,7 @@ export function useServerState({
       }
       dispatch({ type: "DISCONNECT", name: serverName });
     },
-    [clearAutoOAuthEscalation, dispatch],
+    [clearAutoOAuthEscalation, dispatch, nextOpToken],
   );
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
@@ -5557,7 +5561,7 @@ export function useServerState({
       if (options?.removeFromCloud !== false) {
         removedAtOpTokenRef.current.set(
           `${effectiveActiveProjectIdRef.current}:${serverName}`,
-          opTokenRef.current.get(serverName) ?? 0,
+          getOpToken(serverName),
         );
       }
       await handleDisconnect(serverName);
@@ -5571,6 +5575,7 @@ export function useServerState({
     [
       logger,
       handleDisconnect,
+      getOpToken,
       cleanupServerLocalArtifacts,
       dispatch,
       removeServerFromStateAndCloud,
@@ -6100,7 +6105,7 @@ export function useServerState({
             "reauth",
           );
         }
-        const proceed = await confirmAutoOAuthEscalation(serverName);
+        const proceed = await requestAutoOAuthAuthorization(serverName, token);
         // A newer op superseded this one while the prompt sat open — don't
         // write ITS marker state (that would poison the newer attempt).
         if (isStaleOp(serverName, token)) {
@@ -6413,6 +6418,9 @@ export function useServerState({
       mergeWithProjectHeaders,
       updateServerOAuthTrace,
       withProjectConnectionDefaults,
+      isStaleOp,
+      nextOpToken,
+      requestAutoOAuthAuthorization,
     ],
   );
 

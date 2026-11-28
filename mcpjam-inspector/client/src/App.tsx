@@ -34,6 +34,7 @@ import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
 import { ReturningGuestDialog } from "./components/auth/returning-guest-prompt";
 import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
+import { AutoOAuthAuthorizationDialog } from "./components/connection/AutoOAuthAuthorizationDialog";
 import { LauncherProjectChoiceDialog } from "./components/connection/LauncherProjectChoiceDialog";
 import { useLauncherAttach } from "./hooks/use-launcher-attach";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
@@ -6914,6 +6915,7 @@ export default function App() {
             <PlanLimitDialog />
             <AccountCreatedToast />
             <StdioCommandApprovalDialog />
+            <AutoOAuthAuthorizationDialog />
             <LauncherProjectChoiceDialog />
             <UnavailableOrganizationDialog
               isAuthenticated={isAuthenticated}

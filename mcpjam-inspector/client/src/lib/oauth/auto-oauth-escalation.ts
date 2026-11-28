@@ -1,4 +1,5 @@
-import { toast } from "@/lib/toast";
+import { create } from "zustand";
+import { track } from "@/lib/analytics";
 
 /**
  * Session-scoped lifecycle for Auto's OAuth escalation (spec: clients SHOULD
@@ -91,36 +92,92 @@ export const autoOAuthEscalation = {
   },
 };
 
-/**
- * Confirm-before-redirect for Auto's OAuth escalation: the user picked
- * "Auto", not "OAuth", so a surprise `window.location.assign` mid-connect
- * reads as a bug. Uses the app's persistent-toast pattern (same shape as the
- * connect-failure "Open XAA Debugger" action) rather than a blocking modal.
- * Resolves exactly once; dismissal counts as "not now".
- */
+interface AuthorizationPrompt {
+  id: string;
+  serverName: string;
+  resolve: (confirmed: boolean) => void;
+}
+
+type AuthorizationDecision = "continue" | "not_now" | "dismiss";
+
+interface AuthorizationPromptState {
+  queue: AuthorizationPrompt[];
+  shownPromptId: string | null;
+  request: (serverName: string, signal?: AbortSignal) => Promise<boolean>;
+  markShown: (id: string) => void;
+  settle: (id: string, decision: AuthorizationDecision) => void;
+}
+
+const promptLocation = "auto_oauth_authorization_dialog";
+
+export const useAutoOAuthAuthorizationStore = create<AuthorizationPromptState>(
+  (set, get) => {
+    const finish = (id: string, decision: AuthorizationDecision | "superseded") => {
+      const { queue, shownPromptId } = get();
+      const prompt = queue.find((entry) => entry.id === id);
+      if (!prompt) return;
+      const shown = shownPromptId === id;
+      set({
+        queue: queue.filter((entry) => entry !== prompt),
+        shownPromptId: shown ? null : shownPromptId,
+      });
+      if (shown) {
+        track("server_auto_oauth_prompt_resolved", {
+          location: promptLocation,
+          prompt_id: id,
+          decision,
+        });
+      }
+      prompt.resolve(decision === "continue");
+    };
+    return {
+      queue: [],
+      shownPromptId: null,
+      request: (serverName, signal) =>
+        new Promise<boolean>((resolve) => {
+          if (signal?.aborted) {
+            resolve(false);
+            return;
+          }
+          const id = Array.from(
+            crypto.getRandomValues(new Uint8Array(16)),
+            (byte) => byte.toString(16).padStart(2, "0"),
+          ).join("");
+          const cancel = () => finish(id, "superseded");
+          const prompt: AuthorizationPrompt = {
+            id,
+            serverName,
+            resolve: (confirmed) => {
+              signal?.removeEventListener("abort", cancel);
+              resolve(confirmed);
+            },
+          };
+          signal?.addEventListener("abort", cancel, { once: true });
+          set(({ queue }) => ({
+            queue: [...queue, prompt],
+          }));
+        }),
+      markShown: (id) => {
+        const { queue, shownPromptId } = get();
+        if (queue[0]?.id !== id || shownPromptId === id) return;
+        set({ shownPromptId: id });
+        track("server_auto_oauth_prompt_shown", {
+          location: promptLocation,
+          prompt_id: id,
+        });
+      },
+      settle: (id, decision) => {
+        // A dialog's close event may follow its confirm click.
+        if (get().queue[0]?.id === id) finish(id, decision);
+      },
+    };
+  },
+);
+
+/** Ask before redirecting a connection configured with Auto authentication. */
 export function confirmAutoOAuthEscalation(
   serverName: string,
+  signal?: AbortSignal,
 ): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const settle = (value: boolean) => {
-      if (!settled) {
-        settled = true;
-        resolve(value);
-      }
-    };
-    toast(`Authorize "${serverName}"?`, {
-      duration: Infinity,
-      action: {
-        label: "Continue",
-        onClick: () => settle(true),
-      },
-      cancel: {
-        label: "Not now",
-        onClick: () => settle(false),
-      },
-      onDismiss: () => settle(false),
-      onAutoClose: () => settle(false),
-    });
-  });
+  return useAutoOAuthAuthorizationStore.getState().request(serverName, signal);
 }

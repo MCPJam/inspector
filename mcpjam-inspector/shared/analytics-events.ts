@@ -560,6 +560,15 @@ export const ANALYTICS_EVENTS = {
   save_api_key: { source: "client" },
   save_tool_button_clicked: { source: "client" },
   saved_request_item_loaded: { source: "client" },
+  // One impression per visible Auto OAuth dialog. Both events carry
+  // location (auto_oauth_authorization_dialog) and prompt_id (hashed by the
+  // relay). The event properties exclude server names, URLs, and credentials.
+  server_auto_oauth_prompt_shown: { source: "client" },
+  // At most one resolution per impression. decision is continue, not_now,
+  // dismiss (Escape), or superseded (Inspector canceled the attempt).
+  // Join on prompt_id and count impressions without a resolution within
+  // 30 minutes as unanswered. Report dismiss and superseded separately.
+  server_auto_oauth_prompt_resolved: { source: "client" },
   server_card_clicked: { source: "client" },
   // How a connect, reconnect or OAuth completion ended — one per attempt, from
   // `lib/connect-outcome-telemetry.ts`. Props: outcome (success | failure |

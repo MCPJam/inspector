@@ -4,6 +4,7 @@ import {
   telemetryRouteTemplate,
 } from "../strict-posthog";
 import { applyEventPolicy } from "../../server/routes/relay-privacy";
+import { relayPromptId } from "../../server/routes/relay-event-metadata";
 import {
   CONSERVATIVE_TELEMETRY_POLICY,
   FULL_TELEMETRY_POLICY,
@@ -31,6 +32,59 @@ const product = {
 };
 
 describe("strict PostHog reconstruction", () => {
+  it.each(["not_now", "superseded"])("joins Auto OAuth %s events across policies without forwarding caller data", (decisionValue) => {
+    const promptId = "00112233445566778899aabbccddeeff";
+    const properties = {
+      location: "auto_oauth_authorization_dialog",
+      prompt_id: promptId,
+      server_name: secret,
+      server_url: secret,
+    };
+    const shown = {
+      ...product,
+      event: "server_auto_oauth_prompt_shown",
+      properties,
+    };
+    const resolved = {
+      ...product,
+      event: "server_auto_oauth_prompt_resolved",
+      properties: { ...properties, decision: decisionValue },
+    };
+    const impression = applyEventPolicy(
+      shown,
+      CONSERVATIVE_TELEMETRY_POLICY,
+      null,
+    );
+    const decision = applyEventPolicy(resolved, FULL_TELEMETRY_POLICY, null);
+    const forwardedId = relayPromptId(promptId);
+
+    expect(forwardedId).toMatch(/^[0-9a-f]{32}$/);
+    expect(forwardedId).not.toBe(promptId);
+    expect(impression).toMatchObject({
+      event: shown.event,
+      properties: { location: properties.location, prompt_id: forwardedId },
+    });
+    expect(decision).toMatchObject({
+      event: resolved.event,
+      properties: { prompt_id: forwardedId, decision: decisionValue },
+    });
+    expect(JSON.stringify([impression, decision])).not.toContain("SENTINEL");
+    expect(
+      applyEventPolicy(
+        { ...shown, properties: { ...properties, prompt_id: secret } },
+        CONSERVATIVE_TELEMETRY_POLICY,
+        null,
+      ),
+    ).toBeNull();
+    expect(
+      applyEventPolicy(
+        { ...resolved, properties: { ...properties, decision: secret } },
+        FULL_TELEMETRY_POLICY,
+        null,
+      ),
+    ).toBeNull();
+  });
+
   it.each([CONSERVATIVE_TELEMETRY_POLICY, FULL_TELEMETRY_POLICY])(
     "forwards only the allowed webhook receiver fields under $content policy",
     (policy) => {

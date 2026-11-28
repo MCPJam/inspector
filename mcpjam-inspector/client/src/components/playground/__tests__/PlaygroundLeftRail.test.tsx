@@ -10,6 +10,8 @@ import {
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { track } from "@/lib/analytics";
+import { confirmAutoOAuthEscalation } from "@/lib/oauth/auto-oauth-escalation";
+import { AutoOAuthAuthorizationDialog } from "@/components/connection/AutoOAuthAuthorizationDialog";
 import type { ServerFormData } from "@/shared/types";
 import { PlaygroundLeftRail } from "../PlaygroundLeftRail";
 import { useComparePaneStore } from "@/stores/compare-pane-store";
@@ -369,6 +371,46 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /check that the server is running and try again/i,
+    );
+    expect(
+      screen.getByRole("button", { name: "Connect stateless-mcp" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps the server search, focus, and connection result when OAuth is declined", async () => {
+    const user = userEvent.setup();
+    withSavedServer();
+    playgroundState.ensureServersReady.mockImplementationOnce(async () => {
+      await confirmAutoOAuthEscalation("stateless-mcp");
+      return {
+        readyServerNames: [],
+        failedServerNames: ["stateless-mcp"],
+        missingServerNames: [],
+        reauthServerNames: [],
+      };
+    });
+    render(
+      <>
+        <PlaygroundLeftRail />
+        <AutoOAuthAuthorizationDialog />
+      </>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Connect a server" }));
+    await user.type(screen.getByRole("searchbox"), "stateless");
+    await user.click(
+      screen.getByRole("button", { name: "Connect stateless-mcp" }),
+    );
+    expect(screen.getByRole("alertdialog")).toHaveAccessibleName(
+      'Authorize "stateless-mcp"?',
+    );
+    await user.click(screen.getByRole("button", { name: "Not now" }));
+
+    const search = screen.getByRole("searchbox");
+    expect(search).toHaveValue("stateless");
+    await waitFor(() => expect(search).toHaveFocus());
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not connect to stateless-mcp.",
     );
     expect(
       screen.getByRole("button", { name: "Connect stateless-mcp" }),

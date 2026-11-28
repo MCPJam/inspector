@@ -21,6 +21,9 @@ const GITHUB_STAR_PROMPT = {
   reason: ["completed", "return_visit"],
   has_advice: "boolean",
 } as const satisfies Record<string, Rule>;
+const AUTO_OAUTH_PROMPT = {
+  location: ["auto_oauth_authorization_dialog"],
+} as const satisfies Record<string, Rule>;
 
 /** The largest value a `"count"` field keeps; anything above it is dropped. */
 export const STRICT_COUNT_MAX = 1_000_000;
@@ -117,17 +120,31 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     close_reason: ["not_now", "dismiss"],
   },
   github_star_button_clicked: { location: ["header", "settings"] },
+  server_auto_oauth_prompt_shown: AUTO_OAUTH_PROMPT,
+  server_auto_oauth_prompt_resolved: {
+    ...AUTO_OAUTH_PROMPT,
+    decision: ["continue", "not_now", "dismiss", "superseded"],
+  },
   $pageview: {},
   $pageleave: {},
 };
 
-/** Feature-health outcomes: every listed property must be present and valid. */
-const OUTCOME_EVENTS: ReadonlySet<string> = new Set([
+/** Counted signals whose listed properties must all be present and valid. */
+const REQUIRED_PROPERTY_EVENTS: ReadonlySet<string> = new Set([
   "extension_launch_completed",
   "extension_operation_completed",
   "local_webhook_receiver_selected",
   "local_webhook_receiver_failed",
+  "server_auto_oauth_prompt_shown",
+  "server_auto_oauth_prompt_resolved",
 ]);
+
+export function isAutoOAuthPromptEvent(event: unknown): boolean {
+  return (
+    event === "server_auto_oauth_prompt_shown" ||
+    event === "server_auto_oauth_prompt_resolved"
+  );
+}
 
 export function telemetryRouteTemplate(value: unknown): string {
   if (typeof value !== "string") return "/:path";
@@ -144,7 +161,7 @@ export function telemetryRouteTemplate(value: unknown): string {
 export function rebuildStrictPostHogEvent(
   value: unknown,
   actorId?: string,
-): Record<string, unknown> | null {
+): { event: string; properties: Record<string, unknown> } | null {
   if (typeof value !== "object" || value === null) return null;
   const event = value as Record<string, unknown>;
   if (typeof event.event !== "string" || !Object.hasOwn(CATALOG, event.event))
@@ -153,8 +170,8 @@ export function rebuildStrictPostHogEvent(
     typeof event.properties === "object" && event.properties !== null
       ? (event.properties as Record<string, unknown>)
       : {};
-  // An incomplete outcome would count as a successful attempt in the monitor.
-  if (OUTCOME_EVENTS.has(event.event) &&
+  // Incomplete events would skew counts in the monitor.
+  if (REQUIRED_PROPERTY_EVENTS.has(event.event) &&
       Object.entries(CATALOG[event.event]).some(([key, rule]) => {
         const candidate = source[key];
         return typeof rule !== "string" &&
