@@ -10,6 +10,7 @@ import {
   useScenarioHostTheme,
 } from "@/contexts/scenario-client-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { usePlaygroundTerminalPresentation } from "@/contexts/playground-terminal-presentation";
 import { getScenarioHostFamily } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,23 @@ export function UserMessageBubble({
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
   const resolvedThemeMode = scenarioHostTheme ?? globalThemeMode;
   const isDarkScenarioTheme = resolvedThemeMode === "dark";
+  const terminal = usePlaygroundTerminalPresentation();
+  if (terminal) {
+    return (
+      <div
+        data-terminal-client={terminal.variant}
+        className={cn(
+          "flex max-h-[70vh] w-full min-w-0 gap-2 overflow-auto overscroll-contain bg-muted px-2 py-1.5 font-mono text-[13px] leading-5 text-foreground",
+          className,
+        )}
+      >
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground">
+          {terminal.prompt}
+        </span>
+        <div className="min-w-0 flex-1 space-y-3">{children}</div>
+      </div>
+    );
+  }
   const scenarioHostFamily = getScenarioHostFamily(scenarioHostStyle);
   const bubbleClasses =
     scenarioHostFamily === "chatgpt"

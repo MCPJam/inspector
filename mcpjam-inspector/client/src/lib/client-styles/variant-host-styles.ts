@@ -37,6 +37,7 @@ import { ClaudeCodeCliIndicator } from "./indicators/claude-code-cli";
 import { ChatGptDotIndicator } from "./indicators/chatgpt-dot";
 import { CodexShineIndicator } from "./indicators/codex-shine";
 import { MCPJamMarkIndicator } from "./indicators/mcpjam-mark";
+import { CODEX_TERMINAL } from "./terminal-presentations";
 import type { HostStyleDefinition } from "./types";
 import { HOST_STYLE_CAPABILITIES } from "@/shared/host-style-capabilities";
 import {
@@ -186,6 +187,7 @@ export const CODEX_CLI_HOST_STYLE: HostStyleDefinition = {
     pickerDescription: "OpenAI Codex in a terminal",
     logoSrc: codexLogo,
     family: "chatgpt",
+    terminal: CODEX_TERMINAL,
     resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
     loadingIndicator: CodexShineIndicator,
   },

@@ -245,6 +245,8 @@ export interface HostChatUi {
   logoSrcByTheme?: Record<HostThemeMode, string>;
   /** Visual rendering family this host maps onto. */
   family: HostStyleFamily;
+  /** Terminal presentation for a CLI preset. */
+  terminal?: HostTerminalPresentation;
   resolveChatBackground: (theme: HostThemeMode) => string;
   /**
    * Brand thinking/loading indicator. Honors `prefers-reduced-motion`
@@ -252,6 +254,13 @@ export interface HostChatUi {
    * mode prop so adding a new host stays "register one component."
    */
   loadingIndicator: ComponentType<{ className?: string }>;
+}
+
+export interface HostTerminalPresentation {
+  variant: "claude-code" | "codex";
+  prompt: string;
+  reply: string;
+  tool: string;
 }
 
 /**

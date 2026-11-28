@@ -115,6 +115,7 @@ import {
   useScenarioHostStyle,
   useScenarioHostTheme,
 } from "@/contexts/scenario-client-style-context";
+import { usePlaygroundTerminalPresentation } from "@/contexts/playground-terminal-presentation";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   Popover,
@@ -342,6 +343,8 @@ interface ChatInputProps {
   enableMultiModel?: boolean;
   /** Playground-only: renders a client chip beside the model chip. */
   clientSelector?: ClientSelectorData;
+  /** The compare composer sends to multiple clients with their own styles. */
+  sharedClientComposer?: boolean;
   /**
    * Where this turn's Claude Code agent runs, as a chip in the toolbar.
    *
@@ -523,6 +526,7 @@ export function ChatInput({
   onMultiModelEnabledChange,
   enableMultiModel = false,
   clientSelector,
+  sharedClientComposer = false,
   executionTarget,
   systemPrompt,
   onSystemPromptChange,
@@ -625,6 +629,7 @@ export function ChatInput({
     [clientSelector?.cloudProjectId, skillsEnabled],
   );
   const scenarioHostStyle = useScenarioHostStyle();
+  const terminalPresentation = usePlaygroundTerminalPresentation();
   const scenarioHostTheme = useScenarioHostTheme();
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
   const resolvedThemeMode = scenarioHostTheme ?? globalThemeMode;
@@ -1635,10 +1640,14 @@ export function ChatInput({
     );
   };
 
-  const scenarioHostFamily = getScenarioHostFamily(scenarioHostStyle);
+  const composerHostStyle =
+    sharedClientComposer && terminalPresentation ? null : scenarioHostStyle;
+  const scenarioHostFamily = getScenarioHostFamily(composerHostStyle);
+  const terminal = sharedClientComposer ? undefined : terminalPresentation;
   const composerClasses = hostComposerClasses(
-    scenarioHostStyle,
+    composerHostStyle,
     isDarkScenarioTheme,
+    terminal?.variant,
   );
   const activeSubmitButtonClasses =
     scenarioHostFamily === "chatgpt"
@@ -1876,32 +1885,45 @@ export function ChatInput({
               </div>
             )}
 
-          <TextareaAutosize
-            ref={textareaRef}
-            data-chat-composer-input=""
-            value={textareaDisplayValue}
-            onChange={(e) => {
-              if (voiceInputState !== "idle") return;
-              onChange(e.target.value);
-              setCaretIndex(e.target.selectionStart);
-            }}
-            onPaste={handlePaste}
-            onKeyDown={handleKeyDown}
-            onKeyUp={(e) => setCaretIndex(e.currentTarget.selectionStart)}
-            placeholder={placeholder}
-            disabled={disabled && voiceInputState === "idle"}
-            readOnly={disabled || voiceInputState !== "idle"}
-            minRows={2}
-            maxRows={4}
-            className={cn(
-              "min-h-[64px] w-full resize-none overflow-y-auto overscroll-contain border-none bg-transparent dark:bg-transparent px-4",
-              "pt-2 pb-3 text-base text-foreground placeholder:text-muted-foreground/70",
-              "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
-              voiceInputState === "recording" && "italic text-muted-foreground",
-              disabled ? "cursor-not-allowed text-muted-foreground" : "",
+          <div className={terminal ? "relative" : "contents"}>
+            {terminal && (
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute left-2 top-2 font-mono text-[13px] leading-5 text-muted-foreground"
+              >
+                {terminal.prompt}
+              </span>
             )}
-            autoFocus={!disabled}
-          />
+            <TextareaAutosize
+              ref={textareaRef}
+              data-chat-composer-input=""
+              value={textareaDisplayValue}
+              onChange={(e) => {
+                if (voiceInputState !== "idle") return;
+                onChange(e.target.value);
+                setCaretIndex(e.target.selectionStart);
+              }}
+              onPaste={handlePaste}
+              onKeyDown={handleKeyDown}
+              onKeyUp={(e) => setCaretIndex(e.currentTarget.selectionStart)}
+              placeholder={placeholder}
+              disabled={disabled && voiceInputState === "idle"}
+              readOnly={disabled || voiceInputState !== "idle"}
+              minRows={terminal ? 1 : 2}
+              maxRows={4}
+              className={cn(
+                "w-full resize-none overflow-y-auto overscroll-contain border-none bg-transparent dark:bg-transparent",
+                "pt-2 text-foreground placeholder:text-muted-foreground/70",
+                terminal
+                  ? "min-h-0 pb-2 pl-7 pr-2 font-mono text-[13px] leading-5 md:text-[13px]"
+                  : "min-h-[64px] px-4 pb-3 text-base",
+                "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
+                voiceInputState === "recording" && "italic text-muted-foreground",
+                disabled ? "cursor-not-allowed text-muted-foreground" : "",
+              )}
+              autoFocus={!disabled}
+            />
+          </div>
 
           <div className="@container/toolbar flex items-center justify-between gap-2 px-2 min-w-0">
             <div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">

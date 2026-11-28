@@ -82,6 +82,7 @@ import { PerplexityMarkIndicator } from "./indicators/perplexity-mark";
 import { ClineMarkIndicator } from "./indicators/cline-mark";
 import { NotionShimmerIndicator } from "./indicators/notion-shimmer";
 import { MistralSpinnerIndicator } from "./indicators/mistral-spinner";
+import { CLAUDE_CODE_TERMINAL, CODEX_TERMINAL } from "./terminal-presentations";
 import type { HostStyleDefinition, HostThemeMode } from "./types";
 import { HOST_STYLE_CAPABILITIES } from "@/shared/host-style-capabilities";
 import {
@@ -221,6 +222,7 @@ export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
     pickerDescription: "Anthropic Claude Code CLI chrome",
     logoSrc: claudeCodeLogo,
     family: "claude",
+    terminal: CLAUDE_CODE_TERMINAL,
     resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
     loadingIndicator: ClaudeCodeCliIndicator,
   },
@@ -447,21 +449,13 @@ export const COPILOT_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
- * OpenAI Codex host style. Codex itself is a CLI tool (no widget
- * rendering — see the Codex catalog host definition, which
- * advertises `elicitation`-only client capabilities), so this entry is
- * a playground stand-in rather than a faithful clone of a real Codex
- * surface. We mirror ChatGPT's MCP profile because Codex is OpenAI-
- * flavored: if a widget ever did land in a Codex-adjacent surface, the
- * OpenAI Apps SDK is the right protocol bucket. In practice the `mcp`
- * blob is unread (real Codex never renders an iframe).
+ * Codex is a CLI without a widget surface. We mirror ChatGPT's MCP profile
+ * because the OpenAI Apps SDK would be the right protocol for a Codex-adjacent
+ * widget surface. Codex itself never renders an iframe, so its widget profile
+ * is unused in practice.
  *
- * Chat surface reuses ChatGPT's `#212121` dark / white light colors
- * verbatim — Codex doesn't have its own published chat chrome to copy,
- * and ChatGPT's neutral palette is the closest analog to a terminal-
- * adjacent OpenAI tool. The loading indicator is the shimmering
- * "Thinking" treatment (`CodexShineIndicator`), which shares CSS with
- * Cursor's shine via a multi-selector rule in `index.css`.
+ * Codex's terminal presentation uses ChatGPT's neutral light/dark palette.
+ * Its shimmering activity indicator shares CSS with Cursor.
  */
 export const CODEX_HOST_STYLE: HostStyleDefinition = {
   id: "codex",
@@ -481,6 +475,7 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
     pickerDescription: "OpenAI Codex CLI-style chrome",
     logoSrc: codexLogo,
     family: "chatgpt",
+    terminal: CODEX_TERMINAL,
     resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
     loadingIndicator: CodexShineIndicator,
   },

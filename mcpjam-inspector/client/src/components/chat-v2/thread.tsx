@@ -14,6 +14,7 @@ import {
   useScenarioHostStyle,
   useScenarioHostTheme,
 } from "@/contexts/scenario-client-style-context";
+import { usePlaygroundTerminalPresentation } from "@/contexts/playground-terminal-presentation";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { TranscriptThreadProps } from "./thread/transcript-thread";
@@ -332,6 +333,7 @@ export function Thread({
     fullscreenChatInput.trim().length > 0;
 
   const scenarioHostStyle = useScenarioHostStyle();
+  const terminal = usePlaygroundTerminalPresentation();
   const scenarioHostTheme = useScenarioHostTheme();
   const hasBrandIndicator =
     useResolvedHostStyleForIndicator(model.provider) !== null;
@@ -431,7 +433,10 @@ export function Thread({
           lastRenderableMessageId={lastRenderableMessageId}
           contentClassName={
             contentClassName ??
-            cn(TRANSCRIPT_COLUMN_CLASS, "pt-8 pb-16 space-y-8")
+            cn(
+              TRANSCRIPT_COLUMN_CLASS,
+              terminal ? "space-y-3 pb-6 pt-5" : "space-y-8 pb-16 pt-8",
+            )
           }
           getMessageWrapperProps={getMessageWrapperProps}
           renderUserMessageActions={renderUserMessageActions}

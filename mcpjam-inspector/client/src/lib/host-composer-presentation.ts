@@ -4,13 +4,21 @@ import {
   CLAUDE_COMPOSER_CLASSES,
 } from "@/lib/client-styles";
 import { getScenarioHostFamily } from "@/lib/scenario-client-style";
+import type { HostTerminalPresentation } from "@/lib/client-styles/types";
 
 /** Pure shared composer appearance; no session, model or execution ownership. */
 export function hostComposerClasses(
   hostStyle: string | null | undefined,
   dark: boolean,
+  terminalVariant?: HostTerminalPresentation["variant"],
 ) {
   const theme = dark ? "dark" : "light";
+  if (terminalVariant === "claude-code") {
+    return "scenario-host-composer border-y border-border bg-background";
+  }
+  if (terminalVariant === "codex") {
+    return "scenario-host-composer border border-border bg-muted/50";
+  }
   return getScenarioHostFamily(hostStyle) === "chatgpt"
     ? cn(
         "scenario-host-composer rounded-[1.75rem]",

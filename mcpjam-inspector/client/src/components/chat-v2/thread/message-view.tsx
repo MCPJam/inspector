@@ -9,6 +9,7 @@ import { CopyMessageAction } from "@/components/chat-v2/shared/copy-message-acti
 import { EditMessageAction } from "@/components/chat-v2/shared/edit-message-action";
 import { MessageTimestamp, getMessageTimestampMs } from "@mcpjam/chat-ui";
 import { UserMessageBubble } from "./user-message-bubble";
+import { usePlaygroundTerminalPresentation } from "@/contexts/playground-terminal-presentation";
 import { UserContextCard } from "./user-context-card";
 import { getUserContextBlocks } from "@/shared/user-context-message";
 import { PartSwitch } from "./part-switch";
@@ -494,6 +495,7 @@ function MessageViewImpl({
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const scenarioHostStyle = useScenarioHostStyle();
+  const terminal = usePlaygroundTerminalPresentation();
   const scenarioHostTheme = useScenarioHostTheme();
   const assistantAvatar = getAssistantAvatarDescriptor({
     model,
@@ -662,9 +664,12 @@ function MessageViewImpl({
             <CopilotMessageHeader />
           </div>
         ) : null}
-        <div className="space-y-6 text-sm leading-6">
+        <div className={terminal ? "space-y-2" : "space-y-6 text-sm leading-6"}>
           {steps.map((stepParts, sIdx) => (
-            <div key={getStepKey(stepParts, sIdx)} className="space-y-3">
+            <div
+              key={getStepKey(stepParts, sIdx)}
+              className={terminal ? "space-y-2" : "space-y-3"}
+            >
               {stepParts.map((part, pIdx) => (
                 <PartSwitch
                   key={getPartKey(part, sIdx, pIdx)}
