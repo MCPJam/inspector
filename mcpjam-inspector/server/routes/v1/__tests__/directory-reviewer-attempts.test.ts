@@ -231,6 +231,19 @@ describe("v1 reviewer attempts", () => {
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
 
+    it("refuses a mock server by name before anything is written", async () => {
+      authorizeServerMock.mockResolvedValue({
+        authorized: true,
+        serverConfig: { transportType: "http", url: "https://placeholder.invalid/mcp", mock: { mockId: "m1" } },
+      });
+      const res = await request("POST", BASE, { passwordSecretName: PASSWORD_SECRET });
+      expect(res.status).toBe(422);
+      expect(((await res.json()) as { message: string }).message).toContain(
+        "Reviewer attempts do not take mock servers",
+      );
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
     it("takes only secrets named with the reviewer prefix", async () => {
       const res = await request("POST", BASE, { passwordSecretName: "STRIPE_API_KEY" });
       expect(res.status).toBe(400);

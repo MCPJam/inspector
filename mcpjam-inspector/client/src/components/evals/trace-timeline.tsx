@@ -35,6 +35,7 @@ import type {
   EvalTraceSpanCategory,
 } from "@/shared/eval-trace";
 import { mcpErrorCodeLabel } from "@/shared/eval-trace";
+import { mockAnswerOf } from "@/shared/mock-answer-span";
 import {
   BrowserStepDetail,
   browserStepLabel,
@@ -1774,6 +1775,16 @@ function TimelineDetailPane({
                       ? spanThroughputPerSec(span.outputTokens, durationMs)
                       : null;
                   const items: Array<{ label: string; value: string }> = [];
+                  // Who answered a call a mock handled; the model never sees this.
+                  const mockAnswer =
+                    span.category === "tool"
+                      ? mockAnswerOf(span, recordedSpans)
+                      : undefined;
+                  if (mockAnswer)
+                    items.push({
+                      label: "Answered by",
+                      value: `the mock: ${mockAnswer}`,
+                    });
                   if (span.provider)
                     items.push({ label: "Provider", value: span.provider });
                   if (span.finishReason)

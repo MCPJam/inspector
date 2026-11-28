@@ -899,8 +899,13 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
         let success = true;
         let mcpErrorCode: number | undefined;
         let authChallenge: ToolAuthChallengeFinding | undefined;
+        // What a mock did with this call, read off the connection's responses.
+        const mockMarks: MockCallMark[] = [];
         try {
-          const result = await origExecute(input, options);
+          const result = await withMockAnswerSink(
+            (marks) => mockMarks.push(...marks),
+            () => origExecute(input, options),
+          );
           if (isCallToolResultError(result)) {
             success = false;
             authChallenge = classifyToolAuthChallenge(
@@ -957,6 +962,19 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             });
           }
           params.spans.push(toolSpan);
+          if (mockMarks.length > 0) {
+            params.spans.push(
+              mockAnswerSpan(mockMarks, {
+                id: `mock-${toolCallId}`,
+                parentId: toolSpan.id,
+                promptIndex: params.promptIndex,
+                stepIndex: params.stepIndex,
+                ...(raw._serverId ? { serverId: raw._serverId } : {}),
+                startMs: toolSpan.startMs,
+                endMs: toolSpan.endMs,
+              }),
+            );
+          }
           if (!success) {
             params.spans.push({
               id: `backend-tool-err-${toolCallId}`,

@@ -32,6 +32,7 @@ import {
   runAppsConformance,
   runProtocolConformance,
   runTasksConformance,
+  MOCK_HAS_NO_OAUTH,
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
@@ -41,6 +42,7 @@ import {
   conformanceProbeFields,
 } from "../shared/conformance-probes";
 import { authorizeServer, toHttpConfig } from "./auth.js";
+import { mockTransportOf } from "../../utils/mock-servers.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   BlockedEgressTargetError,
@@ -119,6 +121,7 @@ async function resolveHostedHttpConfig(
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
+  transport?: typeof fetch;
 }> {
   const wsBody = parseWithSchema(projectServerSchema, body);
   const auth = await authorizeServer(
@@ -147,6 +150,33 @@ async function resolveHostedHttpConfig(
       ErrorCode.INTERNAL_ERROR,
       "Authorized server is missing URL"
     );
+  }
+
+  if (auth.serverConfig.mock) {
+    // A mock's address is a placeholder: the suite reaches it through the
+    // in-process door as this caller, so there is no target to guard.
+    if (!options.withLogin) {
+      throw new WebRouteError(400, ErrorCode.FEATURE_NOT_SUPPORTED, MOCK_HAS_NO_OAUTH);
+    }
+    const dialed = toHttpConfig(
+      auth,
+      WEB_CALL_TIMEOUT_MS,
+      auth.oauthAccessToken ?? undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mockDialForRequest(c, bearerToken, wsBody.projectId, wsBody.serverId, wsBody)
+    );
+    const transport = mockTransportOf(dialed);
+    if (!transport) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "This mock server could not be opened for the conformance checks. Try again, or open it from Servers."
+      );
+    }
+    return { serverUrl: String(dialed.url), transport };
   }
 
   const oauthToken = options.withLogin
@@ -207,7 +237,8 @@ async function resolveHostedServerConfig(
   // Apps/Tasks accept any transport, so there may be no URL to judge (a stdio
   // config never leaves the box). Guard the ones that do.
   const url = (httpConfig as { url?: unknown }).url;
-  if (typeof url === "string" && url) {
+  // A mock's placeholder address is served in process and never dialed.
+  if (typeof url === "string" && url && !mockTransportOf(httpConfig)) {
     await assertConformanceTarget(url, "Server URL");
   }
 
@@ -285,6 +316,7 @@ conformanceWeb.post("/connection-check", async (c) =>
         url: resolved.serverUrl,
         accessToken: resolved.accessToken,
         requestInit: { headers: resolved.customHeaders },
+        ...(resolved.transport ? { baseFetch: resolved.transport } : {}),
       },
       parsed.protocolVersion,
       { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.runTimeoutSeconds, remainingRunTimeoutMs: parsed.remainingRunTimeoutMs },

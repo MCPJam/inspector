@@ -10,6 +10,8 @@
  * attempt. The worker gets the attempt in memory: the backend run takes no
  * attempt id, and a resumed run finds its attempt by the run it names.
  */
+import { refuseMockServer } from "../../utils/mock-servers.js";
+
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { makeFunctionReference } from "convex/server";
@@ -217,6 +219,7 @@ reviewerAttempts.post(BASE, async (c) => {
   // with no version to grade, leaves no attempt.
   gradedPackage(row);
   const authorized = await authorizeServer(c, token, projectId, savedServerOf(row));
+  refuseMockServer(authorized, "Reviewer attempts do not take mock servers. A mock is served only to you, so a reviewer cannot reach it. Run them on the server the mock is based on.");
   let created: Attempt & { replayed?: true };
   try {
     created = await convex.mutation(fn.create, {
@@ -270,6 +273,7 @@ reviewerAttempts.post(`${ONE}/resume`, async (c) => {
   await readReviewerAttempt(convex, scope, attemptId, translateRead);
   gradedPackage(row);
   const authorized = await authorizeServer(c, token, scope.projectId, savedServerOf(row));
+  refuseMockServer(authorized, "Reviewer attempts do not take mock servers. A mock is served only to you, so a reviewer cannot reach it. Run them on the server the mock is based on.");
   let attempt: Attempt;
   try {
     attempt = await convex.mutation(fn.resume, { attemptId });

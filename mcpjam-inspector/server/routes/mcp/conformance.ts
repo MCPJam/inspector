@@ -38,6 +38,7 @@ import {
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 import { checkConformanceConnection } from "../shared/conformance-connection.js";
 import { deliveredCredentialBinding } from "../../utils/delivered-oauth-credential.js";
+import { mockTransportOf } from "../../utils/mock-servers.js";
 
 const conformance = new Hono();
 
@@ -68,6 +69,8 @@ function toHttpResolved(config: HttpServerConfig) {
       | Record<string, string>
       | undefined,
     credentialBinding: deliveredCredentialBinding(config),
+    // A mock's address is a placeholder, reached through its in-process door.
+    transport: mockTransportOf(config),
   };
 }
 
@@ -116,6 +119,7 @@ conformance.post("/connection-check", async (c) => {
             .credentialSource,
           credentialHeaderNames: (resolved.config as HttpServerConfig)
             .credentialHeaderNames,
+          ...(http.transport ? { baseFetch: http.transport } : {}),
         },
         parsed.data.protocolVersion,
       { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.data.runTimeoutSeconds, remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs },
@@ -599,6 +603,17 @@ conformance.post("/readiness/:publisher", async (c) => {
       return c.json({ success: false, ...resolved }, 400);
     }
 
+    if (mockTransportOf(resolved.config)) {
+      return c.json(
+        {
+          success: false,
+          error:
+            "Directory readiness grades a connector a host can reach, and a mock server is served only to you. Run it on the server the mock is based on.",
+          code: "unsupportedTransport",
+        },
+        400,
+      );
+    }
     const support = canRunConformance("protocol", resolved.config);
     if (!support.supported) {
       // Readiness grades what a HOST would see, and every host in question
