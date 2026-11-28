@@ -934,7 +934,7 @@ describe("HostedElicitationBridge", () => {
     const bridge = makeBridge();
     bridge.attachStreamWriter(writer);
 
-    bridge.emitUrlRequired({
+    const shown = bridge.emitUrlRequired({
       serverId: "srv-1",
       toolCallId: "call-9",
       elicitations: [
@@ -945,6 +945,8 @@ describe("HostedElicitationBridge", () => {
         },
       ],
     });
+
+    expect(shown).toBe(true);
 
     expect(events()).toContainEqual(
       expect.objectContaining({
@@ -991,9 +993,25 @@ describe("HostedElicitationBridge", () => {
     const bridge = makeBridge();
     bridge.attachStreamWriter(writer);
 
-    bridge.emitUrlRequired({ serverId: "srv-1", elicitations: [] });
+    expect(bridge.emitUrlRequired({ serverId: "srv-1", elicitations: [] })).toBe(
+      false,
+    );
 
     expect(events()).toHaveLength(0);
+  });
+
+  it("reports a url_required as not shown when no stream is attached", async () => {
+    // A turn with no stream (nobody watching) must not let the model be told
+    // that the user saw the link.
+    stubFetch({});
+    const bridge = makeBridge();
+
+    expect(
+      bridge.emitUrlRequired({
+        serverId: "srv-1",
+        elicitations: [{ url: "https://example.com/auth", elicitationId: "e1" }],
+      }),
+    ).toBe(false);
   });
 
   it("emits insufficient_scope for a 403 challenge without creating a rendezvous row", async () => {

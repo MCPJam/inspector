@@ -402,7 +402,8 @@ export class HostedElicitationBridge {
   /**
    * Surface a `-32042 URLElicitationRequiredError` raised by a failed
    * `tools/call`. Display-only: the call already failed, so no JSON-RPC response
-   * is owed and there is nothing to rendezvous on.
+   * is owed and there is nothing to rendezvous on. Returns whether the link was
+   * written to a stream, which decides what the model is told.
    */
   emitUrlRequired(info: {
     serverId: string;
@@ -412,9 +413,9 @@ export class HostedElicitationBridge {
       elicitationId: string;
       message?: string;
     }>;
-  }): void {
-    if (info.elicitations.length === 0) return;
-    this.emit({
+  }): boolean {
+    if (info.elicitations.length === 0) return false;
+    return this.emit({
       kind: "url_required",
       serverId: info.serverId,
       serverName: this.options.serverNamesById[info.serverId],
@@ -462,19 +463,21 @@ export class HostedElicitationBridge {
 
   // ── internals ────────────────────────────────────────────────────────────
 
-  private emit(event: HostedElicitationEvent): void {
-    if (!this.writer) return;
+  private emit(event: HostedElicitationEvent): boolean {
+    if (!this.writer) return false;
     try {
       this.writer.write({
         type: HOSTED_ELICITATION_DATA_PART_TYPE,
         data: event,
         transient: true,
       } as unknown as UIMessageChunk);
+      return true;
     } catch (error) {
       // A dead writer means the browser is gone; the poll loop's abort/TTL
       // paths still resolve the blocked call, so this is not fatal.
       logger.warn("[elicitation] stream write failed", { error });
       this.writer = null;
+      return false;
     }
   }
 

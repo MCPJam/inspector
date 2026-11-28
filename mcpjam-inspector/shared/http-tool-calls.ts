@@ -19,6 +19,7 @@ import {
   buildMcpToolErrorResultMessage,
   buildMcpToolResultMessage,
 } from "./mcp-tool-result-message";
+import { urlElicitationModelMessage } from "./url-elicitation-notice";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
@@ -604,19 +605,17 @@ export async function executeToolCallsFromMessages(
       if (isToolExecutionSuspendSignal(error)) {
         throw error;
       }
-      // -32042: the server wants an out-of-band interaction first. Surface
-      // the URLs structurally to the UI and give the model an actionable
-      // retry hint instead of a raw protocol error it can't interpret.
-      // Surfacing the URL to the UI is the tool wrapper's job (see
-      // `web-chat-turn`), which sits on the shared tool set and therefore
-      // fires for every engine. Here we only reshape the model-visible
-      // result so it gets an actionable retry hint instead of a raw
-      // protocol error.
+      // -32042: the server wants an out-of-band interaction first.
+      // Surfacing the URL to a person is the tool wrapper's job (see
+      // `web-chat-turn`), and only a turn with a stream to show it on can.
+      // Here we only reshape the model-visible result: a retry hint where a
+      // person saw the link, and plain words where nobody did, instead of a
+      // raw protocol error the model can't interpret.
       const urlElicitations = readUrlElicitations(error);
       const errorOutput: ToolResultPart = {
         type: "error-text",
         value: urlElicitations
-          ? "This tool needs the user to complete an interaction at a URL first. The user has been shown the link and may complete it out of band. Retry this tool once they confirm they're done."
+          ? urlElicitationModelMessage(error)
           : error instanceof Error
             ? error.message
             : String(error),

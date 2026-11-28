@@ -135,6 +135,7 @@ import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { HarnessToolNameCollisionError } from "./harness/harness-tool-names.js";
 import { asAiRefusalRouteError } from "./ai-refusal-route-error.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
+import { markUrlElicitationShown } from "@/shared/url-elicitation-notice";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import { isRenderedUiContextText } from "@/shared/ui-context";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
@@ -1163,12 +1164,15 @@ export async function streamChatTurn(
     {
       onToolError: ({ error, serverId, toolCallId }) => {
         const elicitations = readUrlElicitations(error);
-        if (elicitations) {
+        if (
+          elicitations &&
           runtime.elicitationBridge?.emitUrlRequired({
             serverId,
             toolCallId,
             elicitations,
-          });
+          })
+        ) {
+          markUrlElicitationShown(error);
         }
       },
       emitInsufficientScope: (challenge) => {
