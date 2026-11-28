@@ -340,6 +340,8 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   create_mock_server: null,
   update_mock_server: null,
   get_mock_server: null,
+  patch_mock_server: null,
+  refresh_mock_server: null,
   get_mock_forwarding_policy: null,
   set_mock_forwarding_policy: null,
   // Not hidden by `multi-account-connections`: a first account needs no

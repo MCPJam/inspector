@@ -21,7 +21,9 @@ import { derivePermalinks, noPermalink } from "./permalinks.js";
 import type { SelectedProjectInfo } from "./show-servers.js";
 import type {
   PlatformMockForwardingPolicy,
+  PlatformMockPatched,
   PlatformMockRead,
+  PlatformMockRefresh,
   PlatformMockWritten,
 } from "./mock-types.js";
 
@@ -79,6 +81,27 @@ const getInput = z.object({
   cursor: text.optional().describe("`page.nextCursor` from the previous page of the same read, as the same caller."),
 });
 
+const patchInput = z.object({
+  project,
+  mock,
+  expectedVersion: positive.describe("The head version you read. Refused with the head if stale."),
+  family: family.optional().describe("With `name`: the entry's kind. Leave both out to patch a server-wide setting such as instructions."),
+  name: text.optional().describe("The entry to change, exactly as a client sees it."),
+  path: z
+    .array(text)
+    .optional()
+    .describe('Keys inside the entry, e.g. ["description"] or ["params", "limit", "fixed"]. Empty with a name sets the whole entry.'),
+  value: z.unknown().optional().describe("The new value for the path."),
+  remove: z.boolean().optional().describe("Remove the path instead, so the real server's own value shows again."),
+});
+
+const refreshInput = z.object({
+  project,
+  mock,
+  expectedVersion: positive.describe("The head version you read."),
+  apply: z.boolean().optional().describe("Save the refreshed listing as the next version. Without it, only previews."),
+});
+
 const policyReadInput = z.object({
   project,
   mock: mock.optional().describe("Read the policy in force for this mock. Omit for the project's workspace."),
@@ -96,12 +119,16 @@ const policySetInput = z.object({
 export type CreateMockServerInput = z.infer<typeof createInput>;
 export type UpdateMockServerInput = z.infer<typeof updateInput>;
 export type GetMockServerInput = z.infer<typeof getInput>;
+export type PatchMockServerInput = z.infer<typeof patchInput>;
+export type RefreshMockServerInput = z.infer<typeof refreshInput>;
 export type GetMockForwardingPolicyInput = z.infer<typeof policyReadInput>;
 export type SetMockForwardingPolicyInput = z.infer<typeof policySetInput>;
 type Scoped<T> = T & { project: SelectedProjectInfo };
 export type CreateMockServerResult = Scoped<PlatformMockWritten>;
 export type UpdateMockServerResult = Scoped<PlatformMockWritten>;
 export type GetMockServerResult = Scoped<PlatformMockRead>;
+export type PatchMockServerResult = Scoped<PlatformMockPatched>;
+export type RefreshMockServerResult = Scoped<PlatformMockRefresh>;
 export type MockForwardingPolicyResult = Scoped<PlatformMockForwardingPolicy>;
 
 const permalink = derivePermalinks(
@@ -170,7 +197,7 @@ export const getMockServerOperation: PlatformOperation<GetMockServerInput, GetMo
   name: "get_mock_server",
   title: "Get a mock server",
   description:
-    "Read a mock server in bounded pages, so a mock with hundreds of tools or a very long description fits any response. With no selector: id, address, version, base server, the forwarding policy in force, counts, and a page of its changes (a change is a tool, prompt, resource or template it adds, edits or hides, or a server-wide setting). With `family`: a page of that kind's names (the real server's saved listing with the mock's edits), narrowed by `search`. With `family` and `name`: that entry, what the mock states and what a client sees. With `path` too: one field or nested path; a long string comes in ordered chunks, so join `value` across pages. Continue any page with `page.nextCursor`; a cursor stays on the version it started on, is bound to your account and to the read, and the last page says `end: true`. headVersion is the version to name in update_mock_server's expectedVersion.",
+    "Read a mock server in bounded pages, so a mock with hundreds of tools or a very long description fits any response. With no selector: id, address, version, base server, the forwarding policy in force, counts, and a page of its changes (a change is a tool, prompt, resource or template it adds, edits or hides, or a server-wide setting). With `family`: a page of that kind's names (the real server's saved listing with the mock's edits), narrowed by `search`. With `family` and `name`: that entry, what the mock states and what a client sees. With `path` too: one field or nested path; a long string comes in ordered chunks, so join `value` across pages. Continue any page with `page.nextCursor`; a cursor stays on the version it started on, is bound to your account and to the read, and the last page says `end: true`. headVersion is the version to name in update_mock_server's and patch_mock_server's expectedVersion.",
   readOnly: true,
   permalink,
   inputSchema: getInput,
@@ -182,6 +209,45 @@ export const getMockServerOperation: PlatformOperation<GetMockServerInput, GetMo
       { signal: context.signal }
     );
     return { ...read, project: info };
+  },
+};
+
+export const patchMockServerOperation: PlatformOperation<PatchMockServerInput, PatchMockServerResult> = {
+  name: "patch_mock_server",
+  title: "Patch one path of a mock server",
+  description:
+    'Set or remove exactly one path of a mock (an entry, a field or a nested path) and save it as the next version, naming the head version you read in expectedVersion. You send only the path and the value, never the entry: to change a late tool\'s description, give family "tools", its name, path ["description"] and the new value. Refused with the head if another version landed since; read again and retry. Repeating a patch that already landed returns the head. The whole definition is checked first, and a path that makes it invalid is refused with that path named.',
+  readOnly: false,
+  risk: "none",
+  permalink,
+  inputSchema: patchInput,
+  async execute(input, context) {
+    const { project, mockId, info } = await resolveMock(context, input);
+    const { project: _project, mock: _mock, ...edit } = input;
+    const patched = await context.client.patchMockServer(
+      { projectId: project.id, mockId, ...edit },
+      { signal: context.signal }
+    );
+    return { ...patched, project: info };
+  },
+};
+
+export const refreshMockServerOperation: PlatformOperation<RefreshMockServerInput, RefreshMockServerResult> = {
+  name: "refresh_mock_server",
+  title: "Refresh a mock server from its real server",
+  description:
+    "Read the mock's real server again, as you, and compare it with the listing the head version saved: which tools, prompts, resources and templates were added, removed or changed, and which of the mock's overrides no longer fit (named by path, for you to repair; nothing is renamed on its own). It saves nothing unless `apply` is set, which saves the new listing as the next version against expectedVersion. Needs a mock made from a saved server.",
+  readOnly: false,
+  risk: "none",
+  permalink,
+  inputSchema: refreshInput,
+  async execute(input, context) {
+    const { project, mockId, info } = await resolveMock(context, input);
+    const refreshed = await context.client.refreshMockServer(
+      { projectId: project.id, mockId, expectedVersion: input.expectedVersion, apply: input.apply },
+      { signal: context.signal }
+    );
+    return { ...refreshed, project: info };
   },
 };
 

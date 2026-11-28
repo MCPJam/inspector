@@ -204,6 +204,8 @@ describe("agent op registry", () => {
         // the version before. The backend holds the tier and the flag.
         "create_mock_server",
         "update_mock_server",
+        "patch_mock_server",
+        "refresh_mock_server",
         "create_persona",
         "update_persona",
         "create_goal",

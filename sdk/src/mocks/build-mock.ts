@@ -1,6 +1,7 @@
 import { createMcpHandler, Server } from "@modelcontextprotocol/server";
 import type {
   McpHttpHandler,
+  Result,
   ServerCapabilities,
 } from "@modelcontextprotocol/server";
 import type { MockDefinition } from "./definition-types.js";
@@ -8,10 +9,15 @@ import type { MockObserver } from "./mock-observer.js";
 import {
   methodUnavailableError,
   unknownMethodError,
+  isRealUnreachable,
   realUnreachableError,
 } from "./mock-errors.js";
 import { NO_REAL_SERVER } from "./real-server.js";
-import type { MockRealServer, MockRealServerInfo } from "./real-server.js";
+import type {
+  MockListingFamily,
+  MockRealServer,
+  MockRealServerInfo,
+} from "./real-server.js";
 import { assertRequestForward, registerToolHandlers } from "./tool-handlers.js";
 
 /** Which capability each family of methods needs; other methods pass to the real server as they are. */
@@ -44,6 +50,19 @@ function effectiveCapabilities(
   if (Object.keys(definition.tools ?? {}).length > 0) merged.tools ??= {};
   return merged as ServerCapabilities;
 }
+
+/** The list methods a pinned listing can answer, by the family and result field. */
+const PINNED_LISTS: Record<
+  string,
+  { family: MockListingFamily; field: string } | undefined
+> = {
+  "prompts/list": { family: "prompts", field: "prompts" },
+  "resources/list": { family: "resources", field: "resources" },
+  "resources/templates/list": {
+    family: "resourceTemplates",
+    field: "resourceTemplates",
+  },
+};
 
 function unreachableServer(error: Error): Server {
   const server = new Server(
@@ -118,6 +137,14 @@ async function buildServer(
         { signal: ctx.mcpReq.signal }
       );
     } catch (cause) {
+      // The base is down: a list the mock does not edit comes from the
+      // version's saved listing, as it does while forwarding is blocked.
+      const listed = PINNED_LISTS[request.method];
+      if (listed && real.pinnedListing && isRealUnreachable(cause)) {
+        return {
+          [listed.field]: await real.pinnedListing(listed.family),
+        } as Result;
+      }
       // The MCP client throws a TypeError for a method outside the spec, which
       // the server would answer as -32603. No server has such a method, so say
       // method not found, as the spec asks for an unknown method.

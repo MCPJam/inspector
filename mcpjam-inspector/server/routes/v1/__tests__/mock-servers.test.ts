@@ -384,7 +384,7 @@ describe("the forwarding policy", () => {
   });
 });
 
-// ---- Bounded reads (I6a) ----
+// ---- Bounded reads, field patch and refresh (I6) ----
 
 const LISTING = (tools: unknown[]) => ({ visibility: "project", listingJson: JSON.stringify({ tools }) });
 const LAST = "tool_202";
@@ -480,8 +480,92 @@ describe("bounded reads of a 202-tool mock", () => {
   });
 });
 
+describe("PATCH /mock-servers/:mockId", () => {
+  beforeEach(() => bigMock());
+
+  it("changes the last tool's description in one patch, sending only the path and value", async () => {
+    const response = await request("PATCH", `${MOCKS}/${MOCK}`, {
+      body: { expectedVersion: 2, family: "tools", name: LAST, path: ["description"], value: "Last, now accurate." },
+    });
+    expect(response.status).toBe(201);
+    expect(await json(response)).toMatchObject({ id: MOCK, version: 3, path: ["tools", LAST, "description"] });
+    const [args] = calls(mocks.mutation, "mockServers:saveMockVersion");
+    expect(args.expectedVersion).toBe(2);
+    expect(JSON.parse(args.definitionJson).tools[LAST]).toEqual({ description: "Last, now accurate." });
+    expect(JSON.parse(args.definitionJson).tools.tool_001).toEqual({ description: "First." });
+  });
+
+  it("answers the head when the same patch already landed, and refuses a stale one with the head", async () => {
+    const same = await request("PATCH", `${MOCKS}/${MOCK}`, {
+      body: { expectedVersion: 1, family: "tools", name: LAST, path: ["description"], value: "Old last." },
+    });
+    expect(same.status).toBe(200);
+    expect(await json(same)).toMatchObject({ created: false, version: 2 });
+    const stale = await request("PATCH", `${MOCKS}/${MOCK}`, {
+      body: { expectedVersion: 1, family: "tools", name: LAST, path: ["description"], value: "Different." },
+    });
+    expect(stale.status).toBe(409);
+    expect((await json(stale)).details).toMatchObject({ code: "MOCK_VERSION_STALE", headVersion: 2 });
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("removes a path, and refuses an edit that makes the definition invalid with its path", async () => {
+    const removed = await request("PATCH", `${MOCKS}/${MOCK}`, { body: { expectedVersion: 2, family: "tools", name: LAST, path: ["description"], remove: true } });
+    expect(removed.status).toBe(201);
+    expect(JSON.parse(calls(mocks.mutation, "mockServers:saveMockVersion")[0].definitionJson).tools).not.toHaveProperty(LAST);
+    vi.clearAllMocks();
+    const invalid = await request("PATCH", `${MOCKS}/${MOCK}`, { body: { expectedVersion: 2, family: "tools", name: LAST, path: ["description"], value: 5 } });
+    expect(invalid.status).toBe(400);
+    expect((await json(invalid)).message).toContain(`tools.${LAST}.description`);
+    const unclear = await request("PATCH", `${MOCKS}/${MOCK}`, { body: { expectedVersion: 2, name: LAST, value: 1 } });
+    expect(unclear.status).toBe(400);
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /mock-servers/:mockId/refresh", () => {
+  const path = `${MOCKS}/${MOCK}/refresh`;
+  const search = { name: "search", description: "Old.", inputSchema: { type: "object", properties: { q: { type: "string" } } } };
+
+  it("previews what changed on the real server and which overrides no longer fit, saving nothing", async () => {
+    queries["mockServers:getMock"] = () =>
+      stored({ tools: { find: { answer: { tool: "gone" } } } }, { discovery: LISTING([search, { name: "gone", inputSchema: { type: "object" } }]) });
+    real.tools = [{ ...SEARCH }, { name: "fresh", inputSchema: { type: "object" } }];
+    const body = await json(request("POST", path, { body: { expectedVersion: 2 } }));
+    expect(body).toMatchObject({
+      view: "refresh",
+      applied: false,
+      listing: "saved",
+      brokenTotal: 1,
+      brokenOverrides: [{ path: "tools.find.answer.tool", code: "target_missing" }],
+      differences: [
+        { family: "tools", added: ["fresh"], removed: ["gone"], changed: ["search"] },
+        // The live server also has a prompt the saved listing never captured.
+        { family: "prompts", added: ["summarize"] },
+      ],
+    });
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("saves the new listing against expectedVersion when asked, and refuses a stale version", async () => {
+    const applied = await request("POST", path, { body: { expectedVersion: 2, apply: true } });
+    expect(applied.status).toBe(201);
+    expect(await json(applied)).toMatchObject({ applied: true, version: 3, saved: { version: 3 } });
+    const [args] = calls(mocks.mutation, "mockServers:saveMockVersion");
+    expect(args).toMatchObject({ mockId: MOCK, expectedVersion: 2, patchJson: "{}" });
+    expect(JSON.parse(args.discoveryJson).tools[0].name).toBe("search");
+    const stale = await request("POST", path, { body: { expectedVersion: 1 } });
+    expect(stale.status).toBe(409);
+  });
+
+  it("needs a real server to read", async () => {
+    queries["mockServers:getMock"] = () => stored({}, { baseServerId: null });
+    expect((await request("POST", path, { body: { expectedVersion: 2 } })).status).toBe(400);
+  });
+});
+
 // The other surfaces (SDK, CLI, MCP) are tested against these same bodies, so
-// create and read return the same result on every one.
+// create, read and patch return the same result on every one.
 describe("the shared surface fixture", () => {
   const fixture = JSON.parse(
     readFileSync(new URL("../../../../../sdk/tests/fixtures/mock-surfaces.json", import.meta.url), "utf8"),
@@ -522,5 +606,12 @@ describe("the shared surface fixture", () => {
   it("reads the summary and one field", async () => {
     expect(await json(request("GET", `${MOCKS}/${MOCK}`))).toEqual(fixture.summary);
     expect(await json(request("GET", `${MOCKS}/${MOCK}?family=tools&name=tool_001&path=description`))).toEqual(fixture.value);
+  });
+
+  it("patches one path", async () => {
+    const response = await request("PATCH", `${MOCKS}/${MOCK}`, {
+      body: { expectedVersion: 2, family: "tools", name: "tool_001", path: ["description"], value: "Second." },
+    });
+    expect(await json(response)).toEqual(fixture.patched);
   });
 });

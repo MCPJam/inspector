@@ -8,9 +8,12 @@ import { DirectoryReviewerAttemptClient } from "./directory-reviewer-attempt-cli
 import type {
   PlatformMockDefinition,
   PlatformMockForwarding,
+  PlatformMockFamily,
   PlatformMockForwardingPolicy,
+  PlatformMockPatched,
   PlatformMockRead,
   PlatformMockReadSelector,
+  PlatformMockRefresh,
   PlatformMockWritten,
 } from "./mock-types.js";
 
@@ -69,6 +72,40 @@ export abstract class MockServerClient extends DirectoryReviewerAttemptClient {
       { query: { ...query, path: encoded } },
       options
     );
+  }
+
+  /**
+   * Set or remove exactly one path (an entry, a field or a nested path)
+   * against the head version the caller read, without sending the entry.
+   */
+  patchMockServer(
+    params: {
+      projectId: string;
+      mockId: string;
+      expectedVersion: number;
+      family?: PlatformMockFamily;
+      name?: string;
+      path?: string[];
+      value?: unknown;
+      remove?: boolean;
+    },
+    options?: Options
+  ): Promise<PlatformMockPatched> {
+    const { projectId, mockId, ...body } = params;
+    return this.request("PATCH", mocksPath(projectId, `/${encodeURIComponent(mockId)}`), { body }, options);
+  }
+
+  /**
+   * Re-read the real server as the caller and compare it with the listing the
+   * version saved. Only previews unless `apply` is set, which saves the new
+   * listing as the next version against `expectedVersion`.
+   */
+  refreshMockServer(
+    params: { projectId: string; mockId: string; expectedVersion: number; apply?: boolean },
+    options?: Options
+  ): Promise<PlatformMockRefresh> {
+    const { projectId, mockId, ...body } = params;
+    return this.request("POST", mocksPath(projectId, `/${encodeURIComponent(mockId)}/refresh`), { body }, options);
   }
 
   /** The policy in force for a mock, or for the project's workspace when no mock is named. */

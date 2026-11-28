@@ -137,6 +137,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/mock-servers": "createMockServer",
   "post /projects/{projectId}/mock-servers/{mockId}/versions": "saveMockServerVersion",
   "get /projects/{projectId}/mock-servers/{mockId}": "getMockServer",
+  "patch /projects/{projectId}/mock-servers/{mockId}": "patchMockServer",
+  "post /projects/{projectId}/mock-servers/{mockId}/refresh": "refreshMockServer",
   "get /projects/{projectId}/mock-servers/{mockId}/forwarding-policy": "getMockForwardingPolicy",
   "get /projects/{projectId}/mock-forwarding-policy": "getMockForwardingPolicy",
   "put /projects/{projectId}/mock-forwarding-policy": "setMockForwardingPolicy",

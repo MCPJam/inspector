@@ -83,6 +83,16 @@ export function saved(fields: SavedFields, result: { created: boolean; loosened?
   return { ...fields, address: mockServerAddress(fields.id), created: result.created, loosened: result.loosened ?? [] };
 }
 
+/** A save against a head that has moved on, as the backend reports it. */
+export function staleHead(headVersion: number): WebRouteError {
+  return new WebRouteError(
+    409,
+    ErrorCode.CONFLICT,
+    `The mock changed since you read it: its head is version ${headVersion}. Read it again, then retry against that version.`,
+    { code: "MOCK_VERSION_STALE", headVersion },
+  );
+}
+
 export async function bearerOf(c: Context): Promise<string> {
   return getConvexBearerForRequest(c);
 }

@@ -2395,6 +2395,8 @@ describe("operation catalog consistency", () => {
     create_mock_server: { name: "m", definition: {} },
     update_mock_server: { mock: "m", patch: {}, expectedVersion: 1 },
     get_mock_server: { mock: "m" },
+    patch_mock_server: { mock: "m", expectedVersion: 1, path: ["instructions"], value: "x" },
+    refresh_mock_server: { mock: "m", expectedVersion: 1 },
     get_mock_forwarding_policy: {},
     set_mock_forwarding_policy: { forwarding: "block" },
     list_server_accounts: { server: "s" },
@@ -2961,6 +2963,8 @@ describe("operation catalog consistency", () => {
       // A mock server's saves and the workspace's forwarding policy.
       "create_mock_server",
       "update_mock_server",
+      "patch_mock_server",
+      "refresh_mock_server",
       "set_mock_forwarding_policy",
       "archive_goal",
       "create_swarm",

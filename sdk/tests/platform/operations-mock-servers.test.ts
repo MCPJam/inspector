@@ -7,6 +7,8 @@ import {
   getMockForwardingPolicyOperation,
   getMockServerOperation,
   isOperationAvailable,
+  patchMockServerOperation,
+  refreshMockServerOperation,
   setMockForwardingPolicyOperation,
   updateMockServerOperation,
 } from "../../src/platform/index.js";
@@ -115,6 +117,24 @@ describe("mock server operations", () => {
     expect(lastUrl().searchParams.get("path")).toBe('["a.b","c"]');
   });
 
+  it("patch sends one path and the version it read, never the entry", async () => {
+    const { client, bodies } = clientWith({
+      "PATCH /api/v1/projects/project-1/mock-servers/mock-1": { ...SAVED, version: 5, path: ["tools", "t", "description"] },
+    });
+    const result = await run(patchMockServerOperation, { mock: "markets (mock)", expectedVersion: 4, family: "tools", name: "t", path: ["description"], value: "New." }, client);
+    expect(bodies).toEqual([{ expectedVersion: 4, family: "tools", name: "t", path: ["description"], value: "New." }]);
+    expect(result).toMatchObject({ version: 5, path: ["tools", "t", "description"] });
+  });
+
+  it("refresh previews unless told to apply", async () => {
+    const { client, bodies } = clientWith({
+      "POST /api/v1/projects/project-1/mock-servers/mock-1/refresh": { view: "refresh", applied: false },
+    });
+    await run(refreshMockServerOperation, { mock: "markets (mock)", expectedVersion: 2 }, client);
+    await run(refreshMockServerOperation, { mock: "markets (mock)", expectedVersion: 2, apply: true }, client);
+    expect(bodies).toEqual([{ expectedVersion: 2 }, { expectedVersion: 2, apply: true }]);
+  });
+
   it("reads the workspace's policy, or a mock's", async () => {
     const { client, lastUrl } = clientWith({
       "GET /api/v1/projects/project-1/mock-forwarding-policy": POLICY,
@@ -134,7 +154,7 @@ describe("mock server operations", () => {
   });
 
   it("are not hidden by an organization feature: the backend answers the flag", () => {
-    for (const name of ["create_mock_server", "update_mock_server", "get_mock_server", "get_mock_forwarding_policy", "set_mock_forwarding_policy"]) {
+    for (const name of ["create_mock_server", "update_mock_server", "get_mock_server", "patch_mock_server", "refresh_mock_server", "get_mock_forwarding_policy", "set_mock_forwarding_policy"]) {
       expect(OPERATION_FEATURES[name]).toBeNull();
       expect(isOperationAvailable(name, {} as never)).toBe(true);
     }
@@ -165,16 +185,19 @@ describe("results match the shared surface fixture", () => {
       }
       if (key === `POST ${root}`) return Response.json(fixture.created, { status: 201 });
       if (key === `GET ${root}/${mock}`) return Response.json(url.searchParams.has("path") ? fixture.value : fixture.summary);
+      if (key === `PATCH ${root}/${mock}`) return Response.json(fixture.patched, { status: 201 });
       throw new Error(`unexpected ${key}`);
     });
     return new PlatformApiClient({ baseUrl: "https://api.test/api/v1", getAuth: () => "t", fetch: fetchMock as unknown as typeof fetch });
   }
   const withProject = (body: object) => ({ ...body, project: expect.objectContaining({ id: project }) });
 
-  it("create and read", async () => {
+  it("create, read and patch", async () => {
     const client = stub();
     expect(await run(createMockServerOperation, { name: "markets (mock)", server: "markets", definition: {} }, client)).toEqual(withProject(fixture.created));
     expect(await run(getMockServerOperation, { mock: "markets (mock)" }, client)).toEqual(withProject(fixture.summary));
     expect(await run(getMockServerOperation, { mock: "markets (mock)", family: "tools", name: "tool_001", path: "description" }, client)).toEqual(withProject(fixture.value));
+    const patched = await run(patchMockServerOperation, { mock: "markets (mock)", expectedVersion: 2, family: "tools", name: "tool_001", path: ["description"], value: "Second." }, client);
+    expect(patched).toEqual(withProject(fixture.patched));
   });
 });

@@ -56,6 +56,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   create_mock_server: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
   update_mock_server: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
   get_mock_server: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
+  patch_mock_server: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
+  refresh_mock_server: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
   get_mock_forwarding_policy: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
   set_mock_forwarding_policy: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
   // `default` runs the same operation as `rename`, with `isDefault` in place

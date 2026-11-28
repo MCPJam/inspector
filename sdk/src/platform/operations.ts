@@ -141,6 +141,8 @@ import {
   createMockServerOperation,
   getMockForwardingPolicyOperation,
   getMockServerOperation,
+  patchMockServerOperation,
+  refreshMockServerOperation,
   setMockForwardingPolicyOperation,
   updateMockServerOperation,
 } from "./mock-operations.js";
@@ -19448,6 +19450,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   createMockServerOperation,
   updateMockServerOperation,
   getMockServerOperation,
+  patchMockServerOperation,
+  refreshMockServerOperation,
   getMockForwardingPolicyOperation,
   setMockForwardingPolicyOperation,
   // Server accounts. Tokens are write-only, and the upload and the update are

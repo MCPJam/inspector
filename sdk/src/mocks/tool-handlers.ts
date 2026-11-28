@@ -3,14 +3,20 @@ import type {
   Server,
   ServerContext,
 } from "@modelcontextprotocol/server";
-import type { MockDefinition } from "./definition-types.js";
+import { findBindingIssues } from "./bindings.js";
+import { answersItself, type MockDefinition } from "./definition-types.js";
 import {
-  editedToolMissingError,
+  bindingError,
   forwardBlockedError,
+  isRealUnreachable,
   toolNotFoundError,
   unknownMethodError,
 } from "./mock-errors.js";
-import type { MockForwardDecision, MockRealServer } from "./real-server.js";
+import {
+  NO_REAL_SERVER,
+  type MockForwardDecision,
+  type MockRealServer,
+} from "./real-server.js";
 import type { MockObserver } from "./mock-observer.js";
 import { pageOf } from "./paging.js";
 import { callerLogLevel, relayDuringCall } from "./relay.js";
@@ -89,6 +95,11 @@ async function forwardCall(
     });
     await relay.flush();
     return result;
+  } catch (error) {
+    // A call that needs the live base says so, as a tool error the agent can
+    // read; the mock's own saved answers never reach this path.
+    if (isRealUnreachable(error)) return toolErrorResult(error.message);
+    throw error;
   } finally {
     relay.stop();
     observer?.({ tool: name, source: "forwarded", realTool: plan.realName });
@@ -103,11 +114,10 @@ export function registerToolHandlers(
   const { definition, real, observer } = c;
 
   server.setRequestHandler("tools/list", async (request, ctx) => {
-    const { tools, missing } = resolveMockTools(
-      definition,
-      await real.listTools({ signal: ctx.mcpReq.signal })
-    );
-    if (missing.length > 0) throw editedToolMissingError(missing);
+    const realTools = await real.listTools({ signal: ctx.mcpReq.signal });
+    const issues = findBindingIssues(definition, realTools);
+    if (issues.length > 0) throw bindingError(issues);
+    const { tools } = resolveMockTools(definition, realTools);
     const page = pageOf(tools, request.params?.cursor, definition.pageSize);
     return {
       tools: page.items,
@@ -119,7 +129,17 @@ export function registerToolHandlers(
     const name = request.params.name;
     const plan = planToolCall(definition, name, request.params.arguments);
     if (!plan) throw toolNotFoundError(name);
-    const answer = definition.tools?.[name]?.answer;
+    const entry = definition.tools?.[name];
+    const answer = entry?.answer;
+    // An override that forwards is checked against the real tool it depends on
+    // before anything is sent, so a repairable mismatch is named, not guessed.
+    if (entry && real !== NO_REAL_SERVER && !answersItself(entry)) {
+      const issues = findBindingIssues(
+        { tools: { [name]: entry } },
+        await real.listTools({ signal: ctx.mcpReq.signal })
+      );
+      if (issues.length > 0) throw bindingError(issues);
+    }
     if (answer?.from === "saved") {
       const realTools = await real.listTools({ signal: ctx.mcpReq.signal });
       const answered = answerItself({

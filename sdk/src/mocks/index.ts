@@ -36,7 +36,19 @@ export {
   type MockFieldChange,
 } from "./change-list.js";
 export { mockPathOf } from "./change-kinds.js";
-export { MOCK_FAMILIES, type MockFamily } from "./read.js";
+export {
+  findBindingIssues,
+  type MockBindingCode,
+  type MockBindingIssue,
+} from "./bindings.js";
+export {
+  applyFieldEdit,
+  editPath,
+  MOCK_FAMILIES,
+  type MockFamily,
+  type MockFieldEdit,
+  type MockFieldEditResult,
+} from "./field-edit.js";
 export {
   MockCursorError,
   openMockCursor,
