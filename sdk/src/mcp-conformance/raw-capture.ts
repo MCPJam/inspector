@@ -276,9 +276,53 @@ export function decodeResponseBody(
   return parsed === undefined ? {} : { json: parsed };
 }
 
+async function captureSseBody(
+  body: NonNullable<Response["body"]>,
+  signal?: AbortSignal
+): Promise<Pick<RawResponse, "bodyText" | "bodyError" | "sse">> {
+  const reader = body
+    .pipeThrough(new TextDecoderStream(), { signal })
+    .getReader();
+  const sse: RawSseEvent[] = [];
+  let bodyText = "";
+  let buffer = "";
+  let bodyError: string | undefined;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      bodyText += value;
+      const { frames, rest } = drainFrames(buffer + value);
+      sse.push(...frames);
+      buffer = rest;
+    }
+  } catch (error) {
+    bodyError = error instanceof Error ? error.message : String(error);
+  } finally {
+    reader.releaseLock();
+  }
+  // Keep the incomplete tail as evidence, but it was never delivered as an event.
+  sse.push(...parseSseEvents(buffer));
+  return { bodyText, sse, ...(bodyError === undefined ? {} : { bodyError }) };
+}
+
+interface CaptureOptions {
+  /**
+   * Record only the SSE headers when the consumer owns the stream and the
+   * server decides when it ends. Waiting for the body would block the consumer.
+   */
+  skipStreamBodies?: boolean;
+  /**
+   * Read SSE incrementally, retaining complete events even if the read aborts.
+   * Only for raw probes that do not read the returned response body.
+   */
+  consumeSseBody?: boolean;
+}
+
 async function captureResponse(
   response: Response,
-  options: { skipStreamBodies?: boolean } = {}
+  options: CaptureOptions,
+  signal?: AbortSignal
 ): Promise<RawResponse> {
   const contentType = response.headers.get("content-type") ?? "";
 
@@ -297,10 +341,18 @@ async function captureResponse(
     };
   }
 
+  if (options.consumeSseBody && isEventStream(contentType) && response.body) {
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: headersToObject(response.headers),
+      ...(await captureSseBody(response.body, signal)),
+    };
+  }
+
   // Read a clone so the original body stays intact for the real consumer.
   const clone = response.clone();
-  // A body that errors mid-stream is itself evidence: keep the status line and
-  // whatever bytes arrived rather than turning the whole exchange into a throw.
+  // Keep the status line even when the body cannot be read to completion.
   let bodyText = "";
   let bodyError: string | undefined;
   try {
@@ -324,26 +376,17 @@ async function captureResponse(
 /**
  * Wrap a fetch so every exchange is recorded verbatim into `exchanges`. The
  * returned `fetch` is a drop-in replacement (pass it to an SDK transport's
- * `fetch` option); the real caller receives an untouched response.
+ * `fetch` option) unless a raw probe opts in to consuming the SSE body.
  */
 export function createCapturingFetch(
   underlying: FetchLike = fetch,
-  options: {
-    /**
-     * Record `text/event-stream` responses head-only instead of reading them.
-     * Set this whenever the wrapped fetch may be handed to a transport that
-     * opens a stream the SERVER decides when to end — buffering one of those
-     * never resolves, so the consumer never receives its response. Leave it off
-     * for the raw probes, which drive bounded streams they close themselves.
-     */
-    skipStreamBodies?: boolean;
-  } = {}
+  options: CaptureOptions = {}
 ): CapturingFetch {
   const exchanges: RawExchange[] = [];
   const wrapped: FetchLike = async (input, init) => {
     const request = await captureRequest(input, init);
     const response = await underlying(input, init);
-    const captured = await captureResponse(response, options);
+    const captured = await captureResponse(response, options, init?.signal ?? undefined);
     exchanges.push({ request, response: captured });
     return response;
   };

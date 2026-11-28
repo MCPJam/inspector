@@ -213,6 +213,8 @@ export interface RawHttpRequestOptions {
   rawBody?: string;
   /** Per-request timeout. Defaults to the run's `checkTimeout`. */
   timeoutMs?: number;
+  /** Observe SSE incrementally through the deadline, keeping frames already read. */
+  observeSse?: boolean;
   /**
    * Decoding policy for the response body.
    *   - `"auto"` (default): parse JSON when the payload is a single JSON
@@ -256,6 +258,8 @@ export interface RawHttpResult {
    * request while separately reporting that the stream broke.
    */
   bodyError?: string;
+  /** The probe reached its own deadline while observing the SSE body. */
+  bodyTimedOut?: boolean;
   /** Parsed body under the `"auto"` decoding policy, else undefined. */
   json?: unknown;
   /** Parsed SSE frames under the `"auto"` policy for an event-stream body. */
@@ -476,7 +480,8 @@ export async function rawRequest(
   );
 
   const capture = createCapturingFetch(
-    withAbortSignalFetch(ctx.fetchFn, ctx.config.signal)
+    withAbortSignalFetch(ctx.fetchFn, ctx.config.signal),
+    { consumeSseBody: options.observeSse }
   );
   try {
     await capture.fetch(options.url ?? ctx.serverUrl, {
@@ -505,12 +510,18 @@ export async function rawRequest(
   }
 
   const { response } = exchange;
+  const bodyTimedOut =
+    options.observeSse &&
+    response.sse !== undefined &&
+    response.bodyError !== undefined &&
+    controller.signal.aborted;
   return {
     status: response.status,
     statusText: response.statusText,
     headers: response.headers,
     bodyText: response.bodyText,
     bodyError: response.bodyError,
+    ...(bodyTimedOut ? { bodyTimedOut } : {}),
     json: options.decode === "text" ? undefined : response.json,
     sse: options.decode === "text" ? undefined : response.sse,
     exchange,

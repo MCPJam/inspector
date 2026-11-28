@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { WireObservationRecorder } from "../../src/mcp-conformance/wire-observations.js";
-import type { RawExchange } from "../../src/mcp-conformance/raw-capture.js";
+import { parseSseEvents, type RawExchange } from "../../src/mcp-conformance/raw-capture.js";
 
 function exchange(options: {
   requestBody?: unknown;
@@ -160,6 +160,19 @@ describe("request-id determinability", () => {
 });
 
 describe("stream messages", () => {
+  it("records complete SSE events and ignores an unfinished frame", () => {
+    const recorder = new WireObservationRecorder();
+    const reply = { jsonrpc: "2.0", id: 1, result: { tools: [] } };
+    const raw = exchange({
+      requestBody: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+    });
+    raw.response.sse = parseSseEvents(
+      `data: ${JSON.stringify(reply)}\n\ndata: {"id":2}\n`,
+    );
+    recorder.recordExchange(raw);
+    expect(recorder.observations.map(({ message }) => message)).toEqual([reply]);
+  });
+
   it("records frames the buffering capture cannot see", () => {
     const recorder = new WireObservationRecorder();
     recorder.recordStreamMessages(

@@ -31,6 +31,8 @@ type Answer =
   | "throw"
   // A stream that carries only a notification, never the response.
   | "no-answer"
+  | "open-after-answer"
+  | "silent"
   // A stream that carries the response to some other request's id.
   | "wrong-id"
   // A notification first, then the response to this request.
@@ -51,7 +53,7 @@ function json(
   });
 }
 
-function sse(chunks: Array<string | Error>) {
+function sse(chunks: Array<string | Error>, holdOpen = false) {
   const encoder = new TextEncoder();
   return new Response(
     new ReadableStream<Uint8Array>({
@@ -63,7 +65,7 @@ function sse(chunks: Array<string | Error>) {
           }
           controller.enqueue(encoder.encode(chunk));
         }
-        controller.close();
+        if (!holdOpen) controller.close();
       },
     }),
     { status: 200, headers: { "content-type": "text/event-stream" } }
@@ -113,6 +115,10 @@ function server(answers: Answer[], protocolVersion: string) {
         return sse([`id: batch-${body.id}\nretry: 1000\ndata: ${JSON.stringify([reply])}\n\n`]);
       case "no-answer":
         return sse([notice]);
+      case "open-after-answer":
+        return sse([frame.slice(0, -1), frame.slice(-1)], true);
+      case "silent":
+        return sse([], true);
       case "wrong-id":
         return sse([
           `data: ${JSON.stringify({ jsonrpc: "2.0", id: 999, result: { tools: [] } })}\n\n`,
@@ -179,12 +185,13 @@ describe("Functional SSE Streams grades only the streams that came back", () => 
     expect(result.details).toMatchObject({ eventCounts: [1, 1] });
   });
 
-  it("still fails a stream that came back unreadable, whatever happened to the others", async () => {
+  it("warns when an accepted stream breaks during the read", async () => {
     const result = await run(["sse", "broken-sse", "429"]);
 
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe("skipped");
+    expect(result.skipReason).toBe("could-not-run");
     expect(result.error?.message).toContain(
-      "ended without the JSON-RPC response to its request"
+      "An SSE stream was cut off"
     );
     expect(result.details).toMatchObject({
       // The probe varies with the declared capabilities; a failure names it.
@@ -244,17 +251,37 @@ describe("Functional SSE Streams grades only the streams that came back", () => 
 });
 
 describe("Functional SSE Streams needs each stream to carry its own response", () => {
-  it("fails a readable stream that never sends the response", async () => {
+  it("passes when a readable stream ends without its response", async () => {
     // A complete event arrived, but it is a notification, not the answer.
     const result = await run(["sse", "no-answer", "sse"]);
 
-    expect(result.status).toBe("failed");
-    expect(result.error?.message).toBe(
-      "One or more concurrent SSE streams ended without the JSON-RPC response to its request"
-    );
+    expect(result.status).toBe("passed");
     expect(result.details).toMatchObject({
       eventCounts: [1, 1, 1],
       unansweredStreams: [1],
+    });
+    expect(result.details).not.toHaveProperty("advice");
+  });
+
+  it("keeps a complete reply when the stream stays open past the deadline", async () => {
+    const result = await run(["sse", "open-after-answer", "sse"]);
+
+    expect(result.status).toBe("passed");
+    expect(result.details).toMatchObject({
+      eventCounts: [1, 1, 1],
+      unansweredStreams: [],
+    });
+    expect(result.details).not.toHaveProperty("advice");
+  });
+
+  it("warns when a stream stays silent until the deadline", async () => {
+    const result = await run(["sse", "silent", "sse"]);
+
+    expect(result).toMatchObject({
+      status: "skipped",
+      skipReason: "could-not-run",
+      error: { message: expect.stringContaining("The probe deadline passed") },
+      details: { eventCounts: [1, 0, 1], unansweredStreams: [1] },
     });
   });
 
@@ -262,7 +289,8 @@ describe("Functional SSE Streams needs each stream to carry its own response", (
     const result = await run(["sse", "sse", "wrong-id"]);
 
     expect(result.status).toBe("failed");
-    expect(result.details).toMatchObject({ unansweredStreams: [2] });
+    expect(result.error?.message).toContain("response for a different request");
+    expect(result.details).toMatchObject({ streamIndexes: [2] });
   });
 
   it("passes a stream that sends a notification before its response", async () => {

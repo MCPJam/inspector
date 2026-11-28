@@ -559,7 +559,8 @@ describe("mcp conformance unit checks", () => {
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
       id: "server-sse-streams-functional",
-      status: "failed",
+      status: "skipped",
+      skipReason: "could-not-run",
     });
     expect(results[0].details).toEqual(
       expect.objectContaining({
@@ -826,7 +827,7 @@ describe("mcp conformance unit checks", () => {
     });
   });
 
-  it("returns structured transport failures instead of throwing on stream errors", async () => {
+  it("returns a structured Could not run result on stream errors", async () => {
     let postCount = 0;
     const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as {
@@ -870,7 +871,8 @@ describe("mcp conformance unit checks", () => {
     const byId = Object.fromEntries(results.map((result) => [result.id, result]));
 
     expect(byId["server-sse-streams-functional"]).toMatchObject({
-      status: "failed",
+      status: "skipped",
+      skipReason: "could-not-run",
       details: expect.objectContaining({
         requestErrors: ["request boom", undefined, undefined],
         eventCounts: [1, 0],
