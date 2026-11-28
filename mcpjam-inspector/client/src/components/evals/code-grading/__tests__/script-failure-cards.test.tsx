@@ -165,6 +165,22 @@ describe("RunScriptNotices, on the run page", () => {
     ).toHaveLength(2);
   });
 
+  it("names its run when the page shows several", () => {
+    render(
+      <RunScriptNotices
+        run={{
+          scriptResults: {
+            runCleanup: { status: "failed", exitCode: 2, output: "" },
+          },
+        }}
+        label="Claude Code · claude-sonnet-5-5"
+      />,
+    );
+    expect(
+      screen.getByText("Claude Code · claude-sonnet-5-5"),
+    ).toBeInTheDocument();
+  });
+
   it("renders nothing for a run whose scripts passed or that has none", () => {
     const { container } = render(
       <RunScriptNotices

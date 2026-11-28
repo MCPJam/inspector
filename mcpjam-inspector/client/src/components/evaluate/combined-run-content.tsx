@@ -319,7 +319,17 @@ export function CombinedRunContent({
             headerVerdict={fullVerdict}
             explanation={null}
           />
-          <RunScriptNotices run={routeRun} onEditScripts={onEditScripts} />
+          {/* Each member ran its own scripts; filtered-out members stay hidden. */}
+          {selectedRuns.map((run) => (
+            <RunScriptNotices
+              key={run._id}
+              run={run}
+              {...(selectedRuns.length > 1
+                ? { label: findingRunLabel(run._id) }
+                : {})}
+              onEditScripts={onEditScripts}
+            />
+          ))}
           {findingsRun ? (
             <div data-testid="combined-run-findings">
               <SelectedRunFindings
