@@ -6,6 +6,7 @@ import { checkStructuredOutput } from "./output-schema.js";
 import {
   fingerprintToolCall,
   MAX_OPERATION_KEY_LENGTH,
+  MockRecordRefusedError,
   OPERATION_KEY_META,
 } from "./record-store.js";
 import type {
@@ -113,11 +114,18 @@ export async function answerFromState(
       write = { key: found.key, fingerprint: fingerprintToolCall(name, input) };
     }
   }
-  const outcome = await call.records.store.execute(
-    call.records.context,
-    operation.value,
-    write
-  );
+  let outcome: Awaited<ReturnType<MockRecords["store"]["execute"]>>;
+  try {
+    outcome = await call.records.store.execute(
+      call.records.context,
+      operation.value,
+      write
+    );
+  } catch (error) {
+    if (!(error instanceof MockRecordRefusedError)) throw error;
+    report("record_refused");
+    return toolErrorResult(error.message);
+  }
   if (!outcome.ok) {
     report("record_refused");
     return toolErrorResult(recordRefusal(name, state, outcome.code));
