@@ -69,15 +69,17 @@ describe("buildConvexAuthHeaders — WorkOS API key exchange", () => {
 
 describe("buildConvexAuthHeaders — an exchanged API key (MCPJAM_TOKEN_EXCHANGE)", () => {
   it("sends the backend's token for the key instead of acting-as", () => {
+    const expiresAt = Date.now() + 600_000;
     const c = fakeContext({
       authMethod: "workos_api_key",
       workosUserId: "workos|user_42",
       mcpjamOrganizationId: "org_42",
-      exchangedConvexBearer: { token: "exchanged-jwt", expiresAt: 1 },
+      exchangedConvexBearer: { token: "exchanged-jwt", expiresAt },
     });
 
     const caller = callerContextFromHono(c);
     expect(caller.exchangedBearer).toBe("exchanged-jwt");
+    expect(caller.exchangedBearerExpiresAt).toBe(expiresAt);
     const headers = buildConvexAuthHeaders(
       caller,
       "sk_should_not_be_forwarded",
@@ -88,6 +90,28 @@ describe("buildConvexAuthHeaders — an exchanged API key (MCPJAM_TOKEN_EXCHANGE
     expect(headers["x-mcpjam-acting-in-org"]).toBeUndefined();
     expect(JSON.stringify(headers)).not.toContain(SERVICE_TOKEN);
     expect(JSON.stringify(headers)).not.toContain("sk_should_not_be_forwarded");
+  });
+
+  it("takes acting-as again once the token has under 30 seconds left", () => {
+    const caller = callerContextFromHono(
+      fakeContext({
+        authMethod: "workos_api_key",
+        workosUserId: "workos|user_42",
+        mcpjamOrganizationId: "org_42",
+        exchangedConvexBearer: {
+          token: "exchanged-jwt",
+          expiresAt: Date.now() + 29_000,
+        },
+      }),
+    );
+    const headers = buildConvexAuthHeaders(caller, "");
+    expect(headers["Authorization"]).toBe(`Bearer ${SERVICE_TOKEN}`);
+    expect(headers["x-mcpjam-acting-as"]).toBe("workos|user_42");
+    expect(headers["x-mcpjam-acting-in-org"]).toBe("org_42");
+    expect(orgBoundActingAs(caller)).toEqual({
+      workosUserId: "workos|user_42",
+      mcpjamOrganizationId: "org_42",
+    });
   });
 
   it("keeps acting-as for a caller synthesized without one (harness routes)", () => {
@@ -110,6 +134,7 @@ describe("buildConvexAuthHeaders — an exchanged API key (MCPJAM_TOKEN_EXCHANGE
         workosUserId: "workos|user_42",
         mcpjamOrganizationId: "org_42",
         exchangedBearer: "exchanged-jwt",
+        exchangedBearerExpiresAt: Date.now() + 600_000,
       }),
     ).toEqual({
       workosUserId: "workos|user_42",

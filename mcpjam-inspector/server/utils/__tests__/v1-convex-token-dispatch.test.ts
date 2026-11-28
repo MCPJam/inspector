@@ -148,6 +148,33 @@ describe("v1 Convex bearer dispatch", () => {
 });
 
 
+describe("an exchanged API key's token (MCPJAM_TOKEN_EXCHANGE)", () => {
+  function seedExchanged(expiresInMs: number) {
+    return (c: any) => {
+      c.set("authMethod", "workos_api_key");
+      c.set("workosUserId", `workos|exchanged-${expiresInMs}`);
+      c.set("mcpjamOrganizationId", "org_1");
+      setRequestLocal(c, "exchangedConvexBearer", {
+        token: "exchanged-jwt",
+        expiresAt: Date.now() + expiresInMs,
+      });
+    };
+  }
+
+  it("is the request's bearer while it has life left", async () => {
+    const { direct, error } = await bearersFor(seedExchanged(600_000));
+    expect(error).toBeUndefined();
+    expect(direct).toBe("exchanged-jwt");
+  });
+
+  it("is not returned with under 30 seconds left: the delegated mint runs instead", async () => {
+    const { direct, error } = await bearersFor(seedExchanged(29_000));
+    expect(error).toBeUndefined();
+    expect(direct).toBe("delegated-jwt");
+    expect(mintFetch).toHaveBeenCalled();
+  });
+});
+
 it("uses only the request-owned active resolver and never falls back after it refuses", async () => {
   let reads = 0;
   const app = new Hono().get("/", async (c) => {

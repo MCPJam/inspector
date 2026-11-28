@@ -161,6 +161,7 @@ import { getRequestLocal } from "../../middleware/request-local.js";
 import {
   isOrgBoundCredential,
   orgBoundActingAs,
+  usableExchangedBearer,
 } from "../../utils/org-bound-credential.js";
 import { carryMockTransport, dialMockOr, type MockAuthorizeEntry, type MockDial } from "../../utils/mock-servers.js";
 import { observeMockAnswered } from "../../services/mock/answer-marks.js";
@@ -754,11 +755,13 @@ export interface ManagerCallerContext {
   /** Convex organization id scope for the delegated exchange. */
   mcpjamOrganizationId?: string;
   /**
-   * The backend's token for an exchanged `sk_` key (`MCPJAM_TOKEN_EXCHANGE`).
-   * Sent instead of acting-as when present. Callers synthesized for harness
-   * routes have none and keep acting-as.
+   * The backend's token for an exchanged `sk_` key (`MCPJAM_TOKEN_EXCHANGE`),
+   * and when it expires. Sent instead of acting-as while it has 30 s left
+   * (`usableExchangedBearer`). Callers synthesized for harness routes have
+   * none and keep acting-as.
    */
   exchangedBearer?: string;
+  exchangedBearerExpiresAt?: number;
   /** Sink for backend-attributed request log context; absent ⇒ no-op. */
   setLogContext?: (partial: Partial<RequestLogContext>) => void;
   /** Read-back of the same log context (authenticatedUserId); absent ⇒ null. */
@@ -772,6 +775,8 @@ export function callerContextFromHono(c: Context): ManagerCallerContext {
     workosUserId: c.get("workosUserId") as string | undefined,
     mcpjamOrganizationId: c.get("mcpjamOrganizationId") as string | undefined,
     exchangedBearer: getRequestLocal(c, "exchangedConvexBearer")?.token,
+    exchangedBearerExpiresAt: getRequestLocal(c, "exchangedConvexBearer")
+      ?.expiresAt,
     setLogContext: (partial) => setRequestLogContext(c, partial),
     getLogContext: () => c.var.requestLogContext,
   };
@@ -792,8 +797,11 @@ export function buildConvexAuthHeaders(
     ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
     ...deliveryContractHeaders(HOSTED_MODE),
   };
-  if (isOrgBoundCredential(caller.authMethod) && caller.exchangedBearer) {
-    headers["Authorization"] = `Bearer ${caller.exchangedBearer}`;
+  const exchangedBearer = isOrgBoundCredential(caller.authMethod)
+    ? usableExchangedBearer(caller)
+    : undefined;
+  if (exchangedBearer) {
+    headers["Authorization"] = `Bearer ${exchangedBearer}`;
     return headers;
   }
   if (isOrgBoundCredential(caller.authMethod)) {

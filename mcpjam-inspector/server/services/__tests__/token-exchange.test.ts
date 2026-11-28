@@ -196,6 +196,35 @@ describe("exchangeApiKey", () => {
     );
   });
 
+  it("gives up on a body that never finishes, and frees the key for the next request", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, init: RequestInit) =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"ok":true,'));
+              init.signal?.addEventListener("abort", () =>
+                controller.error(new DOMException("aborted", "AbortError")),
+              );
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stalled = exchangeApiKey(KEY, "rest");
+    const settled = expect(stalled).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settled;
+
+    fetchMock.mockImplementationOnce(async () => exchanged());
+    await expect(exchangeApiKey(KEY, "rest")).resolves.toMatchObject({
+      kind: "exchanged",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("needs the service credential", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

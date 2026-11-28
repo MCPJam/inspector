@@ -111,9 +111,11 @@ async function requestExchange(
   );
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), EXCHANGE_TIMEOUT_MS);
-  let response: Response;
+  let status: number;
+  let ok: boolean;
+  let body: Record<string, unknown>;
   try {
-    response = await fetch(`${convexUrl}${EXCHANGE_PATH}`, {
+    const response = await fetch(`${convexUrl}${EXCHANGE_PATH}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -126,29 +128,32 @@ async function requestExchange(
       }),
       signal: controller.signal,
     });
+    // The exchange route never answers 404 itself; Convex routing does when
+    // the backend predates it.
+    if (response.status === 404) return { kind: "unsupported" };
+    ({ status, ok } = response);
+    // Read under the same timeout: a body that never finishes would otherwise
+    // hold the request, and every other request with this key waiting on it.
+    body = parseJsonObject(await response.text());
   } finally {
     clearTimeout(timeout);
   }
-  // The exchange route never answers 404 itself; Convex routing does when
-  // the backend predates it.
-  if (response.status === 404) return { kind: "unsupported" };
-  const body = await readJson(response);
-  if (response.status === 401 || response.status === 403) {
+  if (status === 401 || status === 403) {
     return {
       kind: "refused",
-      status: response.status,
+      status,
       ...(typeof body.reason === "string" ? { reason: body.reason } : {}),
       ...(typeof body.error === "string" ? { message: body.error } : {}),
     };
   }
-  const exchanged = response.ok ? parseExchanged(body) : null;
-  if (!exchanged) throw new Error(`Token exchange failed (${response.status})`);
+  const exchanged = ok ? parseExchanged(body) : null;
+  if (!exchanged) throw new Error(`Token exchange failed (${status})`);
   return { kind: "exchanged", value: exchanged };
 }
 
-async function readJson(response: Response): Promise<Record<string, unknown>> {
+function parseJsonObject(text: string): Record<string, unknown> {
   try {
-    const body: unknown = await response.json();
+    const body: unknown = JSON.parse(text);
     return body !== null && typeof body === "object"
       ? (body as Record<string, unknown>)
       : {};
