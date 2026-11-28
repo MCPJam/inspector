@@ -132,7 +132,7 @@ export const TOOL_CHECKS: MCPClientCheckDefinition[] = [
             this,
             Date.now() - startedAt,
             `${violations.length} tool(s) have invalid inputSchema: ${violations.map((v) => `${v.tool} (${v.reason})`).join(", ")}`,
-            { violations },
+            { violations, ...(unsupported.length > 0 ? { unsupported } : {}) },
           );
         }
 

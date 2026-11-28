@@ -1,7 +1,7 @@
 import { Ajv } from "@modelcontextprotocol/client/validators/ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { supportedJsonSchemaDialect } from "../../mcp-client-manager/dialect-dispatch-json-schema-validator.js";
-import { errorMessage } from "./helpers.js";
+import { checkSchemaReferences, type SchemaIssue } from "./tool-input-schema-references.js";
 
 const options = { strict: false, validateFormats: false } as const;
 const draft2020 = new Ajv2020(options);
@@ -9,7 +9,7 @@ const draft07 = new Ajv(options);
 
 export function checkToolInputSchema(
   schema: Record<string, unknown>,
-): { status: "invalid" | "unsupported"; reason: string } | undefined {
+): SchemaIssue | undefined {
   const declared = schema.$schema;
   if (declared !== undefined && typeof declared !== "string") {
     return { status: "invalid", reason: "inputSchema.$schema is not a string" };
@@ -35,22 +35,9 @@ export function checkToolInputSchema(
     };
   }
 
-  if (!JSON.stringify(schema).includes('"$ref":')) return undefined;
-
-  // Resolve references synchronously, without a schema loader. Each tool gets
-  // its own resolver so another tool's $id cannot satisfy its references.
-  const resolutionOptions = { ...options, validateSchema: false };
-  try {
-    if (dialect === "draft2020") {
-      new Ajv2020(resolutionOptions).compile(schema);
-    } else {
-      new Ajv(resolutionOptions).compile(schema);
-    }
-    return undefined;
-  } catch (error) {
-    return {
-      status: "unsupported",
-      reason: `inputSchema references could not be checked locally: ${errorMessage(error)}`,
-    };
-  }
+  return checkSchemaReferences(schema, dialect, validator.opts.uriResolver.resolve, (target) =>
+    validator.validate(metaSchema, target) === true
+      ? undefined
+      : validator.errorsText(validator.errors, { dataVar: "target schema" }),
+  );
 }

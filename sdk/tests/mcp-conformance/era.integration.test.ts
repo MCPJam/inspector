@@ -405,6 +405,12 @@ describe("Tool Input Schemas Valid", () => {
       name: { $id: "https://example.com/schemas/name.json", type: "string" },
     },
   };
+  const brokenLocalRef = { type: "object", $ref: "#/$defs/missing" };
+  const externalDynamicRef = {
+    type: "object",
+    $dynamicRef: "https://example.com/schemas/name.json#name",
+  };
+  const mixed = [invalid, externalRef];
 
   it.each([
     ["2025-03-26", invalid, "passed"],
@@ -420,6 +426,9 @@ describe("Tool Input Schemas Valid", () => {
     ["2025-11-25", externalRef, "skipped"],
     ["2026-07-28", externalRef, "skipped"],
     ["2026-07-28", embeddedRef, "passed"],
+    ["2026-07-28", brokenLocalRef, "failed"],
+    ["2026-07-28", externalDynamicRef, "skipped"],
+    ["2026-07-28", mixed, "failed"],
   ] as const)("on %s with schema %j returns %s", async (protocolVersion, inputSchema, status) => {
     const handler = createFixtureHandler();
     const result = await new MCPConformanceTest({
@@ -437,7 +446,12 @@ describe("Tool Input Schemas Valid", () => {
         const body = isSse
           ? JSON.parse(parseSseEvents(await response.text()).find(({ data }) => data)?.data ?? "")
           : await response.json();
-        body.result.tools[0].inputSchema = inputSchema;
+        if (inputSchema === mixed) {
+          body.result.tools[0].inputSchema = invalid;
+          body.result.tools.push({ name: "unsupported", inputSchema: externalRef });
+        } else {
+          body.result.tools[0].inputSchema = inputSchema;
+        }
         if (isSse) {
           return new Response(`event: message\ndata: ${JSON.stringify(body)}\n\n`, response);
         }
@@ -446,7 +460,11 @@ describe("Tool Input Schemas Valid", () => {
     }).run();
     const check = byId(result.checks, checkId);
     expect(check.status, check.error?.message).toBe(status);
-    if (status === "failed") expect(check.error?.message).toContain("inputSchema/properties/name/type");
+    if (status === "failed" && (inputSchema === invalid || inputSchema === mixed)) {
+      expect(check.error?.message).toContain("inputSchema/properties/name/type");
+    }
+    if (inputSchema === brokenLocalRef) expect(check.error?.message).toContain("no target schema in the local document");
+    if (inputSchema === mixed) expect(check.details?.unsupported).toMatchObject([{ tool: "unsupported" }]);
     if (status === "skipped") expect(check.skipReason).toBe("could-not-run");
   });
 });
