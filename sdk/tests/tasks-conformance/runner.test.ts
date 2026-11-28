@@ -534,6 +534,16 @@ describe("shape validators", () => {
       violations: [],
       warnings: [],
     });
+    // 2025-11-25 `Task.ttl: number | null`: null is "unlimited" (schema.ts:1378).
+    expect(validateTaskTtlShape("legacy", { ttl: null })).toEqual({
+      violations: [],
+      warnings: [],
+    });
+    for (const ttl of ["60000", true, {}]) {
+      expect(validateTaskTtlShape("legacy", { ttl }).violations).toEqual([
+        "legacy task ttl must be a number or null",
+      ]);
+    }
     expect(validateTaskTtlShape("legacy", { ttlMs: 5 })).toEqual({
       violations: [],
       warnings: [],

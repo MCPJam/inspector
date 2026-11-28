@@ -56,8 +56,13 @@ export function validateTaskTtlShape(
       violations.push("extension task pollIntervalMs must be a number");
     }
   } else {
-    if (task.ttl !== undefined && typeof task.ttl !== "number") {
-      violations.push("legacy task ttl must be a number when present");
+    // 2025-11-25 `Task.ttl: number | null`: null is "unlimited" retention.
+    if (
+      task.ttl !== undefined &&
+      task.ttl !== null &&
+      typeof task.ttl !== "number"
+    ) {
+      violations.push("legacy task ttl must be a number or null");
     }
     if (
       task.pollInterval !== undefined &&
