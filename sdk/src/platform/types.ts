@@ -1149,6 +1149,21 @@ export interface PlatformEvalRun {
   accounts?: PlatformEvalRunAccount[];
   notes: string | null;
   /**
+   * The next step when MCPJam credits stopped this run: what to do, who does
+   * it, and the link. Recorded on the run by the backend when a credit stop
+   * finalizes it. ABSENT on every other run and on deployments that do not
+   * record it, so a reader prefers it and falls back to the per-iteration
+   * `infraError.recovery`. The wire value is unvalidated; parse it with
+   * `parseCreditRecovery` before trusting its fields.
+   */
+  creditRecovery?: CreditRecovery;
+  /**
+   * On a terminal run, the exact cases a `resumeFromRunId` launch of it would
+   * run, chosen by the backend. ABSENT on deployments that do not serve it;
+   * the wire value is unvalidated, so read it with `parseResumeSelection`.
+   */
+  resumeSelection?: { caseIds: string[]; totalCaseCount: number };
+  /**
    * The project environment this run executed against, read from the run's
    * immutable config snapshot — NOT the suite's current attachments, which may
    * have changed since. `null` for a legacy (saved-server-selection) run, and
@@ -1783,7 +1798,12 @@ export type PlatformEvalRunGroupEntry =
   | {
       status: "failed";
       target: PlatformEvalRunGroupTarget;
-      error: { code: string; message: string };
+      /**
+       * `recovery` is set when MCPJam credits refused this target: no run was
+       * created for it. Unvalidated on the wire; parse it with
+       * `parseCreditRecovery`.
+       */
+      error: { code: string; message: string; recovery?: CreditRecovery };
     };
 
 /**
@@ -1805,6 +1825,12 @@ export interface PlatformEvalRunGroupCreated {
   startedCount: number;
   failedCount: number;
   targets: PlatformEvalRunGroupEntry[];
+  /**
+   * The launch's key: the caller's, or one the server minted. Replaying the
+   * request with it returns the started targets as their existing runs and
+   * launches only the rest. Absent on deployments that predate it.
+   */
+  idempotencyKey?: string;
   /**
    * @deprecated Mirror of the FIRST started run, so readers written against
    * the single-run receipt keep working. Absent when nothing started. Read
