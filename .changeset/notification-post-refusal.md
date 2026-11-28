@@ -3,4 +3,4 @@
 "@mcpjam/inspector": patch
 ---
 
-Pass the Notification POST Accepted check when the server declines a notification with an HTTP error. When the server accepts the notification, the check still requires HTTP 202 with an empty body.
+Report Notification POST Accepted as Could not run when an HTTP error leaves the acceptance path unverified. An accepted notification still requires HTTP 202 with an empty body.

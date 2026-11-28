@@ -52,7 +52,7 @@ export const TRANSPORT_CHECK_METADATA = {
     category: "transport",
     title: "Notification POST Accepted",
     description:
-      "A notification-only POST returns HTTP 202 Accepted with no body or an HTTP error if the server cannot accept it.",
+      "An accepted notification-only POST returns HTTP 202 Accepted with no body. An HTTP error leaves acceptance unverified.",
   },
   "get-stream-or-405": {
     id: "get-stream-or-405",
@@ -705,10 +705,14 @@ export async function runTransportChecks(
       const check = TRANSPORT_CHECK_METADATA["notification-post-accepted"];
       const { response, durationMs } = initialized;
       const { status, bodyText, bodyError } = response;
-      // An HTTP error is allowed when the server cannot accept the notification.
-      // Only an accepted notification requires an empty response body.
       if (status >= 400 && status < 600) {
-        results.push(passedResult(check, durationMs, { status }));
+        results.push(
+          couldNotRunResult(
+            check,
+            `The notification POST got HTTP ${status}. The spec allows an HTTP error when the server cannot accept the notification, so this run could not verify the empty 202 response.`,
+            { status },
+          ),
+        );
       } else if (bodyError !== undefined) {
         results.push(
           couldNotRunResult(

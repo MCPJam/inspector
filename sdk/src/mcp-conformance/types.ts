@@ -49,6 +49,7 @@ export const MCP_CHECK_IDS = [
   // an accepted notification-only POST answers `202 Accepted` with no body,
   // a refusal answers with an HTTP error, a GET opens an SSE stream or answers
   // 405, and a minted session id contains only visible ASCII (0x21–0x7E).
+  // These checks use 2025 transport mechanics and only run on those revisions.
   "notification-post-accepted",
   "get-stream-or-405",
   "session-id-visible-ascii",
