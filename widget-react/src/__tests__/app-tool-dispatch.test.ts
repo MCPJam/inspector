@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { dispatchAppToolCall } from "../app-tool-dispatch";
 import type { AppInstance } from "../app-tools-registry";
 
@@ -105,19 +106,61 @@ describe("app tool dispatch", () => {
       expect(f.call).toHaveBeenCalledOnce();
     },
   );
-  it("does not report or dispatch an already cancelled call", async () => {
-    const f = fixture();
-    const controller = new AbortController();
-    const onSettled = vi.fn();
-    controller.abort(new Error("closed"));
-    await expect(
-      dispatchAppToolCall(f.entry, {}, {
-        signal: controller.signal,
+  it.each(["signal", "waitSignal"] as const)(
+    "does not report or dispatch with an already cancelled %s",
+    async (signalOption) => {
+      const f = fixture();
+      const controller = new AbortController();
+      const onSettled = vi.fn();
+      controller.abort(new Error("closed"));
+      await expect(
+        dispatchAppToolCall(f.entry, {}, {
+          [signalOption]: controller.signal,
+          onSettled,
+        }),
+      ).rejects.toThrow("closed");
+      expect(f.call).not.toHaveBeenCalled();
+      expect(onSettled).not.toHaveBeenCalled();
+    },
+  );
+  it("can cancel the wire after independently stopping its waiter", async () => {
+    const f = fixture("webmcp");
+    f.request.mockRestore();
+    const [host, app] = InMemoryTransport.createLinkedPair();
+    const received = vi.fn();
+    app.onmessage = received;
+    await f.entry.bridge.connect(host);
+    await app.start();
+    try {
+      const wire = new AbortController();
+      const waiter = new AbortController();
+      const onSettled = vi.fn();
+      const pending = dispatchAppToolCall(f.entry, {}, {
+        signal: wire.signal,
+        waitSignal: waiter.signal,
         onSettled,
-      }),
-    ).rejects.toThrow("closed");
-    expect(f.call).not.toHaveBeenCalled();
-    expect(onSettled).not.toHaveBeenCalled();
+      });
+      waiter.abort(new Error("stop waiting"));
+      await expect(pending).rejects.toThrow("stop waiting");
+      expect(onSettled).not.toHaveBeenCalled();
+      expect(received).toHaveBeenCalledOnce();
+
+      wire.abort(new Error("wire closed"));
+      await vi.waitFor(() =>
+        expect(onSettled).toHaveBeenCalledExactlyOnceWith({
+          status: "rejected",
+          reason: expect.objectContaining({
+            message: expect.stringContaining("wire closed"),
+          }),
+        }),
+      );
+      expect(received).toHaveBeenCalledTimes(2);
+      expect(received.mock.calls[1][0]).toMatchObject({
+        method: "notifications/cancelled",
+      });
+    } finally {
+      await f.entry.bridge.close();
+    }
   });
   it("reports synchronous bridge failure exactly once", async () => {
     const f = fixture();

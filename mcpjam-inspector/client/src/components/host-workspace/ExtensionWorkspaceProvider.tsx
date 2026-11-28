@@ -332,13 +332,18 @@ export function ExtensionWorkspaceProvider({
     });
   }, [store, chatId, identity, identityKey, registration?.includedPluginTools]);
   // Choosing another chat (Sessions, New chat) returns from a global App's
-  // takeover to that chat; the App stays retained.
-  const shownChat = useRef(chatId);
+  // takeover to that chat; the App stays retained. A conflict only changes
+  // the durable session; reopening a conversation restores matching IDs.
+  const shownChat = useRef({ chatId, sessionId });
   useEffect(() => {
-    if (shownChat.current !== null && chatId !== shownChat.current)
+    if (
+      shownChat.current.chatId !== null &&
+      (chatId !== shownChat.current.chatId ||
+        (sessionId !== shownChat.current.sessionId && sessionId === chatId))
+    )
       store.getState().global?.select(null);
-    shownChat.current = chatId;
-  }, [store, chatId]);
+    shownChat.current = { chatId, sessionId };
+  }, [store, chatId, sessionId]);
 
   const globalScope = useMemo(
     () => (identity ? globalOwnerScope(identity) : null),

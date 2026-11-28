@@ -5460,7 +5460,7 @@ describe("PlaygroundMain", () => {
   });
 
   describe("pending execution", () => {
-    it.each([false, true])("forks an explicit conflict without replacing the App pane (comparison configured: %s)", async (compare) => {
+    it.each([false, true])("keeps the App pane through a conflict until comparison is explicitly requested (comparison configured: %s)", async (compare) => {
       invalidateChatHistoryPrefetch();
       const session = {
         _id: "conflict-history", chatSessionId: "chat-session-1", version: 4,
@@ -5512,6 +5512,16 @@ describe("PlaygroundMain", () => {
       expect(mockUseChatSession.detachToLocalFork).toHaveBeenCalledTimes(1);
       expect(screen.getByTestId("thread")).toBe(appPane);
       expect(appPane.isConnected).toBe(true);
+      expect(mockChatInputProps.mock.calls.at(-1)![0].multiModelEnabled).toBe(false);
+
+      mockUseChatSession.setMultiModelEnabled.mockImplementationOnce((enabled: boolean) => {
+        mockUseChatSession.multiModelEnabled = enabled;
+      });
+      act(() => mockChatInputProps.mock.calls.at(-1)![0].onMultiModelEnabledChange(true));
+      rerender(<PlaygroundMain {...props} />);
+      expect(mockUseChatSession.setMultiModelEnabled).toHaveBeenCalledWith(true);
+      expect(mockChatInputProps.mock.calls.at(-1)![0].multiModelEnabled).toBe(true);
+      expect(mockMultiModelPlaygroundCard).toHaveBeenCalled();
       invalidateChatHistoryPrefetch();
     });
 

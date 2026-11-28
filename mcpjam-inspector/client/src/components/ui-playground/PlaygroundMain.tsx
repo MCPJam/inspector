@@ -5545,6 +5545,8 @@ export function PlaygroundMain({
 
   const handleMultiModelEnabledChange = useCallback(
     (enabled: boolean) => {
+      // A conflict retains the replay pane until the person chooses comparison.
+      if (enabled) setViewingHistoryReplay(false);
       setMultiModelEnabled(enabled);
       // Lightweight mutual exclusion (Phase 4 scope). Flipping multi-
       // model ON force-clears multi-host. Also collapse the host
@@ -5584,6 +5586,7 @@ export function PlaygroundMain({
   // propagates without storage events.
   const handleMultiHostEnabledChange = useCallback(
     (enabled: boolean) => {
+      if (enabled) setViewingHistoryReplay(false);
       setMultiHostEnabled(enabled);
       if (enabled && multiModelEnabled) {
         setMultiModelEnabled(false);

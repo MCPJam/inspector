@@ -384,6 +384,42 @@ describe("Playground extension owners", () => {
     },
   );
 
+  it("keeps the global takeover during automatic conflict forks", async () => {
+    const view = renderCenter(registration("chat-a"));
+    await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+    await act(async () => {
+      await owners.global!.launch(server, global);
+    });
+    const app = owners.global!.apps[0];
+
+    for (const sessionId of ["fork-b", "fork-c"]) {
+      view.update(registration("chat-a", { sessionId }));
+      await waitFor(() => expect(owners.global!.active).toBe(app.key));
+      expect(owners.global!.apps[0].handle).toBe(app.handle);
+    }
+    expect(f.open).toHaveBeenCalledOnce();
+    expect(f.close).not.toHaveBeenCalled();
+  });
+
+  it.each(["chat-a", "unrelated"])(
+    "dismisses the global takeover without closing its App when the fork navigates to %s",
+    async (nextId) => {
+      const view = renderCenter(registration("chat-a"));
+      await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());
+      view.update(registration("chat-a", { sessionId: "fork-b" }));
+      await act(async () => { await owners.global!.launch(server, global); });
+      const app = owners.global!.apps[0];
+      expect(owners.global!.active).toBe(app.key);
+
+      view.update(registration(nextId));
+      await waitFor(() => expect(owners.global!.active).toBeNull());
+      expect(owners.global!.apps[0].handle).toBe(app.handle);
+      expect(owners.global!.apps[0].status).toBe("live");
+      expect(f.open).toHaveBeenCalledOnce();
+      expect(f.close).not.toHaveBeenCalled();
+    },
+  );
+
   it("releases the fork owner's App after archiving the continuation", async () => {
     const view = renderCenter(registration("chat-a"));
     await waitFor(() => expect(owners.global?.entries.saved).toBeDefined());

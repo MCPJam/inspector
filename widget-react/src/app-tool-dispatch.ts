@@ -8,17 +8,24 @@ export async function dispatchAppToolCall(
   args: Record<string, unknown>,
   options?: {
     signal?: AbortSignal;
+    /** Stop waiting without cancelling the dispatched wire request. */
+    waitSignal?: AbortSignal;
     /** Observe the dispatched operation, even when its waiter is cancelled. */
     onSettled?: (outcome: PromiseSettledResult<CallToolResult>) => void;
   },
 ) {
-  const signal = options?.signal;
+  const signal =
+    options?.signal && options.waitSignal
+      ? AbortSignal.any([options.signal, options.waitSignal])
+      : options?.signal ?? options?.waitSignal;
   signal?.throwIfAborted();
   let call: Promise<CallToolResult>;
   try {
     call =
       entry.instance.toolSource === "webmcp"
-        ? callViewWebmcpTool(entry.bridge, entry.rawName, args, { signal })
+        ? callViewWebmcpTool(entry.bridge, entry.rawName, args, {
+            signal: options?.signal,
+          })
         : entry.bridge.callTool({ name: entry.rawName, arguments: args });
   } catch (reason) {
     options?.onSettled?.({ status: "rejected", reason });

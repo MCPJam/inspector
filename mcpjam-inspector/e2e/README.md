@@ -46,8 +46,9 @@ npm run test:e2e:app-lifecycle -w @mcpjam/inspector
 
 It drives the real hosted client, mounted counter App, iframe bridge and tool
 alias. Convex and chat responses are fixtures, so this does not prove real
-backend concurrency. The `telemetry-egress` job in `test.yml` runs it for fork
-PRs and the merge queue without a guest-session secret or visual approval.
+backend concurrency. The `telemetry-egress` job in `test.yml` runs it on pull
+requests (including fork PRs) and reusable workflow calls, including the release
+workflow, without a guest-session secret or visual approval.
 
 ## The local-access spec
 

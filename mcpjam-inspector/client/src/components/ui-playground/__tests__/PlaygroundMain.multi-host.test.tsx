@@ -14,6 +14,8 @@ import { PlaygroundMain } from "../PlaygroundMain";
 import { useSignOutStore } from "@/stores/sign-out-store";
 import { GUEST_LOCKED_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
+import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { useHostContextStore } from "@/stores/client-context-store";
 import type { HostDetail } from "@/hooks/useClients";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -331,6 +333,9 @@ const mockUseChatSession = {
   loadChatSession: vi.fn(async () => undefined),
   syncResumedVersion: vi.fn(),
   resumedVersion: null,
+  consumePersistReceipt: vi.fn(() => null),
+  consumeTurnAborted: vi.fn(() => false),
+  detachToLocalFork: vi.fn(async () => ({ chatSessionId: "forked-session" })),
   restoredToolRenderOverrides: {},
   chatSessionId: "chat-session-1",
   startChatWithMessages: vi.fn(),
@@ -789,7 +794,10 @@ describe("PlaygroundMain — multi-host render path", () => {
       multiModelEnabled: false,
       selectedModelIds: [],
       chatSessionId: "chat-session-1",
+      status: "ready",
+      resumedVersion: null,
     });
+    mockUseChatSession.consumePersistReceipt.mockReset().mockReturnValue(null);
     mockUseChatSession.startChatWithMessages.mockReset();
     mockMultiModelPlaygroundCard.mockClear();
     mockChatInput.mockClear();
@@ -2559,6 +2567,70 @@ describe("PlaygroundMain — multi-host render path", () => {
     // limbo state.
     expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(false);
     expect(mockRestorePanes).toHaveBeenCalledWith([]);
+  });
+
+  it("allows explicit client comparison after preserving the single pane through a history conflict", async () => {
+    invalidateChatHistoryPrefetch();
+    const session = {
+      _id: "conflict-history", chatSessionId: "chat-session-1", version: 4,
+      firstMessagePreview: "App", status: "active" as const,
+      directVisibility: "private" as const, messageCount: 1,
+      startedAt: 1, lastActivityAt: 1, isPinned: false, manualUnread: false,
+      isUnread: false, messagesBlobUrl: "https://storage.test/conflict",
+      resumeConfig: { selectedServers: ["test-server"] },
+    };
+    vi.mocked(getChatHistoryDetail).mockResolvedValue({ ok: true, session, widgetSnapshots: [] });
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }, { hostId: "h-B", name: "Host B" }];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A"];
+    mockSetSelectedHostIds.mockImplementation((ids: string[]) => {
+      multiHostFixture.selectedHostIds = ids;
+    });
+    mockSetMultiHostEnabled.mockImplementation((enabled: boolean) => {
+      multiHostFixture.multiHostEnabled = enabled;
+    });
+    mockUseChatSession.messages = [
+      { id: "app", role: "assistant", parts: [{ type: "text", text: "App" }] },
+    ];
+    const view = render(<PlaygroundMain {...defaultProps} />);
+    try {
+      await waitFor(() => expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBeNull());
+      await act(async () => {
+        await usePlaygroundChatHistoryBridgeStore.getState().bridge!.onSelectThread(session);
+      });
+      expect(mockUseChatSession.loadChatSession).toHaveBeenCalled();
+      mockUseChatSession.resumedVersion = 4;
+      mockUseChatSession.status = "streaming";
+      view.rerender(<PlaygroundMain {...defaultProps} />);
+      mockUseChatSession.consumePersistReceipt.mockReturnValueOnce({
+        outcome: "conflict", chatSessionId: session.chatSessionId,
+        currentVersion: 5, turnId: "losing-turn",
+      });
+      mockUseChatSession.status = "ready";
+      view.rerender(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => expect(mockUseChatSession.detachToLocalFork).toHaveBeenCalledWith(
+        mockUseChatSession.messages, expect.objectContaining({ preserveAppSession: true }),
+      ));
+      mockUseChatSession.chatSessionId = "forked-session";
+      view.rerender(<PlaygroundMain {...defaultProps} />);
+      expect(screen.queryByTestId("playground-multi-host-compare-section")).not.toBeInTheDocument();
+
+      const selector = mockChatInput.mock.calls.at(-1)![0].clientSelector;
+      act(() => {
+        selector.onSelectedHostIdsChange(["h-A", "h-B"]);
+        selector.onMultiHostEnabledChange(true);
+      });
+      view.rerender(<PlaygroundMain {...defaultProps} />);
+      expect(screen.getByTestId("playground-multi-host-compare-section")).toBeInTheDocument();
+      expect(mockMultiModelPlaygroundCard).toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      invalidateChatHistoryPrefetch();
+      vi.mocked(getChatHistoryDetail).mockReset();
+    }
   });
 
   it("falls back to single-pane when multi-host is persisted on but only one host resolves (length>1 gate)", () => {

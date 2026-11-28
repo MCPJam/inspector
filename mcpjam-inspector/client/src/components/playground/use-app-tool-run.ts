@@ -169,7 +169,7 @@ export function useAppToolRun() {
         .getIframeElement?.()
         ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       const raw = await dispatchAppToolCall(entry, input, {
-        signal: controller.signal,
+        waitSignal: controller.signal,
         onSettled(outcome) {
           const completed = outcome.status === "fulfilled" ? outcome.value : null;
           try {
