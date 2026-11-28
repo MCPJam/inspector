@@ -122,6 +122,54 @@ describe("request-log backstop for Ask MCPJam", () => {
     expect(captureTags().page_class).toBe("incident");
   });
 
+  // HONO-8J: a scan sending GET and DELETE to POST-only Ask MCPJam URLs. No
+  // route answered, so nothing failed; Ask MCPJam's client never sends these.
+  it.each(["GET", "DELETE"])(
+    "captures a %s that no route answered as routine",
+    async (method) => {
+      const res = await app((a) => {
+        a.post(AGENT, (c) => c.json({ ok: true }));
+        a.post(`${AGENT}/widget-content`, (c) => c.json({ ok: true }));
+      }).request(`${AGENT}/widget-content`, { method });
+
+      expect(res.status).toBe(404);
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(capture.mock.calls[0]?.[1]).toMatchObject({
+        level: "warning",
+        tags: { surface: "mcpjam_agent", page_class: "routine" },
+      });
+      expect(res.headers.get(FAILURE_CAPTURED_HEADER)).toBe("1");
+    },
+  );
+
+  // Ask MCPJam's client sends POSTs, so one no route answered means a route
+  // went missing.
+  it("captures a POST that no route answered as an incident", async () => {
+    const res = await app((a) =>
+      a.post(AGENT, (c) => c.json({ ok: true })),
+    ).request(`${AGENT}/widget-content`, { method: "POST" });
+
+    expect(res.status).toBe(404);
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(captureTags().page_class).toBe("incident");
+  });
+
+  // GET, so the metadata guard decides it: a POST pages whatever the metadata.
+  it("keeps a route's own 404 classified by its code", async () => {
+    await app((a) =>
+      a.get(AGENT, (c) => {
+        c.set("webErrorMeta", {
+          status: 404,
+          code: "TASK_NOT_FOUND",
+          message: "Task not found",
+        });
+        return c.json({ code: "TASK_NOT_FOUND" }, 404);
+      }),
+    ).request(AGENT, { method: "GET" });
+
+    expect(captureTags().page_class).toBe("incident");
+  });
+
   it("does not re-capture an error the route already captured", async () => {
     const res = await app((a) =>
       a.post(AGENT, (c) => {

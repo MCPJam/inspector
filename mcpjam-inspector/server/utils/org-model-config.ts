@@ -22,6 +22,8 @@ import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import { HOSTED_MODE } from "../config.js";
 import { logger } from "./logger";
 import { backendFailureText } from "./backend-failure-text.js";
+import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
+import { PROJECT_ACCESS_REFUSED_CODE } from "@/shared/agent-failure-class";
 import {
   getServiceCredential,
   INSPECTOR_SERVICE_TOKEN_HEADER,
@@ -51,6 +53,9 @@ import {
   runtimeResolveCache,
   type LocalOrgAttemptRequest,
 } from "./org-runtime-admission.js";
+
+const PROJECT_ACCESS_REFUSED_MESSAGE =
+  "You don't have access to this project. Ask a project owner for access.";
 
 // The hosted-mode SSRF guard on a provider's base URL lives with the request
 // plumbing; re-exported for callers that import it from here.
@@ -298,7 +303,7 @@ export async function resolveOrgModelConfig(
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      let parsed: { error?: unknown } | null = null;
+      let parsed: { error?: unknown; code?: unknown } | null = null;
       try {
         const value = JSON.parse(body);
         if (value && typeof value === "object") parsed = value;
@@ -311,6 +316,26 @@ export async function resolveOrgModelConfig(
       // neither would — the hosted-only answer, not a route-not-found error.
       if (!inspectorServiceToken && response.status === 404 && !parsed) {
         throw new ServiceCredentialUnavailableError(ORG_MODEL_CONFIG_FEATURE);
+      }
+      // The caller may not read the project: the backend codes this one
+      // refusal. Its other 403s (guest checks, nonprod lockdowns, a failed
+      // membership read, `provider_secret_…`, `credential_not_allowed`) stay
+      // untyped, so they keep paging.
+      if (
+        response.status === 403 &&
+        parsed?.code === PROJECT_ACCESS_REFUSED_CODE
+      ) {
+        throw new WebRouteError(
+          403,
+          ErrorCode.FORBIDDEN,
+          backendFailureText({
+            source: "org-model-config",
+            status: response.status,
+            detail: parsed.error,
+            fallback: PROJECT_ACCESS_REFUSED_MESSAGE,
+          }),
+          { code: PROJECT_ACCESS_REFUSED_CODE },
+        );
       }
       const fallback = `Org model config resolution failed (${response.status})`;
       throw new Error(

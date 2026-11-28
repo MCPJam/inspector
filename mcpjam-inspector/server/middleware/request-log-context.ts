@@ -72,6 +72,12 @@ function captureUnreportedAgentFailure(
         source: "request-log.agent-backstop",
         httpStatus: status,
         ...(meta?.code ? { code: meta.code } : {}),
+        // No route answered a method Ask MCPJam's client never sends. A POST
+        // still pages: its client sends those, so a missing route is ours. A
+        // route's 404 sets `webErrorMeta`.
+        ...(status === 404 && !meta && c.req.method !== "POST"
+          ? { pageClass: "routine" as const }
+          : {}),
       }),
     }).captured;
   } catch {

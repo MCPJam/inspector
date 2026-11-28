@@ -1,6 +1,8 @@
 import type { CapturePolicy } from "./error-origin-capture.js";
+import type { MappedRuntimeError } from "../routes/web/errors.js";
 import {
   AGENT_SURFACE,
+  PROJECT_ACCESS_REFUSED_CODE,
   agentFingerprint,
   agentPageClass,
   type FailureFacts,
@@ -63,11 +65,20 @@ export const MCPJAM_AGENT_FAILURE_CAPTURE: FailureCapture = {
  * the engine streams), for `mapRuntimeError`'s `capture` option: every one
  * reaches Sentry, classified by the status and code it is answered with. The
  * capture is decided inside the mapping, because that is where the error is
- * first stamped.
+ * first stamped. A project-membership refusal is classified by its own code:
+ * other FORBIDDENs (our platform server's scope refusal, the v1 agent's lease
+ * checks) stay incidents.
  */
 export const agentRouteCapture =
-  (source: string) => (mapped: { status: number; code: string }) =>
-    agentCapturePolicy({ source, httpStatus: mapped.status, code: mapped.code });
+  (source: string) => (mapped: MappedRuntimeError) =>
+    agentCapturePolicy({
+      source,
+      httpStatus: mapped.status,
+      code:
+        mapped.details?.code === PROJECT_ACCESS_REFUSED_CODE
+          ? PROJECT_ACCESS_REFUSED_CODE
+          : mapped.code,
+    });
 
 /**
  * The MCP server an error names, when it names one.

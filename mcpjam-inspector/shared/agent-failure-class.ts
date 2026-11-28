@@ -17,6 +17,15 @@ import type { AiRefusalCode } from "./ai-execution-refusal.js";
 
 export const AGENT_SURFACE = "mcpjam_agent";
 
+/**
+ * The backend refused the caller the project a request named: they are not a
+ * member of it. The backend's org-model-config resolve sends this same code
+ * (mcpjam-backend `convex/http.ts`), so change both together.
+ * `resolveOrgModelConfig` puts it in a 403 FORBIDDEN's `details.code`, which
+ * stays distinct from every other FORBIDDEN.
+ */
+export const PROJECT_ACCESS_REFUSED_CODE = "project_access_refused";
+
 export type PageClass = "incident" | "routine";
 
 /** What a capture point knows about one failure. Every field is optional. */
@@ -83,6 +92,8 @@ const ROUTINE_CODES: ReadonlySet<string> = new Set([
   "unauthorized",
   "session_revoked",
   "oauth_required",
+  // Access: a project the caller is not a member of.
+  PROJECT_ACCESS_REFUSED_CODE,
   // Validation.
   "validation_error",
   "guest_input_too_large",

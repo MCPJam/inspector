@@ -42,6 +42,7 @@ import { Thread } from "@/components/chat-v2/thread";
 import { MarkdownLinkBaseProvider } from "@/components/chat-v2/thread/memomized-markdown";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { LoadingIndicatorContent } from "@/components/chat-v2/shared/loading-indicator-content";
+import { formatErrorMessage } from "@/components/chat-v2/shared/chat-helpers";
 import { UserMessageBubble } from "@/components/chat-v2/thread/user-message-bubble";
 import {
   ScenarioHostStyleProvider,
@@ -553,7 +554,7 @@ export function McpjamAgentThread({
                 {/* Ask MCPJam is MCPJam-paid, so its own refusals come
                     first: they are about MCPJam's budget, not the reader's
                     credits, and the credits copy would be wrong twice over.
-                    The raw body is the last resort — it reads as a crash. */}
+                    A raw JSON body is never shown — it reads as a crash. */}
                 {tooLarge
                   ? CONVERSATION_TOO_LARGE_MESSAGE
                   : (describeAgentRefusalMessage(session.error.message) ??
@@ -562,7 +563,10 @@ export function McpjamAgentThread({
                     // backend's sentence, never its JSON envelope.
                     orgKeysRefusalSentence(session.error.message) ??
                     describeMCPJamLimitMessage(session.error.message) ??
-                    session.error.message ??
+                    // Any other route error: its own `message`, never the
+                    // envelope with its RPC logs. Plain text over 400
+                    // characters is cut, as in the Playground.
+                    formatErrorMessage(session.error)?.message ??
                     "Something went wrong.")}
                 {tooLarge && (
                   <Button

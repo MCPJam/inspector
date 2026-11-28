@@ -308,6 +308,32 @@ describe("McpjamAgentThread refusal copy", () => {
     expect(screen.queryByText(JSON.stringify(body))).toBeNull();
   });
 
+  // HONO-8W: a route error no Ask MCPJam parser knows used to print the whole
+  // envelope, RPC and HTTP logs included (19 KB in the repro).
+  it("shows a route error's own message, not its envelope and logs", () => {
+    const body = {
+      _rpcLogs: [{ eventId: "rpc:1", serverId: "mcpjam-docs" }],
+      _httpLogs: [{ eventId: "rpc:2", serverId: "mcp-spec" }],
+      code: "FORBIDDEN",
+      message:
+        "You don't have access to this project. Ask a project owner for access.",
+      details: { code: "project_access_refused" },
+    };
+    renderWithError(body);
+    expect(
+      screen.getByText(
+        "You don't have access to this project. Ask a project owner for access.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/_rpcLogs/)).toBeNull();
+  });
+
+  it("still shows a plain-text error as it arrived", () => {
+    sessionState.error = new Error("Failed to fetch");
+    renderThread();
+    expect(screen.getByText("Failed to fetch")).toBeTruthy();
+  });
+
   it("says why a turn stopped short of resuming, in one line", () => {
     sessionState.autoResumeNotice =
       "The reply was cut off. Send a message to continue.";
