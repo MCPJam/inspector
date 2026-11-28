@@ -10,19 +10,19 @@ import {
   verifySlackLinkState,
 } from "../slack-link/state.js";
 import { isValidDiscordServiceToken } from "../../middleware/slack-service-auth.js";
+import { linkRefusalPage } from "../slack-link/link-sign-in.js";
 import {
   consumeSurfaceLinkSession,
   createSurfaceLinkSession,
   getSurfaceLinkSession,
-  resolveOrganizationByWorkosId,
   setSurfaceLinkStatus,
 } from "../../services/slack-backend.js";
-import { resolveUserByExternalId } from "../../services/identity.js";
 import {
   resolveAuthkitIssuer,
   resolveWorkosClientId,
 } from "../../services/authkit-jwt.js";
 import { logger } from "../../utils/logger.js";
+import { requireServiceCredentialRoute } from "../../middleware/require-service-credential.js";
 
 const DISCORD_AUTHORIZE_URL = "https://discord.com/oauth2/authorize";
 const DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token";
@@ -213,6 +213,10 @@ async function fetchJson<T>(
 }
 
 const surfaceLink = new Hono();
+// Every step talks to the backend's link-session routes with the service
+// credential; a server without one answers with the shared hosted-only
+// response, as Slack's link pages do.
+surfaceLink.use("*", requireServiceCredentialRoute("Discord account linking"));
 
 surfaceLink.post("/session", async (c) => {
   const config = resolveConfig();
@@ -253,16 +257,13 @@ surfaceLink.post("/session", async (c) => {
     );
   const sessionId = randomUUID();
   try {
-    await createSurfaceLinkSession(
-      {
-        sessionId,
-        surfaceKind: "discord",
-        surfaceTenantId: tenant,
-        surfaceUserId: actor,
-        expiresAt: Date.now() + TTL_MS,
-      },
-      token
-    );
+    await createSurfaceLinkSession({
+      sessionId,
+      surfaceKind: "discord",
+      surfaceTenantId: tenant,
+      surfaceUserId: actor,
+      expiresAt: Date.now() + TTL_MS,
+    });
   } catch (error) {
     logger.error("[surface-link] could not create Discord link session", error);
     return c.json(
@@ -285,14 +286,11 @@ surfaceLink.post("/session", async (c) => {
 surfaceLink.get("/start", async (c) => {
   const config = resolveConfig();
   if (!config) return failed(c);
-  const token = process.env.DISCORD_SERVICE_TOKEN ?? "";
-  if (!isValidDiscordServiceToken(token)) return failed(c);
   const signed = verifySlackLinkState(c.req.query("s") ?? "", config.secret);
   if (!signed) return failed(c);
-  const session = await getSurfaceLinkSession(
-    signed.linkSessionId,
-    token
-  ).catch(() => null);
+  const session = await getSurfaceLinkSession(signed.linkSessionId).catch(
+    () => null,
+  );
   const existingProof = session?.surfaceProof as
     | { stateHash?: unknown }
     | undefined;
@@ -306,15 +304,12 @@ surfaceLink.get("/start", async (c) => {
     return failed(c);
   const surfaceState = randomToken();
   const workosState = randomToken();
-  const transition = await setSurfaceLinkStatus(
-    {
-      sessionId: session.sessionId,
-      status: "pending_surface",
-      surfaceProof: { stateHash: hashOauthState(surfaceState) },
-      workosStateHash: hashOauthState(workosState),
-    },
-    token
-  ).catch(() => ({ ok: false }));
+  const transition = await setSurfaceLinkStatus({
+    sessionId: session.sessionId,
+    status: "pending_surface",
+    surfaceProof: { stateHash: hashOauthState(surfaceState) },
+    workosStateHash: hashOauthState(workosState),
+  }).catch(() => ({ ok: false }));
   if (!transition.ok) return unavailable(c);
   setCookie(
     c,
@@ -343,11 +338,10 @@ surfaceLink.get("/start", async (c) => {
 surfaceLink.get("/discord/callback", async (c) => {
   const config = resolveConfig();
   if (!config) return failed(c);
-  const token = process.env.DISCORD_SERVICE_TOKEN ?? "";
   const cookie = decodeCookie(readCookie(c), config.secret);
-  if (!cookie || !isValidDiscordServiceToken(token)) return failed(c);
-  const session = await getSurfaceLinkSession(cookie.sessionId, token).catch(
-    () => null
+  if (!cookie) return failed(c);
+  const session = await getSurfaceLinkSession(cookie.sessionId).catch(
+    () => null,
   );
   const proof = session?.surfaceProof as { stateHash?: unknown } | undefined;
   if (
@@ -356,10 +350,10 @@ surfaceLink.get("/discord/callback", async (c) => {
     typeof proof?.stateHash !== "string" ||
     !oauthStateMatches(c.req.query("state") ?? "", proof.stateHash)
   ) {
-    await setSurfaceLinkStatus(
-      { sessionId: cookie.sessionId, status: "failed" },
-      token
-    ).catch(() => {});
+    await setSurfaceLinkStatus({
+      sessionId: cookie.sessionId,
+      status: "failed",
+    }).catch(() => {});
     return failed(c);
   }
   const code = c.req.query("code");
@@ -400,23 +394,20 @@ surfaceLink.get("/discord/callback", async (c) => {
     logger.warn("[surface-link] Discord identity proof failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    await setSurfaceLinkStatus(
-      { sessionId: cookie.sessionId, status: "failed" },
-      token
-    ).catch(() => {});
+    await setSurfaceLinkStatus({
+      sessionId: cookie.sessionId,
+      status: "failed",
+    }).catch(() => {});
     return failed(c);
   }
-  const transition = await setSurfaceLinkStatus(
-    {
-      sessionId: cookie.sessionId,
-      status: "surface_verified",
-      surfaceProof: {
-        discordUserId: session.surfaceUserId,
-        guildId: session.surfaceTenantId,
-      },
+  const transition = await setSurfaceLinkStatus({
+    sessionId: cookie.sessionId,
+    status: "surface_verified",
+    surfaceProof: {
+      discordUserId: session.surfaceUserId,
+      guildId: session.surfaceTenantId,
     },
-    token
-  ).catch(() => ({ ok: false }));
+  }).catch(() => ({ ok: false }));
   if (!transition.ok) return unavailable(c);
   const authorize = new URL(`${config.workosIssuer}/oauth2/authorize`);
   authorize.searchParams.set("client_id", config.workosClientId);
@@ -433,11 +424,10 @@ surfaceLink.get("/discord/callback", async (c) => {
 surfaceLink.get("/workos/callback", async (c) => {
   const config = resolveConfig();
   if (!config) return failed(c);
-  const token = process.env.DISCORD_SERVICE_TOKEN ?? "";
   const cookie = decodeCookie(readCookie(c), config.secret);
-  if (!cookie || !isValidDiscordServiceToken(token)) return failed(c);
-  const session = await getSurfaceLinkSession(cookie.sessionId, token).catch(
-    () => null
+  if (!cookie) return failed(c);
+  const session = await getSurfaceLinkSession(cookie.sessionId).catch(
+    () => null,
   );
   if (
     !session ||
@@ -451,8 +441,7 @@ surfaceLink.get("/workos/callback", async (c) => {
     return failed(c);
   const code = c.req.query("code");
   if (!code) return failed(c);
-  let workosUserId = "";
-  let workosOrgId: string | undefined;
+  let accessToken = "";
   try {
     const result = await fetchJson<{ access_token?: string }>(
       `${config.workosIssuer}/oauth2/token`,
@@ -470,86 +459,54 @@ surfaceLink.get("/workos/callback", async (c) => {
     );
     if (!result.ok || typeof result.body?.access_token !== "string")
       throw new Error(`WorkOS token exchange failed (${result.status})`);
-    const claims = decodeJwtClaims(result.body.access_token);
-    workosUserId = typeof claims?.sub === "string" ? claims.sub : "";
-    workosOrgId =
-      typeof claims?.org_id === "string" ? claims.org_id : undefined;
-    if (!workosUserId) throw new Error("WorkOS token carried no subject");
+    accessToken = result.body.access_token;
   } catch (error) {
     logger.warn("[surface-link] WorkOS token exchange failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    await setSurfaceLinkStatus(
-      { sessionId: cookie.sessionId, status: "failed" },
-      token
-    ).catch(() => {});
+    await setSurfaceLinkStatus({
+      sessionId: cookie.sessionId,
+      status: "failed",
+    }).catch(() => {});
     return failed(c);
   }
-  const advanced = await setSurfaceLinkStatus(
-    { sessionId: cookie.sessionId, status: "workos_verified" },
-    token
-  ).catch(() => ({ ok: false }));
+  const advanced = await setSurfaceLinkStatus({
+    sessionId: cookie.sessionId,
+    status: "workos_verified",
+  }).catch(() => ({ ok: false }));
   if (!advanced.ok) return unavailable(c);
-  let user;
+  // The backend verifies the person's sign-in and takes the user and
+  // organization from it; a refusal has already failed the session.
+  let consumed;
   try {
-    user = await resolveUserByExternalId(workosUserId);
-  } catch (error) {
-    logger.error("[surface-link] identity lookup failed", error);
-    return unavailable(c);
-  }
-  if (!user) {
-    await setSurfaceLinkStatus(
-      { sessionId: cookie.sessionId, status: "failed" },
-      token
-    ).catch(() => {});
-    return page(
-      c,
-      "No MCPJam account yet",
-      "Sign in to MCPJam once at app.mcpjam.com, then use the connect link again.",
-      400
-    );
-  }
-  if (!workosOrgId) {
-    await setSurfaceLinkStatus(
-      { sessionId: cookie.sessionId, status: "failed" },
-      token
-    ).catch(() => {});
-    return page(
-      c,
-      "Couldn’t tell which organization to use",
-      "Open MCPJam, choose the organization you want Discord to use, then use the connect link again.",
-      400
-    );
-  }
-  let organization;
-  try {
-    organization = await resolveOrganizationByWorkosId(workosOrgId);
-  } catch (error) {
-    logger.error("[surface-link] organization lookup failed", error);
-    return unavailable(c);
-  }
-  if (!organization) {
-    await setSurfaceLinkStatus(
-      { sessionId: cookie.sessionId, status: "failed" },
-      token
-    ).catch(() => {});
-    return page(
-      c,
-      "Couldn’t tell which organization to use",
-      "Open MCPJam, choose the organization you want Discord to use, then use the connect link again.",
-      400
-    );
-  }
-  const consumed = await consumeSurfaceLinkSession(
-    {
+    consumed = await consumeSurfaceLinkSession({
       sessionId: cookie.sessionId,
-      userId: user._id,
-      workosUserId,
-      organizationId: organization.organizationId,
-    },
-    token
-  ).catch(() => ({ ok: false }));
-  if (!consumed.ok) return unavailable(c);
+      accessToken,
+    });
+  } catch (error) {
+    logger.error("[surface-link] link consumption failed", error);
+    return unavailable(c);
+  }
+  if (!consumed.ok) {
+    switch (linkRefusalPage(consumed.reason)) {
+      case "no_account":
+        return page(
+          c,
+          "No MCPJam account yet",
+          "Sign in to MCPJam once at app.mcpjam.com, then use the connect link again.",
+          400,
+        );
+      case "no_organization":
+        return page(
+          c,
+          "Couldn’t tell which organization to use",
+          "Open MCPJam, choose the organization you want Discord to use, then use the connect link again.",
+          400,
+        );
+      default:
+        return failed(c);
+    }
+  }
   clearCookie(c);
   return page(
     c,
@@ -557,17 +514,5 @@ surfaceLink.get("/workos/callback", async (c) => {
     "MCPJam will now act as you when you mention it in this Discord server. You can manage the organization connection from MCPJam settings."
   );
 });
-
-function decodeJwtClaims(jwt: string): Record<string, unknown> | null {
-  const parts = jwt.split(".");
-  if (parts.length !== 3) return null;
-  try {
-    return JSON.parse(
-      Buffer.from(parts[1] as string, "base64url").toString("utf8")
-    ) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
 
 export default surfaceLink;
