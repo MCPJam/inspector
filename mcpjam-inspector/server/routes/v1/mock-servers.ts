@@ -116,7 +116,12 @@ mockServers.post("/projects/:projectId/mock-servers/:mockId/versions", async (c)
   const definition = validatedDefinition(
     body.patch !== undefined ? applyMergePatch(JSON.parse(head.definitionJson), body.patch) : body.definition,
   );
-  assertCallable(definition, savedTools(head.discovery?.listingJson));
+  // A stale save stores nothing: the backend answers it with a 409, or with the
+  // head when it equals the head (a retry of a save that landed). It needs no
+  // check of callability, and its caller learns of the newer head first.
+  if (body.expectedVersion === head.headVersion) {
+    assertCallable(definition, savedTools(head.discovery?.listingJson));
+  }
   let result: { version: number; contentHash: string; created: boolean; loosened?: PlatformMockLoosened[] };
   try {
     result = await createConvexClient(await bearerOf(c)).mutation(fn.save, {

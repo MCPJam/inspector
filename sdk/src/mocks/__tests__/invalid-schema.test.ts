@@ -38,6 +38,43 @@ describe("findInvalidSchemas", () => {
     expect(issues.map((issue) => issue.path)).toEqual(["tools.a.outputSchema.properties.n.type"]);
   });
 
+  it("names a $schema that is not a string, and still judges the rest of the tools", () => {
+    const issues = findInvalidSchemas({
+      tools: {
+        a: { inputSchema: { type: "object", $schema: 42 } },
+        b: { inputSchema: { type: "bogus-type" } },
+      },
+    });
+    expect(issues.map((issue) => issue.path)).toEqual([
+      "tools.a.inputSchema.$schema",
+      "tools.b.inputSchema.type",
+    ]);
+    expect(issues[0].message).toContain('"$schema" must be a string');
+  });
+
+  it("judges a dialect by its meaning, however the address that names it is spelled", () => {
+    const spellings = [
+      "https://json-schema.org/draft/2020-12/schema",
+      "http://json-schema.org/draft/2020-12/schema",
+      "http://json-schema.org/draft/2020-12/schema#",
+      "https://json-schema.org/draft-07/schema",
+      "http://json-schema.org/draft-07/schema",
+      "http://json-schema.org/draft-07/schema#",
+    ];
+    for (const $schema of spellings) {
+      const check = (inputSchema: object) =>
+        findInvalidSchemas({ tools: { a: { inputSchema } } } as never);
+      expect(check({ $schema, type: "object", required: ["id"] })).toEqual([]);
+      const [issue, ...rest] = check({
+        $schema,
+        type: "object",
+        required: "id",
+      });
+      expect(rest).toEqual([]);
+      expect(issue).toMatchObject({ path: "tools.a.inputSchema.required" });
+    }
+  });
+
   it("judges draft-07 by its own meta-schema and leaves an unknown dialect alone", () => {
     expect(
       findInvalidSchemas({

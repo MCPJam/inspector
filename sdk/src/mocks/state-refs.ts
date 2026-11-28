@@ -67,11 +67,15 @@ export function hasRefs(value: unknown): boolean {
   return false;
 }
 
+/** A step into an array is an index (`rows.0`) and nothing else: `length` is not a field. */
+const INDEX = /^(?:0|[1-9]\d*)$/;
+
 function valueAt(scope: Obj, path: string): unknown {
   let node: unknown = scope;
   for (const step of path.split(".")) {
-    if (!isObj(node) || !Object.hasOwn(node, step)) return undefined;
-    node = node[step];
+    const steppable = Array.isArray(node) ? INDEX.test(step) : isObj(node);
+    if (!steppable || !Object.hasOwn(node as object, step)) return undefined;
+    node = (node as Obj)[step];
   }
   return node;
 }

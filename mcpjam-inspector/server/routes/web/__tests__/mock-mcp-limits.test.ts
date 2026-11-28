@@ -102,6 +102,33 @@ describe("the per-key limit", () => {
   });
 });
 
+describe("a request of any method", () => {
+  const get = (token: string) =>
+    app.request("/api/web/mock-mcp/mock1", {
+      method: "GET",
+      headers: {
+        accept: "text/event-stream",
+        authorization: `Bearer ${token}`,
+        "cf-connecting-ip": "203.0.113.7",
+      },
+    });
+
+  it("spends the key's budget on the mock, so a flood of GETs cannot reach the backend", async () => {
+    for (let i = 0; i < MCP_OPERATION_BURST; i += 1) {
+      await (await get("sk_ann")).body?.cancel();
+    }
+    expect(backendCalls).toBe(MCP_OPERATION_BURST);
+
+    const limited = await get("sk_ann");
+    expect(limited.status).toBe(429);
+    expect((await mockCode(limited)).data.mockCode).toBe("mock_rate_limited");
+    expect(backendCalls).toBe(MCP_OPERATION_BURST);
+    // It is the one budget: a POST from the same key is refused too.
+    expect((await rpc("sk_ann")).status).toBe(429);
+    expect(backendCalls).toBe(MCP_OPERATION_BURST);
+  });
+});
+
 describe("the per-source limit", () => {
   it("refuses a source address at its line, before the key is checked or the backend asked", async () => {
     // A new key each time, so only the address can be what refuses.

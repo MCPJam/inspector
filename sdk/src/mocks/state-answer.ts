@@ -30,6 +30,9 @@ export interface StateCall {
   observer?: MockObserver;
 }
 
+/** Added to an error the caller gets after a write committed, so it does not repeat the write blindly. */
+const CHANGE_SAVED = "The change was saved.";
+
 function recordRefusal(
   name: string,
   state: MockToolState,
@@ -133,7 +136,9 @@ export async function answerFromState(
   const shaped = shapeResult(name, state, outcome, input);
   if (!shaped.ok) {
     report("invalid_output");
-    return toolErrorResult(shaped.message);
+    return toolErrorResult(
+      writes ? `${shaped.message} ${CHANGE_SAVED}` : shaped.message
+    );
   }
   const result: CallToolResult = {
     content: [{ type: "text", text: JSON.stringify(shaped.value) }],
@@ -143,7 +148,7 @@ export async function answerFromState(
   if (!output.ok) {
     report("invalid_output");
     return toolErrorResult(
-      `The result of ${name} does not match its output schema: ${output.message}.${writes ? " The change was saved." : ""} Fix the result template, or the output schema.`
+      `The result of ${name} does not match its output schema: ${output.message}.${writes ? ` ${CHANGE_SAVED}` : ""} Fix the result template, or the output schema.`
     );
   }
   report();

@@ -82,6 +82,69 @@ describe("findUncallableInputs", () => {
     expect(issues.map((i) => i.path)).toEqual(["tools.search.inputSchema"]);
   });
 
+  it("takes a parameter the real tool requires without declaring it as one the client can send", () => {
+    const loose = [
+      { name: "search", inputSchema: { type: "object", required: ["q"] } },
+    ];
+    // A description-only edit leaves the real schema in force.
+    expect(
+      findUncallableInputs({ tools: { search: { description: "x" } } }, loose)
+    ).toEqual([]);
+    // A replaced schema that still requires it tells the client to send it.
+    expect(
+      findUncallableInputs(
+        {
+          tools: {
+            search: { inputSchema: { type: "object", required: ["q"] } },
+          },
+        },
+        loose
+      )
+    ).toEqual([]);
+    // A replaced schema that drops it, and hiding it, are still refused.
+    expect(
+      findUncallableInputs(
+        {
+          tools: {
+            search: { inputSchema: { type: "object", properties: {} } },
+          },
+        },
+        loose
+      ).map((i) => i.path)
+    ).toEqual(["tools.search.inputSchema"]);
+    expect(
+      findUncallableInputs(
+        { tools: { search: { params: { q: { hidden: true } } } } },
+        loose
+      ).map((i) => i.path)
+    ).toEqual(["tools.search.params.q"]);
+  });
+
+  it("does not judge a listed parameter against a strict real tool that names others by pattern", () => {
+    const patterned = [
+      {
+        name: "search",
+        inputSchema: {
+          type: "object",
+          patternProperties: { "^q$": { type: "string" } },
+          additionalProperties: false,
+        },
+      },
+    ];
+    expect(
+      findUncallableInputs(
+        {
+          tools: {
+            search: {
+              inputSchema: { type: "object", properties: { q: {} } },
+            },
+          },
+        },
+        patterned
+      )
+    ).toEqual([]);
+  });
+
   it("follows answer.tool to the real tool a renamed entry reaches", () => {
     const issues = findUncallableInputs(
       {

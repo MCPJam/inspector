@@ -28,12 +28,12 @@ type MetaValidator = { validateSchema(schema: object): boolean | Promise<unknown
 let draft2020: MetaValidator | undefined;
 let draft07: MetaValidator | undefined;
 
-function validatorFor(schema: Record<string, unknown>): MetaValidator | undefined {
-  const declared = typeof schema.$schema === "string" ? schema.$schema.replace(/#$/, "") : undefined;
-  if (declared === undefined || DRAFT_2020_12.has(declared)) {
+function validatorFor(declared: string | undefined): MetaValidator | undefined {
+  const dialect = declared?.replace(/#$/, "");
+  if (dialect === undefined || DRAFT_2020_12.has(dialect)) {
     return (draft2020 ??= new Ajv2020({ strict: false, allErrors: true }));
   }
-  if (DRAFT_07.has(declared)) {
+  if (DRAFT_07.has(dialect)) {
     return (draft07 ??= new Ajv({ strict: false, allErrors: true }));
   }
   return undefined;
@@ -60,8 +60,21 @@ function advice(field: string, errors: ErrorObject[]): string {
 
 function check(where: string, label: string, schema: unknown, issues: MockIssue[]): void {
   if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return;
-  const meta = validatorFor(schema as Record<string, unknown>);
-  if (!meta || meta.validateSchema(schema) === true) return;
+  const { $schema: declared, ...body } = schema as Record<string, unknown>;
+  // Ajv throws on a `$schema` that is not a string, which would abort the save.
+  if (declared !== undefined && typeof declared !== "string") {
+    issues.push({
+      code: "invalid_schema",
+      path: `${where}.$schema`,
+      message: `The ${label} is not a valid JSON Schema: "$schema" must be a string, the address of a JSON Schema dialect. Change it to a string, or remove it.`,
+    });
+    return;
+  }
+  const meta = validatorFor(declared);
+  // The declaration has chosen the engine above. Ajv looks a dialect up by one
+  // spelling of its address and throws on the others it accepts here, so the
+  // schema is judged by the engine's own dialect, without its `$schema`.
+  if (!meta || meta.validateSchema(body) === true) return;
   const byPath = new Map<string, ErrorObject[]>();
   for (const error of meta.errors ?? []) {
     byPath.set(error.instancePath, [...(byPath.get(error.instancePath) ?? []), error]);
