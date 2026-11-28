@@ -58,14 +58,20 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 }));
 
 import chatSessions from "../chat-sessions.js";
-import { createSecretScrubber } from "../../../utils/secrets/secret-scrubber.js";
+import {
+  createSecretScrubber,
+  type SecretScrubber,
+} from "../../../utils/secrets/secret-scrubber.js";
 import { v1OnError } from "../envelope.js";
 import { __testing } from "../chat-session-turn.js";
 import {
-  boundPayload,
   joinToolCalls,
+  MAX_MESSAGE_PAGE_CHARS,
+  MAX_MESSAGE_PAYLOAD_CHARS,
+  MAX_TOOL_PAYLOAD_CHARS,
   projectMessages,
 } from "../chat-session-payloads.js";
+import { boundJson } from "../payload-bounds.js";
 
 const PROJECT = "proj_a";
 const OTHER_PROJECT = "proj_b";
@@ -1056,39 +1062,64 @@ describe("maxToolCalls", () => {
 // ── Payload economics ───────────────────────────────────────────────────────
 
 describe("payload bounding", () => {
+  const LENGTH_MARKER = /…\[\+\d+ chars\]$/;
+
+  /**
+   * 480 objects at the depth cap beneath a 12,000-character key. Every depth
+   * marker's path repeats the key, so listing them all came to about 5.8
+   * million characters.
+   */
+  function deepUnderLongKey(): Record<string, unknown> {
+    let rows: unknown = Array.from({ length: 480 }, (_, i) => ({ i }));
+    for (let level = 0; level < 6; level++) rows = { n: rows };
+    return { ["k".repeat(12_000)]: rows };
+  }
+
   it("drops protocol annotations, not caller data", () => {
-    const { value } = boundPayload({
-      city: "SF",
-      _meta: { progressToken: 1 },
-      $schema: "http://example",
-      nested: { $ref: "x", keep: true },
-    });
+    const { value } = boundJson(
+      {
+        city: "SF",
+        _meta: { progressToken: 1 },
+        $schema: "http://example",
+        nested: { $ref: "x", keep: true },
+      },
+      MAX_TOOL_PAYLOAD_CHARS,
+    );
     expect(value).toEqual({ city: "SF", nested: { keep: true } });
   });
 
-  it("announces truncation instead of silently shortening", () => {
-    const result = boundPayload({ blob: "x".repeat(50_000) });
+  it("announces truncation and keeps the payload's JSON type", () => {
+    const result = boundJson(
+      { blob: "x".repeat(50_000) },
+      MAX_TOOL_PAYLOAD_CHARS,
+    );
     expect(result.truncated).toBe(true);
-    expect(typeof result.value).toBe("string");
+    // Still an object: the old bound handed back a sliced JSON string here.
+    expect(result.value).toEqual({
+      blob: expect.stringMatching(LENGTH_MARKER),
+    });
   });
 
-  it("contains a cycle at the depth cap rather than failing the turn", () => {
-    // The depth cap, not the serializer catch, is what stops this: a cyclic
-    // tool result must never take down a turn that already ran and already
-    // spent, and it must not need `JSON.stringify` to throw first.
+  it("contains a cycle rather than failing the turn", () => {
+    // A cyclic tool result must never take down a turn that already ran and
+    // already spent, and it must not need `JSON.stringify` to throw first.
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
-    let result!: ReturnType<typeof boundPayload>;
+    let result!: ReturnType<typeof boundJson>;
     expect(() => {
-      result = boundPayload({ a: { b: { c: cyclic } } });
+      result = boundJson({ a: { b: { c: cyclic } } }, MAX_TOOL_PAYLOAD_CHARS);
     }).not.toThrow();
-    expect(JSON.stringify(result.value)).toContain("max depth");
+    expect(result.truncatedFields).toEqual([
+      { path: "a.b.c.self", reason: "depth" },
+    ]);
   });
 
   it("renders a bigint instead of throwing on it", () => {
     // `JSON.stringify` THROWS on bigint, which would turn one odd tool result
     // into a 500 for the whole turn.
-    expect(boundPayload({ n: 10n }).value).toEqual({ n: "10" });
+    expect(boundJson({ n: 10n }, MAX_TOOL_PAYLOAD_CHARS).value).toEqual({
+      n: "10",
+    });
   });
 
   it("reports a tool call with no result as an error, not as missing", () => {
@@ -1119,41 +1150,83 @@ describe("payload bounding", () => {
     expect(joined[1]!.status).toBe("error");
   });
 
-  it("scrubs a credential that STRADDLES the truncation boundary", () => {
-    // Bounding used to run first, cutting the serialized payload at a fixed
-    // offset. A credential spanning that cut left a fragment in the retained
-    // prefix — no needle matches a fragment — and those bytes went out in a
-    // response that crosses the trust boundary. A partial credential is not
-    // safe; it is a shorter one.
-    //
-    // THE SHAPE HERE IS LOAD-BEARING and took two attempts to get right. The
-    // obvious payload (filler + secret) has no filler length that works: the
-    // window where the cut lands inside the value under the OLD ordering is
-    // exactly the window where the NEW ordering, having shrunk the value to
-    // `[secret:…]`, drops back under the cap and never truncates at all. The
-    // test then passes for the wrong reason, proving only the untruncated
-    // path. The trailing field is what fixes it — it keeps the payload over
-    // the cap after redaction, so BOTH orderings truncate and the only
-    // difference left is whether a fragment survives.
-    const value = `sk_live_${"a".repeat(64)}`;
-    const scrubber = createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!;
-    const input = {
-      filler: "x".repeat(15_940),
-      key: value,
-      tail: "y".repeat(200),
-    };
-
+  it("keeps isError a boolean on a 100,000-character tool result", () => {
+    // The bug this pins: the old bound sliced the serialized result, so a long
+    // error came back as a broken JSON string with `isError` inside it.
     const joined = joinToolCalls(
-      [{ toolCallId: "t1", toolName: "run", input }],
-      [{ toolCallId: "t1", output: { type: "json", value: input } }],
-      scrubber,
+      [
+        {
+          toolCallId: "t1",
+          toolName: "fetch",
+          input: { query: "q".repeat(20_000) },
+        },
+      ],
+      [
+        {
+          toolCallId: "t1",
+          output: {
+            type: "json",
+            value: {
+              content: [{ type: "text", text: "z".repeat(100_000) }],
+              isError: true,
+            },
+          },
+        },
+      ],
     );
+    const call = joined[0]!;
+    expect(call.status).toBe("error");
+    expect(call.output).toEqual({
+      content: [{ type: "text", text: expect.stringMatching(LENGTH_MARKER) }],
+      isError: true,
+    });
+    expect(JSON.stringify(call.output).length).toBeLessThanOrEqual(
+      MAX_TOOL_PAYLOAD_CHARS,
+    );
+    expect(call.truncated).toBe(true);
+    // Each path says which side of the call it is on.
+    expect(call.truncatedFields).toEqual([
+      { path: "input.query", reason: "length", originalLength: 20_000 },
+      {
+        path: "output.content[0].text",
+        reason: "length",
+        originalLength: 100_000,
+      },
+    ]);
+  });
 
+  it("scrubs a credential that STRADDLES the truncation boundary", () => {
+    // Scrubbing runs on the structured value before anything is cut, so a cut
+    // can only ever land inside `[secret:NAME]`. A credential split by the cut
+    // would leave a fragment no needle matches, and a partial credential is
+    // not safe; it is a shorter one.
+    //
+    // The credential sits inside the string the cut shortens, and the tail
+    // keeps that string over the cap after redaction, so the cut happens with
+    // the scrubber too rather than redaction alone bringing it under.
+    const value = `sk_live_${"a".repeat(192)}`;
+    const scrubber = createSecretScrubber([{ name: "STRIPE_API_KEY", value }])!;
+    const input = { text: `${"x".repeat(15_800)}${value}${"y".repeat(1_000)}` };
+    const run = (secrets?: SecretScrubber) =>
+      joinToolCalls(
+        [{ toolCallId: "t1", toolName: "run", input }],
+        [{ toolCallId: "t1", output: { type: "json", value: input } }],
+        secrets,
+      );
+
+    // Without the scrubber the cut lands inside the credential. Bounding
+    // before scrubbing would keep this fragment, and no needle matches it.
+    const unscrubbed = JSON.stringify(run());
+    expect(unscrubbed).toContain(value.slice(0, 20));
+    expect(unscrubbed).not.toContain(value);
+
+    const joined = run(scrubber);
     // Truncation really happened — without this the assertions below could
     // pass on a payload that was never cut.
     expect(joined[0]!.truncated).toBe(true);
 
     const serialized = JSON.stringify(joined);
+    expect(serialized).toContain("[secret:STRIPE_API_KEY]");
     // The FRAGMENT is the assertion that matters. The whole value never
     // survives bounding under either ordering, so asserting only on it would
     // pass while the bug was live.
@@ -1161,12 +1234,47 @@ describe("payload bounding", () => {
     expect(serialized).not.toContain(value);
   });
 
-  it("survives a CYCLIC payload now that scrubbing runs first", () => {
-    // The regression the reordering could have introduced. `boundPayload`'s
-    // depth cap is what turns a cycle into a marker, and it used to run before
-    // the scrubber — so the scrubber never saw one. Scrubbing first removed
-    // that shield, and an unguarded recursive rebuild would blow the stack and
-    // turn a turn that used to succeed into a 500.
+  it("keeps a tool call's input and output, cut lists included, within the ceiling", () => {
+    const deep = deepUnderLongKey();
+    const [call] = joinToolCalls(
+      [{ toolCallId: "t1", toolName: "run", input: deep }],
+      [{ toolCallId: "t1", output: { type: "json", value: deep } }],
+    );
+    for (const side of ["input", "output"] as const) {
+      const cuts = call!.truncatedFields!.filter((field) =>
+        field.path.startsWith(side),
+      );
+      expect(cuts.length).toBeGreaterThan(0);
+      expect(
+        JSON.stringify(call![side]).length + JSON.stringify(cuts).length,
+      ).toBeLessThanOrEqual(MAX_TOOL_PAYLOAD_CHARS);
+    }
+  });
+
+  it("holds a page's first message, cut list included, to its ceiling", () => {
+    // A page takes its first message before any size check, so that
+    // message's own bound is what keeps the page bounded.
+    const page = projectMessages(
+      [
+        { role: "tool", content: deepUnderLongKey() },
+        { role: "user", content: "next" },
+      ],
+      0,
+    );
+    const [first] = page;
+    expect(
+      JSON.stringify(first!.content).length +
+        JSON.stringify(first!.truncatedFields).length,
+    ).toBeLessThanOrEqual(MAX_MESSAGE_PAYLOAD_CHARS);
+    expect(JSON.stringify(page).length).toBeLessThanOrEqual(
+      MAX_MESSAGE_PAGE_CHARS,
+    );
+    expect(page.map((message) => message.index)).toEqual([0, 1]);
+  });
+
+  it("survives a CYCLIC payload while it scrubs", () => {
+    // `boundJson` scrubs as it copies, so its cycle guard is what stands
+    // between a third-party server's cyclic result and a blown stack.
     const value = "sk_live_cyclictest_value";
     const cyclic: Record<string, unknown> = { key: value };
     cyclic.self = cyclic;
@@ -1211,5 +1319,111 @@ describe("payload bounding", () => {
     expect(projectMessages([{ role: "user", content: "c" }], 5)).toEqual([
       { index: 5, role: "user", content: "c" },
     ]);
+  });
+
+  it("keeps a stored tool result's isError, listing cuts under content", () => {
+    const [message] = projectMessages(
+      [
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "t1",
+              toolName: "fetch",
+              output: {
+                type: "json",
+                value: {
+                  content: [{ type: "text", text: "z".repeat(100_000) }],
+                  isError: true,
+                },
+              },
+            },
+          ],
+        },
+      ],
+      0,
+    );
+    expect(message!.content).toEqual([
+      {
+        type: "tool-result",
+        toolCallId: "t1",
+        toolName: "fetch",
+        output: {
+          type: "json",
+          value: {
+            content: [
+              { type: "text", text: expect.stringMatching(LENGTH_MARKER) },
+            ],
+            isError: true,
+          },
+        },
+      },
+    ]);
+    expect(message!.truncatedFields).toEqual([
+      {
+        path: "content[0].output.value.content[0].text",
+        reason: "length",
+        originalLength: 100_000,
+      },
+    ]);
+  });
+
+  it("pages by size, and following nextMessageIndex returns every message once", async () => {
+    // Mixed sizes, so pages break at different points and some hold one
+    // message. A page that skipped or repeated a message at its edge would
+    // show up as a gap or a duplicate below.
+    const sizes = [10, 30_000, 5, 50_000, 20_000, 100, 40_000, 7, 30_000, 1];
+    const transcript = sizes.map((size, index) => ({
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: "m".repeat(size),
+    }));
+    queryMock.mockResolvedValue(sessionRow());
+    serveBlobs({ "https://blob.test/messages": transcript });
+
+    const seen: number[] = [];
+    let pages = 0;
+    let after: number | undefined = 0;
+    while (after !== undefined && pages < transcript.length) {
+      const response = await call(
+        "GET",
+        `/api/v1/chat-sessions/${SESSION}?afterMessageIndex=${after}`,
+      );
+      const body = await response.json();
+      pages += 1;
+      expect(body.messageCount).toBe(transcript.length);
+      seen.push(...body.messages.map((m: { index: number }) => m.index));
+      if (body.messages.length > 1) {
+        expect(JSON.stringify(body.messages).length).toBeLessThanOrEqual(
+          MAX_MESSAGE_PAGE_CHARS,
+        );
+      }
+      after = body.nextMessageIndex;
+    }
+
+    // The walk ended on its own, not at the iteration limit.
+    expect(after).toBeUndefined();
+    expect(seen).toEqual(transcript.map((_, index) => index));
+    // The size cap stopped pages well short of the default limit of 50.
+    expect(pages).toBeGreaterThan(1);
+  });
+
+  it("still applies limit when the messages are small", async () => {
+    queryMock.mockResolvedValue(sessionRow());
+    serveBlobs({
+      "https://blob.test/messages": ["a", "b", "c"].map((content) => ({
+        role: "user",
+        content,
+      })),
+    });
+    const response = await call(
+      "GET",
+      `/api/v1/chat-sessions/${SESSION}?limit=2`,
+    );
+    const body = await response.json();
+    expect(body.messages.map((m: { index: number }) => m.index)).toEqual([
+      0, 1,
+    ]);
+    expect(body.nextMessageIndex).toBe(2);
   });
 });

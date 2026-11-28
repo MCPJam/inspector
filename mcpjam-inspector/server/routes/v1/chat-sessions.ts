@@ -297,7 +297,10 @@ chatSessions.get("/chat-sessions/:sessionId", async (c) => {
     DEFAULT_MESSAGE_PAGE;
 
   const { messages, unavailable } = await loadTranscript(session);
-  const page = messages.slice(offset, offset + limit);
+  // `limit` caps the count, and the page can stop sooner to stay under its
+  // size ceiling, so the next page starts after the messages it holds.
+  const page = projectMessages(messages.slice(offset, offset + limit), offset);
+  const nextMessageIndex = offset + page.length;
 
   return v1Resource(c, {
     sessionId: session._id,
@@ -344,10 +347,8 @@ chatSessions.get("/chat-sessions/:sessionId", async (c) => {
      */
     messageCount: unavailable ? null : messages.length,
     ...(unavailable ? { transcriptUnavailable: true as const } : {}),
-    messages: projectMessages(page, offset),
-    ...(offset + page.length < messages.length
-      ? { nextMessageIndex: offset + page.length }
-      : {}),
+    messages: page,
+    ...(nextMessageIndex < messages.length ? { nextMessageIndex } : {}),
   });
 });
 

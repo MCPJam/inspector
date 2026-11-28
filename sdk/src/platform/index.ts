@@ -208,6 +208,7 @@ export type {
   PlatformChatMessage,
   PlatformChatTurn,
   PlatformToolMode,
+  PlatformTruncatedField,
   PlatformTurnToolCall,
   PlatformTurnTrace,
   PlatformTurnUsage,

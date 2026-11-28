@@ -631,13 +631,34 @@ export interface PlatformChatSession {
 export type PlatformToolMode = "read_only" | "auto";
 
 /**
+ * One place a bounded agent Playground payload holds less than the original.
+ *
+ * `path` is JSONPath-like and starts at a field of the object that carries
+ * the list: `content[0].text`, `output.structuredContent.items`,
+ * `input["a b"]`.
+ */
+export interface PlatformTruncatedField {
+  path: string;
+  /**
+   * `length`: a string was shortened, and ends in `…[+N chars]`. `items`: an
+   * array kept its first items and ends in an `…[+N items]` item (or, for a
+   * payload whose keys alone are over the limit, an object kept its first
+   * entries). `depth`: nesting, or a circular reference, became a marker
+   * string.
+   */
+  reason: "length" | "items" | "depth";
+  /** The string's length, or the item count, before the cut. */
+  originalLength?: number;
+}
+
+/**
  * One tool call as the agent Playground reports it.
  *
  * `input`/`output` are the RAW wire values — scrubbed of protocol annotations
- * (`_meta`, `$`-prefixed keys) and bounded, with `truncated` set whenever the
- * caller is seeing less than the whole payload. That bounding is announced
- * rather than silent because a shortened tool result an agent believes is
- * complete sends it debugging the wrong thing.
+ * (`_meta`, `$`-prefixed keys) and bounded. Bounding keeps each value's JSON
+ * type, so `output.isError` and every other field that survives still parse.
+ * It is announced rather than silent because a shortened tool result an agent
+ * believes is complete sends it debugging the wrong thing.
  */
 export interface PlatformTurnToolCall {
   toolCallId: string;
@@ -646,7 +667,10 @@ export interface PlatformTurnToolCall {
   status: "ok" | "error";
   output?: unknown;
   errorMessage?: string;
+  /** Set when part of `input` or `output` was cut; see `truncatedFields`. */
   truncated?: true;
+  /** Each cut, with its path under `input` or `output`. */
+  truncatedFields?: PlatformTruncatedField[];
 }
 
 /** One turn's execution trace, in the same span shape eval iterations use. */
@@ -748,7 +772,13 @@ export interface PlatformChatMessage {
   index: number;
   role: string;
   content: unknown;
+  /**
+   * Set when part of `content` was cut. Cut content keeps its JSON type; see
+   * `truncatedFields` for what was shortened.
+   */
   truncated?: true;
+  /** Each cut, with its path under `content`. */
+  truncatedFields?: PlatformTruncatedField[];
 }
 
 /** Session metadata plus a bounded window of raw messages. */
@@ -770,6 +800,11 @@ export interface PlatformChatSessionDetail {
   messageCount: number | null;
   transcriptUnavailable?: true;
   messages: PlatformChatMessage[];
+  /**
+   * Where the next page starts, present while messages remain. A page can
+   * stop before `limit` to stay under its size ceiling, so follow this rather
+   * than counting.
+   */
   nextMessageIndex?: number;
 }
 
