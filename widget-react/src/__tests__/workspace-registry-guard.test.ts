@@ -13,6 +13,10 @@ function sourceFiles(directory: string): string[] {
   });
 }
 
+// A static scan of ~300 files with synchronous reads. It takes tens of
+// milliseconds alone but several seconds when every workspace tests at once
+// on Windows, so it gets more than the default 5 s. It runs no app code that
+// could hang.
 it("keeps widget and chat consumers on their workspace registry", () => {
   const roots = [
     resolve(import.meta.dirname, ".."),
@@ -24,4 +28,4 @@ it("keeps widget and chat consumers on their workspace registry", () => {
     ),
   );
   expect(offenders).toEqual([]);
-});
+}, 30_000);
