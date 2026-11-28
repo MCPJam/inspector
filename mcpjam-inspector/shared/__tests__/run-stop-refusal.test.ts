@@ -106,6 +106,51 @@ describe("runStopRefusal — locked wallet", () => {
   });
 });
 
+describe("runStopRefusal — the harness model proxy", () => {
+  // The harness turn's raw text: the proxy's reason, read back off the lease
+  // with its recovery, under the runtime's bare status sentence.
+  const proxyTurn = (code: string, recovery: Record<string, unknown>) => ({
+    message: "API Error: 409",
+    details: JSON.stringify({ message: "API Error: 409", code, recovery }),
+  });
+
+  it("stops on spent credits with the proxy's plan step", () => {
+    const recovery = {
+      version: 1,
+      reason: "allowance_exhausted",
+      action: "upgrade_plan",
+      actor: "caller",
+      plan: "pro",
+      url: "https://app.mcpjam.com/organizations/org_1/plans",
+    };
+    const turn = proxyTurn("spending_limit_reached", recovery);
+    expect(isCreditExhaustion(turn)).toBe(true);
+    expect(runStopRefusal(turn)).toEqual({ recovery });
+  });
+
+  it("names a locked wallet as one, never as spent credits", () => {
+    const turn = proxyTurn("wallet_locked", {
+      version: 1,
+      reason: "wallet_locked",
+      action: "contact_support",
+      actor: "support",
+    });
+    expect(isCreditExhaustion(turn)).toBe(false);
+    expect(runStopRefusal(turn)?.recovery).toMatchObject({
+      action: "contact_support",
+    });
+  });
+
+  it("does not stop on a hold: in-flight credits settle in seconds", () => {
+    const turn = {
+      message: "API Error: 409",
+      details: JSON.stringify({ message: "API Error: 409", code: "spend_held" }),
+    };
+    expect(isCreditExhaustion(turn)).toBe(false);
+    expect(runStopRefusal(turn)).toBeUndefined();
+  });
+});
+
 describe("runStopRefusal — not a stop", () => {
   it("leaves a hold to its retry", () => {
     const hold = {

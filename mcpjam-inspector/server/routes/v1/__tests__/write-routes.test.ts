@@ -92,6 +92,7 @@ import { convexReadFetch } from "../convex-read-errors.js";
 import { createConvexClient } from "../convex-client.js";
 import { createConvexClients } from "../../shared/evals.js";
 import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
+import { ErrorCode, WebRouteError } from "../../web/errors.js";
 import {
   __resetHostedModelCatalogForTests,
   __setHostedCatalogForTests,
@@ -2216,6 +2217,50 @@ describe("v1 write routes", () => {
       expect(body.targets[0]?.error?.message).toMatch(/approximated/);
     });
 
+    it("keeps a credit refusal's recovery on the failed target", async () => {
+      hostSuiteQueries();
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      const recovery = {
+        version: 1,
+        reason: "allowance_exhausted",
+        action: "upgrade_plan",
+        actor: "caller",
+        url: "https://app.mcpjam.com/billing",
+        plan: "pro",
+      };
+      // What the recorder throws when the organization cannot pay to start.
+      prepareEvalRunMock.mockRejectedValue(
+        new WebRouteError(403, ErrorCode.FORBIDDEN, "Out of credits.", {
+          reason: "PLATFORM_FEE_REQUIRED",
+          recovery,
+        })
+      );
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [{ namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as {
+        targets: Array<{ error?: Record<string, unknown> }>;
+      };
+      expect(body.targets[0]?.error).toEqual({
+        code: "FORBIDDEN",
+        message: "Out of credits.",
+        recovery,
+      });
+    });
+
     it("refuses a caller-supplied approver on the group body (400, no launch)", async () => {
       hostSuiteQueries();
       mockPendingLaunches();
@@ -2854,6 +2899,43 @@ describe("v1 write routes", () => {
         mockPendingLaunches();
       const replay = (await (
         await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups", body)
+      ).json()) as any;
+      expect(replay.runGroupId).toBe(first.runGroupId);
+      expect(
+        prepareEvalRunMock.mock.calls.map((call) => call[1].idempotencyKey)
+      ).toEqual(firstKeys);
+      await drain(gates2, d2, 2);
+    });
+
+    it("keys an unkeyed group and returns the key, so its replay dedupes", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const app = makeApp();
+      const body = {
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        targets: [
+          { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+          { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+        ],
+      };
+      const first = (await (
+        await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups", body)
+      ).json()) as any;
+      expect(typeof first.idempotencyKey).toBe("string");
+      const firstKeys = prepareEvalRunMock.mock.calls.map(
+        (call) => call[1].idempotencyKey
+      );
+      expect(new Set(firstKeys).size).toBe(2);
+      await drain(releaseGates, disconnectAllServers, 2);
+      prepareEvalRunMock.mockClear();
+
+      const { releaseGates: gates2, disconnectAllServers: d2 } =
+        mockPendingLaunches();
+      const replay = (await (
+        await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups", {
+          ...body,
+          idempotencyKey: first.idempotencyKey,
+        })
       ).json()) as any;
       expect(replay.runGroupId).toBe(first.runGroupId);
       expect(

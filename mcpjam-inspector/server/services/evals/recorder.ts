@@ -2,7 +2,10 @@ import { asCapacityRouteError } from "../../utils/capacity-route-error.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
-import type { ResolvedExecutionBudgets } from "@mcpjam/sdk/contract";
+import type {
+  CreditRecovery,
+  ResolvedExecutionBudgets,
+} from "@mcpjam/sdk/contract";
 import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
@@ -24,6 +27,7 @@ import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { findPrecreatedIterationByCase } from "./precreated-iteration.js";
 import { retrySuiteStartOnConflict } from "./suite-start-retry.js";
 import { rerunRefusalError } from "./rerun-refusal.js";
+import { resumeRefusalError } from "./resume-refusal.js";
 import { platformFeeRefusalError } from "./platform-fee-refusal.js";
 import { localHarnessCapabilities, runnerCapabilities } from "./runner-capabilities.js";
 import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
@@ -208,6 +212,13 @@ export type SuiteRunRecorder = {
     };
     notes?: string;
     stopReason?: RunStopReason;
+    /**
+     * The credit refusal's recovery when a credit stop finalized this run, so
+     * the backend records it on the run (`updateTestSuiteRun.creditRecovery`)
+     * and every reader gets the step without walking iterations. Forwarded
+     * as-is; the backend rebuilds the link server-side.
+     */
+    creditRecovery?: CreditRecovery;
   }): Promise<void>;
 };
 
@@ -469,7 +480,7 @@ export const createSuiteRunRecorder = ({
         },
       });
     },
-    async finalize({ status, summary, notes, stopReason }) {
+    async finalize({ status, summary, notes, stopReason, creditRecovery }) {
       // Drop this run's shadow-mismatch bookkeeping FIRST, and unconditionally.
       //
       // `shadow-mismatch.ts` keeps a per-run dedupe set so one comparison is
@@ -517,13 +528,23 @@ export const createSuiteRunRecorder = ({
           }
         }
 
+        const finalizeArgs = { runId, status, summary, notes, stopReason };
+        const update = (args: Record<string, unknown>) =>
+          convexClient.mutation("testSuites:updateTestSuiteRun" as any, args);
         try {
-          await convexClient.mutation("testSuites:updateTestSuiteRun" as any, {
-            runId,
-            status,
-            summary,
-            notes,
-            stopReason,
+          // Only present on a credit stop. A backend that predates the field
+          // rejects the whole update, so the run is finalized again without it
+          // and keeps its terminal status and the note.
+          await update(
+            creditRecovery ? { ...finalizeArgs, creditRecovery } : finalizeArgs,
+          ).catch((error: unknown) => {
+            if (
+              !creditRecovery ||
+              !/extra field `?creditRecovery/.test(String(error))
+            ) {
+              throw error;
+            }
+            return update(finalizeArgs);
           });
         } catch (error) {
           const errorMessage =
@@ -592,6 +613,7 @@ export const startSuiteRunWithRecorder = async ({
   useCurrentSuiteConfig,
   rerunOfRunId,
   rerunScope,
+  resumeFromRunId,
   environmentOverride,
   githubCheckServerOverride,
   toolSnapshot,
@@ -636,6 +658,12 @@ export const startSuiteRunWithRecorder = async ({
    */
   rerunOfRunId?: string;
   rerunScope?: "failed_cases";
+  /**
+   * Resume a credit-stopped run: the backend narrows the new run to the source
+   * run's unfinished cases, or refuses with a `RESUME_*` code. Forwarded only
+   * when set, so ordinary launches send exactly the args they always sent.
+   */
+  resumeFromRunId?: string;
   environmentOverride?: {
     servers: string[];
     serverBindings?: Array<{
@@ -807,6 +835,7 @@ export const startSuiteRunWithRecorder = async ({
       useCurrentSuiteConfig,
       ...(rerunOfRunId ? { rerunOfRunId } : {}),
       ...(rerunScope ? { rerunScope } : {}),
+      ...(resumeFromRunId ? { resumeFromRunId } : {}),
       ...(environmentOverride ? { environmentOverride } : {}),
       ...(githubCheckServerOverride ? { githubCheckServerOverride } : {}),
       toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
@@ -931,6 +960,14 @@ export const startSuiteRunWithRecorder = async ({
     const rerunRefusal = rerunScope ? rerunRefusalError(error) : null;
     if (rerunRefusal) {
       throw rerunRefusal;
+    }
+    // A resume refused before anything was created: nothing unfinished to
+    // resume, a source that is missing, still running, or a scope that cannot
+    // be combined with resuming. Gated on `resumeFromRunId` so only a resume
+    // launch reclassifies these codes.
+    const resumeRefusal = resumeFromRunId ? resumeRefusalError(error) : null;
+    if (resumeRefusal) {
+      throw resumeRefusal;
     }
     throw error;
   }
