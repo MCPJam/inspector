@@ -9,6 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -31,6 +32,12 @@ import {
 } from "./copy-review.mjs";
 
 const RATCHET = join(dirname(fileURLToPath(import.meta.url)), "ratchet.mjs");
+
+// Scripts copied into a temp repo resolve `typescript` from there, and it
+// has no node_modules. Child processes find the package these tests load.
+process.env.NODE_PATH = dirname(
+  dirname(createRequire(import.meta.url).resolve("typescript/package.json")),
+);
 
 function count(text, path = "sdk/src/a.ts") {
   return countFile(path, text);
@@ -1122,3 +1129,6 @@ describe("hooks in a worktree", async () => {
     assert.equal(hook({ hook_event_name: "Stop", cwd: wt }), 2);
   });
 });
+
+// CI runs only this file, so the review-rule tests ride along with it.
+import "./slop-review-rules.test.mjs";

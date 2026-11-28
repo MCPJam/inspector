@@ -4,11 +4,13 @@
  * remove, and `check-file.mjs` reports them on one file as an agent edits it.
  * All three read this list, so a rule added here is enforced everywhere.
  *
- * These are text counts, not a parser. A rule earns its place by being cheap,
- * stable and hard to hit by accident; anything that needs types belongs in
- * ESLint instead.
+ * Most are text counts. A rule that has to tell code from comments, strings
+ * or JSX text reads the syntax tree from `parse.mjs`. A rule earns its place
+ * by being cheap, stable and hard to hit by accident; anything that needs
+ * types belongs in ESLint instead.
  */
 
+import { REVIEW_RULES } from "./review-rules.mjs";
 import { extractUiStrings, isUiFile } from "./ui-strings.mjs";
 
 const SOURCE_EXTENSIONS = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
@@ -160,6 +162,7 @@ export const RULES = [
     appliesTo: isUiFile,
     count: (text) => countCopy(text, VAGUE_ERROR),
   },
+  ...REVIEW_RULES,
 ];
 
 /** Count every rule that applies to `path`. Rules that do not apply are 0. */
@@ -167,7 +170,7 @@ export function countFile(path, text) {
   const counts = {};
   for (const rule of RULES) {
     counts[rule.id] =
-      rule.appliesTo && !rule.appliesTo(path) ? 0 : rule.count(text);
+      rule.appliesTo && !rule.appliesTo(path) ? 0 : rule.count(text, path);
   }
   return counts;
 }

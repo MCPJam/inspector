@@ -154,6 +154,9 @@ function report({ deltas, increases }, waived) {
     for (const { path, rule, delta } of increases) {
       if (deltas[rule] > 0) lines.push(`- \`${path}\`: ${rule} +${delta}`);
     }
+    for (const rule of failing) {
+      if (rule.fix) lines.push("", `${rule.label}: ${rule.fix}`);
+    }
     lines.push(
       "",
       waived
