@@ -3,9 +3,7 @@ name: Preview cleanup checks
 on:
   pull_request:
     paths:
-      - .github/scripts/jamroom-*.mjs
       - .github/scripts/railway-wait-deploy.sh
-      - .github/workflows/jamroom-preview.yml
       - .github/scripts/preview-cleanup.test.mjs
       - .github/scripts/railway-preview-origin.mjs
       - .github/scripts/railway-preview-origin.test.mjs
@@ -17,9 +15,7 @@ on:
   push:
     branches: [main]
     paths:
-      - .github/scripts/jamroom-*.mjs
       - .github/scripts/railway-wait-deploy.sh
-      - .github/workflows/jamroom-preview.yml
       - .github/scripts/preview-cleanup.test.mjs
       - .github/scripts/railway-preview-origin.mjs
       - .github/scripts/railway-preview-origin.test.mjs
@@ -43,5 +39,5 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - run: node --test .github/scripts/jamroom-railway.test.mjs .github/scripts/preview-cleanup.test.mjs .github/scripts/railway-preview-origin.test.mjs
+      - run: node --test .github/scripts/preview-cleanup.test.mjs .github/scripts/railway-preview-origin.test.mjs
       - run: bash -n .github/scripts/railway-env.sh .github/scripts/reap-preview-envs.sh .github/scripts/railway-wait-deploy.sh
