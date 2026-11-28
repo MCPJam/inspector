@@ -1000,6 +1000,9 @@ export function buildIterationFinishParams(args: {
     startedAt,
     ...(error ? { error } : {}),
     ...(errorDetails ? { errorDetails } : {}),
+    ...(args.codeGrading?.gradingFilesStorageId
+      ? { gradingFilesStorageId: args.codeGrading.gradingFilesStorageId }
+      : {}),
     resultSource: "reported" as const,
     metadata: {
       ...iterationMetadataBase,
@@ -1147,6 +1150,12 @@ export type FinalizeEvalIterationParams = {
   errorDetails?: string;
   /** OUR infrastructure failed this trial; sent only with `status: "failed"`. */
   infraError?: EvalInfraError;
+  /**
+   * EFTW-90: the stored copy of what this iteration's grading box was given.
+   * Set only once the backend confirmed the upload, so a backend without the
+   * feature never sees the field.
+   */
+  gradingFilesStorageId?: string;
   resultSource?: "reported" | "derived";
   // Scalar signals (argumentMismatchCount, host exposure counts, …) plus the
   // nested `predicates: PredicateResult[]` rows. Persisted to
@@ -1243,6 +1252,7 @@ export async function finalizeEvalIteration(
     error,
     errorDetails,
     infraError,
+    gradingFilesStorageId,
     resultSource,
     metadata,
     onRunDeleted,
@@ -1490,6 +1500,7 @@ export async function finalizeEvalIteration(
       // Paired with `status: "failed"` by construction; sent only when set,
       // so every other write is byte-identical to before.
       ...(infraError && iterationStatus === "failed" ? { infraError } : {}),
+      ...(gradingFilesStorageId ? { gradingFilesStorageId } : {}),
       resultSource,
       // Merge user-provided metadata with token usage breakdown, then
       // sanitize: metadata can carry nested predicate rows whose

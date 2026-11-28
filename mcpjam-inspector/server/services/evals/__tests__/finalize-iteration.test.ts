@@ -938,3 +938,38 @@ describe("finalizeEvalIteration — routing records", () => {
     expect(JSON.stringify(update!.args)).not.toContain("harnessMcp");
   });
 });
+
+describe("finalizeEvalIteration — the grading archive (EFTW-90)", () => {
+  test("names a confirmed grading archive on the terminal write", async () => {
+    const { client, calls } = makeClient({});
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+      gradingFilesStorageId: "storage-1",
+    });
+    const update = calls.find(
+      (call) => call.ref === "testSuites:updateTestIteration",
+    );
+    expect(update?.args).toMatchObject({ gradingFilesStorageId: "storage-1" });
+  });
+
+  test("sends no field at all when nothing was stored", async () => {
+    const { client, calls } = makeClient({});
+    await finalizeEvalIteration({
+      convexClient: client,
+      iterationId: "iter1",
+      passed: true,
+      toolsCalled: [],
+      usage: usageZero,
+      messages,
+    });
+    const update = calls.find(
+      (call) => call.ref === "testSuites:updateTestIteration",
+    );
+    expect(update?.args).not.toHaveProperty("gradingFilesStorageId");
+  });
+});

@@ -34,6 +34,7 @@ import { withPhaseBox, type PhaseBoxDeps } from "./phase-box.js";
 import {
   restoreGradingFiles,
   type CollectedGradingFiles,
+  type GradingFileEntry,
 } from "./grading-files.js";
 import type {
   CodeEvaluatorOutcome,
@@ -77,6 +78,14 @@ export type IterationScriptResult = {
   output: string;
   durationMs: number;
   error?: string;
+};
+
+/** What one grading box is given before any evaluator runs. */
+export type GradingBoxInput = {
+  /** `/mcpjam/iteration.json`, exactly as the evaluators read it. */
+  iterationJson: string;
+  /** The declared files, restored at their own paths. */
+  files: readonly GradingFileEntry[];
 };
 
 function remaining(ctx: IterationPhaseContext, limit: number): number {
@@ -298,11 +307,16 @@ async function runEvaluator(
   return { kind: "scored", ...parsed, ...base, exitCode: 0 };
 }
 
-/** Make `/mcpjam` the box user's, then write the input every evaluator reads. */
+/**
+ * Restore the declared files, make `/mcpjam` the box user's, then write the
+ * input every evaluator reads.
+ */
 async function prepareGradingBox(
   sandbox: PhaseSandbox,
-  input: EvaluatorContextV1,
+  input: GradingBoxInput,
 ): Promise<void> {
+  // Restored before `/mcpjam` exists, as the agent's files are inputs.
+  await restoreGradingFiles(sandbox, input.files);
   try {
     await sandbox.commands.run(
       `mkdir -p ${GRADING_ROOT}/results ${GRADING_ROOT}/evaluators && chown -R user:user ${GRADING_ROOT}`,
@@ -316,9 +330,15 @@ async function prepareGradingBox(
   }
   await sandbox.files.write(
     `${GRADING_ROOT}/iteration.json`,
-    JSON.stringify(input),
+    input.iterationJson,
   );
 }
+
+/** One iteration's grading, and what its box was given when it had one. */
+export type IterationGrading = CodeGradingResult & {
+  /** Set only when grading ran in a grading box. */
+  boxInput?: GradingBoxInput;
+};
 
 /**
  * Grade one iteration: every frozen evaluator against `input`, at the same
@@ -329,11 +349,15 @@ export async function gradeIteration(
   ctx: IterationPhaseContext,
   input: EvaluatorContextV1,
   files?: CollectedGradingFiles,
-): Promise<CodeGradingResult> {
+): Promise<IterationGrading> {
   const evaluators = ctx.config.codeEvaluators;
   if (evaluators.length === 0) return { evaluators, outcomes: {} };
   // Grading without the files would score a workspace the agent didn't leave.
   if (files && !files.ok) return erroredGrading(evaluators, files.problem);
+  const boxInput: GradingBoxInput = {
+    iterationJson: JSON.stringify(input),
+    files: files?.ok ? files.entries : [],
+  };
   let lastError = "";
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const boxed = await withPhaseBox(
@@ -347,9 +371,7 @@ export async function gradeIteration(
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       },
       async (sandbox) => {
-        // Restored before `/mcpjam` exists, as the agent's files are inputs.
-        if (files?.ok) await restoreGradingFiles(sandbox, files.entries);
-        await prepareGradingBox(sandbox, input);
+        await prepareGradingBox(sandbox, boxInput);
         const outcomes = await Promise.all(
           evaluators.map((evaluator) => runEvaluator(ctx, sandbox, evaluator)),
         );
@@ -359,7 +381,7 @@ export async function gradeIteration(
       },
       ctx.deps,
     );
-    if (boxed.ok) return { evaluators, outcomes: boxed.value };
+    if (boxed.ok) return { evaluators, outcomes: boxed.value, boxInput };
     lastError = boxed.error;
     // Only a box that went away mid-grading is worth a fresh one: grading has
     // no side effects. A box the control plane refused will be refused again.

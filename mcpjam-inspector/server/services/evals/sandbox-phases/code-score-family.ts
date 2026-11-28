@@ -88,6 +88,11 @@ export type CodeGradingResult = {
   evaluators: readonly FrozenCodeEvaluator[];
   outcomes: Record<string, CodeEvaluatorOutcome>;
   notRun?: string;
+  /**
+   * Where what the grading box was given is stored, once the backend
+   * confirmed the upload (`grading-archive-upload.ts`). Absent otherwise.
+   */
+  gradingFilesStorageId?: string;
 };
 
 /** The rows for `result`, joined to the definitions in `byId`. */
