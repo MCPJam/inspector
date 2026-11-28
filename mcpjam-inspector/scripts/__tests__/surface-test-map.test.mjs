@@ -5,12 +5,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   destinationSegments,
+  exercisedImportSpecifiers,
   harnessModules,
   importSpecifiers,
   matchSurface,
   moduleOwners,
   navigatedSurfaces,
   parseSurfaces,
+  runsTests,
   surfaceRoots,
   surfaceTags,
 } from "../lib/surface-test-map.mjs";
@@ -131,6 +133,18 @@ test("a goto built from data links the route-shaped literals it loops over", () 
   assert.deepEqual([...navigatedSurfaces(loop, SURFACES)], ["settings"]);
 });
 
+test("a goto built from data does not count literals passed to a call", () => {
+  const spec = `
+    for (const route of ["home"]) {
+      test(route, async ({ page }) => {
+        await page.goto(\`/p/\${PROJECT_ID}/\${route}\`);
+        await expect(page).toHaveURL("/tools");
+        await page.getByText( "swarms" ).click();
+      });
+    }`;
+  assert.deepEqual([...navigatedSurfaces(spec, SURFACES)], ["home"]);
+});
+
 test("surface tags are read one per comment line", () => {
   const source =
     "// @surface tracing\n * @surface tools\nconst s = '@surface nope';";
@@ -215,6 +229,80 @@ const fixture = \`import { Fake } from "./Fake"; \${await import("./Lazy")}\`;
     "./after-url",
     "./Lazy",
   ]);
+});
+
+test("a typeof import() type query is not an edge; a dynamic import is", () => {
+  const source = `
+type Module = typeof import("./TracingTab");
+const load = () => import("./Lazy");
+`;
+  assert.deepEqual(importSpecifiers(source), ["./Lazy"]);
+});
+
+test("an import() type reference is not an edge; a dynamic import chain is", () => {
+  const source = `
+type Props = import("./TracingTab").Props;
+let state: import( "./Store" ) . State;
+const mod = import("./Lazy").then((m) => m.default);
+`;
+  assert.deepEqual(importSpecifiers(source), ["./Lazy"]);
+});
+
+test("an import the test never mentions again exercises nothing", () => {
+  const source = `
+import { render } from "@testing-library/react";
+import { ToolsTab } from "./ToolsTab";
+import TracingTab from "./TracingTab";
+import * as Home from "./HomeTab";
+import { Store as UsedStore } from "./Store";
+import "./setup";
+// render(<TracingTab />)
+const label = "TracingTab";
+const s = UsedStore;
+render(<ToolsTab />);
+`;
+  assert.deepEqual(exercisedImportSpecifiers(source), [
+    "@testing-library/react",
+    "./ToolsTab",
+    "./Store",
+    "./setup",
+  ]);
+});
+
+test("a file whose every test is skipped runs nothing", () => {
+  const skipped = [
+    `it.skip("a", () => {}); test.todo("b"); xit("c", () => {});`,
+    `describe.skip("suite", () => { it("a", () => {}); test("b", () => {}); });`,
+    `test.describe.skip("suite", () => { test("a", async () => {}); });`,
+    `xdescribe("suite", () => { it.each([1])("a %s", () => {}); });`,
+    `const ok = /x/.test("it(x)"); it.skip("a", () => {}); // it("b", () => {})`,
+    `test.concurrent.skip("a", () => {});`,
+    `test.skip.concurrent("a", () => {});`,
+    `it.skip.each([1])("a %s", () => {});`,
+    `test.skip(/* disabled temporarily */ "a", () => {});`,
+  ];
+  for (const source of skipped) assert.equal(runsTests(source), false, source);
+  const runs = [
+    `describe.skip("old", () => { it("a", () => {}); }); it("b", () => {});`,
+    `test.describe("s", () => { test.skip(!!process.env.CI, "local"); test("a", async () => {}); });`,
+    "it.each([1, 2])('%s', (n) => {});",
+    "it.each<[number]>([[1]])('%s', (n) => {});",
+    "test.only(`x`, () => {});",
+    `import { describeColdLoad } from "./support"; describeColdLoad({ label: "x" });`,
+    `test.concurrent.skip("a", () => {}); test.concurrent("b", () => {});`,
+    `import { describeColdLoad } from "./support"; test.skip(false, "not disabled"); describeColdLoad({ label: "x" });`,
+    `import { describeColdLoad } from "./support"; test.skip(({ browserName }) => browserName === "webkit", "x"); describeColdLoad({});`,
+  ];
+  for (const source of runs) assert.equal(runsTests(source), true, source);
+});
+
+test("import text quoted in a string is not an edge", () => {
+  const source = `
+const fixture = 'import("./TracingTab")';
+const other = "import { Fake } from './Fake'";
+const run = \`\${await import("./Lazy")}\`;
+`;
+  assert.deepEqual(importSpecifiers(source), ["./Lazy"]);
 });
 
 test("a module belongs to a surface only when no other surface reaches it", () => {
