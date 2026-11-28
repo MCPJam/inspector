@@ -149,6 +149,21 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
       if (taskId !== "task-1") throw rpcErrorValue(-32602, "unknown task");
       return { resultType: "complete" };
     },
+    // The 2025-11-25 reads, for tests that put the run on the legacy wire.
+    // There `-32602` for an unknown id is a MUST on all three
+    // (2025-11-25 tasks.mdx:766-768).
+    getTask: async (_serverId: string, taskId: string) => {
+      if (taskId !== "task-1") throw rpcErrorValue(-32602, "unknown task");
+      return { taskId, status: "completed", ttl: 60_000 };
+    },
+    getTaskResult: async (_serverId: string, taskId: string) => {
+      if (taskId !== "task-1") throw rpcErrorValue(-32602, "unknown task");
+      return { content: [] };
+    },
+    cancelTask: async (_serverId: string, taskId: string) => {
+      if (taskId !== "task-1") throw rpcErrorValue(-32602, "unknown task");
+      return { taskId, status: "cancelled", ttl: 60_000 };
+    },
     // A conformant server refuses EVERY undeclared task request with -32021
     // (ext-tasks tasks.md:797-799), including a task-filtered
     // subscriptions/listen.
@@ -1072,12 +1087,6 @@ describe("MCPTasksConformanceTest", () => {
       executeTool: async () => ({
         task: { taskId: "task-1", status: "working", ttl: 60_000 },
       }),
-      getTask: async () => ({
-        taskId: "task-1",
-        status: "completed",
-        ttl: 60_000,
-      }),
-      getTaskResult: async () => ({ content: [] }),
     });
 
     const result = await runAgainst(manager, {

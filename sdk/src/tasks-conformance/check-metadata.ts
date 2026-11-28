@@ -50,7 +50,7 @@ export const CHECK_METADATA: Record<
     category: "lifecycle",
     title: "Invalid Task Id Rejected",
     description:
-      "tasks/get for a task id the server never issued is rejected with -32602 (Invalid params); the same rejection on tasks/update and tasks/cancel is a SHOULD and is reported as advice.",
+      "A task id the server never issued is rejected with -32602 (Invalid params). On 2025-11-25 that is required on tasks/get, tasks/result and tasks/cancel. On the extension it is required on tasks/get, and on tasks/update and tasks/cancel it is a SHOULD, reported as advice.",
   },
   "tasks-status-payload-shape": {
     id: "tasks-status-payload-shape",
