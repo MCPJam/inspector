@@ -23,11 +23,12 @@ export const MAX_OUTCOMES_PER_BATCH = 50;
 const FLUSH_AFTER_MS = 2_000;
 const REPORT_TIMEOUT_MS = 5_000;
 /**
- * One caller's outcomes waiting or in a send that has not settled. Counting the
- * sends too bounds a caller whose reports hang: it holds at most this many, in
- * at most this many over the batch size sends at once.
+ * One caller's outcomes waiting or in a send that has not settled: a caller
+ * whose reports hang holds at most this many, and later ones are dropped.
  */
 const MAX_PENDING_PER_CALLER = 500;
+/** Sends one caller may have unsettled at once; its other outcomes wait for one to settle. */
+const MAX_SENDS_PER_CALLER = 10;
 
 export interface OutcomeCaller {
   caller: ManagerCallerContext;
@@ -73,6 +74,7 @@ export interface OutcomeReporterOptions {
 export class MockOutcomeReporter {
   private readonly waiting = new Map<string, { who: OutcomeCaller; entries: OutcomeEntry[] }>();
   private readonly pending = new Map<string, number>();
+  private readonly sending = new Map<string, number>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private inFlight = new Set<Promise<void>>();
 
@@ -86,32 +88,42 @@ export class MockOutcomeReporter {
     const group = this.waiting.get(callerKey) ?? { who, entries: [] };
     group.entries.push(entry);
     this.waiting.set(callerKey, group);
-    if (group.entries.length >= MAX_OUTCOMES_PER_BATCH) return void this.flush();
-    this.timer ??= setTimeout(() => void this.flush(), this.options.flushAfterMs ?? FLUSH_AFTER_MS);
+    // A full batch goes now, and only this caller's; a partial one waits for the short timer.
+    if (group.entries.length >= MAX_OUTCOMES_PER_BATCH) return this.sendWaiting(callerKey);
+    this.timer ??= setTimeout(() => this.sendAllWaiting(), this.options.flushAfterMs ?? FLUSH_AFTER_MS);
     this.timer.unref?.();
   }
 
-  /** Sends everything waiting and resolves when the sends have settled. Never rejects. */
+  /** Sends everything waiting and resolves once no send is left unsettled. Never rejects. */
   async flush(): Promise<void> {
+    this.sendAllWaiting();
+    // A send that settles frees a place for outcomes still waiting, which go then.
+    while (this.inFlight.size > 0) await Promise.all([...this.inFlight]);
+  }
+
+  private sendAllWaiting(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    const groups = [...this.waiting];
-    this.waiting.clear();
-    for (const [callerKey, { who, entries }] of groups) {
-      for (let i = 0; i < entries.length; i += MAX_OUTCOMES_PER_BATCH) {
-        const batch = entries.slice(i, i + MAX_OUTCOMES_PER_BATCH);
-        const send = this.send(who, batch).finally(() => this.settle(callerKey, batch.length));
-        this.inFlight.add(send);
-        void send.finally(() => this.inFlight.delete(send));
-      }
+    for (const callerKey of [...this.waiting.keys()]) this.sendWaiting(callerKey);
+  }
+
+  /** Sends a caller's waiting outcomes in batches while it has a send to spare; the rest wait. */
+  private sendWaiting(callerKey: string): void {
+    const group = this.waiting.get(callerKey);
+    while (group && group.entries.length > 0 && (this.sending.get(callerKey) ?? 0) < MAX_SENDS_PER_CALLER) {
+      const batch = group.entries.splice(0, MAX_OUTCOMES_PER_BATCH);
+      adjust(this.sending, callerKey, 1);
+      const send = this.send(group.who, batch).finally(() => this.settle(callerKey, batch.length));
+      this.inFlight.add(send);
+      void send.finally(() => this.inFlight.delete(send));
     }
-    await Promise.all([...this.inFlight]);
+    if (group?.entries.length === 0) this.waiting.delete(callerKey);
   }
 
   private settle(callerKey: string, count: number): void {
-    const left = (this.pending.get(callerKey) ?? 0) - count;
-    if (left > 0) this.pending.set(callerKey, left);
-    else this.pending.delete(callerKey);
+    adjust(this.pending, callerKey, -count);
+    adjust(this.sending, callerKey, -1);
+    this.sendWaiting(callerKey);
   }
 
   private async send(who: OutcomeCaller, entries: OutcomeEntry[]): Promise<void> {
@@ -138,6 +150,13 @@ export class MockOutcomeReporter {
       });
     }
   }
+}
+
+/** Adds to a count, dropping it at zero. */
+function adjust(counts: Map<string, number>, key: string, by: number): void {
+  const next = (counts.get(key) ?? 0) + by;
+  if (next > 0) counts.set(key, next);
+  else counts.delete(key);
 }
 
 /** The process's reporter; `flushMockOutcomes` is called once at shutdown. */

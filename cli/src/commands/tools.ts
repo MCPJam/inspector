@@ -802,6 +802,16 @@ export function registerToolsCommands(program: Command): void {
     });
     const mcpHeaders = parseMcpHeaderOption(options.mcpHeader);
     const operationKey = operationKeyMetadata(options.operationKey);
+    // Refused before the parameters are read, which may mean reading stdin: the
+    // task path carries no `_meta`, so a key it dropped would let a retried
+    // write apply twice.
+    if (options.task && operationKey) {
+      throw usageError(
+        "--operation-key cannot be used together with --task: the task-augmented " +
+          "call path does not carry the key. Drop --task to make the write safe " +
+          "to retry, or drop --operation-key.",
+      );
+    }
     // A `Mcp-Param-*` override has to SUPPRESS the mirroring to take effect.
     // Upstream `callTool` merges `{ ...options.headers, ...paramHeaders }` —
     // the mirrored value wins — so a caller-supplied `Mcp-Param-Region=wrong`
@@ -905,15 +915,6 @@ export function registerToolsCommands(program: Command): void {
         "--mcp-header cannot be used together with --task: the task-augmented " +
           "call path does not carry per-request headers. Drop --task to " +
           "reproduce a header mismatch, or drop --mcp-header.",
-      );
-    }
-    // The same holds for `_meta`: a key the task path dropped would let a
-    // retried write apply twice.
-    if (options.task && operationKey) {
-      throw usageError(
-        "--operation-key cannot be used together with --task: the task-augmented " +
-          "call path does not carry the key. Drop --task to make the write safe " +
-          "to retry, or drop --operation-key.",
       );
     }
 
