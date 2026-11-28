@@ -131,6 +131,12 @@ import {
   type ToolTaskSeamOptions,
 } from "@mcpjam/sdk";
 import { resolveToolTaskSeam } from "../utils/task-seam.js";
+import {
+  inputAnswerResolverOf,
+  openInputAnswerConnection,
+  withInputAnswerResolverScope,
+} from "./evals/input-answers.js";
+import type { InputAnswer } from "@mcpjam/sdk/contract";
 import { mcpToolOptionsFor } from "../utils/mcp-tool-options.js";
 import {
   createLlmModel,
@@ -509,6 +515,7 @@ export type EvalTestCase = {
    * the runner converts via `resolveSteps` until the backend emits `steps`.
    */
   steps?: TestStep[];
+  inputAnswers?: InputAnswer[];
   advancedConfig?: {
     system?: string;
     temperature?: number;
@@ -3364,7 +3371,10 @@ const executeTestCase = async (params: {
       signal: AbortSignal,
       deadline: number,
     ) => {
-      const outcome = await runner(signal, deadline, noteIterationStarted);
+      const outcome = await withInputAnswerResolverScope(
+        inputAnswerResolverOf(mcpClientManager),
+        () => runner(signal, deadline, noteIterationStarted),
+      );
       if (outcome.creditsExhausted && !creditStop.exhausted) {
         creditStop.exhausted = true;
         logger.info("[evals] credits exhausted; remaining iterations skipped", {
@@ -4208,15 +4218,31 @@ export const runEvalSuiteWithAiSdk = async ({
     }
   };
 
-  const evalTasksSeam = resolveToolTaskSeam({
+  const resolveEvalTasks = (manager: MCPClientManager) => {
+    const evalInputAnswers = inputAnswerResolverOf(manager);
+    return resolveToolTaskSeam({
     tasksPolicy: readTasksPolicy(
       (suiteHostConfig ?? undefined) as Parameters<typeof readTasksPolicy>[0],
     ),
     surface: "eval",
     // Driver `timeoutMs` stays at its default — the task drive nests under
     // the run timeout, which aborts through this same signal.
-    await: { signal: abortController.signal },
-  });
+    await: {
+      signal: abortController.signal,
+      // A task that asks gets the case's replies, through the same resolver
+      // the connection's callback and collector use.
+      ...(evalInputAnswers
+        ? {
+            input: {
+              declaredCapabilities: { elicitation: { form: {} } },
+              handlers: evalInputAnswers.taskHandlers,
+            },
+          }
+        : {}),
+    },
+    });
+  };
+  const answerConnections: MCPClientManager[] = [];
 
   const runSetupStartedAt = Date.now();
   // EFTW-90: run setup and cleanup; set once the cases are about to start.
@@ -4251,6 +4277,7 @@ export const runEvalSuiteWithAiSdk = async ({
       manager: MCPClientManager,
       observer: RunSetupObserver,
     ) => {
+      const evalTasksSeam = resolveEvalTasks(manager);
       let resolvedToolPolicyWarnings: string[] | undefined;
       // When a host policy is present we need the full tool set (including
       // app-only) so `applyVisibilityPolicyAndCountSignals` can:
@@ -4355,6 +4382,7 @@ export const runEvalSuiteWithAiSdk = async ({
 
       return {
         tools,
+        evalTasksSeam,
         toolAnnotations,
         resolvedToolPolicyWarnings,
         resolvedToolSignals,
@@ -4363,10 +4391,16 @@ export const runEvalSuiteWithAiSdk = async ({
         resolvedSetupAudit,
       };
     };
-    const managers = new Map(tests.map((test) => [
-      test,
-      accountManagerForCase ? accountManagerForCase(test.testCaseId ?? testCaseId) : mcpClientManager,
-    ]));
+    const managers = new Map<EvalTestCase, MCPClientManager>();
+    for (const test of tests) {
+      const base = accountManagerForCase?.(test.testCaseId ?? testCaseId) ?? mcpClientManager;
+      let manager = base;
+      if (serverIds.length && test.inputAnswers?.length && !inputAnswerResolverOf(base)) {
+        manager = await openInputAnswerConnection(base, test.inputAnswers);
+        answerConnections.push(manager);
+      }
+      managers.set(test, manager);
+    }
     const managerSetups = new Map<MCPClientManager, Awaited<ReturnType<typeof prepareManager>>>();
     for (const manager of new Set(managers.values())) {
       const observer = manager === mcpClientManager ? setupObserver : createRunSetupObserver({
@@ -4457,6 +4491,7 @@ export const runEvalSuiteWithAiSdk = async ({
       if (!manager || !setup) throw new Error("The eval case has no prepared connection.");
       const {
         tools,
+        evalTasksSeam,
         toolAnnotations,
         resolvedToolPolicyWarnings,
         resolvedToolSignals,
@@ -4894,6 +4929,15 @@ export const runEvalSuiteWithAiSdk = async ({
     }
 
     throw error;
+  } finally {
+    const results = await Promise.allSettled(
+      answerConnections.map((manager) => manager.disconnectAllServers()),
+    );
+    for (const result of results) {
+      if (result.status === "rejected") {
+        logger.warn("[evals] Could not close a saved-reply connection", { runId });
+      }
+    }
   }
 };
 

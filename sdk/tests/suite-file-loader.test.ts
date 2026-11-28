@@ -61,7 +61,7 @@ const MINIMAL_V2 = payload(
 
 describe("the parity corpus, through the loader", () => {
   it("accepts every accept row", () => {
-    expect(data.accept).toHaveLength(10);
+    expect(data.accept).toHaveLength(11);
     for (const row of data.accept) {
       const result = loadEvalSuiteFile(asText(payload(row)));
       expect(result.ok, `${row.__label}: ${JSON.stringify(result)}`).toBe(true);
@@ -69,7 +69,7 @@ describe("the parity corpus, through the loader", () => {
   });
 
   it("rejects every reject row as a CONTRACT failure, not a parse failure", () => {
-    expect(data.reject).toHaveLength(52);
+    expect(data.reject).toHaveLength(54);
     for (const row of data.reject) {
       const result = loadEvalSuiteFile(asText(payload(row)));
       expect(result.ok, row.__label).toBe(false);

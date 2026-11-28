@@ -1043,6 +1043,27 @@ describe("eval export", () => {
     });
   });
 
+  test("keeps a case's replies to a server's question, so a re-sync does not clear them", async () => {
+    await withTempDir(async () => {
+      const replies = [
+        { message: "name", action: "accept", content: { name: "Ada" } },
+        { action: "decline" },
+      ];
+      const run = await runExport(
+        { cases: [{ inputAnswers: replies }] },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const loaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(loaded.ok, true);
+      if (!loaded.ok) return;
+      assert.deepEqual(loaded.authored.cases[0].inputAnswers, replies);
+    });
+  });
+
   test("exports execution config, hosts, and one resolved environment", async () => {
     await withTempDir(async () => {
       const run = await runExport(
@@ -3734,6 +3755,41 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(updated.checks, null);
     assert.equal(updated.expectedOutput, "");
     assert.equal(updated.intent, null);
+  });
+
+  test("a case's replies to a server's question reach the create body, and an update clears only ones the hosted case had", () => {
+    const replies = [
+      { server: "billing", message: "Delete", action: "accept", content: { sure: true } },
+      { action: "decline" },
+    ];
+    const withReplies = loadEvalSuiteFile(
+      VALID_SUITE_FILE.replace(
+        "        prompt: Refund the duplicate charge on invoice 4471.\n",
+        "        prompt: Refund the duplicate charge on invoice 4471.\n" +
+          "    inputAnswers:\n" +
+          "      - server: billing\n        message: Delete\n        action: accept\n        content:\n          sure: true\n" +
+          "      - action: decline\n"
+      )
+    );
+    assert.equal(withReplies.ok, true);
+    if (!withReplies.ok) return;
+    const testCase = withReplies.resolved.enabledCases[0];
+    assert.deepEqual(testCase.inputAnswers, replies);
+    assert.deepEqual(fileCaseToCreateBody(testCase).inputAnswers, replies);
+    assert.deepEqual(fileCaseToUpdateBody(testCase).inputAnswers, replies);
+
+    const plain = loadEvalSuiteFile(VALID_SUITE_FILE);
+    assert.equal(plain.ok, true);
+    if (!plain.ok) return;
+    const dropped = plain.resolved.enabledCases[0];
+    // Nothing is sent for a case that never had replies: an Inspector that
+    // predates the field refuses an unknown key, which would fail every sync.
+    assert.equal("inputAnswers" in fileCaseToCreateBody(dropped), false);
+    assert.equal("inputAnswers" in fileCaseToUpdateBody(dropped), false);
+    assert.equal(
+      fileCaseToUpdateBody(dropped, undefined, 1, replies).inputAnswers,
+      null
+    );
   });
 
   test("under vocabulary 2 the bodies spell the count and the rules canonically", () => {

@@ -18,6 +18,13 @@
  * `application/json`; the optional GET returns a minimal server-stream the
  * client probes then closes; no `Mcp-Session-Id` (stateless).
  */
+import {
+  createInputAnswerResolver,
+  loadPinnedInputAnswers,
+  inputAnswerResolverOf,
+  withInputAnswerResolverScope,
+  withToolCallScope,
+} from "../../services/evals/input-answers.js";
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -391,6 +398,20 @@ async function handle(c: any) {
   };
 
   try {
+    // An eval's iteration may have replies for a server that asks; they are
+    // read here, before the connection that declares the capability.
+    const pinnedReplies =
+      claims.runId && claims.iterationId
+        ? await loadPinnedInputAnswers({
+            runId: claims.runId,
+            iterationId: claims.iterationId,
+            proxyToken: sealed?.token ?? presentedToken,
+            serverId,
+          })
+        : [];
+    const inputAnswers = pinnedReplies.length
+      ? createInputAnswerResolver({ answers: pinnedReplies })
+      : undefined;
     const createAuthorized = () =>
       createAuthorizedManager(
         caller,
@@ -402,6 +423,7 @@ async function handle(c: any) {
         sealed?.profile?.clientCapabilities,
         {
           ...(sealed?.profile ? { initializePins: sealed.profile } : {}),
+          ...(inputAnswers ? { inputAnswers } : {}),
           // Per-server XAA works on the harness proxy (configured servers
           // mint instead of 500ing). KNOWN LIMITATION: the host's
           // enterprise-managed POLICY is NOT enforced here — the harness
@@ -610,7 +632,7 @@ async function handle(c: any) {
             return block.response;
           }
         }
-        const reply = await handleJsonRpc(serverId, body, manager, "adapter", {
+        const dispatch = () => handleJsonRpc(serverId, body, manager, "adapter", {
           ...(call ? { signal: call.signal } : {}),
           downstreamProtocolVersion: downstreamProtocolVersionOf(body),
           // This request's manager is still connecting: answer the handshake
@@ -672,6 +694,16 @@ async function handle(c: any) {
             );
           },
         });
+        const resolver = inputAnswerResolverOf(manager);
+        const params = body.params as { name?: unknown } | undefined;
+        const tool = body.method === "tools/call" && typeof params?.name === "string"
+          ? params.name
+          : undefined;
+        const reply = resolver && tool
+          ? await withInputAnswerResolverScope(resolver, () =>
+              withToolCallScope({ tool, serverId }, dispatch),
+            )
+          : await dispatch();
         // A failed request may have lost the upstream session; the next one
         // builds the turn's connection again.
         if (connection && reply && "error" in reply) connection.discard();

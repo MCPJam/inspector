@@ -14,6 +14,8 @@ export function signTestProxyToken(
     externalId?: string;
     orgId?: string;
     projectId?: string;
+    runId?: string;
+    iterationId?: string;
   },
   opts: { nowS?: number; expS?: number } = {},
 ): string {
@@ -28,6 +30,8 @@ export function signTestProxyToken(
     org: claims.orgId ?? "org_1",
     projectId: claims.projectId ?? "proj_1",
     serverId: claims.serverId,
+    runId: claims.runId,
+    iterationId: claims.iterationId,
     iat: now,
     exp: opts.expS ?? now + 3600,
   };

@@ -21,6 +21,8 @@ import { readTasksPolicy } from "@mcpjam/sdk";
 import {
   caseIntentSchema,
   evalSuiteFileToolPolicySchema,
+  inputAnswersSchema,
+  type InputAnswer,
 } from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { mcpToolOptionsFor } from "../../utils/mcp-tool-options.js";
@@ -362,6 +364,7 @@ export const RunEvalsRequestSchema = z.object({
     z
       .object({
         title: z.string(),
+        inputAnswers: inputAnswersSchema.optional(),
         query: z.string(),
         runs: z.number().int().positive().max(10),
         model: z.string(),
@@ -1630,6 +1633,7 @@ function toCaseBatchItem(
     expectedOutput?: string;
     intent?: string;
     steps?: TestStep[];
+    inputAnswers?: InputAnswer[];
     advancedConfig?: any;
     matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
     predicates?: import("@/shared/eval-matching").CasePredicates;
@@ -1652,6 +1656,9 @@ function toCaseBatchItem(
       ? { intent: testCaseData.intent }
       : {}),
     steps: sanitizeForConvexTransport(testCaseData.steps),
+    ...(testCaseData.inputAnswers !== undefined
+      ? { inputAnswers: testCaseData.inputAnswers }
+      : {}),
     advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
     matchOptions: testCaseData.matchOptions,
     predicates: testCaseData.predicates,
@@ -1990,6 +1997,7 @@ export async function authorEvalSuite(args: {
       expectedOutput?: string;
       intent?: string;
       steps?: TestStep[];
+      inputAnswers?: InputAnswer[];
       judgeRequirement?: string;
       advancedConfig?: any;
       matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
@@ -2013,6 +2021,7 @@ export async function authorEvalSuite(args: {
         expectedOutput: test.expectedOutput,
         intent: test.intent,
         steps: authoringSteps,
+        inputAnswers: test.inputAnswers,
         advancedConfig: test.advancedConfig,
         matchOptions: test.matchOptions,
         predicates: test.predicates,
@@ -2194,6 +2203,9 @@ export async function authorEvalSuite(args: {
               advancedConfigChanged ||
               matchOptionsChanged ||
               predicatesChanged ||
+              (testCaseData.inputAnswers !== undefined &&
+                JSON.stringify(normalizeForComparison(testCaseData.inputAnswers)) !==
+                  JSON.stringify(normalizeForComparison(existingTestCase.inputAnswers))) ||
               (testCaseData.suppressedSuiteStandardCheckIds !== undefined &&
                 JSON.stringify(testCaseData.suppressedSuiteStandardCheckIds) !==
                   JSON.stringify(
@@ -2215,6 +2227,9 @@ export async function authorEvalSuite(args: {
                   ? { intent: testCaseData.intent }
                   : {}),
                 steps: sanitizeForConvexTransport(testCaseData.steps),
+                ...(testCaseData.inputAnswers !== undefined
+                  ? { inputAnswers: testCaseData.inputAnswers }
+                  : {}),
                 advancedConfig: sanitizeForConvexTransport(
                   testCaseData.advancedConfig,
                 ),
