@@ -5,7 +5,8 @@ import { expect, it, vi } from "vitest";
 import { inputAnswerResolverOf, openInputAnswerConnection } from "../input-answers.js";
 import { openLocalEvalRun } from "../local-run-manager.js";
 
-vi.mock("../route-helpers.js", () => ({
+vi.mock("../route-helpers.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../route-helpers.js")>()),
   createConvexClient: () => ({ query: async () => null }),
 }));
 
@@ -29,9 +30,11 @@ it("opens a separate stdio connection for saved replies in a suite without a pro
       expect(inputAnswerResolverOf(caseManager)?.answers).toEqual(replies);
       const appResult = await app.executeTool("local", "echo", { text: "app" });
       const caseResult = await caseManager.executeTool("local", "echo", { text: "case" });
-      expect(JSON.stringify(appResult).match(/echo:app:(\d+)/)?.[1]).toBeTruthy();
-      expect(JSON.stringify(caseResult).match(/echo:case:(\d+)/)?.[1])
-        .not.toEqual(JSON.stringify(appResult).match(/echo:app:(\d+)/)?.[1]);
+      const appPid = JSON.stringify(appResult).match(/echo:app:(\d+)/)?.[1];
+      const casePid = JSON.stringify(caseResult).match(/echo:case:(\d+)/)?.[1];
+      expect(appPid).toBeTruthy();
+      expect(casePid).toBeTruthy();
+      expect(casePid).not.toBe(appPid);
     } finally {
       await caseManager.disconnectAllServers();
       await run.close();
