@@ -1,28 +1,22 @@
 import { useEffect } from "react";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
+import { isBrowserToolName as isBrowserVerb } from "@/shared/client-fulfilled-tools";
+import { isWebmcpPageToolName } from "@/shared/declared-tools";
 
 /**
- * The browser's model-facing tools.
+ * Is this one of the browser's model-facing tools?
  *
- * Listed rather than matched on a `browser_` prefix, because the prefix is not
- * a namespace anybody owns: an MCP server is free to publish a tool called
- * `browser_thing`, and a panel that opened because a third-party server ran
- * one would be taking 60% of somebody's workspace on a coincidence. These are
- * the six the harness registers (`server/utils/built-in-tools/browser.ts`);
- * one that is added there and not here simply does not open the panel, which
- * is the failure that goes unnoticed rather than the one that annoys people.
+ * Read from the names the server builds rather than matched on a `browser_`
+ * prefix, because that prefix is not a namespace anybody owns: an MCP server is
+ * free to publish a tool called `browser_thing`, and a panel that opened because
+ * a third-party server ran one would be taking 60% of somebody's workspace on a
+ * coincidence. The verbs come from `client-fulfilled-tools.ts`, which
+ * `buildBrowserTools` reads too, so a verb added there opens the panel here.
+ * A page's own tools reach the model as minted `webmcp_*` names, and those act
+ * on the page just as much as `browser_act` does.
  */
-const BROWSER_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "browser_navigate",
-  "browser_act",
-  "browser_observe",
-  "browser_tabs",
-  "browser_page_tool",
-  "browser_cancel_page_tool",
-]);
-
 export function isBrowserToolName(name: string | undefined): boolean {
-  return !!name && BROWSER_TOOL_NAMES.has(name);
+  return !!name && (isBrowserVerb(name) || isWebmcpPageToolName(name));
 }
 
 /**
