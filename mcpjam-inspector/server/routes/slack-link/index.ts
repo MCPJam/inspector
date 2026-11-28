@@ -46,8 +46,6 @@ import {
   resolveWorkosClientId,
 } from "../../services/authkit-jwt.js";
 import { isValidSlackServiceToken } from "../../middleware/slack-service-auth.js";
-import { resolveUserByExternalId } from "../../services/identity.js";
-import { getConvexBearerForDelegation } from "../../utils/v1-convex-token.js";
 import {
   consumeSlackLinkSession,
   createSlackLinkSession,
@@ -55,7 +53,6 @@ import {
   getSlackLinkSession,
   markSlackLegVerified,
   markWorkosLegVerified,
-  resolveOrganizationByWorkosId,
   setSlackDefaultProject,
   SlackBackendUnavailable,
 } from "../../services/slack-backend.js";
@@ -69,6 +66,7 @@ import {
   verifySlackLinkState,
 } from "./state.js";
 import { requireServiceCredentialRoute } from "../../middleware/require-service-credential.js";
+import { linkRefusalPage, listLinkPickerProjects } from "./link-sign-in.js";
 
 /** Slack's OIDC endpoints. Fixed — these are not per-workspace. */
 const SLACK_AUTHORIZE_URL = "https://slack.com/openid/connect/authorize";
@@ -661,42 +659,30 @@ slackLink.get("/workos/callback", async (c) => {
       : linkFailed(c);
   }
 
-  let workosUserId: string;
-  let workosOrgId: string | undefined;
+  let accessToken: string;
   try {
     const {
       ok,
       status,
       body: tokenBody,
-    } = await fetchJsonWithDeadline<{
-      access_token?: string;
-      user?: { id?: string };
-      organization_id?: string;
-    }>(`${config.workosIssuer}/oauth2/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: config.workosClientId,
-        client_secret: config.workosClientSecret,
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: workosRedirectUri(config),
-      }),
-    });
+    } = await fetchJsonWithDeadline<{ access_token?: string }>(
+      `${config.workosIssuer}/oauth2/token`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: config.workosClientId,
+          client_secret: config.workosClientSecret,
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: workosRedirectUri(config),
+        }),
+      },
+    );
     if (!ok || !tokenBody?.access_token) {
       throw new Error(`WorkOS token exchange failed (${status})`);
     }
-    // The access token is an AuthKit JWT; `sub` is the WorkOS user id and
-    // `org_id` names the organization the user authenticated into.
-    const claims = decodeJwtClaims(tokenBody.access_token);
-    workosUserId =
-      (typeof claims?.sub === "string" ? claims.sub : undefined) ??
-      tokenBody.user?.id ??
-      "";
-    workosOrgId =
-      (typeof claims?.org_id === "string" ? claims.org_id : undefined) ??
-      tokenBody.organization_id;
-    if (!workosUserId) throw new Error("WorkOS token carried no subject");
+    accessToken = tokenBody.access_token;
   } catch (error) {
     logger.warn("[slack-link] WorkOS token exchange failed", {
       error: error instanceof Error ? error.message : String(error),
@@ -708,112 +694,49 @@ slackLink.get("/workos/callback", async (c) => {
     return linkFailed(c);
   }
 
-  // A LOOKUP FAILURE is not "no account". Failing the session on a blip would
-  // make a valid user redo the entire two-leg OAuth flow, so the outage path
-  // leaves the session intact and asks them to retry the same link.
-  let mcpjamUser;
-  try {
-    mcpjamUser = await resolveUserByExternalId(workosUserId);
-  } catch (error) {
-    logger.error("[slack-link] identity lookup failed", error);
-    return unavailable(c);
-  }
-  if (!mcpjamUser) {
-    await failSlackLinkSession(
-      payload.linkSessionId,
-      "unknown_mcpjam_user"
-    ).catch(() => {});
-    return page(c, {
-      title: "No MCPJam account yet",
-      body: "Sign in to MCPJam once at app.mcpjam.com, then use the connect link again.",
-      status: 400,
-    });
-  }
-
-  // The org comes from WorkOS's `org_id` claim: WorkOS prompts multi-org
-  // users itself, so we never need our own org picker. A claim that maps to
-  // nothing is NOT fatal — orgs marked `workosOrgSyncStatus: 'skipped'` have
-  // no WorkOS counterpart at all — but we cannot guess one either, so the
-  // user is told to pick an org in the app and retry.
-  let organizationId: string | null = null;
-  if (workosOrgId) {
-    let mapped;
-    try {
-      mapped = await resolveOrganizationByWorkosId(workosOrgId);
-    } catch (error) {
-      // Same rule: could-not-ask is not the same as maps-to-nothing.
-      logger.error("[slack-link] org lookup failed", error);
-      return unavailable(c);
-    }
-    organizationId = mapped?.organizationId ?? null;
-  }
-  if (!organizationId) {
-    await failSlackLinkSession(payload.linkSessionId, "org_unresolved").catch(
-      () => {}
-    );
-    return page(c, {
-      title: "Couldn’t tell which organization to use",
-      body: "Open MCPJam, make sure you’re in the organization you want Slack to work in, then use the connect link again.",
-      status: 400,
-    });
-  }
-
+  // The backend verifies the person's sign-in and takes the user and
+  // organization from it (`sub`, `org_id`); a refusal has already burned the
+  // session, so the page only has to explain it.
   let result;
   try {
     result = await consumeSlackLinkSession({
       linkSessionId: payload.linkSessionId,
-      userId: mcpjamUser._id,
-      workosUserId,
-      organizationId,
+      accessToken,
     });
   } catch (error) {
-    // The session is intact (consume+upsert is one transaction, so a failure
-    // rolled both back). The user can retry with a fresh link.
+    // Nothing was consumed, so the same link works on a retry. 503, not 400:
+    // this is ours to fix.
     logger.error("[slack-link] link consumption failed", error, {
       is_backend_unavailable: error instanceof SlackBackendUnavailable,
     });
-    // The session is intact — consume+upsert is one transaction, so a failure
-    // rolled both back. 503, not 400: this is ours to fix, and the user's
-    // link is still usable.
     return unavailable(c);
   }
-  if (!result.ok) return linkFailed(c);
-
-  // The person is fully identified at this point, so the page can offer
-  // their ACTUAL projects instead of asking them to go find an id. Fetched
-  // with a delegated token for exactly the org the link landed in;
-  // best-effort — an empty list degrades to the paste field, never to a
-  // failed page (the LINK already succeeded, and this is decoration on it).
-  let projects: Array<{ id: string; name: string }> = [];
-  try {
-    const convexHttpUrl = (process.env.CONVEX_HTTP_URL ?? "").replace(
-      /\/+$/,
-      ""
-    );
-    if (convexHttpUrl) {
-      const jwt = await getConvexBearerForDelegation(
-        workosUserId,
-        organizationId
-      );
-      const { ok, body } = await fetchJsonWithDeadline<{
-        items?: Array<{ id?: unknown; name?: unknown }>;
-        data?: Array<{ id?: unknown; name?: unknown }>;
-      }>(`${convexHttpUrl}/v1/projects`, {
-        headers: { Authorization: `Bearer ${jwt}` },
-      });
-      const rows = ok ? (body.items ?? body.data ?? []) : [];
-      projects = rows
-        .filter((row) => typeof row?.id === "string")
-        .map((row) => ({
-          id: String(row.id),
-          name: typeof row.name === "string" && row.name ? row.name : String(row.id),
-        }));
+  if (!result.ok) {
+    switch (linkRefusalPage(result.reason)) {
+      case "no_account":
+        return page(c, {
+          title: "No MCPJam account yet",
+          body: "Sign in to MCPJam once at app.mcpjam.com, then use the connect link again.",
+          status: 400,
+        });
+      case "no_organization":
+        return page(c, {
+          title: "Couldn’t tell which organization to use",
+          body: "Open MCPJam, make sure you’re in the organization you want Slack to work in, then use the connect link again.",
+          status: 400,
+        });
+      default:
+        return linkFailed(c);
     }
-  } catch (error) {
-    logger.warn("[slack-link] could not list projects for the picker", {
-      error: error instanceof Error ? error.message : String(error),
-    });
   }
+
+  // The person's ACTUAL projects instead of a field for an id, read with
+  // their own token. Decoration on a link that already succeeded: an empty
+  // list falls back to the paste field.
+  const projects = await listLinkPickerProjects(
+    accessToken,
+    result.organizationId,
+  );
 
   // Keep the cookie: the default-project picker below needs the session id,
   // and the session is now `consumed`, so it can no longer authorize a link.
@@ -873,26 +796,6 @@ slackLink.post("/default-project", async (c) => {
   clearLinkCookie(c);
   return c.json({ ok: true });
 });
-
-/**
- * Base64url-decode a JWT's claims WITHOUT verifying it.
- *
- * Safe here and ONLY here: the token was just received over TLS directly from
- * the WorkOS token endpoint, in exchange for our client secret. It was not
- * supplied by the user, so there is no attacker in a position to have forged
- * it. Never use this on a token that arrived from a client.
- */
-function decodeJwtClaims(jwt: string): Record<string, unknown> | null {
-  const parts = jwt.split(".");
-  if (parts.length !== 3) return null;
-  try {
-    return JSON.parse(
-      Buffer.from(parts[1] as string, "base64url").toString("utf8")
-    ) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
 
 function renderProjectPicker(
   projects: Array<{ id: string; name: string }>

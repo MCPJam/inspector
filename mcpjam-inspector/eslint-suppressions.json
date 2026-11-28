@@ -779,12 +779,12 @@
   },
   "server/routes/slack-link/index.ts": {
     "no-restricted-syntax": {
-      "count": 4
+      "count": 2
     }
   },
   "server/routes/surface-link/index.ts": {
     "no-restricted-syntax": {
-      "count": 3
+      "count": 2
     }
   },
   "server/routes/v1/eval-backtest.ts": {

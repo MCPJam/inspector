@@ -3,8 +3,10 @@
  *
  * Used by two callers with the same trust level: the `slk_` auth branch in
  * `bearer-auth.ts` (which needs the acting user's account link) and the
- * account-link bridge in `routes/slack-link` (which drives the link session
- * state machine). Both authenticate with `INSPECTOR_SERVICE_TOKEN`.
+ * account-link bridges in `routes/slack-link` and `routes/surface-link`
+ * (which drive the link session state machines). Both authenticate with the
+ * Inspector's service credential; only the Discord bot's own routes forward
+ * the bot's credential instead.
  *
  * FAILURE SEMANTICS ARE THE POINT. Every function here throws
  * `SlackBackendUnavailable` when the backend could not answer, and returns a
@@ -189,53 +191,52 @@ export interface SurfaceLinkSession {
   expiresAt: number;
 }
 
-export async function createSurfaceLinkSession(
-  args: {
-    sessionId: string;
-    surfaceKind: "discord" | "teams";
-    surfaceTenantId: string;
-    surfaceUserId: string;
-    expiresAt: number;
-  },
-  surfaceServiceToken: string
-): Promise<{ ok: boolean }> {
-  return post("/agent/link-sessions/create", args, { surfaceServiceToken });
+export async function createSurfaceLinkSession(args: {
+  sessionId: string;
+  surfaceKind: "discord" | "teams";
+  surfaceTenantId: string;
+  surfaceUserId: string;
+  expiresAt: number;
+}): Promise<{ ok: boolean }> {
+  return post("/agent/link-sessions/create", args);
 }
 
 export async function getSurfaceLinkSession(
   sessionId: string,
-  surfaceServiceToken: string
 ): Promise<SurfaceLinkSession | null> {
   const body = await post<{ session?: SurfaceLinkSession | null }>(
     "/agent/link-sessions/get",
     { sessionId },
-    { surfaceServiceToken }
   );
   return body.session ?? null;
 }
 
-export async function setSurfaceLinkStatus(
-  args: {
-    sessionId: string;
-    status: SurfaceLinkSession["status"];
-    surfaceProof?: unknown;
-    workosStateHash?: string;
-  },
-  surfaceServiceToken: string
-): Promise<{ ok: boolean; reason?: string }> {
-  return post("/agent/link-sessions/set-status", args, { surfaceServiceToken });
+export async function setSurfaceLinkStatus(args: {
+  sessionId: string;
+  status: SurfaceLinkSession["status"];
+  surfaceProof?: unknown;
+  workosStateHash?: string;
+}): Promise<{ ok: boolean; reason?: string }> {
+  return post("/agent/link-sessions/set-status", args);
 }
 
-export async function consumeSurfaceLinkSession(
-  args: {
-    sessionId: string;
-    userId: string;
-    workosUserId: string;
-    organizationId: string;
-  },
-  surfaceServiceToken: string
-): Promise<{ ok: boolean; reason?: string }> {
-  return post("/agent/link-sessions/consume", args, { surfaceServiceToken });
+/**
+ * What a consume answers. The backend takes the user and organization from
+ * `accessToken`, the person's sign-in to the link app, and names why it
+ * refused (`unknown_mcpjam_user`, `org_unresolved`, ...); `organizationId` is
+ * the organization it linked.
+ */
+export interface LinkConsumeResult {
+  ok: boolean;
+  reason?: string;
+  organizationId?: string;
+}
+
+export async function consumeSurfaceLinkSession(args: {
+  sessionId: string;
+  accessToken: string;
+}): Promise<LinkConsumeResult> {
+  return post("/agent/link-sessions/consume", args);
 }
 
 // ── Link-session state machine ─────────────────────────────────────────
@@ -302,16 +303,14 @@ export async function failSlackLinkSession(
 
 export async function consumeSlackLinkSession(args: {
   linkSessionId: string;
-  userId: string;
-  workosUserId: string;
-  organizationId: string;
-}): Promise<{
-  ok: boolean;
-  reason?: string;
-  teamId?: string;
-  slackUserId?: string;
-  relinked?: boolean;
-}> {
+  accessToken: string;
+}): Promise<
+  LinkConsumeResult & {
+    teamId?: string;
+    slackUserId?: string;
+    relinked?: boolean;
+  }
+> {
   return post("/slack/link-sessions/consume", args);
 }
 
