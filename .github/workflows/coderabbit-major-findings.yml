@@ -20,10 +20,10 @@ permissions:
   contents: read
   pull-requests: read
 
-concurrency:
-  group: coderabbit-major-findings-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
+# No concurrency group. A CodeRabbit review fires a review event and a
+# review-comment event at once; cancelling either leaves a cancelled run of
+# this check on the commit, which can be the one a required check reads.
+# Parallel runs read the same threads, so they agree.
 jobs:
   gate:
     name: CodeRabbit Major Findings
