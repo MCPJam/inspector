@@ -540,6 +540,10 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         return { tools, metadata: toolsMetadata };
       }
 
+      // A server change or a newer listing bumps the sequence; this walk then
+      // answers only its caller and must not overwrite the newer list.
+      const seq = toolsRequestSeqRef.current;
+      const isCurrent = () => seq === toolsRequestSeqRef.current;
       setFetchingTools(true);
       try {
         const aggregatedTools = { ...tools };
@@ -577,7 +581,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
             pages >= maxPages
           ) {
             const message = `Stopped fetching tools after ${maxPages} pages without finding "${toolName}".`;
-            setExecutionError(message);
+            if (isCurrent()) setExecutionError(message);
             throw createInspectorCommandClientError(
               "execution_failed",
               message
@@ -589,17 +593,19 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
           }
         } while (true);
 
-        setTools(aggregatedTools);
-        setToolsMetadata(aggregatedMetadata);
+        if (isCurrent()) {
+          setTools(aggregatedTools);
+          setToolsMetadata(aggregatedMetadata);
+        }
 
         return { tools: aggregatedTools, metadata: aggregatedMetadata };
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to fetch tools";
-        setExecutionError(message);
+        if (isCurrent()) setExecutionError(message);
         throw createInspectorCommandClientError("execution_failed", message);
       } finally {
-        setFetchingTools(false);
+        if (isCurrent()) setFetchingTools(false);
       }
     },
     [serverName, setExecutionError, setTools, tools, toolsMetadata]
