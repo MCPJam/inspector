@@ -16,7 +16,10 @@ vi.mock("@/lib/apis/web/api-keys", () => ({
 
 const onCreate = vi.fn();
 
-function renderDialog(organizations = [{ _id: "org-a", name: "Acme" }]) {
+function renderDialog(
+  organizations = [{ _id: "org-a", name: "Acme" }],
+  activeOrganizationId?: string,
+) {
   return render(
     <CreateApiKeyDialog
       open
@@ -24,6 +27,7 @@ function renderDialog(organizations = [{ _id: "org-a", name: "Acme" }]) {
       isCreating={false}
       organizations={organizations}
       orgsLoading={false}
+      activeOrganizationId={activeOrganizationId}
       onCreate={onCreate}
     />,
   );
@@ -189,5 +193,84 @@ describe("CreateApiKeyDialog organization setting for who creates keys", () => {
       ).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("button", { name: "Create key" })).toBeEnabled();
+  });
+});
+
+describe("CreateApiKeyDialog active organization", () => {
+  const twoOrgs = [
+    { _id: "org-a", name: "Acme" },
+    { _id: "org-b", name: "Beta" },
+  ];
+
+  it("pre-selects the active organization and keeps the picker", async () => {
+    const user = userEvent.setup();
+    renderDialog(twoOrgs, "org-b");
+
+    expect(
+      screen.getByRole("combobox", { name: "Organization" }),
+    ).toHaveTextContent("Beta");
+    await user.type(screen.getByLabelText("Name"), "ci");
+    await user.click(screen.getByRole("button", { name: "Create key" }));
+
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: "org-b" }),
+      ),
+    );
+    expect(mockGetApiKeyMintEligibility).toHaveBeenCalledWith("org-b");
+  });
+
+  it("keeps the typed name when the active organization arrives late", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderDialog(twoOrgs);
+    await user.type(screen.getByLabelText("Name"), "ci");
+
+    rerender(
+      <CreateApiKeyDialog
+        open
+        onOpenChange={vi.fn()}
+        isCreating={false}
+        organizations={twoOrgs}
+        orgsLoading={false}
+        activeOrganizationId="org-b"
+        onCreate={onCreate}
+      />,
+    );
+
+    expect(screen.getByLabelText("Name")).toHaveValue("ci");
+    expect(
+      screen.getByRole("combobox", { name: "Organization" }),
+    ).toHaveTextContent("Beta");
+  });
+
+  it("switches to the active organization once it is listed", () => {
+    const { rerender } = renderDialog([twoOrgs[0]], "org-b");
+    expect(
+      screen.getByRole("combobox", { name: "Organization" }),
+    ).toHaveTextContent("Acme");
+
+    rerender(
+      <CreateApiKeyDialog
+        open
+        onOpenChange={vi.fn()}
+        isCreating={false}
+        organizations={twoOrgs}
+        orgsLoading={false}
+        activeOrganizationId="org-b"
+        onCreate={onCreate}
+      />,
+    );
+
+    expect(
+      screen.getByRole("combobox", { name: "Organization" }),
+    ).toHaveTextContent("Beta");
+  });
+
+  it("asks for an organization when the active one is not listed", () => {
+    renderDialog(twoOrgs, "org-gone");
+
+    expect(
+      screen.getByRole("combobox", { name: "Organization" }),
+    ).toHaveTextContent("Select an organization");
   });
 });

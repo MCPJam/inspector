@@ -7,9 +7,9 @@ import { CreditUsagePage } from "./components/billing/CreditUsagePage";
 import { createBrowserRouter, redirect } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
+import { ApiKeysSettingsRoute } from "./components/settings/ApiKeysRoute";
 import { CaniuseComparePage } from "./components/hosts/comparison/CaniuseComparePage";
 import App, {
-  ApiKeysSettingsRoute,
   BenchResultsRoute,
   BenchRunnerRoute,
   GithubChecksSettingsRoute,

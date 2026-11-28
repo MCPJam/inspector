@@ -14,6 +14,7 @@ import { OrganizationApiKeyPolicyCard } from "../organization/OrganizationApiKey
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { isConvexQueryUnavailable } from "@/lib/convex-error";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
+import { useAppRouteContext } from "@/lib/app-route-context";
 import { useApiKeys } from "@/hooks/useApiKeys";
 import { type ApiKey } from "@/lib/apis/web/api-keys";
 import { describeApiKeyExpiry } from "@/lib/api-key-expiry";
@@ -39,6 +40,8 @@ interface ApiKeysRouteProps {
   organizationId?: string;
   /** Owner or admin of `organizationId`; enables the key creation setting. */
   isAdmin?: boolean;
+  /** The org the app is in; pre-selected when creating a key. */
+  activeOrganizationId?: string | null;
 }
 
 /** A key's display name; the id stands in when WorkOS could not be asked. */
@@ -88,6 +91,7 @@ function KeyExpiry({ expiresAt }: { expiresAt?: string | null }) {
 export function ApiKeysRoute({
   organizationId,
   isAdmin = false,
+  activeOrganizationId,
 }: ApiKeysRouteProps = {}) {
   const [createOpen, setCreateOpen] = useState(false);
   const [revealValue, setRevealValue] = useState<string | null>(null);
@@ -310,6 +314,7 @@ export function ApiKeysRoute({
         isCreating={isCreating}
         organizations={sortedOrganizations}
         orgsLoading={orgsLoading}
+        activeOrganizationId={activeOrganizationId}
         onCreate={handleCreate}
       />
 
@@ -335,4 +340,12 @@ export function ApiKeysRoute({
       />
     </SettingsPageShell>
   );
+}
+
+/** `/settings/api-keys`: personal keys, with the active org pre-selected. The
+ * organization inventory mounts ApiKeysRoute with an explicit organizationId
+ * from OrganizationsTab instead. */
+export function ApiKeysSettingsRoute() {
+  const { activeOrganizationId } = useAppRouteContext();
+  return <ApiKeysRoute activeOrganizationId={activeOrganizationId} />;
 }

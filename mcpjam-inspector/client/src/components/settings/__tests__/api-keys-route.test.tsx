@@ -1,12 +1,14 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiKeysRoute } from "../ApiKeysRoute";
+import { ApiKeysRoute, ApiKeysSettingsRoute } from "../ApiKeysRoute";
 const state = vi.hoisted(() => ({
   keys: [] as any[],
   error: null as string | null,
   truncated: false,
   revoke: vi.fn(),
+  organizations: [{ _id: "org-a", name: "Acme" }],
+  activeOrganizationId: null as string | null,
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -17,7 +19,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("@/lib/app-navigation", () => ({ useAppNavigate: () => vi.fn() }));
 vi.mock("@/hooks/useOrganizations", () => ({
   useOrganizationQueries: () => ({
-    sortedOrganizations: [{ _id: "org-a", name: "Acme" }],
+    sortedOrganizations: state.organizations,
     isLoading: false,
   }),
 }));
@@ -43,6 +45,14 @@ vi.mock("@/hooks/useOrgApiKeyPolicy", () => ({
     };
   },
 }));
+vi.mock("@/lib/app-route-context", () => ({
+  useAppRouteContext: () => ({
+    activeOrganizationId: state.activeOrganizationId,
+  }),
+}));
+vi.mock("@/lib/apis/web/api-keys", () => ({
+  getApiKeyMintEligibility: vi.fn().mockResolvedValue(null),
+}));
 vi.mock("@/lib/error-reporting", () => ({ reportBoundaryError: vi.fn() }));
 vi.mock("../SettingsPageShell", () => ({
   SettingsPageShell: ({ children }: any) => <main>{children}</main>,
@@ -55,6 +65,8 @@ beforeEach(() => {
   policyHook.throws = null;
   state.error = null;
   state.truncated = false;
+  state.organizations = [{ _id: "org-a", name: "Acme" }];
+  state.activeOrganizationId = null;
   state.revoke = vi.fn().mockResolvedValue(undefined);
   state.keys = [
     {
@@ -211,5 +223,23 @@ describe("key expiry", () => {
     expect(states[0][1]).toMatch(/^Expired /);
     expect(states[1]).toEqual(["expiring", "Expires in 3 days"]);
     expect(states[2]).toEqual(["none", "No expiry"]);
+  });
+});
+
+describe("Settings API keys route", () => {
+  it("opens the create dialog with the active organization selected", async () => {
+    state.organizations = [
+      { _id: "org-a", name: "Acme" },
+      { _id: "org-b", name: "Beta" },
+    ];
+    state.activeOrganizationId = "org-b";
+    const user = userEvent.setup();
+    render(<ApiKeysSettingsRoute />);
+
+    await user.click(screen.getByRole("button", { name: "Create API key" }));
+
+    expect(
+      await screen.findByRole("combobox", { name: "Organization" }),
+    ).toHaveTextContent("Beta");
   });
 });

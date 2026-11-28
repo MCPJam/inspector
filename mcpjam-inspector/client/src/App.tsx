@@ -73,7 +73,7 @@ import {
 import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
 import { SessionsPanel } from "./components/sessions/SessionsPanel";
 import { SettingsTab } from "./components/SettingsTab";
-import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
+import { ApiKeysSettingsRoute } from "./components/settings/ApiKeysRoute";
 import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
 import { GithubInstallCallbackRoute } from "./components/settings/GithubInstallCallbackRoute";
 import { IntegrationsRoute } from "./components/settings/IntegrationsRoute";
@@ -2816,12 +2816,6 @@ export function SettingsRoute() {
       onNavigate={handleNavigate}
     />
   );
-}
-
-export function ApiKeysSettingsRoute() {
-  // Personal keys. The organization inventory mounts ApiKeysRoute with an
-  // explicit organizationId from OrganizationsTab instead.
-  return <ApiKeysRoute />;
 }
 
 export function IntegrationsSettingsRoute() {

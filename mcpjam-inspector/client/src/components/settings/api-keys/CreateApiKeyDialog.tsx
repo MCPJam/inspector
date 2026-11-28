@@ -43,6 +43,8 @@ export interface CreateApiKeyDialogProps {
   /** MCPJam orgs the user belongs to. The key is scoped to the selected one. */
   organizations: CreateApiKeyOrganization[];
   orgsLoading: boolean;
+  /** The org the app is in. Pre-selected when it is one of `organizations`. */
+  activeOrganizationId?: string | null;
   onCreate: (args: {
     name: string;
     organizationId: string;
@@ -57,26 +59,34 @@ export function CreateApiKeyDialog({
   isCreating,
   organizations,
   orgsLoading,
+  activeOrganizationId,
   onCreate,
 }: CreateApiKeyDialogProps) {
   const [name, setName] = useState("");
-  const [organizationId, setOrganizationId] = useState("");
+  const [pickedOrgId, setPickedOrgId] = useState<string | null>(null);
   const [expiresInDays, setExpiresInDays] = useState(
     DEFAULT_API_KEY_EXPIRY_DAYS,
   );
 
-  // Reset name and lifetime on open; auto-select the org when there's exactly
-  // one (and clear any stale selection that's no longer in the list).
+  // Reset the form on open.
   useEffect(() => {
     if (!open) return;
     setName("");
     setExpiresInDays(DEFAULT_API_KEY_EXPIRY_DAYS);
-    setOrganizationId((prev) => {
-      if (organizations.length === 1) return organizations[0]._id;
-      if (prev && organizations.some((o) => o._id === prev)) return prev;
-      return "";
-    });
-  }, [open, organizations]);
+    setPickedOrgId(null);
+  }, [open]);
+
+  // The user's pick while it is still listed; otherwise the active org, or
+  // the only org.
+  const isListed = (id: string | null | undefined): id is string =>
+    !!id && organizations.some((o) => o._id === id);
+  const organizationId = isListed(pickedOrgId)
+    ? pickedOrgId
+    : isListed(activeOrganizationId)
+      ? activeOrganizationId
+      : organizations.length === 1
+        ? organizations[0]._id
+        : "";
 
   useSettingsDraft(
     open && !!name,
@@ -164,7 +174,7 @@ export function CreateApiKeyDialog({
           ) : (
             <Select
               value={organizationId}
-              onValueChange={setOrganizationId}
+              onValueChange={setPickedOrgId}
               disabled={isCreating || singleOrg}
             >
               <SelectTrigger id="api-key-org-select">
