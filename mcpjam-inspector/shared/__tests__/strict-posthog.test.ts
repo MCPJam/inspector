@@ -365,3 +365,50 @@ describe("strict app launches", () => {
     expect(JSON.stringify(result)).not.toContain("SENTINEL");
   });
 });
+
+describe("strict sign-in attempts", () => {
+  it("counts a failed attempt with closed fields only and no organization group", () => {
+    const result = rebuildStrictPostHogEvent({
+      event: "signin_failed",
+      properties: {
+        location: "app",
+        intent: "sign_in",
+        signin_platform: "desktop",
+        reason: "insecure_origin",
+        platform: "mac",
+        $groups: { organization: secret },
+        error: secret,
+      },
+    });
+    expect(result?.properties).toMatchObject({
+      distinct_id: "strict",
+      location: "app",
+      intent: "sign_in",
+      signin_platform: "desktop",
+      reason: "insecure_origin",
+    });
+    expect(result?.properties).not.toHaveProperty("$groups");
+    expect(JSON.stringify(result)).not.toContain("SENTINEL");
+  });
+
+  it.each(["signin_started", "signin_completed"])(
+    "keeps %s and drops values outside the catalog",
+    (event) => {
+      const result = rebuildStrictPostHogEvent({
+        event,
+        properties: {
+          location: "promo_redemption",
+          intent: "sign_up",
+          signin_platform: secret,
+          reason: "abandoned",
+        },
+      });
+      expect(result?.properties).toMatchObject({
+        location: "promo_redemption",
+        intent: "sign_up",
+      });
+      expect(result?.properties).not.toHaveProperty("signin_platform");
+      expect(result?.properties).not.toHaveProperty("reason");
+    },
+  );
+});

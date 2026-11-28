@@ -561,6 +561,14 @@ export const ANALYTICS_EVENTS = {
   save_tool_button_clicked: { source: "client" },
   saved_request_item_loaded: { source: "client" },
   server_card_clicked: { source: "client" },
+  // One WorkOS sign-in or sign-up attempt, from `lib/auth/signin-tracking.ts`:
+  // started, then exactly one of completed or failed. Props: location, intent
+  // (sign_in | sign_up), signin_platform (web | desktop | npx), and on failure
+  // reason (insecure_origin | start_error | callback_error |
+  // code_exchange_failed | abandoned).
+  signin_completed: { source: "client" },
+  signin_failed: { source: "client" },
+  signin_started: { source: "client" },
   // How a connect, reconnect or OAuth completion ended — one per attempt, from
   // `lib/connect-outcome-telemetry.ts`. Props: outcome (success | failure |
   // timeout | cancelled), flow (connect | reconnect | background), hosted,

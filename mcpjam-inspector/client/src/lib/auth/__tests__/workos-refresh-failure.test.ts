@@ -27,6 +27,16 @@ vi.mock("@/lib/analytics", () => ({
   track: mockState.track,
 }));
 
+// Sign-in tracking is skipped while telemetry is off (`.env.local` turns it
+// off for tests) or before PostHog has initialized.
+vi.mock("@/lib/PosthogUtils", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/PosthogUtils")>()),
+  isPostHogDisabled: false,
+}));
+vi.mock("posthog-js", () => ({
+  default: { __loaded: true, has_opted_out_capturing: () => false },
+}));
+
 vi.mock("@/lib/app-signin-return-path", () => ({
   captureAppSignInReturnPath: mockState.captureAppSignInReturnPath,
 }));
@@ -89,10 +99,14 @@ describe("handleWorkosRefreshFailure", () => {
     handleWorkosRefreshFailure({ signIn });
 
     expect(signIn).toHaveBeenCalledTimes(1);
-    expect(mockState.track).toHaveBeenCalledTimes(1);
+    expect(
+      mockState.track.mock.calls.filter(
+        ([name]) => name === "workos_session_expired",
+      ),
+    ).toHaveLength(1);
     expect(mockState.track).toHaveBeenCalledWith(
-      "workos_session_expired",
-      expect.any(Object),
+      "signin_started",
+      expect.objectContaining({ location: "session-refresh" }),
     );
     expect(mockState.reportCaught).not.toHaveBeenCalled();
   });

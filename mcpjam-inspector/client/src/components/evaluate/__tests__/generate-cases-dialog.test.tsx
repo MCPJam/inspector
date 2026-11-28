@@ -7,6 +7,7 @@ import { SuiteDetailOverview } from "../suite-detail-overview";
 vi.mock("../suite-runs-as", () => ({ SuiteRunsAsLine: () => null }));
 import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import { authoringRequest } from "@/lib/apis/eval-authoring-api";
+import { PENDING_SIGN_IN_STORAGE_KEY } from "@/lib/auth/signin-tracking";
 import type { EvalSuite } from "../../evals/types";
 import {
   loadGenerateConfig,
@@ -83,7 +84,12 @@ it("offers sign-in instead of configuration for a guest actor, even while WorkOS
   await userEvent.setup().click(screen.getByRole("button", { name: "Sign in" }));
   expect(auth.signIn).toHaveBeenCalledOnce();
   expect(onGenerate).not.toHaveBeenCalled();
-  expect(localStorage.length).toBe(0);
+  // Sign-in records its open attempt; nothing else may be saved.
+  expect(
+    Array.from({ length: localStorage.length }, (_, i) =>
+      localStorage.key(i),
+    ).filter((key) => key !== PENDING_SIGN_IN_STORAGE_KEY),
+  ).toEqual([]);
   await userEvent.setup().click(screen.getByRole("button", { name: "Cancel" }));
   expect(onClose).toHaveBeenCalledOnce();
 });

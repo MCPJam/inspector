@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
@@ -152,7 +153,7 @@ function SignedInClaim({ campaignId }: { campaignId: string }) {
 }
 
 export function PromoRedemptionPage() {
-  const { user, signIn } = useAuth();
+  const { user, signIn } = useInspectorAuth("promo_redemption");
   const [error, setError] = useState("");
   const [campaignId] = useState(() => readPromoCampaign());
   async function login() {

@@ -17,6 +17,20 @@ function usesOrganizationGroupOnly(event: ClientAnalyticsEventName): boolean {
   );
 }
 
+let signedInOrganizationId: string | null = null;
+
+/**
+ * The organization a signed-in member is working in, attached to every
+ * event as PostHog's `organization` group. Guests get none: the hook feeding
+ * this passes null until Convex confirms a member, so a guest bearer never
+ * groups into an organization.
+ */
+export function setAnalyticsOrganizationGroup(
+  organizationId: string | null,
+): void {
+  signedInOrganizationId = organizationId || null;
+}
+
 function isForbiddenBillingProperty(name: string): boolean {
   const normalized = name.toLowerCase();
   return (
@@ -84,6 +98,11 @@ export function track(
       suppliedOrganizationId.length > 0
         ? suppliedOrganizationId
         : undefined;
+    // Billing events name the organization they are about, which can differ
+    // from the one in view; they never fall back to it.
+    const groupOrganizationId = organizationGroupOnlyEvent
+      ? billingOrganizationId
+      : (signedInOrganizationId ?? undefined);
     const eventProperties = organizationGroupOnlyEvent
       ? Object.fromEntries(
           Object.entries(rest).filter(
@@ -97,17 +116,9 @@ export function track(
       // Keep the raw id in PostHog's native organization group only. An
       // explicit null prevents the registered super-property from duplicating
       // it into every billing event's ordinary property bag.
-      ...(organizationGroupOnlyEvent
-        ? {
-            organization_id: null,
-            ...(billingOrganizationId
-              ? {
-                  $groups: {
-                    organization: billingOrganizationId,
-                  },
-                }
-              : {}),
-          }
+      ...(organizationGroupOnlyEvent ? { organization_id: null } : {}),
+      ...(groupOrganizationId
+        ? { $groups: { organization: groupOrganizationId } }
         : {}),
     });
   } catch (error) {
