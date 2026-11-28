@@ -51,15 +51,13 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_server_revisions: { command: "cloud projects servers revisions" },
   get_server_revision: { command: "cloud projects servers revision" },
   diff_server_revisions: { command: "cloud projects servers revision-diff" },
-  // Mock servers: the CLI commands come with the bounded reads. Until then the
-  // surface is REST and the SDK.
-  create_mock_server: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
-  update_mock_server: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
-  get_mock_server: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
-  patch_mock_server: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
-  refresh_mock_server: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
-  get_mock_forwarding_policy: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
-  set_mock_forwarding_policy: { excluded: "Mock server commands arrive with the bounded reads. Use REST or the SDK." },
+  create_mock_server: { command: "cloud mocks create" },
+  update_mock_server: { command: "cloud mocks update" },
+  get_mock_server: { command: "cloud mocks get" },
+  patch_mock_server: { command: "cloud mocks patch" },
+  refresh_mock_server: { command: "cloud mocks refresh" },
+  get_mock_forwarding_policy: { command: "cloud mocks policy get" },
+  set_mock_forwarding_policy: { command: "cloud mocks policy set" },
   // `default` runs the same operation as `rename`, with `isDefault` in place
   // of a name.
   list_server_accounts: { command: "cloud server-accounts list" },

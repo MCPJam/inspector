@@ -10,6 +10,7 @@ import { registerCloudConformanceCommands } from "./conformance-cloud.js";
 import { registerImagesCommands } from "./images.js";
 import { registerSkillsCommands } from "./skills.js";
 import { registerGoalsCommands } from "./goals.js";
+import { registerMocksCommands } from "./mocks.js";
 import { registerOrganizationsCommands } from "./organizations.js";
 import { registerProjectsCommands } from "./projects.js";
 import { registerStudiesCommands } from "./studies.js";
@@ -54,6 +55,8 @@ export function registerCloudCommands(program: Command): Command {
   // Server accounts sit beside secrets: each stores a credential runs use, and
   // no command prints one.
   registerServerAccountsCommands(cloud);
+  // Mock servers: authoring and the forwarding policy. Servers a mock is made from stay in Projects.
+  registerMocksCommands(cloud);
   registerImagesCommands(cloud);
   registerSkillsCommands(cloud);
 

@@ -135,6 +135,13 @@ import {
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  createMockServerOperation,
+  updateMockServerOperation,
+  getMockServerOperation,
+  patchMockServerOperation,
+  refreshMockServerOperation,
+  getMockForwardingPolicyOperation,
+  setMockForwardingPolicyOperation,
   listServerAccountsOperation,
   getServerAccountOperation,
   deleteServerAccountOperation,
@@ -362,6 +369,17 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  // MOCK SERVERS. Reads are bounded pages (see get_mock_server), so a mock with
+  // hundreds of tools or a very long description stays inside this server's
+  // response text budget. The policy write is a workspace admin decision and
+  // the agent registry gates it.
+  createMockServerOperation,
+  updateMockServerOperation,
+  getMockServerOperation,
+  patchMockServerOperation,
+  refreshMockServerOperation,
+  getMockForwardingPolicyOperation,
+  setMockForwardingPolicyOperation,
   // SERVER ACCOUNTS — the reads plus the delete. The upload and the update
   // are in EXCLUDED_FROM_CATALOG; deleting the default while other accounts
   // exist is refused, so the delete never moves runs onto another account.
@@ -805,23 +823,6 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Same as list_trace_destinations: admin configuration. Available on REST, the SDK and the CLI.",
   list_trace_destination_backfills:
     "Operational detail for an admin diagnosing an export. Available on REST, the SDK and the CLI.",
-  // Mock servers: the MCP tools come with the bounded reads, which keep a mock's
-  // definition inside this server's response budget. Until then the surface is
-  // REST and the SDK.
-  create_mock_server:
-    "Held until the bounded-read tools can return a mock's state inside the response budget. Available on REST and the SDK.",
-  update_mock_server:
-    "Same as create_mock_server: it needs the bounded field reads to patch a late entry. Available on REST and the SDK.",
-  get_mock_server:
-    "Same as create_mock_server: the read here is small, and the paged reads come with the MCP tools. Available on REST and the SDK.",
-  patch_mock_server:
-    "Same as create_mock_server. Available on REST and the SDK.",
-  refresh_mock_server:
-    "Same as create_mock_server. Available on REST and the SDK.",
-  get_mock_forwarding_policy:
-    "Same as create_mock_server. Available on REST and the SDK.",
-  set_mock_forwarding_policy:
-    "Same as create_mock_server; it is also a workspace admin decision. Available on REST and the SDK.",
 };
 
 const catalogOperationNames = new Set(
