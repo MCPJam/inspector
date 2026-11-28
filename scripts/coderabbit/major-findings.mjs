@@ -12,11 +12,19 @@ import { pathToFileURL } from "node:url";
 const CODERABBIT_LOGINS = new Set(["coderabbitai", "coderabbitai[bot]"]);
 const BLOCKING_SEVERITY = /\*\*[^*\n]*\b(Critical|Major)\*\*/;
 
+// A marker can span lines; reading its first line as the grade would let a
+// Major finding pass.
 function gradeLineIndex(lines) {
-  return lines.findIndex((line) => {
+  let inMarker = false;
+  for (const [index, line] of lines.entries()) {
     const trimmed = line.trim();
-    return trimmed !== "" && !/^<!--.*-->$/.test(trimmed);
-  });
+    if (inMarker || trimmed.startsWith("<!--")) {
+      inMarker = !trimmed.endsWith("-->");
+    } else if (trimmed !== "") {
+      return index;
+    }
+  }
+  return -1;
 }
 
 /** Returns "Critical", "Major" or null for a CodeRabbit comment body. */

@@ -45,6 +45,11 @@ test("reads the grade after the HTML marker in the current format", () => {
   );
 });
 
+test("reads the grade after an HTML marker that spans lines", () => {
+  const body = MARKED_MAJOR.replace("<!-- coderabbit-ai-generated:v1 -->", "<!--\ncoderabbit-ai-generated:v1\n-->");
+  assert.equal(blockingSeverity(body), "Major");
+});
+
 test("ignores resolved threads, other authors and empty threads", () => {
   const findings = blockingFindings([
     thread(MAJOR, { isResolved: true }),
