@@ -47,6 +47,11 @@ export const ANALYTICS_EVENTS = {
   // --- Tool execution (paired) ---
   execute_tool: { source: "client" },
   execute_tool_server: { source: "server" },
+  // One finished tool call from chat or the Tools tab. Props: source
+  // (chat | tools_tab), is_error (an isError result or a failed call),
+  // first_for_user (this browser's first for the actor), hosted. Chat calls
+  // are deduped by tool call id; no tool names, inputs or outputs.
+  tool_call_completed: { source: "client" },
 
   // --- Eval runs (paired) ---
   eval_suite_run_started: { source: "client" },

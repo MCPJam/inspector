@@ -146,6 +146,7 @@ vi.mock("../ElicitationDialog", () => ({
 // stub it so tests don't need a router mounted.
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
+  useCurrentLocationState: () => undefined,
 }));
 
 // Mock ResizablePanelGroup to simplify rendering

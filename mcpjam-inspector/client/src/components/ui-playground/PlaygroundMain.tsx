@@ -591,6 +591,8 @@ interface PlaygroundMainProps {
   disabledInputPlaceholder?: string;
   // Onboarding
   initialInput?: string;
+  /** Shows a "Run a tool" chip beside the starter prompts. */
+  onRunTool?: () => void;
   /** When true with `initialInput`, reveals the string with a typewriter effect (App Builder NUX). */
   initialInputTypewriter?: boolean;
   /** When true, Send / Enter are blocked until the playground server is connected. */
@@ -743,6 +745,7 @@ export function PlaygroundMain({
   disabledInputPlaceholder = "Input disabled in Views",
   initialInput,
   initialInputTypewriter = false,
+  onRunTool,
   blockSubmitUntilServerConnected = false,
   pulseSubmit = false,
   showPostConnectGuide = false,
@@ -7067,6 +7070,7 @@ export function PlaygroundMain({
                         </div>
                         <MultiModelStarterPromptsBlock
                           onStarterPrompt={handleStarterPrompt}
+                          onRunTool={onRunTool}
                         />
                         {errorMessage && (
                           <div className="w-full">
@@ -7644,6 +7648,7 @@ export function PlaygroundMain({
                     ) : null
                   }
                   onStarterPrompt={handleStarterPrompt}
+                  onRunTool={onRunTool}
                   chatInputSlot={
                     <ChatInput {...sharedChatInputProps} hasMessages={false} />
                   }

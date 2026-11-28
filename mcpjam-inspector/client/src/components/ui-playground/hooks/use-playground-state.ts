@@ -83,8 +83,7 @@ const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
 // the usable Playground instead of spinning forever. See issue #3352.
 const FIRST_RUN_SKELETON_TIMEOUT_MS = 12000;
 
-export const PLAYGROUND_FIRST_RUN_PROMPT =
-  "What can this server do?";
+export { PLAYGROUND_FIRST_RUN_PROMPT } from "../first-run-prompt";
 
 type ExecutionInjectionWaiter = {
   expectedToolCallId?: string;
@@ -298,6 +297,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   }, []);
 
   const [fetchingTools, setFetchingTools] = useState(false);
+  // The server whose tools/list last succeeded. An empty `tools` map cannot
+  // say "listed and empty" on its own, and a failed listing is not empty.
+  const [toolsListedFor, setToolsListedFor] = useState<string | null>(null);
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
   >({});
@@ -503,6 +505,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         setTools(dictionary);
         setToolsMetadata(data.toolsMetadata ?? {});
         toolsSettledKeyRef.current = toolsRequestKey;
+        setToolsListedFor(serverName);
       } catch (err) {
         if (seq !== toolsRequestSeqRef.current) return;
         console.error("Failed to fetch tools:", err);
@@ -537,6 +540,10 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
         return { tools, metadata: toolsMetadata };
       }
 
+      // A server change or a newer listing bumps the sequence; this walk then
+      // answers only its caller and must not overwrite the newer list.
+      const seq = toolsRequestSeqRef.current;
+      const isCurrent = () => seq === toolsRequestSeqRef.current;
       setFetchingTools(true);
       try {
         const aggregatedTools = { ...tools };
@@ -574,7 +581,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
             pages >= maxPages
           ) {
             const message = `Stopped fetching tools after ${maxPages} pages without finding "${toolName}".`;
-            setExecutionError(message);
+            if (isCurrent()) setExecutionError(message);
             throw createInspectorCommandClientError(
               "execution_failed",
               message
@@ -586,17 +593,20 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
           }
         } while (true);
 
-        setTools(aggregatedTools);
-        setToolsMetadata(aggregatedMetadata);
+        if (isCurrent()) {
+          setTools(aggregatedTools);
+          setToolsMetadata(aggregatedMetadata);
+          setToolsListedFor(serverName);
+        }
 
         return { tools: aggregatedTools, metadata: aggregatedMetadata };
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to fetch tools";
-        setExecutionError(message);
+        if (isCurrent()) setExecutionError(message);
         throw createInspectorCommandClientError("execution_failed", message);
       } finally {
-        setFetchingTools(false);
+        if (isCurrent()) setFetchingTools(false);
       }
     },
     [serverName, setExecutionError, setTools, tools, toolsMetadata]
@@ -662,6 +672,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       toolsSettledKeyRef.current = null;
       toolsFailedAtRevisionRef.current = null;
       setFetchingTools(false);
+      setToolsListedFor(null);
     };
     // Only a different server clears the selection: a reconnect after
     // sign-in keeps the restored call on screen.
@@ -1151,6 +1162,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     toolsMetadata,
     selectedTool,
     fetchingTools,
+    toolsListed: !!serverName && toolsListedFor === serverName,
     fetchTools,
     setSelectedTool,
     formFields,

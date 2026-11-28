@@ -80,6 +80,7 @@ import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 import { webSearchRefusalCodeOf } from "@/lib/web-search-refusal";
+import { extractToolResultErrorText } from "@/components/chat-v2/shared/tool-result-text";
 import { WebSearchRefusalNotice } from "./web-search-refusal-notice";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
@@ -354,6 +355,11 @@ export function ToolPart({
   const hasOutput =
     resultDisplayData !== undefined && resultDisplayData !== null;
   const hasError = state === "output-error" && !!errorText;
+  // Read from the RAW output: the editable value is not evidence.
+  const resultErrorText =
+    state === "output-available"
+      ? extractToolResultErrorText(rawResultData)
+      : null;
   const showRawResult = hasOutput && !hasAttachedTraceDisplay;
 
   const storedWidgetDebugInfo = useWidgetDebugStore((s) =>
@@ -922,8 +928,8 @@ export function ToolPart({
         {renderToolInput()}
         {renderAttachedTraceDisplay()}
         {renderAuthUrls()}
-        {renderToolResult()}
         {renderToolError()}
+        {renderToolResult()}
       </div>
     );
   };
@@ -1050,7 +1056,12 @@ export function ToolPart({
   }
 
   return (
-    <div className="@container rounded-lg border text-xs border-border/50 bg-background/70">
+    <div
+      className={cn(
+        "@container rounded-lg border text-xs bg-background/70",
+        resultErrorText ? "border-destructive/40" : "border-border/50",
+      )}
+    >
       <div
         role="button"
         tabIndex={hideDiagnosticsUI ? -1 : 0}
@@ -1161,6 +1172,14 @@ export function ToolPart({
         </span>
       </div>
 
+      {resultErrorText ? (
+        <div
+          data-testid="tool-part-result-error"
+          className="mx-3 mb-2 whitespace-pre-wrap break-words rounded border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-destructive"
+        >
+          {resultErrorText}
+        </div>
+      ) : null}
       <ToolResourceAttachments result={rawResultData} serverId={resourceServerId} />
       {webSearchRefusalCode ? (
         <WebSearchRefusalNotice code={webSearchRefusalCode} />

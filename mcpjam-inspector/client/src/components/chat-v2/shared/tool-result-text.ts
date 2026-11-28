@@ -135,3 +135,13 @@ export function extractTextFromToolResult(result: unknown): string | null {
   const nestedTextParts = collectTextParts(nestedValue?.content);
   return nestedTextParts.length > 0 ? nestedTextParts.join("\n\n") : null;
 }
+
+/**
+ * The text of an MCP result the server marked `isError: true`, or null for
+ * any other result. An error with no text still needs something to show.
+ */
+export function extractToolResultErrorText(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  if ((result as { isError?: unknown }).isError !== true) return null;
+  return extractTextFromToolResult(result) ?? "The tool returned an error.";
+}

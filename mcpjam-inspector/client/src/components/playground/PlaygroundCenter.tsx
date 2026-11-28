@@ -6,16 +6,16 @@
  * pane and the center share state). Renders `PlaygroundMain` directly — the
  * tools sidebar UI lives in the docked `tools` pane instead.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Wrench } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PlaygroundSkeleton } from "@/components/playground/PlaygroundSkeleton";
 import { PlaygroundMain } from "@/components/ui-playground/PlaygroundMain";
 import SaveRequestDialog from "@/components/tools/SaveRequestDialog";
-import {
-  PLAYGROUND_FIRST_RUN_PROMPT,
-  usePlaygroundStateContext,
-} from "@/components/ui-playground/hooks/use-playground-state";
+import type { ToolPreselectState } from "@/components/tools/use-tool-preselect";
+import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
+import { chooseFirstRunPrompt } from "@/components/ui-playground/first-run-prompt";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
@@ -40,7 +40,7 @@ interface PlaygroundCenterProps {
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
-  firstRunPrompt?: string | null;
+  firstRunPrompt?: boolean;
   onFirstRunPromptConsumed?: () => void;
 }
 
@@ -53,17 +53,29 @@ export function PlaygroundCenter({
   playgroundServerSelectorProps,
   evalChatHandoff = null,
   onEvalChatHandoffConsumed,
-  firstRunPrompt = null,
+  firstRunPrompt = false,
   onFirstRunPromptConsumed,
 }: PlaygroundCenterProps) {
   const state = usePlaygroundStateContext();
   const [homeAutorun] = useState(readHomeChecklistAutorun);
   const isGuidedPostConnect = state.onboarding.isGuidedPostConnect;
   const isFirstRunUnfinished = state.onboarding.isFirstRunUnfinished;
+  // The prompt depends on the tool list, so it waits for tools/list to answer
+  // rather than typing one prompt and then swapping it for another.
+  const wantsFirstRunPrompt = firstRunPrompt || state.firstRunComposerSeed;
+  const toolList = useMemo(() => Object.values(state.tools), [state.tools]);
   const initialComposerPrompt =
-    firstRunPrompt ??
-    (state.firstRunComposerSeed ? PLAYGROUND_FIRST_RUN_PROMPT : undefined);
+    wantsFirstRunPrompt && state.toolsListed
+      ? chooseFirstRunPrompt(toolList)
+      : undefined;
   const shouldGuideFirstPrompt = Boolean(initialComposerPrompt);
+  const firstToolName = toolList[0]?.name;
+  const openFirstTool = firstToolName
+    ? () =>
+        navigateApp(routePaths.tools, {
+          state: { preselectTool: firstToolName } satisfies ToolPreselectState,
+        })
+    : undefined;
 
   if (state.loadingState.kind === "skeleton") {
     return (
@@ -108,6 +120,7 @@ export function PlaygroundCenter({
         deviceType={state.deviceType}
         onDeviceTypeChange={state.setDeviceType}
         playgroundServerSelectorProps={playgroundServerSelectorProps}
+        onRunTool={openFirstTool}
         initialInput={initialComposerPrompt}
         initialInputTypewriter={shouldGuideFirstPrompt}
         blockSubmitUntilServerConnected={state.firstRunSubmitBlocked}

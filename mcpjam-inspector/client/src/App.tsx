@@ -98,7 +98,6 @@ import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { PlaygroundTab } from "./components/playground/PlaygroundTab";
-import { PLAYGROUND_FIRST_RUN_PROMPT } from "./components/ui-playground/hooks/use-playground-state";
 import {
   EXCALIDRAW_SERVER_CONFIG,
   EXCALIDRAW_SERVER_NAME,
@@ -2729,13 +2728,13 @@ export function PlaygroundRoute() {
     isSelectedServerSyncing,
     isWorkOsLoading,
     playgroundServerSelectorProps,
-    firstRunPlaygroundPrompt,
+    firstRunPlaygroundPromptPending,
     onFirstRunPlaygroundReady,
     projectServers,
     remoteFirstRunOnboardingShown,
     selectedMCPConfig,
     setPlaygroundOnboarding,
-    setFirstRunPlaygroundPrompt,
+    setFirstRunPlaygroundPromptPending,
     setEvalChatHandoff,
     workOsUser,
     suspendRouteAutoConnect,
@@ -2762,10 +2761,10 @@ export function PlaygroundRoute() {
       ensureServersReady={ensureServersReady}
       onOnboardingChange={setPlaygroundOnboarding}
       playgroundServerSelectorProps={playgroundServerSelectorProps}
-      firstRunPrompt={firstRunPlaygroundPrompt}
+      firstRunPrompt={firstRunPlaygroundPromptPending}
       onReady={onFirstRunPlaygroundReady}
       onFirstRunPromptConsumed={() => {
-        setFirstRunPlaygroundPrompt(null);
+        setFirstRunPlaygroundPromptPending(false);
         markFirstRunPlaygroundPromptConsumed();
       }}
       suspendAutoConnect={suspendRouteAutoConnect}
@@ -3038,13 +3037,10 @@ export default function App() {
       }
       return { status: "idle" };
     });
-  const [firstRunPlaygroundPrompt, setFirstRunPlaygroundPrompt] = useState<
-    string | null
-  >(() =>
-    initialFirstRunServerChoiceState?.playgroundPromptPending
-      ? PLAYGROUND_FIRST_RUN_PROMPT
-      : null,
-  );
+  const [firstRunPlaygroundPromptPending, setFirstRunPlaygroundPromptPending] =
+    useState(
+      () => initialFirstRunServerChoiceState?.playgroundPromptPending === true,
+    );
   const [isOpeningFirstRunPlayground, setIsOpeningFirstRunPlayground] =
     useState(false);
   const [pendingFirstRunConnection, setPendingFirstRunConnection] =
@@ -4687,7 +4683,7 @@ export default function App() {
     setPendingFirstRunConnection(null);
     firstRunAnalyticsContextRef.current = null;
     setIsOpeningFirstRunPlayground(true);
-    setFirstRunPlaygroundPrompt(PLAYGROUND_FIRST_RUN_PROMPT);
+    setFirstRunPlaygroundPromptPending(true);
     markFirstRunServerChoiceCompleted();
     markFirstRunPlaygroundPromptPending();
     navigateApp(routePaths.playground);
@@ -6573,7 +6569,7 @@ export default function App() {
     defaultHubRoute,
     ensureServersReady,
     evalChatHandoff,
-    firstRunPlaygroundPrompt,
+    firstRunPlaygroundPromptPending,
     onFirstRunPlaygroundReady: handleFirstRunPlaygroundReady,
     suspendRouteAutoConnect: shouldSuspendFirstRunBackgroundConnections,
     handleConnect,
@@ -6617,7 +6613,7 @@ export default function App() {
     selectedMCPConfig,
     selectedServerEntry,
     setPlaygroundOnboarding,
-    setFirstRunPlaygroundPrompt,
+    setFirstRunPlaygroundPromptPending,
     setActiveHostId,
     setEvalChatHandoff,
     setHostsTabSelectedHostId,
@@ -6667,7 +6663,7 @@ export default function App() {
     !(shouldRouteToFirstRunOnboarding && !firstRunOverlayDismissed) &&
     !shouldSuspendFirstRunBackgroundConnections &&
     !isOpeningFirstRunPlayground &&
-    firstRunPlaygroundPrompt === null &&
+    !firstRunPlaygroundPromptPending &&
     !playgroundOnboarding;
   const appContent = (
     <SettingsDraftProvider enabled={settingsShellActive}>

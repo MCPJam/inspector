@@ -350,14 +350,14 @@ describe("PlaygroundTab loading branch", () => {
     render(
       <PlaygroundTab
         {...baseProps}
-        firstRunPrompt="What can this server do?"
+        firstRunPrompt
         onFirstRunPromptConsumed={onFirstRunPromptConsumed}
       />,
     );
 
     expect(mockPlaygroundCenter).toHaveBeenCalledWith(
       expect.objectContaining({
-        firstRunPrompt: "What can this server do?",
+        firstRunPrompt: true,
         onFirstRunPromptConsumed,
       }),
     );

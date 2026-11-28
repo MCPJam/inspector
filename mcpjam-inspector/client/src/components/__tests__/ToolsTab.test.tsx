@@ -15,7 +15,17 @@ vi.mock("posthog-js/react", () => ({
     capture: vi.fn(),
   }),
 }));
-vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+const { mockTrack, mockValidateToolOutput } = vi.hoisted(() => ({
+  mockTrack: vi.fn(),
+  mockValidateToolOutput: vi.fn(),
+}));
+vi.mock("@/lib/analytics", () => ({ track: mockTrack }));
+// Real validation by default; one test makes it throw after the result lands.
+vi.mock("@/lib/schema-utils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/schema-utils")>();
+  mockValidateToolOutput.mockImplementation(actual.validateToolOutput);
+  return { ...actual, validateToolOutput: mockValidateToolOutput };
+});
 
 // Mock the APIs
 const mockListTools = vi.fn();
@@ -120,8 +130,10 @@ vi.mock("../ElicitationDialog", () => ({
 
 // Mock app navigation — the task_created success branch navigates to /tasks;
 // stub it so tests don't need a router mounted.
+const mockLocation = vi.hoisted(() => ({ state: undefined as unknown }));
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
+  useCurrentLocationState: () => mockLocation.state,
 }));
 
 // Mock ResizablePanelGroup to simplify rendering
@@ -462,6 +474,38 @@ describe("ToolsTab", () => {
           screen.getByRole("button", { name: /^run/i })
         ).toBeInTheDocument();
       });
+    });
+  });
+
+  describe("preselect from navigation", () => {
+    it("opens the named tool's form once the list loads", async () => {
+      mockLocation.state = { preselectTool: "second-tool" };
+      try {
+        mockListTools.mockResolvedValue({
+          tools: [
+            { name: "first-tool", inputSchema: { type: "object" } },
+            { name: "second-tool", inputSchema: { type: "object" } },
+          ],
+        });
+
+        render(
+          <ToolsTab
+            serverConfig={createServerConfig()}
+            serverName="test-server"
+          />,
+        );
+
+        await waitFor(() => {
+          expect(
+            screen.getByRole("button", { name: /^run/i }),
+          ).toBeInTheDocument();
+        });
+        // The selected tool's header replaces the tool list.
+        expect(screen.getByText("second-tool")).toBeInTheDocument();
+        expect(screen.queryByText("first-tool")).not.toBeInTheDocument();
+      } finally {
+        mockLocation.state = undefined;
+      }
     });
   });
 
@@ -1257,6 +1301,72 @@ describe("ToolsTab", () => {
         "toolPrechecks:get",
         expect.objectContaining({ snapshot: expect.anything() })
       );
+    });
+  });
+
+  describe("tool_call_completed", () => {
+    const completedEvents = () =>
+      mockTrack.mock.calls.filter(([name]) => name === "tool_call_completed");
+
+    async function runTool(name: string) {
+      mockListTools.mockResolvedValue({
+        tools: [{ name, inputSchema: { type: "object", properties: {} } }],
+      });
+      render(
+        <ToolsTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+        />
+      );
+      await waitFor(() => {
+        expect(screen.getByText(name)).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText(name));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /^run/i })
+        ).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^run/i }));
+    }
+
+    it("reports one event when handling the result throws after it is reported", async () => {
+      mockExecuteToolApi.mockResolvedValue({
+        status: "completed",
+        result: { content: [{ type: "text", text: "ok" }] },
+      });
+      mockValidateToolOutput.mockImplementationOnce(() => {
+        throw new Error("schema compile failed");
+      });
+
+      await runTool("ok-tool");
+
+      await waitFor(() => {
+        expect(screen.getByText("schema compile failed")).toBeInTheDocument();
+      });
+      expect(completedEvents()).toHaveLength(1);
+      expect(completedEvents()[0][1]).toMatchObject({ is_error: false });
+    });
+
+    it("reports the call when the server creates a task", async () => {
+      mockExecuteToolApi.mockResolvedValue({
+        status: "task_created",
+        task: {
+          taskId: "task-1",
+          createdAt: Date.now(),
+          status: "working",
+          ttl: 0,
+          pollInterval: 1000,
+        },
+      });
+
+      await runTool("task-tool");
+
+      await waitFor(() => {
+        expect(mockTrackTask).toHaveBeenCalled();
+      });
+      expect(completedEvents()).toHaveLength(1);
+      expect(completedEvents()[0][1]).toMatchObject({ is_error: false });
     });
   });
 });

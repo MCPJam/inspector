@@ -4,6 +4,8 @@ import { STARTER_PROMPTS } from "@/components/chat-v2/shared/chat-helpers";
 
 export interface MultiModelStarterPromptsBlockProps {
   onStarterPrompt: (text: string) => void;
+  /** Adds a "Run a tool" chip that opens a tool's form instead of chatting. */
+  onRunTool?: () => void;
   chipClassName?: string;
   className?: string;
   /** Default matches ChatTabV2 non-minimal starter row spacing. */
@@ -13,6 +15,7 @@ export interface MultiModelStarterPromptsBlockProps {
 /** Shared starter title + chips (used by Chat tab layout and App Builder multi-model). */
 export function MultiModelStarterPromptsBlock({
   onStarterPrompt,
+  onRunTool,
   chipClassName = "rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light",
   className,
   headingClassName = "mb-3 text-sm text-muted-foreground",
@@ -31,6 +34,11 @@ export function MultiModelStarterPromptsBlock({
             {prompt.label}
           </button>
         ))}
+        {onRunTool ? (
+          <button type="button" onClick={onRunTool} className={chipClassName}>
+            Run a tool
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -66,6 +74,7 @@ export interface MultiModelStartersEmptyLayoutProps {
   /** Loading spinner, upsell panel, or null — rendered above the starter row. */
   authPrimarySlot: ReactNode;
   onStarterPrompt: (text: string) => void;
+  onRunTool?: () => void;
   chatInputSlot: ReactNode;
   /** Defaults to the non-minimal Chat tab chip styling. */
   chipClassName?: string;
@@ -81,6 +90,7 @@ export function MultiModelStartersEmptyLayout({
   logoSlot,
   authPrimarySlot,
   onStarterPrompt,
+  onRunTool,
   chatInputSlot,
   chipClassName = "rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light",
 }: MultiModelStartersEmptyLayoutProps) {
@@ -100,6 +110,7 @@ export function MultiModelStartersEmptyLayout({
               {logoSlot}
               <MultiModelStarterPromptsBlock
                 onStarterPrompt={onStarterPrompt}
+                onRunTool={onRunTool}
                 chipClassName={chipClassName}
               />
             </div>

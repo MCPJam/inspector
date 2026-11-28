@@ -33,6 +33,7 @@ import {
   type McpModelVisibleToolResultPolicy,
 } from "@mcpjam/sdk/browser";
 import { track } from "@/lib/analytics";
+import { trackToolCallCompleted } from "@/lib/tool-call-telemetry";
 import { useToolAuthChallengePresentation } from "./useToolAuthChallengeReplay";
 
 // Result metadata type for tool responses
@@ -347,6 +348,9 @@ export function useToolExecution({
       setIsExecuting(true);
       setExecutionError(null);
 
+      // The step-up and auth-challenge handlers run after the outcome is
+      // reported and can throw; the catch must not report the call again.
+      let reported = false;
       try {
         const response = await executeToolApi(
           effectiveServerName,
@@ -355,6 +359,8 @@ export function useToolExecution({
         );
 
         if ("error" in response) {
+          trackToolCallCompleted({ source: "tools_tab", isError: true });
+          reported = true;
           // Log tool execution failure
           track("app_builder_tool_executed", {
             location: "app_builder_tab",
@@ -393,6 +399,10 @@ export function useToolExecution({
         }
 
         if (response.status === "elicitation_required") {
+          // The playground cannot answer the elicitation, so the call ends
+          // here without a result.
+          trackToolCallCompleted({ source: "tools_tab", isError: true });
+          reported = true;
           const error =
             "Tool requires elicitation, which is not supported in the UI Playground yet.";
           setExecutionError(error);
@@ -406,6 +416,9 @@ export function useToolExecution({
         }
 
         if (response.status === "task_created") {
+          // As in the Tools tab: the server accepted the call as a task.
+          trackToolCallCompleted({ source: "tools_tab", isError: false });
+          reported = true;
           const error =
             "Task-based tool execution is not supported in the UI Playground yet.";
           setExecutionError(error);
@@ -419,6 +432,13 @@ export function useToolExecution({
         }
 
         const result = response.result;
+        // Report the server's outcome before local post-processing, which
+        // can throw and must not turn a server success into an error event.
+        trackToolCallCompleted({
+          source: "tools_tab",
+          isError: result.isError === true,
+        });
+        reported = true;
         const modelOutput = await resolveModelOutputForToolResult(
           result,
           effectiveServerName,
@@ -477,6 +497,9 @@ export function useToolExecution({
         const errorMessage =
           err instanceof Error ? err.message : "Tool execution failed";
 
+        if (!reported) {
+          trackToolCallCompleted({ source: "tools_tab", isError: true });
+        }
         track("app_builder_tool_executed", {
           location: "app_builder_tab",
           toolName: effectiveToolName,

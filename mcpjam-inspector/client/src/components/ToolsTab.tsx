@@ -21,6 +21,8 @@ import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { ResultsPanel } from "./tools/ResultsPanel";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
 import SaveRequestDialog from "./tools/SaveRequestDialog";
+import { useToolPreselect } from "./tools/use-tool-preselect";
+import { trackToolCallCompleted } from "@/lib/tool-call-telemetry";
 import {
   applyParametersToFields as applyParamsToFields,
   buildParametersFromFields,
@@ -562,6 +564,8 @@ export function ToolsTab({
     }
   }, [selectedTool, tools]);
 
+  useToolPreselect({ tools, selectedTool, onSelectTool: setSelectedTool });
+
   useEffect(() => {
     track("tools_tab_viewed", {
       location: "tools_tab",
@@ -774,6 +778,10 @@ export function ToolsTab({
       setResponseDurationMs(durationMs);
       const callResult = response.result;
       setResult(callResult);
+      trackToolCallCompleted({
+        source: "tools_tab",
+        isError: callResult.isError === true,
+      });
 
       // A result carrying a sign-in challenge is a refusal, not a success:
       // resetting the budget on it would let a server that alternates
@@ -818,6 +826,7 @@ export function ToolsTab({
     // Handle task creation response (MCP Tasks spec 2025-11-25)
     if ("status" in response && response.status === "task_created") {
       const { task, modelImmediateResponse } = response;
+      trackToolCallCompleted({ source: "tools_tab", isError: false });
 
       // A task-augmented tool that succeeds lands here, not in the `completed`
       // branch — reset the step-up counter on this success path too so a stale
@@ -856,6 +865,7 @@ export function ToolsTab({
     }
 
     if ("error" in response && response.error) {
+      trackToolCallCompleted({ source: "tools_tab", isError: true });
       setResponseDurationMs(durationMs);
       setError(response.error as string);
       // Preserve the rich describer block when the response carried one
@@ -1077,6 +1087,10 @@ export function ToolsTab({
     setStructuredContentValid(undefined);
     setResponseDurationMs(null);
 
+    // Once the server answers, handleExecutionResponse reports the call; a
+    // later throw in it (auth challenge, output validation) is not a second
+    // call.
+    let responded = false;
     try {
       const params = buildParameters();
       setLastToolName(selectedTool);
@@ -1110,6 +1124,7 @@ export function ToolsTab({
         taskOptions,
         allowTaskResult,
       );
+      responded = true;
       handleExecutionResponse(response, selectedTool, scopeAtCall, {
         kind: "tool",
         surface: "tools",
@@ -1132,6 +1147,9 @@ export function ToolsTab({
         source: "tools_tab_execute",
         extra: { toolName: selectedTool },
       });
+      if (!responded) {
+        trackToolCallCompleted({ source: "tools_tab", isError: true });
+      }
       setError(message);
     } finally {
       setToolCallRunning(false);

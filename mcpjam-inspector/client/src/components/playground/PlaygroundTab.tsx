@@ -115,8 +115,8 @@ interface PlaygroundTabProps {
   activeHost?: HostConfigDtoV2 | null;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
-  /** One-shot prompt handed off by first-run server connection. */
-  firstRunPrompt?: string | null;
+  /** Whether first-run server connection handed off its one-shot prompt. */
+  firstRunPrompt?: boolean;
   onFirstRunPromptConsumed?: () => void;
   /** Pauses route-local reconnect work while first-run onboarding owns it. */
   suspendAutoConnect?: boolean;
