@@ -1175,6 +1175,7 @@ export async function swarmPersonaNextTurn(
     // the run's immutable fan-out and refuses the turn when it is missing.
     sessionIdx: number;
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>;
+    clientAction?: import("./sessionSimulation/persona-client-driver.js").PersonaClientRequest;
     // Run abort signal. This call can PARK for up to LLM_TIMEOUT_MS (120s) in
     // an uncancellable place; forwarding the run's signal lets a shutdown/cancel
     // abort the parked fetch immediately so the session can unwind.
@@ -1187,7 +1188,7 @@ export async function swarmPersonaNextTurn(
     ok?: boolean;
     message?: string;
     endSession?: boolean;
-    error?: string;
+        error?: string;
   }>(
     `${convexHttpUrl}/journey-execution/persona-next-turn`,
     bearer,
@@ -1200,6 +1201,7 @@ export async function swarmPersonaNextTurn(
       // would drop exactly the index the backend validates most often.
       sessionIdx: args.sessionIdx,
       transcriptSoFar: args.transcriptSoFar,
+      ...(args.clientAction ? { clientAction: args.clientAction } : {}),
     },
     LLM_TIMEOUT_MS,
     args.signal,

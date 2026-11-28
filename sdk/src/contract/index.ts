@@ -1216,3 +1216,4 @@ export * from "./swarm-finding.js";
 export * from "./eval-lifecycle.js";
 
 export * from "./input-answers.js";
+export * from "./client-action-receipt.js";

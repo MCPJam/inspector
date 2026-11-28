@@ -680,6 +680,12 @@ async function createAndStartJourneyRun(
           host.clientCapabilities,
           {
             accessScope: "project_member",
+            ...(hooks?.clientDriver
+              ? {
+                  elicitationCallback: hooks.clientDriver.elicitationCallback,
+                  mrtrInputCollectorForServer: hooks.clientDriver.collectorFor,
+                }
+              : {}),
             // XAA servers fail closed without the issuer; resolved above
             // from the live request Context.
             xaaIssuer: deps.xaaIssuer,
