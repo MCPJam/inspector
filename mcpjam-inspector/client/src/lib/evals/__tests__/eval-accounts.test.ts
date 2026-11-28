@@ -162,11 +162,7 @@ describe("runsAsEntries", () => {
         serverName: "Asana",
         accounts: [{ name: "Dummy", needsReauth: false }],
       },
-      {
-        serverId: "srv-linear",
-        serverName: "Linear",
-        accounts: [{ name: "Work", needsReauth: false }],
-      },
+      // Linear has one account, so there is nothing to choose and no line.
       // A shared server's chosen project account; one with none has no line.
       {
         serverId: "srv-tracker",

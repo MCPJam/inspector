@@ -49,7 +49,7 @@ This challenge is not part of the MCP specification. A client that does not know
 <Note>
   A `403` with `WWW-Authenticate: Bearer error="insufficient_scope"` asks for
   more scopes on an existing sign-in. MCPJam handles it with the
-  [scope step-up](/inspector/tools-prompts-resources#oauth-scope-step-up-on-tool-calls)
+  [scope step-up](/inspector/tools#oauth-scope-step-up-on-tool-calls)
   flow, not with the settings below.
 </Note>
 
@@ -90,7 +90,6 @@ The host presets set these values from each vendor's published documentation. MC
 | Preset | Values that differ from the defaults | Source |
 | --- | --- | --- |
 | Claude, Claude Desktop | Server sign-in trigger: Needs a Bearer challenge | Anthropic's lazy authentication guide |
-| Claude Code | When the server asks for sign-in: Notify. Server sign-in trigger: Needs a Bearer challenge | Anthropic's lazy authentication guide, which says Claude Code tells you to re-authenticate with `/mcp` instead of showing a Connect card, and does not retry the call |
 | ChatGPT | When a tool result asks for sign-in: Prompt to sign in | OpenAI's Apps SDK authentication guide |
 
 Every other preset uses the defaults.

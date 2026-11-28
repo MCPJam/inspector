@@ -7,16 +7,22 @@ import { useBrowserEnabled } from "@/hooks/useComputersEnabled";
 import { useBrowserEngine } from "@/hooks/useBrowserEngine";
 import { BrowserRuntimeControls } from "@/components/browser/BrowserRuntimeControls";
 import { BrowserProfilesSettings } from "@/components/browser/BrowserProfilesSettings";
+import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
+import { webClientVendorOfHost } from "@/lib/web-accounts/clients";
+import { WebAccountsSettings } from "@/components/web-clients/WebAccountsSettings";
 import { BrowserProfilePicker } from "./BrowserProfilePicker";
 import { FieldRow, FocusBlock } from "./primitives";
 
 export function BrowserTab({
   projectId,
+  hostId,
   draft,
   onDraftChange,
   readOnly = false,
 }: {
   projectId?: string;
+  /** The saved client, for a web client's accounts. */
+  hostId?: string;
   draft: HostConfigInputV2;
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2,
@@ -33,8 +39,18 @@ export function BrowserTab({
     !HOSTED_MODE && draft.localBrowserEnabled !== undefined
       ? draft.localBrowserEnabled
       : draft.builtInToolIds.includes("browser");
+  const webClientVendor = useWebClientsEnabled()
+    ? webClientVendorOfHost(draft)
+    : undefined;
   return (
     <div className="flex flex-col gap-4">
+      {webClientVendor && projectId && hostId ? (
+        <WebAccountsSettings
+          projectId={projectId}
+          hostId={hostId}
+          vendor={webClientVendor}
+        />
+      ) : null}
       <FocusBlock
         title="This client"
         subtitle={

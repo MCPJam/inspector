@@ -255,6 +255,12 @@ export function getCapabilityCaveats(
   if (field.id === "capabilities.sampling" && "tools" in rec) {
     caveats.push("Supports tool use in sampling (SEP-1577).");
   }
+  if (field.id === "capabilities.elicitation") {
+    const modes = ["form", "url"].filter((mode) => mode in rec);
+    if (modes.length > 0) {
+      caveats.push(`Advertises ${modes.map((mode) => mode === "url" ? "URL" : mode).join(" and ")} elicitation.`);
+    }
+  }
   if (field.id === "capabilities.experimental" && Object.keys(rec).length > 0) {
     caveats.push("Vendor / experimental — outside the core capability set.");
   }

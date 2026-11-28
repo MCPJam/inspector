@@ -49,7 +49,7 @@ const next = await manager.pollServerEvents("docs", {
 
 ## Run a subscription with the coordinator
 
-`EventsCoordinator` owns every lifecycle transition for every mode: subscribe, refresh, rotate, poll, pause and removal. Each `step()` performs one transition and returns a patch plus the time of the next action. Events land in an inbox. `MemoryEventInbox` is the local one; hosted MCPJam uses its public inbox at `hooks.mcpjam.com`.
+`EventsCoordinator` owns every lifecycle transition for every mode: subscribe, refresh, rotate, poll, pause and removal. Each `step()` performs one transition and returns a patch plus the time of the next action. Events land in an inbox. `MemoryEventInbox` keeps them in memory.
 
 ```typescript
 import {
@@ -127,7 +127,7 @@ A plain-http receiver is allowed only as a labelled override (`overrides: ["inse
 
 ## Event-triggered turns in evals
 
-`runEventStep` runs an event through a host executor with the same prompt shape MCPJam's unattended trigger runner uses. The instruction stays outside, and the event goes into an untrusted data block. A canned event is first validated against its `payloadSchema`.
+`runEventStep` runs an event through a host executor. The instruction stays outside, and the event goes into an untrusted data block. A canned event is first validated against its `payloadSchema`.
 
 ```typescript
 import { runEventStep } from "@mcpjam/sdk/events";

@@ -401,3 +401,45 @@ export function rebuildSentryFrameLocations<T extends object>(input: T, catalog:
   });
   return { ...result, ...sentryProtocolMetadata(files, catalog) } as T;
 }
+
+/**
+ * Which agent an MCP client is, as a closed value telemetry may carry.
+ *
+ * `clientInfo.name` and user agents are caller-chosen text, and telemetry
+ * forwards only literal unions. Matching known agents by substring keeps the
+ * question "which agents use us" answerable without forwarding what a client
+ * typed; anything unrecognized is `other`. Order matters: the more specific
+ * pattern comes first (`claude-code` before `claude`, `cursor` before `vscode`).
+ */
+const MCP_CLIENT_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
+  ["claude-code", /claude[-_ ]?code/],
+  ["claude-ai", /claude/],
+  ["cursor", /cursor/],
+  ["windsurf", /windsurf|codeium/],
+  ["codex", /codex/],
+  ["copilot", /copilot/],
+  ["vscode", /vscode|visual studio code/],
+  ["chatgpt", /chatgpt|openai/],
+  ["gemini-cli", /gemini/],
+  ["goose", /goose/],
+  ["opencode", /opencode/],
+  ["cline", /cline/],
+  ["zed", /\bzed\b/],
+  ["mcp-inspector", /mcp[-_ ]inspector/],
+  ["mcpjam", /mcpjam/],
+];
+
+export const MCP_CLIENT_FAMILIES = [
+  ...MCP_CLIENT_PATTERNS.map(([family]) => family),
+  "other",
+] as const;
+
+export function mcpClientFamily(name: unknown): string | undefined {
+  if (typeof name !== "string") return undefined;
+  const normalized = name.trim().toLowerCase().slice(0, 200);
+  if (!normalized) return undefined;
+  return (
+    MCP_CLIENT_PATTERNS.find(([, pattern]) => pattern.test(normalized))?.[0] ??
+    "other"
+  );
+}

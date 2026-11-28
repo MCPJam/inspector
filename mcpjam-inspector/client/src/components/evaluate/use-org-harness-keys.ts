@@ -1,3 +1,4 @@
+import { harnessTargetOfHost } from "@/lib/harness-model-locks";
 import { useMemo } from "react";
 import { useConvexAuth, useQueries } from "convex/react";
 import { makeFunctionReference } from "convex/server";
@@ -42,7 +43,11 @@ function readinessOf(answer: unknown): OrgHarnessKeyReadiness | undefined {
 export function useOrgHarnessKeys(
   projectId: string,
   orgConfig: { readonly aiKeyPolicy?: unknown } | null | undefined,
-  hosts: readonly { harness?: string | null }[],
+  hosts: readonly {
+    runtime?: string | null;
+    harness?: string | null;
+    agentLoop?: string | null;
+  }[],
 ): OrgHarnessKeys {
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -55,11 +60,10 @@ export function useOrgHarnessKeys(
   const key = asks
     ? [
         ...new Set(
-          hosts.flatMap((host) =>
-            host.harness && orgKeyHarnessName(host.harness)
-              ? [host.harness]
-              : [],
-          ),
+          hosts.flatMap((host) => {
+            const harnessId = harnessTargetOfHost(host)?.harnessId;
+            return harnessId && orgKeyHarnessName(harnessId) ? [harnessId] : [];
+          }),
         ),
       ]
         .sort()
@@ -81,7 +85,7 @@ export function useOrgHarnessKeys(
     for (const [harnessId, answer] of Object.entries(answers)) {
       if (answer instanceof Error) {
         console.warn(
-          "[Setup Run] Could not read the organization's harness key; the launch will check it.",
+          "[Set up run] Could not read the organization's harness key; the launch will check it.",
           answer,
         );
         continue;

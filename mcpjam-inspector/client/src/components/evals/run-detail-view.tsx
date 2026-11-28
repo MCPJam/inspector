@@ -726,8 +726,19 @@ export function RunDetailView({
     // where the message is the only thing there is to say.
     runChain.serviceNote !== null;
 
+  // A findings analysis completes the run's analysis without writing the
+  // legacy per-tool result this card reads, so the card would wait forever,
+  // or show cancel's placeholder ("modelUsed: n/a") left by an earlier
+  // request. The actionable-findings panel above shows that analysis instead.
+  // An older real legacy result still shows: the run document carries no
+  // findings snapshot to tell which analysis is newer.
+  const findingsAnalysisOwnsRun =
+    selectedRunDetails.serverQualityStatus === "completed" &&
+    (!serverQualityResult || serverQualityResult.modelUsed === "n/a");
   const serverQualityTriage =
-    selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
+    selectedRunDetails.status === "completed" &&
+    !serverQualityUnavailable &&
+    !findingsAnalysisOwnsRun ? (
       <AiTriageCard
         run={selectedRunDetails}
         iterations={caseGroupsForSelectedRun}
@@ -888,10 +899,11 @@ export function RunDetailView({
       />
     ) : null;
 
-  // The same actionable findings the swarm and user-testing surfaces render,
-  // projected from THIS run's serverQuality by the backend. It sits above the
-  // existing triage card rather than replacing it: triage is per-tool
-  // reference, this is the ordered list of what to change.
+  // The same actionable findings the swarm and user-testing surfaces render:
+  // the backend lists this run's findings analysis, or its legacy
+  // serverQuality projected into findings, whichever owns the run's analysis.
+  // It sits above the triage card rather than replacing it: triage is
+  // per-tool reference, this is the ordered list of what to change.
   //
   // Rendered only for a COMPLETED run, and only when serverQuality is
   // available: on this surface `AiTriageCard` already owns the pending /

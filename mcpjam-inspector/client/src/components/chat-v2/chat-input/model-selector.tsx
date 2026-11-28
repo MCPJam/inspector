@@ -55,7 +55,32 @@ import {
 import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
 import { loadLastOwnProviderModelId } from "@/lib/selected-model-storage";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
-import { isNoRunnableHarnessModel } from "@/lib/harness-model-locks";
+import {
+  applyHarnessModelLocks,
+  isNoRunnableHarnessModel,
+  type HarnessModelTarget,
+} from "@/lib/harness-model-locks";
+import type { HarnessModelPurpose } from "@/shared/harness-model-support";
+
+/**
+ * Which clients the picked model will run on, so the menu can disable the
+ * rows their runtimes cannot run. Required on every picker so none can forget
+ * it and offer a model the run admission then refuses:
+ *
+ *  - `{ targets, purpose }`: the client(s) the model runs on (`null` for an
+ *    emulated client) and what for. A row EVERY target refuses is disabled
+ *    with the server's reason (`applyHarnessModelLocks`). Read each target
+ *    with `harnessTargetOfHost` / `harnessTargetOfClient`.
+ *  - `"not-client-run"`: the model never runs inside a client (an LLM judge,
+ *    a simulated user's model, an organization default), so no runtime
+ *    applies.
+ */
+export type ModelSelectorHarnessScope =
+  | {
+      targets: ReadonlyArray<HarnessModelTarget | null | undefined>;
+      purpose: HarnessModelPurpose;
+    }
+  | "not-client-run";
 
 interface ModelSelectorProps {
   /** Alternate trigger for embedded surfaces such as eval tables. */
@@ -114,6 +139,8 @@ interface ModelSelectorProps {
    * `onManageOrgProviders` wins when both are set, so chat passes `null`.
    */
   onAddProvider: (() => void) | null;
+  /** See {@link ModelSelectorHarnessScope}. */
+  harnessScope: ModelSelectorHarnessScope;
   /**
    * The organization requires its own provider keys for AI features: MCPJam
    * models are not offered, so the "Free models" / "Your providers" split is
@@ -417,6 +444,7 @@ export function ModelSelector({
   respondToProviderTabIntent = false,
   onManageOrgProviders,
   onAddProvider,
+  harnessScope,
   requireOrgKeys = false,
   platformPaidFallback = false,
   workload,
@@ -568,10 +596,21 @@ export function ModelSelector({
   // The rows on offer. A saved model the organization's AI key policy no
   // longer allows is kept by the composition only so the surface never
   // switches it silently; it shows on the trigger, never in the menu.
-  const listedModels = useMemo(
-    () => availableModels.filter((model) => !isOrgKeysDisallowedRow(model)),
-    [availableModels],
-  );
+  const listedModels = useMemo(() => {
+    const listed = availableModels.filter(
+      (model) => !isOrgKeysDisallowedRow(model),
+    );
+    // Rows the surface already locked keep their reason; this only adds the
+    // runtime verdict a surface may have skipped.
+    return harnessScope === "not-client-run"
+      ? listed
+      : applyHarnessModelLocks(
+          listed,
+          harnessScope.targets,
+          harnessScope.purpose,
+          { requireOrgKeys },
+        );
+  }, [availableModels, harnessScope, requireOrgKeys]);
   // Rows as displayed: the surface's capability needs applied, newest first
   // within each provider (grouping keeps this order).
   const displayModels = useMemo(

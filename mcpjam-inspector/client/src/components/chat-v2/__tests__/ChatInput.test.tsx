@@ -203,6 +203,7 @@ describe("ChatInput", () => {
     stop: vi.fn(),
     currentModel: defaultModel,
     availableModels: [defaultModel],
+    harnessScope: "not-client-run" as const,
     onModelChange: vi.fn(),
     systemPrompt: "You are a helpful assistant.",
     onSystemPromptChange: vi.fn(),
@@ -693,6 +694,45 @@ describe("ChatInput", () => {
       });
 
       expect(requestSubmitSpy).not.toHaveBeenCalled();
+
+      requestSubmitSpy.mockRestore();
+    });
+  });
+
+  describe("submitting state", () => {
+    it("shows a disabled spinner in place of Send while the message is being prepared", () => {
+      render(<ChatInput {...defaultProps} value="Draft" isSubmitting />);
+
+      const sending = screen.getByRole("button", { name: "Sending message" });
+      expect(sending).toBeDisabled();
+      expect(sending.querySelector("svg.animate-spin")).not.toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Send message" }),
+      ).not.toBeInTheDocument();
+      // The draft stays editable, so the text box keeps focus.
+      expect(
+        screen.getByPlaceholderText("Type your message..."),
+      ).not.toBeDisabled();
+    });
+
+    it("does not request form submit on Enter while the message is being prepared", () => {
+      const requestSubmitSpy = vi
+        .spyOn(HTMLFormElement.prototype, "requestSubmit")
+        .mockImplementation(() => {});
+
+      const { rerender } = render(
+        <ChatInput {...defaultProps} value="Draft" isSubmitting />,
+      );
+      const textarea = screen.getByPlaceholderText("Type your message...");
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+      expect(requestSubmitSpy).not.toHaveBeenCalled();
+
+      // Control: the same Enter submits once the preparation is over.
+      rerender(
+        <ChatInput {...defaultProps} value="Draft" isSubmitting={false} />,
+      );
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+      expect(requestSubmitSpy).toHaveBeenCalledTimes(1);
 
       requestSubmitSpy.mockRestore();
     });

@@ -30,6 +30,8 @@ colors:
   chrome-control-border: "oklch(0.856 0.0218 85.9495)"
   chrome-hover: "oklch(0.8957 0.0187 86.151)"
   chrome-control-hover: "oklch(0.83 0.0235 80.6762)"
+  chrome-button: "oklch(0.9818 0.0054 95.0986)"
+  chrome-button-hover: "oklch(0.9468 0.0102 92.3)"
   divider: "oklch(0.8829 0.0171 88.0071)"
   input: "oklch(0.7621 0.0156 98.3528)"
   ring: "oklch(0.6171 0.1375 39.0427)"
@@ -51,6 +53,18 @@ colors:
   run-origin-cli-bg: "oklch(0.65 0.11 195 / 0.1)"
   run-origin-agent-border: "oklch(0.62 0.21 330 / 0.5)"
   run-origin-agent-bg: "oklch(0.62 0.21 330 / 0.1)"
+  account-avatar-1-bg: "oklch(0.65 0.15 255 / 0.16)"
+  account-avatar-1-fg: "oklch(0.45 0.15 255)"
+  account-avatar-2-bg: "oklch(0.65 0.15 295 / 0.16)"
+  account-avatar-2-fg: "oklch(0.45 0.15 295)"
+  account-avatar-3-bg: "oklch(0.65 0.15 160 / 0.16)"
+  account-avatar-3-fg: "oklch(0.45 0.15 160)"
+  account-avatar-4-bg: "oklch(0.65 0.15 75 / 0.16)"
+  account-avatar-4-fg: "oklch(0.45 0.15 75)"
+  account-avatar-5-bg: "oklch(0.65 0.15 15 / 0.16)"
+  account-avatar-5-fg: "oklch(0.45 0.15 15)"
+  account-avatar-6-bg: "oklch(0.65 0.15 210 / 0.16)"
+  account-avatar-6-fg: "oklch(0.45 0.15 210)"
   overlay: "oklch(0 0 0 / 0.5)"
   json-key: "oklch(0.55 0.2 255)"
   json-string: "oklch(0.5 0.1 55)"
@@ -96,6 +110,8 @@ colors:
   chrome-control-border-dark: "oklch(0.3618 0.0101 106.8928)"
   chrome-hover-dark: "oklch(0.213 0.0078 95.4245)"
   chrome-control-hover-dark: "oklch(0.3951 0.0106 106.8928)"
+  chrome-button-dark: "oklch(0.2679 0.0036 106.6427)"
+  chrome-button-hover-dark: "oklch(0.3085 0.0035 106.6039)"
   divider-dark: "oklch(0.3618 0.0101 106.8928)"
   input-dark: "oklch(0.4336 0.0113 100.2195)"
   ring-dark: "oklch(0.6724 0.1308 38.7559)"
@@ -117,6 +133,18 @@ colors:
   run-origin-cli-bg-dark: "oklch(0.78 0.1 195 / 0.15)"
   run-origin-agent-border-dark: "oklch(0.74 0.18 330 / 0.5)"
   run-origin-agent-bg-dark: "oklch(0.74 0.18 330 / 0.15)"
+  account-avatar-1-bg-dark: "oklch(0.7 0.13 255 / 0.22)"
+  account-avatar-1-fg-dark: "oklch(0.84 0.1 255)"
+  account-avatar-2-bg-dark: "oklch(0.7 0.13 295 / 0.22)"
+  account-avatar-2-fg-dark: "oklch(0.84 0.1 295)"
+  account-avatar-3-bg-dark: "oklch(0.7 0.13 160 / 0.22)"
+  account-avatar-3-fg-dark: "oklch(0.84 0.1 160)"
+  account-avatar-4-bg-dark: "oklch(0.7 0.13 75 / 0.22)"
+  account-avatar-4-fg-dark: "oklch(0.84 0.1 75)"
+  account-avatar-5-bg-dark: "oklch(0.7 0.13 15 / 0.22)"
+  account-avatar-5-fg-dark: "oklch(0.84 0.1 15)"
+  account-avatar-6-bg-dark: "oklch(0.7 0.13 210 / 0.22)"
+  account-avatar-6-fg-dark: "oklch(0.84 0.1 210)"
   overlay-dark: "oklch(0 0 0 / 0.5)"
   json-key-dark: "oklch(0.7 0.18 255)"
   json-string-dark: "oklch(0.7 0.1 55)"
@@ -316,7 +344,7 @@ hub, sandbox proxy iframe, view iframe). They are role-based names for that one
 drawing. Do not reuse them as a general accent palette.
 
 **Directory portal copies are scoped.** The Readiness page copies a directory's
-submission portal one to one, so inside `.portal-claude`
+submission portal one to one, so inside `.portal-claude` and `.portal-openai`
 (`mcpjam-inspector/client/src/components/readiness/portal-theme.css`) the role
 tokens take that portal's colours, in light and dark. Components there still use
 role tokens; only the values change. The scope overrides the surface, text,
@@ -368,6 +396,12 @@ divider between them, and the content panel sits inset within that frame, its
 rounded top edge doing the separating. See
 `mcpjam-inspector/client/src/components/app-chrome-panel.tsx` and `mcp-sidebar.tsx`.
 
+Top-bar buttons (Onboard, Ask MCPJam, Sign in, Star) use the `chrome` Button
+variant: a paper `chrome-button` fill with the `chrome-control-border` hairline,
+so the server selector is the only beige `chrome-control` fill in the bar. Their
+icons opt into a short hover tip with `data-chrome-icon`, skipped under
+`prefers-reduced-motion`.
+
 In the docs, tables use bottom-hairline rows with no header tint and generous
 padding; callouts are editorial left-rail marks, never soft-filled boxes.
 
@@ -418,6 +452,99 @@ only for an explicit deep link (a "Settings" action that opens the Settings tab)
 Docs equivalents follow the product: buttons match the app's Add Server button,
 tables are bottom-hairline only, callouts are left-rail editorial marks.
 
+
+## Errors
+
+An error message owes the reader three things, and they come straight from
+Nielsen's ninth heuristic: **plain language, a precise statement of the problem,
+and a way out.** NN/g's dedicated error guidance (Neusesser & Sunwall, 2023)
+sharpens the same three into rules we can actually check.
+
+`sdk/src/error-describer/catalog.ts` gives
+every known failure a title, a one-line explanation, its likely causes, its next
+steps, and a docs anchor. Reuse that schema for diagnosed failures and render them
+through `ErrorCard`, not as fresh strings at the call site. Some existing catalog
+copy predates this standard and does not meet E4; the schema is not a blanket
+endorsement of its wording. New or changed catalog copy must pass the checks below.
+
+### The four checks
+
+**E1 — Plain language.** Words the reader already knows. No error code as the
+message, no jargon they did not type, and never a raw `error.message`, response
+body or stack fragment. Raw text is unbounded, unreviewed and occasionally carries
+a token. It belongs in `ErrorCard`'s collapsed detail, which is redacted and
+copyable, never in the message itself.
+
+**E2 — Precisely indicates the problem.** Name what failed and which thing it
+failed on, and state the cause when we know it. "Copy failed" names neither.
+"Something went wrong" as an entire message names nothing, and is the example NN/g
+calls out by name. The same words are fine when they open a message that goes on
+to say something: "Something went wrong while saving. Your draft is still here."
+
+State the cause once, and only when it is real. The catalog's own rule: never pad
+a known cause out to a list, because it makes the product read as unsure of its
+own state.
+
+**E3 — Offers a way out.** A next step in words, or an affordance in reach: a
+Retry button, a link to the exact setting. When the reader genuinely can do
+nothing, say what will happen instead ("Retrying automatically"). Silence is not
+an option. Preserve what they typed, too. Never make someone re-enter a form to
+recover from our failure.
+
+**E4 — Consistent.** One failure verb: **"Couldn't"**. Not "Failed to", "Could
+not" or "Unable to". "Failed to" is a log verb, correct in `console.*` and thrown
+errors and wrong in front of a reader. One name per thing, too: pick *server* or
+*connection* and use it in every message about that thing.
+
+### Where the message goes
+
+Half of weak error copy is a placement problem. The message is thin because a
+toast cannot hold what it needed to say: no room for a cause, no room for a step,
+it disappears, and it cannot be copied.
+
+| The situation | The surface |
+| --- | --- |
+| The reader's own input is wrong or missing | **Inline**, beside the control |
+| A failure with a real cause and a real next step | **`ErrorCard`** |
+| A background failure, complete in one line | **Toast** |
+| The view cannot render at all | **Error boundary** |
+
+**Validation never goes in a toast.** NN/g is unambiguous (Flaherty, 2024): a
+dismissible toast for a validation error risks the reader missing the correction
+entirely, and errors belong adjacent to where they occurred. A message asking
+someone to select, enter or fix something belongs beside the control they are
+looking at.
+
+**One message per box.** When a surface has several warnings or errors at once,
+give each its own bordered notice, with the action that fixes it beside it. Never
+stack several messages in one shared box: a long block of unrelated sentences
+hides which one is blocking and which button belongs to which problem. The
+Set up run sheet's `PreflightNotice`
+(`mcpjam-inspector/client/src/components/evaluate/preflight-notice.tsx`) is the
+reference.
+
+### Tone
+
+Don't blame the reader, and don't use "invalid" or "illegal" — NN/g names both.
+Frame the message around what the system needs rather than what the person got
+wrong.
+
+Don't minimize. "Simply reconnect" tells someone whose connection just died that
+their problem is trivial and they are slow. Cut "simply", "just", "easily" and
+"quickly" from error copy.
+
+Don't clear your throat. "Looks like", "It seems", "Unfortunately" and "Oops"
+delay the sentence the reader needs. Start at the problem. Skip humor as well: a
+joke goes stale the third time someone hits the same error.
+
+Keep short copy plain. No em dashes, no emoji, and no "not X, it's Y" contrasts —
+the false half costs a sentence someone reads while blocked.
+
+Color follows **Colors** above: `destructive` for failures, `warning` for state
+that needs attention, and `text-destructive` rather than `destructive-foreground`
+on a tinted surface. Match severity to impact; not every failure is `destructive`.
+
+
 ## Do's and Don'ts
 
 **Do**
@@ -437,9 +564,10 @@ tables are bottom-hairline only, callouts are left-rail editorial marks.
   this file's prose. Role values belong in `design-system/src/tokens.css`, so
   there is one place to change. The exceptions are a package-local accent
   palette deliberately outside the role system — chat-ui's
-  `--trace-waterfall-*` — and the directory portal copies (`.portal-claude`),
-  which hold a portal's own colours. Adding another is a decision to make on
-  purpose: it won't track the theme, and nothing will check it.
+  `--trace-waterfall-*` — and the directory portal copies (`.portal-claude`,
+  `.portal-openai`), which hold a portal's own colours. Adding another is a
+  decision to make on purpose: it won't track the theme, and nothing will
+  check it.
 - Don't hand-edit generated regions: this file's front matter, the fenced blocks in
   `docs/style.css` and `chat-ui/src/styles.css`, or the derived color fields in
   `docs/docs.json`. CI fails on drift; run the sync script.

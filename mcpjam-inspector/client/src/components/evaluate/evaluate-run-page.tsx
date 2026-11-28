@@ -45,9 +45,9 @@ import type {
 } from "../evals/types";
 import { EvaluateRunCompare } from "./evaluate-run-compare";
 import { trackRunViewed } from "./run-result-pages/run-view-events";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { modelsFromRun } from "./run-launch-context";
-import { RunAccountFacts } from "./run-account-facts";
+import { RunAccountFacts, launchAccounts } from "./run-account-facts";
 import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import {
@@ -167,7 +167,8 @@ export function EvaluateRunPage({
     useState<EvaluateRunPageHeaderActions | null>(null);
   const [, setHeaderVerdict] = useState<HeaderVerdict | null>(null);
   const canCompare = otherRuns.length >= 1;
-  const accountsEnabled = useEvalAccountSelectionEnabled();
+  const showRanAs =
+    useEvalAccountSelectionEnabled() && launchAccounts(targets) !== null;
 
   return (
     <HeaderActionsContext.Provider value={setHeaderActions}>
@@ -194,6 +195,14 @@ export function EvaluateRunPage({
                   iterations={iterations}
                 />
               </div>
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                {showRanAs ? <RunAccountFacts runs={targets} /> : null}
+                <RunServerGroups
+                  targets={targets}
+                  hostNamesById={hostNamesById}
+                  lead={showRanAs ? "on" : undefined}
+                />
+              </div>
               {scope ? (
                 <p
                   className="text-[12.5px] text-muted-foreground"
@@ -202,11 +211,6 @@ export function EvaluateRunPage({
                   {scope}
                 </p>
               ) : null}
-              <RunServerGroups
-                targets={targets}
-                hostNamesById={hostNamesById}
-              />
-              {accountsEnabled ? <RunAccountFacts runs={targets} /> : null}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
               {SHOW_EXPORT_REPORT && onExport && (
@@ -393,6 +397,7 @@ type PairingMark = {
   key: string;
   label: string;
   client: string;
+  hostStyle?: string;
 };
 
 function pairingModel(
@@ -429,6 +434,7 @@ function groupPairingsByDecision(
       key: target._id,
       label: `${client} · ${model}`,
       client,
+      hostStyle: runClientIdentity(target).hostStyle,
     };
     const bucket = buckets.get(decision.tone);
     if (!bucket) {
@@ -525,7 +531,10 @@ function RunPairingDecisions({
                     className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-background"
                   >
                     <img
-                      src={resolveHostLogoByName(mark.client, theme)}
+                      src={resolveHostLogo(
+                        { name: mark.client, hostStyle: mark.hostStyle },
+                        theme,
+                      )}
                       alt=""
                       className="size-3.5 object-contain"
                     />

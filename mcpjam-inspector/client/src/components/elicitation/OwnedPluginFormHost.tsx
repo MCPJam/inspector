@@ -42,6 +42,10 @@ import {
 } from "@/lib/plugin-diagnostics";
 import { pluginDiagnostic } from "@/shared/plugin-diagnostics";
 import {
+  formChoice,
+  observeExtensionOperation,
+} from "@/lib/extension-operation-health";
+import {
   PluginDescribedError,
   withPluginDeadline,
 } from "@/shared/plugin-operation";
@@ -347,7 +351,10 @@ function OwnedRequest({
   const respond = (answer: HostedElicitationAnswer) => {
     if (pendingAnswer.current) return pendingAnswer.current;
     setSubmitting(true);
-    const pending = sendResponse(answer);
+    const pending = observeExtensionOperation(
+      { operation: "form_response", choice: formChoice(answer.action) },
+      () => sendResponse(answer),
+    );
     pendingAnswer.current = pending;
     const settled = () => {
       if (pendingAnswer.current === pending) {

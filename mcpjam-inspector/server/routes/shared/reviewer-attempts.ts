@@ -1,0 +1,189 @@
+/**
+ * Reviewer sign-in attempts, read the way the routes and a resumed run need
+ * them. The backend owns the attempt; every call here carries the caller's
+ * bearer, and none reads or returns a secret's value.
+ */
+import type { ConvexHttpClient } from "convex/browser";
+import type { Context } from "hono";
+import { makeFunctionReference } from "convex/server";
+import type { PlatformReviewerAttempt } from "@mcpjam/sdk/platform";
+import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { authorizeServerAs, callerContextFromHono } from "../web/auth.js";
+import { getBackgroundRunBearerForRequest } from "../../utils/v1-convex-token.js";
+import { logger } from "../../utils/logger.js";
+import type { ReadinessReviewerAccount } from "../../services/readiness/reviewer-path.js";
+import {
+  readinessMcpHeaders,
+  type AuthorizedReadinessServer,
+} from "./readiness-runs.js";
+
+const query = (name: string) =>
+  makeFunctionReference<"query">(`directoryReviewerAttempts:${name}`);
+const mutation = (name: string) =>
+  makeFunctionReference<"mutation">(`directoryReviewerAttempts:${name}`);
+
+export const reviewerAttemptFunctions = {
+  create: mutation("createDirectoryReviewerAttempt"),
+  get: query("getDirectoryReviewerAttempt"),
+  list: query("listDirectoryReviewerAttempts"),
+  resume: mutation("resumeDirectoryReviewerAttempt"),
+  cancel: mutation("cancelDirectoryReviewerAttempt"),
+};
+
+export const ATTEMPT_NOT_FOUND =
+  "Reviewer attempt not found for this submission. List the submission's attempts and pick one.";
+
+type Scope = { projectId: string; submissionId: string };
+type Translate = (error: unknown) => Error;
+
+/** The attempt, if it belongs to this submission; any other answers 404. */
+export async function readReviewerAttempt(
+  convex: ConvexHttpClient,
+  scope: Scope,
+  attemptId: string,
+  translate: Translate,
+): Promise<PlatformReviewerAttempt> {
+  let attempt: PlatformReviewerAttempt | null;
+  try {
+    attempt = await convex.query(reviewerAttemptFunctions.get, { attemptId });
+  } catch (error) {
+    throw translate(error);
+  }
+  if (
+    attempt?.projectId !== scope.projectId ||
+    attempt.submissionId !== scope.submissionId
+  ) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, ATTEMPT_NOT_FOUND);
+  }
+  return attempt;
+}
+
+/** The attempt's id, if a run may work on it now: only while it is running. */
+export async function runnableReviewerAttemptId(
+  convex: ConvexHttpClient,
+  scope: Scope,
+  attemptId: string,
+  translate: Translate,
+): Promise<string> {
+  const { id, state } = await readReviewerAttempt(convex, scope, attemptId, translate);
+  if (state === "running") return id;
+  throw new WebRouteError(
+    409,
+    ErrorCode.CONFLICT,
+    state === "waiting-for-person"
+      ? "This reviewer attempt is waiting for a person. Resume it, which starts its next run."
+      : `This reviewer attempt is ${state}, so no run can work on it. Start a new attempt.`,
+    { code: "attempt_not_running", state },
+  );
+}
+
+/**
+ * The attempt a resumed run worked on: the submission's newest attempt, if it
+ * names this run. Only the newest can be open, and an open attempt names the
+ * run working on it until it waits or ends.
+ */
+export async function reviewerAttemptForRun(
+  convex: ConvexHttpClient,
+  submissionId: string,
+  runId: string,
+): Promise<string | undefined> {
+  try {
+    const newest: PlatformReviewerAttempt[] | null = await convex.query(
+      reviewerAttemptFunctions.list,
+      { submissionId, limit: 1 },
+    );
+    return newest?.[0]?.currentRunId === runId ? newest[0].id : undefined;
+  } catch (error) {
+    // The run still grades the submission, only without the attempt, which
+    // waits for a later run or expires.
+    logger.warn("[readiness] could not find a resumed run's reviewer attempt", {
+      runId,
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
+const NO_REVIEWER_ACCOUNT =
+  "No reviewer account is connected for this submission. Rehearse the reviewer sign-in, then run again.";
+
+/**
+ * The reviewer account a run of the submission signs in as: the one its
+ * newest attempt connected, authorized as itself with the caller's bearer,
+ * never the caller's own account. Every failure is the reason the run's
+ * reviewer checks are blocked; none stops the run.
+ */
+export async function reviewerAccountForRun(
+  convex: ConvexHttpClient,
+  submissionId: string,
+  authorize: (connectionId: string) => Promise<AuthorizedReadinessServer>,
+): Promise<ReadinessReviewerAccount> {
+  const reason = (error: unknown) =>
+    error instanceof Error ? error.message : String(error);
+  let accountId: string | undefined;
+  try {
+    const newest: PlatformReviewerAttempt[] | null = await convex.query(
+      reviewerAttemptFunctions.list,
+      { submissionId, limit: 1 },
+    );
+    accountId = newest?.[0]?.reviewerAccountId;
+  } catch (error) {
+    return {
+      missing: `MCPJam could not read this submission's reviewer sign-in (${reason(error)}). Start the run again.`,
+    };
+  }
+  if (!accountId) return { missing: NO_REVIEWER_ACCOUNT };
+  return authorizedReviewerAccount(accountId, authorize);
+}
+
+/** The account, authorized as itself, or why it cannot be used. */
+export async function authorizedReviewerAccount(
+  accountId: string,
+  authorize: (connectionId: string) => Promise<AuthorizedReadinessServer>,
+): Promise<ReadinessReviewerAccount> {
+  const reason = (error: unknown) =>
+    error instanceof Error ? error.message : String(error);
+  try {
+    const authorized = await authorize(accountId);
+    return authorized.oauthAccessToken
+      ? { accountId, mcpHeaders: readinessMcpHeaders(authorized) }
+      : {
+          missing:
+            "The reviewer account has no working sign-in. Rehearse the reviewer sign-in again, then run again.",
+        };
+  } catch (error) {
+    return {
+      missing: `MCPJam could not use the reviewer account (${reason(error)}). Rehearse the reviewer sign-in again, then run again.`,
+    };
+  }
+}
+
+/**
+ * How a run authorizes the reviewer account its sign-in connects, minutes
+ * after the request that started it ended: a background credential that is
+ * re-minted near expiry, and the caller as the request named it. Without one
+ * (a self-hosted node), the request's own bearer, for as long as it lasts.
+ */
+export async function reviewerAuthorizerFor(
+  c: Context,
+  token: string,
+  projectId: string,
+  serverId: string,
+): Promise<(accountId: string) => Promise<ReadinessReviewerAccount>> {
+  const caller = callerContextFromHono(c);
+  let bearer: () => Promise<string>;
+  try {
+    bearer = await getBackgroundRunBearerForRequest(c, projectId);
+  } catch (error) {
+    logger.warn("[readiness] no background credential for the reviewer account", {
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    bearer = async () => token;
+  }
+  return (accountId) =>
+    authorizedReviewerAccount(accountId, async (connectionId) =>
+      authorizeServerAs({ caller }, await bearer(), projectId, serverId, {
+        connectionId,
+      }),
+    );
+}

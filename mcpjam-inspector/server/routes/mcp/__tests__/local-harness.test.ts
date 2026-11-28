@@ -5,6 +5,8 @@ vi.mock("../../../utils/harness/local/authorization.js", async importOriginal =>
 vi.mock("../../../utils/harness/local/readiness.js", async importOriginal => ({
   ...await importOriginal<typeof import("../../../utils/harness/local/readiness.js")>(), localHarnessAccountEnabled: accountRollout, verifyLocalHarnessMember: offConsent.member,
 }));
+const evalVenue = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/harness/local/eval-venue.js", () => ({ localEvalVenue: evalVenue }));
 import { Hono } from "hono";
 
 /**
@@ -188,6 +190,29 @@ beforeEach(() => {
     grantId: "grant_1",
     token: "t".repeat(32),
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+  });
+});
+
+describe("GET /eval-venue", () => {
+  it("answers for the request's harness and project, with the member's own sign-in", async () => {
+    const answer = { venue: "refused", refusal: "not-set-up", message: "Codex isn't set up for this project on this machine.", fix: "set-up" };
+    evalVenue.mockResolvedValue(answer);
+    const response = await createApp().request("/api/mcp/local-harness/eval-venue?harnessId=codex&projectId=project_1", { headers: AUTH });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(answer);
+    expect(evalVenue).toHaveBeenCalledWith({ harnessId: "codex", bearer: "session", projectId: "project_1" });
+  });
+
+  it("needs a project, because setup is per project", async () => {
+    const response = await createApp().request("/api/mcp/local-harness/eval-venue?harnessId=claude-code", { headers: AUTH });
+    expect(response.status).toBe(400);
+    expect(evalVenue).not.toHaveBeenCalled();
+  });
+
+  it("refuses a client that has no local runtime, as every route here does", async () => {
+    const response = await createApp().request("/api/mcp/local-harness/eval-venue?harnessId=claude-web&projectId=project_1", { headers: AUTH });
+    expect(response.status).toBe(400);
+    expect(evalVenue).not.toHaveBeenCalled();
   });
 });
 
@@ -591,7 +616,7 @@ describe("each local harness is addressed by its own id", () => {
 
   it("refuses a harness this build has no local runtime for, rather than defaulting", async () => {
     for (const [path, init] of [
-      ["/api/mcp/local-harness/availability?harnessId=cursor", { headers: AUTH }],
+      ["/api/mcp/local-harness/availability?harnessId=gemini-cli", { headers: AUTH }],
       ["/api/mcp/local-harness/runtime/install", { method: "POST", headers: AUTH, body: JSON.stringify({ harnessId: "__proto__" }) }],
     ] as const) {
       const response = await createApp().request(path, init);
@@ -672,7 +697,7 @@ describe("local Off consent", () => {
     expect(grantLocalHarnessConsentMock).not.toHaveBeenCalled();
     expect(startRuntimeInstallMock).not.toHaveBeenCalled();
   });
-  it.each([{}, { projectId: "p", harnessId: "cursor" }])("rejects unsupported consent input %j", async body => {
+  it.each([{}, { projectId: "p", harnessId: "gemini-cli" }])("rejects unsupported consent input %j", async body => {
     expect((await request(body)).status).toBe(400);
     expect(offConsent.acknowledge).not.toHaveBeenCalled();
   });

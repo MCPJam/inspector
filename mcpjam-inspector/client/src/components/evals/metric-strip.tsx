@@ -8,6 +8,35 @@ import {
   type MetricStripPoint,
 } from "./metric-strip-data";
 import { formatCost, formatCostOrDash } from "./helpers";
+import { InfoHint } from "./global-gates-info";
+
+/** Text behind the ⓘ beside a metric's label; absent renders no ⓘ. */
+export type MetricStripHints = {
+  latency?: string;
+  tokens?: string;
+  toolCalls?: string;
+};
+
+/** A section label, with its ⓘ only when the caller explains it. */
+function MetricLabel({ label, hint }: { label: string; hint?: string }) {
+  const text = (
+    <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+      {label}
+    </div>
+  );
+  if (!hint) return text;
+  return (
+    <div className="flex items-center gap-1">
+      {text}
+      <InfoHint
+        label={`About ${label}`}
+        className="border border-border bg-muted/50"
+      >
+        {hint}
+      </InfoHint>
+    </div>
+  );
+}
 
 export function LatencyTrendMetric({
   p50,
@@ -22,6 +51,7 @@ export function LatencyTrendMetric({
   subLabel = "per run",
   divider,
   bars = false,
+  hint,
 }: {
   p50: number | null;
   p95: number | null;
@@ -37,6 +67,7 @@ export function LatencyTrendMetric({
   /** Draw the left divider. Defaults to the horizontal-layout behavior. */
   divider?: boolean;
   bars?: boolean;
+  hint?: string;
 }) {
   const valueClass = cn(
     "font-semibold leading-none tabular-nums tracking-tight text-foreground",
@@ -64,9 +95,7 @@ export function LatencyTrendMetric({
       data-testid="metric-strip-latency"
     >
       <div className="min-w-0">
-        <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Latency
-        </div>
+        <MetricLabel label="Latency" hint={hint} />
         <div
           className={cn(
             matrixCell
@@ -149,6 +178,7 @@ export function TrendMetric({
   layout = "horizontal",
   matrixCell = false,
   divider,
+  hint,
 }: {
   label: string;
   value: string;
@@ -159,6 +189,7 @@ export function TrendMetric({
   matrixCell?: boolean;
   /** Draw the left divider. Defaults to the horizontal-layout behavior. */
   divider?: boolean;
+  hint?: string;
 }) {
   return (
     <div
@@ -169,9 +200,7 @@ export function TrendMetric({
       )}
     >
       <div className="min-w-0">
-        <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-          {label}
-        </div>
+        <MetricLabel label={label} hint={hint} />
         <div
           className={cn(
             "mt-1 font-semibold leading-none tabular-nums tracking-tight text-foreground",
@@ -213,6 +242,8 @@ export function MetricStrip({
   context,
   bars = false,
   showCost = true,
+  hidePassRate = false,
+  hints,
 }: {
   data: MetricStripData | null;
   density?: "default" | "compact";
@@ -224,6 +255,9 @@ export function MetricStrip({
   context?: "history";
   bars?: boolean;
   showCost?: boolean;
+  /** Drop the pass-rate section; the remaining sections share the width evenly. */
+  hidePassRate?: boolean;
+  hints?: MetricStripHints;
 }) {
   if (!data) return null;
 
@@ -471,12 +505,15 @@ export function MetricStrip({
         compact={compact}
         layout={layout}
         matrixCell={matrixCell}
+        hint={hints?.latency}
+        {...(hidePassRate ? { divider: false } : {})}
       />
       {!bars && costSection}
       <TrendMetric
         label="Tokens"
         value={formatCompactNumber(tokenHeadline)}
         sub={tokenSub}
+        hint={hints?.tokens}
         compact={compact}
         layout={layout}
         matrixCell={matrixCell}
@@ -496,6 +533,7 @@ export function MetricStrip({
         label="Tool calls"
         value={formatCompactNumber(toolCallHeadline)}
         sub={toolCallSub}
+        hint={hints?.toolCalls}
         compact={compact}
         layout={layout}
         matrixCell={matrixCell}
@@ -527,18 +565,22 @@ export function MetricStrip({
             : "overflow-visible",
         vertical
           ? "flex flex-col divide-y divide-border/60"
-          : !showCost
-            ? context === "history"
-              ? "grid grid-cols-2 @min-[960px]/history-metrics:grid-cols-[1.4fr_1fr_1fr_1fr]"
-              : "grid grid-cols-2 sm:grid-cols-[1.4fr_1fr_1fr_1fr]"
-            : context === "history"
-              ? "grid grid-cols-2 @min-[960px]/history-metrics:grid-cols-[1.5fr_1.3fr_0.8fr_1fr_0.9fr]"
-              : compact
-                ? "grid grid-cols-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr_1fr]"
-                : "grid grid-cols-[1.4fr_1fr_1fr_1fr_1fr]",
+          : hidePassRate
+            ? showCost
+              ? "grid grid-cols-2 @min-[960px]/history-metrics:grid-cols-4"
+              : "grid grid-cols-2 @min-[960px]/history-metrics:grid-cols-3"
+            : !showCost
+              ? context === "history"
+                ? "grid grid-cols-2 @min-[960px]/history-metrics:grid-cols-[1.4fr_1fr_1fr_1fr]"
+                : "grid grid-cols-2 sm:grid-cols-[1.4fr_1fr_1fr_1fr]"
+              : context === "history"
+                ? "grid grid-cols-2 @min-[960px]/history-metrics:grid-cols-[1.5fr_1.3fr_0.8fr_1fr_0.9fr]"
+                : compact
+                  ? "grid grid-cols-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr_1fr]"
+                  : "grid grid-cols-[1.4fr_1fr_1fr_1fr_1fr]",
       )}
     >
-      {passSection}
+      {hidePassRate ? null : passSection}
       {vertical ? (
         <div
           className={cn(

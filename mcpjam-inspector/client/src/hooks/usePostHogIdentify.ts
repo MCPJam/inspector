@@ -88,7 +88,6 @@ export function usePostHogIdentify() {
       // flag evaluated between the reset and the next page load would target
       // an unknown deployment.
       posthog.setPersonPropertiesForFlags?.({
-        ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
         deployment: HOSTED_MODE ? "hosted" : "self_hosted",
         platform: detectPlatform(),
       });

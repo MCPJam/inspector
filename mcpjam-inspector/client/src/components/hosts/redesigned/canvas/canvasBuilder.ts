@@ -1,6 +1,7 @@
 import type { Edge } from "@xyflow/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { getModelById } from "@/shared/types";
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { findHostStyle, getCompatRuntimeForStyle } from "@/lib/client-styles";
 import {
   resolveEffectiveCompatRuntime,
@@ -832,6 +833,9 @@ export function buildRedesignedHostCanvas(
       appsExtensionAdvertised,
       compatRuntime,
       mcpAppsBridge,
+      ...(context.hostId
+        ? { harness: { hostId: context.hostId, isDirty: context.isDirty } }
+        : {}),
     },
     draggable: false,
     selectable: false,
@@ -841,9 +845,10 @@ export function buildRedesignedHostCanvas(
   // (right), flanking the matrix header. The built-in-tools island is gated on
   // `computersEnabled`; the Computer island ALSO shows whenever a computer is
   // attached (`draft.computer`), so an existing attachment stays detachable
-  // with the flag off — mirroring `visibleHostFocusTabs`. A HARNESS draft
-  // (Claude Code / Codex / Cursor) is the exception for everyone: it runs on a
-  // throwaway box, so it shows no computer island, flag or not.
+  // with the flag off — mirroring `visibleHostFocusTabs`. A draft that runs a
+  // native harness (its `agentLoop` or `harness`) is the exception for
+  // everyone: it runs on a throwaway box, so it shows no computer island, flag
+  // or not.
   // Both island edges source from the matrix (which never reflows — it sits at
   // y=0 and grows downward), so the measured-height shift leaves them pinned.
   if (context.computersEnabled === true || draft.computer !== undefined) {
@@ -887,12 +892,11 @@ export function buildRedesignedHostCanvas(
       });
     }
 
-    // Computer node (right of the matrix). A harness client (Claude Code /
-    // Codex / Cursor) runs on a throwaway per-conversation box and has no
-    // computer settings for anyone, so it gets no island. `attached` is the
-    // config intent (`draft.computer`); `status` is the orthogonal backend
-    // lifecycle.
-    if (draft.harness === undefined) {
+    // Computer node (right of the matrix). A client on a native harness runs
+    // on a throwaway per-conversation box and has no computer settings for
+    // anyone, so it gets no island. `attached` is the config intent
+    // (`draft.computer`); `status` is the orthogonal backend lifecycle.
+    if (effectiveHarnessId(draft) === null) {
       const attached = draft.computer !== undefined;
       const status =
         context.computerStatus === undefined

@@ -78,3 +78,65 @@ describe("legacy 2025-11-25 tasks wire — real client integration", () => {
     });
   });
 });
+
+describe("legacy 2025-11-25 tasks wire — server without tasks.requests.tools.call", () => {
+  let served: ServedLegacyTasksFixture;
+  let manager: MCPClientManager;
+
+  beforeEach(async () => {
+    // `tasks.cancel` alone still resolves to the legacy wire, and the
+    // fixture's tool says `taskSupport: "required"`.
+    served = await serveLegacyTasksFixture({
+      tasksCapability: { cancel: {} },
+    });
+    manager = new MCPClientManager();
+    await manager.connectToServer("legacy", {
+      url: served.url,
+      mcpProtocolVersion: "2025-11-25",
+      timeout: 10_000,
+    });
+  });
+
+  afterEach(async () => {
+    await manager.disconnectAllServers().catch(() => {});
+    await served.close();
+  });
+
+  it("refuses to call a tool as a task and sends nothing", async () => {
+    expect(manager.supportsTasksForToolCalls("legacy")).toBe(false);
+    await expect(
+      manager.executeTool("legacy", LEGACY_TASK_TOOL_NAME, {}, undefined, {})
+    ).rejects.toThrow(/tasks\.requests\.tools\.call/);
+    expect(served.received.some((r) => r.method === "tools/call")).toBe(false);
+  });
+});
+
+describe("legacy 2025-11-25 tasks wire — tool without taskSupport", () => {
+  let served: ServedLegacyTasksFixture;
+  let manager: MCPClientManager;
+
+  beforeEach(async () => {
+    // The server accepts task tool calls, but its one tool declares no
+    // `execution.taskSupport` (2025-11-25 tasks.mdx:115).
+    served = await serveLegacyTasksFixture({ toolTaskSupport: null });
+    manager = new MCPClientManager();
+    await manager.connectToServer("legacy", {
+      url: served.url,
+      mcpProtocolVersion: "2025-11-25",
+      timeout: 10_000,
+    });
+  });
+
+  afterEach(async () => {
+    await manager.disconnectAllServers().catch(() => {});
+    await served.close();
+  });
+
+  it("refuses to call the tool as a task and sends no tools/call", async () => {
+    expect(manager.supportsTasksForToolCalls("legacy")).toBe(true);
+    await expect(
+      manager.executeTool("legacy", LEGACY_TASK_TOOL_NAME, {}, undefined, {})
+    ).rejects.toThrow(/has no taskSupport/);
+    expect(served.received.some((r) => r.method === "tools/call")).toBe(false);
+  });
+});

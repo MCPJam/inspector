@@ -3,6 +3,7 @@ import type { ModelMessage } from "ai";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { StageAuthoredCase, StageResultRow } from "@mcpjam/sdk/contract";
 import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
+import { extractHostExecutionPolicy } from "@mcpjam/sdk/host-config/internal";
 import {
   buildIterationFinishParams,
   buildStageMetadata,
@@ -834,5 +835,41 @@ describe("buildIterationFinishParams — infra errors", () => {
     const params = build();
     expect(params.passed).toBe(true);
     expect(params).not.toHaveProperty("infraError");
+  });
+});
+
+describe("buildIterationFinishParams — approvals an eval did not ask for", () => {
+  // An eval runs every engine, harnesses included, as approval off
+  // (`turnApprovalPolicy("eval")`); the host's switch survives only as this
+  // count of calls that would have asked.
+  test("records them for a harness iteration on an approval host", () => {
+    const params = build({
+      evaluation: {
+        ...evaluation,
+        toolsCalled: [
+          { toolName: "create_issue", arguments: {} },
+          { toolName: "close_issue", arguments: {} },
+        ],
+      },
+      hostPolicy: extractHostExecutionPolicy({
+        harness: "claude-code",
+        requireToolApproval: true,
+      }),
+      toolSignals: { toolsTotalBefore: 2, toolsExposed: 2, toolsDroppedVisibility: 0 },
+      harnessMcpByPromptIndex: new Map(),
+    });
+    expect(params.metadata).toMatchObject({ approvals_would_require: 2 });
+  });
+
+  test("records none when the host's switch is off", () => {
+    const params = build({
+      evaluation: {
+        ...evaluation,
+        toolsCalled: [{ toolName: "create_issue", arguments: {} }],
+      },
+      hostPolicy: extractHostExecutionPolicy({ harness: "claude-code" }),
+      toolSignals: { toolsTotalBefore: 1, toolsExposed: 1, toolsDroppedVisibility: 0 },
+    });
+    expect(params.metadata).not.toHaveProperty("approvals_would_require");
   });
 });

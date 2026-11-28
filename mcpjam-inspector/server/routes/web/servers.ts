@@ -1,6 +1,11 @@
+import { mockDialForRequest } from "./mock-dial.js";
+import { mockTransportOf } from "../../utils/mock-servers.js";
 import { Hono } from "hono";
-import { runServerDoctor } from "@mcpjam/sdk";
-import { ConvexHttpClient } from "convex/browser";
+import {
+  runServerDoctor,
+  suppressFeatureObservation,
+  type OAuthFlowSummary,
+} from "@mcpjam/sdk";
 import {
   HOSTED_MODE,
   WEB_CONNECT_TIMEOUT_MS,
@@ -19,6 +24,9 @@ import {
   parseWithSchema,
   toHttpConfig,
   callerOAuthTokenUnlessRefused,
+  runEphemeralConnection,
+  mapEphemeralServerFailure,
+  projectRouteFailure,
 } from "./auth.js";
 import {
   attachHostedRpcLogs,
@@ -26,9 +34,17 @@ import {
 } from "./hosted-rpc-logs.js";
 import { buildConnectSuccessEnvelope } from "../../utils/local-server-resolver.js";
 import {
-  exportSingleServerForInspection,
-  type ServerToolSnapshot,
-} from "../../utils/export-helpers.js";
+  captureHostedOnlyAccountProfiles,
+  connectedAccounts,
+} from "../../utils/account-profile-capture.js";
+import { recordConnectInspection } from "../../services/server-canvas/connect-hook.js";
+import { optionalOAuthFlowSummarySchema } from "../../services/server-canvas/oauth-flow-summary.js";
+import { widenHostedInitInfoForCanvas } from "../../utils/hosted-canvas-projection.js";
+import { resolveServerCanvasRollout } from "../../utils/server-canvas-rollout.js";
+import {
+  claimCanvasRefresh,
+  runCanvasRefresh,
+} from "../../services/server-canvas/refresh.js";
 import {
   BlockedEgressTargetError,
   EgressResolutionError,
@@ -41,11 +57,14 @@ import {
 } from "../../utils/hosted-doctor-redaction.js";
 import { projectHostedConnectFailureLogs } from "../../utils/hosted-connect-failure.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
-import { getInspectorClientRuntimeConfig } from "../../env.js";
 import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
-import { logger } from "../../utils/logger.js";
 
 const servers = new Hono();
+
+/** Validate also takes the non-secret summary of a just-finished OAuth flow. */
+const validateServerSchema = projectServerSchema.extend({
+  oauthFlowSummary: optionalOAuthFlowSummarySchema,
+});
 
 // Hosted, a failure is reported like every other MCP route's (MJ-001; see
 // `withEphemeralConnection`), and a successful connect's log envelope reports
@@ -53,7 +72,7 @@ const servers = new Hono();
 servers.post("/validate", async (c) =>
   withEphemeralConnection(
     c,
-    projectServerSchema,
+    validateServerSchema,
     // Hosted, bounded by the Connect button's own deadline (counted from the
     // request's arrival, queue wait included); on expiry the ephemeral
     // connection's cleanup stops the stuck connect.
@@ -97,60 +116,76 @@ export function remainingServerCheckBudget(
 export async function validateServerCore(
   c: any,
   manager: any,
-  body: { projectId: string; serverId: string }
+  body: {
+    projectId: string;
+    serverId: string;
+    oauthFlowSummary?: OAuthFlowSummary;
+  }
 ) {
+  const bearer: string | undefined = c.req.header("authorization");
+  // Asked now so the answer is ready when the tools are listed.
+  const canvasRollout = resolveServerCanvasRollout(bearer);
   // The doctor's target check, so a stored URL the hosted inspector will not
   // dial is answered as the caller's to fix (400) rather than as a failed
   // connection. A no-op outside hosted mode.
-  const configuredUrl = manager.getServerConfig?.(body.serverId)?.url;
+  const config = manager.getServerConfig?.(body.serverId);
+  // A mock's address is a placeholder that resolves nowhere: it is reached
+  // through the in-process door as the caller, so there is no target to judge
+  // and nothing downstream may read the address.
+  const isMock = Boolean(config && mockTransportOf(config));
+  const configuredUrl = isMock ? undefined : config?.url;
   if (typeof configuredUrl === "string" || configuredUrl instanceof URL) {
     await assertHostedServerTarget(String(configuredUrl));
   }
-  await manager.getToolsForAiSdk([body.serverId]);
-  const snapshot = await exportSingleServerForInspection(
-    manager,
-    body.serverId,
-    body.serverId,
-    { logPrefix: "hosted-connect-inspection" }
+  // The Connect button's own listing is not observed use.
+  await suppressFeatureObservation(manager, body.serverId, () =>
+    manager.getToolsForAiSdk([body.serverId]),
   );
-  void persistHostedConnectInspection(c, {
-    projectId: body.projectId,
-    snapshot,
-  }).catch((error) => {
-    logger.debug("Failed to persist hosted connect-time inspection", {
+  // Captured before returning: the ephemeral manager disconnects as soon as
+  // this function does. Only the Convex write runs after the response. A shared
+  // or uploaded account's identity is captured beside the inspection, while
+  // the ephemeral manager is still live.
+  const [{ canvas }] = await Promise.all([
+    recordConnectInspection({
+      hosted: true,
+      projectId: body.projectId,
       serverId: body.serverId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  });
+      managerKey: body.serverId,
+      manager,
+      convexBearer: bearer,
+      ...(configuredUrl ? { serverUrl: String(configuredUrl) } : {}),
+      canvasRollout,
+      oauthFlow: body.oauthFlowSummary,
+      logPrefix: "hosted-connect-inspection",
+    }),
+    captureHostedOnlyAccountProfiles(
+      manager,
+      connectedAccounts(manager, body.serverId),
+      {
+        bearer: String(c.req?.header?.("authorization") ?? "").replace(
+          /^Bearer\s+/i,
+          "",
+        ),
+        projectId: body.projectId,
+      },
+    ),
+  ]);
   // Same success envelope as the local /api/mcp/connect path so the inspector
   // client's `storeInitInfo` takes one code path on both surfaces. Hosted, its
-  // initialization info is projected (MJ-001).
+  // initialization info is projected (MJ-001), and widened for the canvas.
   const envelope = buildConnectSuccessEnvelope(manager, body.serverId);
-  return HOSTED_MODE
-    ? {
-        ...envelope,
-        initInfo: projectHostedValidateInitInfo(envelope.initInfo),
-      }
-    : envelope;
-}
-
-async function persistHostedConnectInspection(
-  c: any,
-  args: { projectId: string; snapshot: ServerToolSnapshot },
-): Promise<void> {
-  // Only `CONVEX_HTTP_URL` is boot-enforced; the convex-client URL is
-  // derived from it (suffix swap) by the runtime config helper so that
-  // production env (which sets only CONVEX_HTTP_URL) works.
-  const { convexUrl } = getInspectorClientRuntimeConfig();
-  if (!convexUrl) return;
-  const bearer = c.req.header("authorization");
-  if (!bearer) return;
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(bearer.replace(/^Bearer\s+/i, ""));
-  await client.mutation("serverInspections:recordFromConnect" as any, {
-    projectId: args.projectId,
-    snapshot: args.snapshot,
-  });
+  if (!HOSTED_MODE) return envelope;
+  const initInfo = projectHostedValidateInitInfo(envelope.initInfo);
+  return {
+    ...envelope,
+    initInfo: canvas
+      ? widenHostedInitInfoForCanvas(
+          initInfo,
+          envelope.initInfo,
+          manager.getCapturedEventsCapability?.(body.serverId)?.rawCapabilities,
+        )
+      : initInfo,
+  };
 }
 
 servers.post("/check-oauth", async (c) =>
@@ -234,6 +269,91 @@ servers.post("/doctor", async (c) => {
   }
 });
 
+/**
+ * Refresh the server canvas: a fresh capture and every background probe for
+ * one project server, on an ephemeral connection, behind `server-canvas`.
+ * Answers 202 `accepted` once the probes are stored; the page watches Convex
+ * for results. Answers 409 `disabled` when the rollout is off, at the gate or
+ * when the refresh rechecks it, and an error when the refresh fails. The route
+ * holds its server-check slot (the egress limiter in `routes/web/index.ts`)
+ * until then. The connection is `runEphemeralConnection`'s: it closes as soon
+ * as the probes no longer need it, or when the server-check scope aborts. A
+ * second refresh from the same verified caller for the same server while one
+ * runs is authorized, then answers 202 and joins it. The body may carry the
+ * same client pins as /validate, so the capture lands in the same context as
+ * the connect's.
+ */
+servers.post("/canvas/refresh", async (c) => {
+  const claim: { release?: () => void } = {};
+  try {
+    const rawBody = await readJsonBody<Record<string, unknown>>(c);
+    const body = parseWithSchema(projectServerSchema, rawBody);
+    const bearer: string | undefined = c.req.header("authorization");
+    assertBearerToken(c);
+    if (!(await resolveServerCanvasRollout(bearer))) {
+      return c.json({ status: "disabled" }, 409);
+    }
+    // An unverified passthrough bearer names no principal, so its refresh is
+    // not deduped: a shared key would let one member's run swallow another's.
+    const caller = c.get("guestId") ?? c.get("workosUserId");
+    const run = await runEphemeralConnection(
+      c,
+      rawBody,
+      projectServerSchema,
+      async (manager) => {
+        const config = manager.getServerConfig(body.serverId);
+        if (config && "url" in config && config.url && !mockTransportOf(config)) {
+          await assertHostedServerTarget(String(config.url));
+        }
+        // Claimed once authorized, so only a caller with access joins a run.
+        if (caller) {
+          claim.release = claimCanvasRefresh({
+            caller,
+            projectId: body.projectId,
+            serverId: body.serverId,
+          });
+          if (!claim.release) return undefined;
+        }
+        return runCanvasRefresh({
+          hosted: true,
+          projectId: body.projectId,
+          serverId: body.serverId,
+          manager,
+          managerKey: body.serverId,
+          convexBearer: bearer ?? "",
+        });
+      },
+      { timeoutMs: WEB_CONNECT_TIMEOUT_MS },
+    );
+    if (!run) return c.json({ status: "accepted" }, 202);
+    // The connection is closed by now; the HTTP probes may still be running.
+    await run.done;
+    if (run.outcome === "rollout-off") {
+      return c.json({ status: "disabled" }, 409);
+    }
+    if (run.outcome === "failed") {
+      return webErrorFromRoute(
+        c,
+        new WebRouteError(
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          "The refresh failed. Try again in a moment.",
+        ),
+      );
+    }
+    return c.json({ status: "accepted" }, 202);
+  } catch (error) {
+    const { routeError } = projectRouteFailure(
+      mapEphemeralServerFailure(error),
+      error,
+      undefined,
+    );
+    return webErrorFromRoute(c, routeError);
+  } finally {
+    claim.release?.();
+  }
+});
+
 export default servers;
 
 /**
@@ -286,14 +406,21 @@ export async function runHostedDoctor(
         resolveEffectiveAuthMethod(auth.serverConfig),
         body.oauthAccessToken
       ),
-    body.clientCapabilities
+    body.clientCapabilities,
+    undefined,
+    undefined,
+    undefined,
+    mockDialForRequest(c, bearerToken, body.projectId, body.serverId, body)
   );
 
   // Judge the target once, before either leg runs — the same check the
   // conformance routes make, and a no-op outside hosted mode. This is the
   // caller-facing refusal: a stored URL that is already a private address gets
   // a 400 naming the host they typed, rather than a transport error.
-  await assertHostedServerTarget(config.url);
+  // A mock is reached through its in-process door as the caller: no target to
+  // judge, and the probes and the connection use the door, never the network.
+  const mockDoor = mockTransportOf(config);
+  if (!mockDoor) await assertHostedServerTarget(config.url);
 
   // THE DOCTOR'S TWO LEGS, ON ONE TRANSPORT.
   //
@@ -304,9 +431,11 @@ export async function runHostedDoctor(
   // into the socket, and re-run all of it on every redirect hop. One transport
   // rather than two so the probe and the connection cannot disagree about what
   // is dialable.
-  const doctorFetch = hostedMcpBaseFetch();
+  const doctorFetch = mockDoor ?? hostedMcpBaseFetch();
 
   const result = await runServerDoctor({
+    // A hosted doctor run is not SDK usage, so the SDK sends nothing for it.
+    __suppressTelemetry: true,
     config: { ...config, baseFetch: doctorFetch },
     target: {
       kind: "http",

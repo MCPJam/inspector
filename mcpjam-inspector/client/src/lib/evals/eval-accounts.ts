@@ -10,6 +10,8 @@ export type SuiteAccount = {
   needsReauth: boolean;
 };
 
+export type SharedEvalAccountSelection = { serverId: string; connectionId: string };
+
 /**
  * `accounts`: the person's own accounts, one or more of which they choose.
  * `shared`: the project's accounts on a server shared with the project, which
@@ -24,6 +26,8 @@ export type SuiteAccountsServer = {
   accounts: SuiteAccount[];
   /** The saved choice; `null` (or empty) runs with the default account. */
   chosen: string[] | null;
+  managed?: boolean;
+  suiteConnectionId?: string;
   xaaSubject?: string;
 };
 
@@ -42,6 +46,16 @@ export function choosesAccounts(server: SuiteAccountsServer): boolean {
   return server.mode === "accounts" || server.mode === "shared";
 }
 
+/**
+ * Whether a run can pick among this server's accounts: more than one, or a
+ * saved suite default that was removed and needs replacing.
+ */
+export function hasAccountChoice(server: SuiteAccountsServer): boolean {
+  if (server.accounts.length > 1) return true;
+  const saved = server.suiteConnectionId;
+  return Boolean(saved && !server.accounts.some((a) => a.connectionId === saved));
+}
+
 export const SUITE_ACCOUNTS_VIEW_QUERY =
   "testSuiteAccountSelections:getSuiteAccountsView";
 export const SET_SUITE_ACCOUNT_SELECTION_MUTATION =
@@ -53,6 +67,7 @@ export const SET_SUITE_ACCOUNT_SELECTION_MUTATION =
  * reported by {@link chosenAccountProblems} instead.
  */
 export function checkedAccountIds(server: SuiteAccountsServer): string[] {
+  if (server.managed && server.suiteConnectionId) return [server.suiteConnectionId];
   if (server.chosen?.length) {
     const listed = new Set(server.accounts.map((a) => a.connectionId));
     return server.chosen.filter((id) => listed.has(id));
@@ -115,7 +130,7 @@ export type RunsAsEntry = {
 };
 
 /**
- * "Runs as you": each server the person chooses accounts for, with the
+ * "Runs as": each server the person chooses accounts for, with the
  * accounts their runs use there.
  */
 export function runsAsEntries(
@@ -123,7 +138,8 @@ export function runsAsEntries(
   serverName: (serverId: string) => string,
 ): RunsAsEntry[] {
   return view.servers.flatMap((server) => {
-    if (!choosesAccounts(server)) return [];
+    // One account leaves nothing to choose, so there is nothing to say.
+    if (!choosesAccounts(server) || server.accounts.length === 1) return [];
     const checked = new Set(checkedAccountIds(server));
     const accounts = server.accounts
       .filter((account) => checked.has(account.connectionId))

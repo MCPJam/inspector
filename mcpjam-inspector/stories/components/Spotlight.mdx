@@ -1,0 +1,45 @@
+import { Canvas, Meta } from "@storybook/addon-docs/blocks";
+import * as Stories from "./spotlight.stories";
+
+<Meta of={Stories} name="Overview" />
+
+# Spotlight
+
+A one-time card pinned to the control it introduces.
+
+**Use it** to point someone at a new feature they can try right now, from where
+they are, with one action that starts it.
+
+**Don't use it** for errors or warnings (use an alert or ErrorCard), for help on
+hover (HoverCard), or for anything shown more than once.
+
+Open it after the page settles and treat any close as final. It doesn't move
+focus, and Escape or an outside click closes it. The product decides when it
+opens; the component only draws it.
+
+<Canvas of={Stories.WithServer} />
+
+In light and dark:
+
+<Canvas of={Stories.LightAndDark} />
+
+## Do's and Don'ts
+
+**Do**
+
+- Pin it to the control it introduces, and make the primary action start the
+  feature from where the user is.
+- Keep it to a title, one or two short sentences and two actions at most.
+- Show it once. Store that it was seen, and treat any close as final.
+- Wait for the page to settle, and skip it when another overlay or tour is open.
+- Track when it is shown, when the primary action is used and when it is
+  dismissed.
+
+**Don't**
+
+- Don't use it for errors, warnings or help on hover.
+- Don't move focus or block the page. It sits beside the work, not in front of it.
+- Don't stack it with a second spotlight or a guided tour on the same page.
+- Don't restyle the card at the call site. For several steps, use a
+  [Guided Tour](?path=/docs/components-guided-tour--overview), which shares the
+  same card.

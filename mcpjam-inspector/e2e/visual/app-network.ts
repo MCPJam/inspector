@@ -165,6 +165,11 @@ async function serveHttp(
         body: ": synthetic workspace\n\n",
       });
     }
+    // Every local tab polls for dev command attach requests; none here.
+    if (/^\/api\/mcp\/launcher\/tabs\/[^/]+\/(poll|close)$/.test(url.pathname))
+      return route.fulfill({
+        json: { tasks: [], cancelledAttachIds: [], waitingForSignIn: [] },
+      });
     if (url.pathname.startsWith("/tlm/"))
       return route.fulfill({
         contentType: "application/javascript",
@@ -212,12 +217,6 @@ export async function prepareApp(
     ({ theme, time, localAccessToken, seedOnboarding, origin }) => {
       if (window.location.origin !== origin) return;
       localStorage.setItem("themeMode", theme);
-      // Match a returning visitor; the promotional sprites animate independently
-      // of the navigation and screens covered by these snapshots.
-      localStorage.setItem(
-        "mcpjam:platform-launch-2026-09:status",
-        "dismissed",
-      );
       localStorage.setItem("mcpjam.local-access", localAccessToken);
       if (!seedOnboarding) return;
       for (const key of [

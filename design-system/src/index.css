@@ -432,6 +432,8 @@
   --color-chrome-control-border: var(--chrome-control-border);
   --color-chrome-hover: var(--chrome-hover);
   --color-chrome-control-hover: var(--chrome-control-hover);
+  --color-chrome-button: var(--chrome-button);
+  --color-chrome-button-hover: var(--chrome-button-hover);
   --color-divider: var(--divider);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -483,4 +485,31 @@
   --shadow-2xl: var(--shadow-2xl);
   --shadow-chrome-panel: var(--shadow-chrome-panel);
   --shadow-chrome-tab: var(--shadow-chrome-tab);
+}
+
+/* Header button icons tip on hover, as on mcpjam.com. Mark an icon with
+   data-chrome-icon inside a button or link to opt in. */
+@layer components {
+  [data-chrome-icon] {
+    transform-origin: 50% 70%;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    :is(button, a):is(:hover, :focus-visible) [data-chrome-icon] {
+      animation: chrome-icon-wiggle 0.42s ease-in-out both;
+    }
+  }
+
+  @keyframes chrome-icon-wiggle {
+    0%,
+    100% {
+      transform: rotate(0) translateY(0);
+    }
+    30% {
+      transform: rotate(-7deg) translateY(-1px);
+    }
+    60% {
+      transform: rotate(6deg) translateY(0);
+    }
+  }
 }

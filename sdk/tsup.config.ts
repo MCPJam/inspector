@@ -15,6 +15,10 @@ export default defineConfig({
     "src/browser.ts",
     "src/worker.ts",
     "src/operations.ts",
+    // Node-only, and kept out of index.ts and browser.ts so neither bundle carries it.
+    "src/mocks/index.ts",
+    // The definition's types and validator alone: browser-safe, for a check before a save.
+    "src/mocks/definition.ts",
     "src/skill-reference.ts",
     "src/model-factory.ts",
     "src/model-native-ids.ts",
@@ -50,6 +54,11 @@ export default defineConfig({
     "src/internal/telemetry.ts",
     "src/internal/deployment.ts",
     "src/internal/network-proxy.ts",
+    // How platform operations appear as MCP tools, shared by the hosted MCP
+    // server and `mcpjam mcp`.
+    "src/internal/mcp-surface.ts",
+    // Node-only start-or-attach engine for a local Inspector (CLI + launcher).
+    "src/internal/inspector.ts",
     // Node-only SSRF-hardened OAuth networking (classifier + DNS-pinned
     // transport) for backend actions that must not load the whole SDK graph.
     "src/oauth/node.ts",

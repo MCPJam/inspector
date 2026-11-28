@@ -82,7 +82,7 @@ import { PerplexityMarkIndicator } from "./indicators/perplexity-mark";
 import { ClineMarkIndicator } from "./indicators/cline-mark";
 import { NotionShimmerIndicator } from "./indicators/notion-shimmer";
 import { MistralSpinnerIndicator } from "./indicators/mistral-spinner";
-import type { HostStyleDefinition } from "./types";
+import type { HostStyleDefinition, HostThemeMode } from "./types";
 import { HOST_STYLE_CAPABILITIES } from "@/shared/host-style-capabilities";
 import {
   OPENAI_APPS_COPILOT_SURFACE,
@@ -97,6 +97,7 @@ import {
   CODEX_CLI_HOST_STYLE,
   GROKBOT_HOST_STYLE,
   MUSE_HOST_STYLE,
+  OPENCODE_HOST_STYLE,
 } from "./variant-host-styles";
 
 export {
@@ -113,6 +114,7 @@ export {
   CODEX_CLI_HOST_STYLE,
   GROKBOT_HOST_STYLE,
   MUSE_HOST_STYLE,
+  OPENCODE_HOST_STYLE,
 } from "./variant-host-styles";
 
 export {
@@ -126,6 +128,20 @@ export {
   MCP_APPS_SLACK_SURFACE,
   MCP_APPS_GEMINI_SURFACE,
 } from "@/shared/host-style-capabilities";
+
+// Composer chrome is keyed by visual family, not host id, so every host in the
+// claude/chatgpt family shares these.
+export const CLAUDE_COMPOSER_CLASSES: Record<HostThemeMode, string> = {
+  light:
+    "border border-[#DFDFDB] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]",
+  dark: "border-[#4b463d] bg-[#30302E] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]",
+};
+
+export const CHATGPT_COMPOSER_CLASSES: Record<HostThemeMode, string> = {
+  light:
+    "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]",
+  dark: "border border-white/10 bg-[#303030] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]",
+};
 
 // NOTE: capability presets are best-effort mocks of what each vendor publicly
 // supports today. Treat them as starting points — verify against vendor docs
@@ -748,16 +764,24 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
       ...HOST_STYLE_CAPABILITIES["copilot-cli"],
       resolveStyleVariables: getChatGPTStyleVariables,
     },
-    chatUi: { ...COPILOT_HOST_STYLE.chatUi, label: "GitHub Copilot CLI",
-      shortLabel: "GitHub Copilot CLI", pickerDescription: "GitHub Copilot CLI in a hosted sandbox",
+    chatUi: {
+      ...COPILOT_HOST_STYLE.chatUi,
+      label: "GitHub Copilot CLI",
+      shortLabel: "GitHub Copilot CLI",
+      pickerDescription: "GitHub Copilot CLI in a hosted sandbox",
       // GitHub Copilot's own mark, not Microsoft 365 Copilot's. It is a flat
       // silhouette, so it flips with the theme like Goose's.
       logoSrc: githubCopilotLogoLight,
-      logoSrcByTheme: { light: githubCopilotLogoLight, dark: githubCopilotLogoDark } },
+      logoSrcByTheme: {
+        light: githubCopilotLogoLight,
+        dark: githubCopilotLogoDark,
+      },
+    },
   },
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
   CODEX_CLI_HOST_STYLE,
+  OPENCODE_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,
   CLAUDE_CODE_DESKTOP_HOST_STYLE,
   CLAUDE_CODE_WEB_HOST_STYLE,

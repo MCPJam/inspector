@@ -17,7 +17,7 @@ import { normalizedError } from "./_support/specimens";
  * so the colours are the product's, not an approximation.
  */
 const meta = {
-  title: "Error Patterns/Open decisions (not shipped)",
+  title: "Components/Error Patterns/Open decisions (not shipped)",
   parameters: {
     layout: "padded",
     docs: {

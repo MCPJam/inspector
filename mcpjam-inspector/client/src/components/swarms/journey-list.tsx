@@ -91,7 +91,11 @@ export type JourneyListJourney = {
   /** Deterministic criteria. `null` from the wire when the journey has none. */
   rubric?: JourneyCriterion[] | null;
 };
-export type JourneyListHost = { hostId: string; name: string };
+export type JourneyListHost = {
+  hostId: string;
+  name: string;
+  hostStyle?: string | null;
+};
 type ServerAttachment = { _id: string; name: string };
 
 /** The run currently open in the surface's detail panel. `targetKey` is the
@@ -294,6 +298,8 @@ function JourneyBlock({
   // run on the organization's providers, listed together.
   const [launchProblems, setLaunchProblems] = useState<AiLaunchProblem[]>([]);
   const runSessions = useRunSessionsContext();
+  const hostStyleOf = (hostId: string) =>
+    hosts.find((host) => host.hostId === hostId)?.hostStyle;
 
   const typedRuns = runs as JourneyRun[];
   const latestRun = typedRuns[0] ?? null;
@@ -491,7 +497,10 @@ function JourneyBlock({
                 className="flex min-h-[4rem] flex-col items-start justify-center gap-1 rounded-md border border-dashed border-border/50 bg-muted/5 px-2.5 py-2"
               >
                 <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
-                  <JourneyHostLogoMark label={col.label} />
+                  <JourneyHostLogoMark
+                    label={col.label}
+                    hostStyle={hostStyleOf(col.hostId)}
+                  />
                   <span className="truncate text-[11px] font-medium text-foreground/80">
                     {col.label}
                   </span>
@@ -535,7 +544,10 @@ function JourneyBlock({
                 className="flex w-full min-w-0 items-center justify-between gap-1.5 rounded-sm outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <span className="inline-flex min-w-0 items-center gap-1.5">
-                  <JourneyHostLogoMark label={col.label} />
+                  <JourneyHostLogoMark
+                    label={col.label}
+                    hostStyle={hostStyleOf(col.hostId)}
+                  />
                   <span className="truncate text-[11px] font-medium text-foreground/80">
                     {col.label}
                   </span>

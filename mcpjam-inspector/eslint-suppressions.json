@@ -1,0 +1,1000 @@
+{
+  "client/src/App.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 9
+    }
+  },
+  "client/src/components/ActiveServerSelector.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/ChatTabV2.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/CiEvalsTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/EvaluateTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/GuestTabRecoveryBoundary.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/components/LearningTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/components/OAuthFlowTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/PromptsTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/ResourceTemplatesTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/components/ResourcesTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 5
+    }
+  },
+  "client/src/components/ServersTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/SkillsTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/TaskAccountsTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/TasksTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 12
+    }
+  },
+  "client/src/components/ToolsTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 4
+    }
+  },
+  "client/src/components/__tests__/OAuthFlowTab.agent.test.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/browser/BrowserActivityList.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/browser/BrowserProfilesSettings.tsx": {
+    "react-hooks/rules-of-hooks": {
+      "count": 1
+    }
+  },
+  "client/src/components/browser/ElectronNativeBody.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/browser/HostedBrowserBody.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/browser/__tests__/LocalBrowserBody.test.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 2
+    }
+  },
+  "client/src/components/chat-v2/chat-input/model-selector.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/chat-v2/chat-input/prompts/mcp-prompts-popover.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/chat-v2/chat-input/skills/skill-result-card.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/chat-v2/multi-model-chat-card.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/chat-v2/thread/checkout-dialog.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/chat-v2/thread/mcp-apps/__tests__/mcp-apps-renderer.test.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/computer/BrowserStream.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/computer/SandboxImagesDrawer.tsx": {
+    "react-hooks/rules-of-hooks": {
+      "count": 1
+    }
+  },
+  "client/src/components/conformance/ConformanceSettings.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/conformance/PersistConformanceRun.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/conformance/TasksCheckOverride.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/connection/AddServerModal.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/connection/ServerAuthSummary.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/connection/__tests__/ServerDetailModal.test.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/connection/share-usage/ShareUsageThreadDetail.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/elicitation/form-app-preview.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/elicitation/form-files.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/evals/SuiteRow.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evals/checks-section.tsx": {
+    "react-hooks/rules-of-hooks": {
+      "count": 2
+    }
+  },
+  "client/src/components/evals/cross-host/use-cross-host-data.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evals/iteration-details.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/components/evals/project-runs-table.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/evals/run-detail-view.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evals/suite-group-compare.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evals/suite-iterations-view.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evals/suite-skills-field.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evals/suites-overview.tsx": {
+    "react-hooks/rules-of-hooks": {
+      "count": 2
+    }
+  },
+  "client/src/components/evals/tag-aggregation-panel.tsx": {
+    "react-hooks/rules-of-hooks": {
+      "count": 1
+    }
+  },
+  "client/src/components/evals/test-template-editor.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 6
+    }
+  },
+  "client/src/components/evals/use-eval-handlers.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 10
+    }
+  },
+  "client/src/components/evals/use-eval-trace-blob.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evals/use-goal-completion.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evals/use-groundedness.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evals/use-playground-project-executions.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evals/use-project-run-history.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evaluate/case-steps/use-case-tools.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/components/evaluate/combined-run-content.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/evaluate/eval-server-preview-page.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evaluate/import-dataset-dialog.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/evaluate/suites-overview.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/harness/LocalHarnessTrustDialog.tsx": {
+    "react-hooks/rules-of-hooks": {
+      "count": 1
+    }
+  },
+  "client/src/components/host-workspace/HostWorkspace.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/host-workspace/OwnedModelApp.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 8
+    }
+  },
+  "client/src/components/host-workspace/ServerSettingsPanel.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/host-workspace/ServerSettingsView.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/host-workspace/SettingsApp.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 7
+    }
+  },
+  "client/src/components/host-workspace/ThreadAppPanel.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 8
+    }
+  },
+  "client/src/components/host-workspace/__tests__/OwnedModelApp.composition.test.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/host-workspace/__tests__/retained-app-host-config.test.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/host-workspace/__tests__/settings-display-mode.test-support.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/components/host-workspace/__tests__/settings-owned-input.test.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/host-workspace/use-app-context.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/host-workspace/use-extension-discovery.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/host-workspace/use-plugin-onboarding.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/host-workspace/use-server-settings.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/host-workspace/use-workspace-settings.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/hosted/ScenarioChatPage.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/components/hosts/CreateHostDialog.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/hosts/comparison/HostConfigCompareView.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/components/hosts/server-picker.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/mcpjam-limit-dialog.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/oauth/OAuthAuthorizationModal.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/oauth/OAuthFlowLogger.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/oauth/OAuthProfileModal.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/playground/PlaygroundTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/readiness/ReviewerStages.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/score/BenchRunnerPage.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/server-canvas/ServerFeatureMap.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/settings/SettingsRail.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/shared/usage-insights/InsightsWorkbench.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/shared/usage-insights/TopicMapPanel.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/skills/SkillsFileTree.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/swarms/SwarmsTab.tsx": {
+    "react-hooks/rules-of-hooks": {
+      "count": 1
+    }
+  },
+  "client/src/components/swarms/new-swarm-create-flow.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/swarms/new-swarm-running-step.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/components/swarms/swarm-overview-panel.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/ui-playground/PlaygroundMain.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 20
+    }
+  },
+  "client/src/components/ui-playground/__tests__/PlaygroundMain.multi-host.test.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/ui-playground/__tests__/PlaygroundMain.test.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    },
+    "react-hooks/rules-of-hooks": {
+      "count": 1
+    }
+  },
+  "client/src/components/ui-playground/compare-pane-skills.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/ui-playground/hooks/use-playground-state.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/ui-playground/hooks/useToolExecution.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/ui-playground/multi-model-playground-card.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 5
+    }
+  },
+  "client/src/components/ui/json-editor/json-editor.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/components/webmcp-inspector/ToolInvokePane.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/components/xaa/XAAFlowTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/__tests__/use-run-cost-estimate.test.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/hooks/__tests__/usePostHogIdentify.test.ts": {
+    "react-hooks/rules-of-hooks": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/__tests__/useSessionPrivacy.recorders.test.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/hosted/use-scenario-server-reachability.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/org-usage-pages.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-aggregated-tools.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-app-state.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-chat-session.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 14
+    }
+  },
+  "client/src/hooks/use-compare-chat-environment.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-comparison-browser.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-conformance-run.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 5
+    }
+  },
+  "client/src/hooks/use-environment-capabilities.ts": {
+    "react-hooks/rules-of-hooks": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-eval-run-iteration-chains.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-harness-approval-stop.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 5
+    }
+  },
+  "client/src/hooks/use-inspector-auth.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/hooks/use-onboarding.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-plugin-message.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-project-client-initialization.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-project-environment-capability.ts": {
+    "react-hooks/rules-of-hooks": {
+      "count": 2
+    }
+  },
+  "client/src/hooks/use-project-state.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/hooks/use-project-transition-recovery.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-resumed-thread-persistence.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-saved-client-send-guard.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/use-server-card-order.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 5
+    }
+  },
+  "client/src/hooks/use-server-state.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 6
+    }
+  },
+  "client/src/hooks/use-upgrade-checkout.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/useBrowserTools.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/useEnsureDbUser.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/useLocalAutoApproveConsent.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/hooks/useLocalHarnessTarget.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/usePluginExtensionsAccess.ts": {
+    "react-hooks/rules-of-hooks": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/useSessionMap.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/useSharedArtifact.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/useSharedChatWidgetCapture.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/hooks/useUsageInsights.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/hooks/useXaaTestTarget.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/lib/browser-pane/use-viewport-reporter.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "client/src/lib/callback-project-return.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/lib/chat-auth-recovery.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/lib/mcpjam-agent/use-eval-agent-draft.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 4
+    }
+  },
+  "client/src/lib/unified-convex-auth.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "client/src/lib/use-extension-launch-health.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "client/src/test/mocks/convex-use-queries.ts": {
+    "react-hooks/rules-of-hooks": {
+      "count": 1
+    }
+  },
+  "server/__tests__/sandbox-proxy-buildCSP.test.ts": {
+    "@typescript-eslint/no-implied-eval": {
+      "count": 3
+    }
+  },
+  "server/__tests__/sandbox-proxy-mount.test.ts": {
+    "@typescript-eslint/no-implied-eval": {
+      "count": 1
+    }
+  },
+  "server/routes/apps/__tests__/widget-content-metadata.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "server/routes/apps/shared/widget-files.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/slack-link/index.ts": {
+    "no-restricted-syntax": {
+      "count": 4
+    }
+  },
+  "server/routes/surface-link/index.ts": {
+    "no-restricted-syntax": {
+      "count": 3
+    }
+  },
+  "server/routes/v1/eval-backtest.ts": {
+    "no-restricted-imports": {
+      "count": 2
+    }
+  },
+  "server/routes/v1/proposed-actions.ts": {
+    "no-restricted-syntax": {
+      "count": 4
+    }
+  },
+  "server/routes/v1/tunnels.ts": {
+    "no-restricted-syntax": {
+      "count": 3
+    }
+  },
+  "server/routes/web/api-keys.ts": {
+    "no-restricted-syntax": {
+      "count": 11
+    }
+  },
+  "server/routes/web/auth.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/browser-profile-upload.ts": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "server/routes/web/chat-prepare.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/computer-browser-frames.ts": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "server/routes/web/computer-browser-panel.ts": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "server/routes/web/computer-browser-stream.ts": {
+    "no-restricted-syntax": {
+      "count": 5
+    }
+  },
+  "server/routes/web/computer-upload.ts": {
+    "no-restricted-syntax": {
+      "count": 4
+    }
+  },
+  "server/routes/web/environments.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/flags.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/guest-cookie-scope.ts": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "server/routes/web/harness-mcp.ts": {
+    "no-restricted-syntax": {
+      "count": 4
+    }
+  },
+  "server/routes/web/hosted-elicitation.ts": {
+    "no-restricted-syntax": {
+      "count": 7
+    }
+  },
+  "server/routes/web/hosted-internal-error.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/hosted-rpc-logs.ts": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "server/routes/web/local-browser-frames.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/local-computer-terminal.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/local-mrtr-stream.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/mcpjam-agent.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/mrtr-continuation.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/org-gateway-test.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/swarm-runs.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/web/tasks.ts": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "server/routes/web/tools.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/services/evals/assertion-backtest.ts": {
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "server/services/plugins/run-plugin-servers.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "server/utils/__tests__/sandbox-proxy-csp.test.ts": {
+    "@typescript-eslint/no-implied-eval": {
+      "count": 1
+    }
+  },
+  "server/utils/__tests__/turn-execution.test.ts": {
+    "import/first": {
+      "count": 1
+    }
+  },
+  "server/utils/harness/local/__tests__/attestation-verify.test.ts": {
+    "import/extensions": {
+      "count": 1
+    }
+  },
+  "server/utils/harness/local/__tests__/pack-digests.test.ts": {
+    "import/extensions": {
+      "count": 1
+    }
+  },
+  "server/utils/harness/local/__tests__/pack-inputs.test.ts": {
+    "import/extensions": {
+      "count": 3
+    }
+  },
+  "server/utils/harness/local/__tests__/pack-naming.test.ts": {
+    "import/extensions": {
+      "count": 1
+    }
+  },
+  "server/utils/harness/local/__tests__/pack-publication.test.ts": {
+    "import/extensions": {
+      "count": 4
+    }
+  },
+  "server/utils/harness/local/__tests__/release-workflow.test.ts": {
+    "import/extensions": {
+      "count": 1
+    }
+  },
+  "server/utils/harness/local/__tests__/revocation-list.test.ts": {
+    "import/extensions": {
+      "count": 1
+    }
+  },
+  "server/utils/harness/local/__tests__/runtime-contract.test.ts": {
+    "import/extensions": {
+      "count": 4
+    }
+  },
+  "server/utils/route-error-report.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "shared/sentry-build-metadata.ts": {
+    "no-restricted-imports": {
+      "count": 3
+    }
+  },
+  "shared/strict-server-analytics.ts": {
+    "no-restricted-imports": {
+      "count": 1
+    }
+  }
+}

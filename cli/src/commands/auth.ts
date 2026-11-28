@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { declareMcpjamUse } from "../lib/deployment-preflight.js";
 import { getGlobalOptions } from "../lib/server-config.js";
+import { listAccountOrganizations } from "../lib/account-organizations.js";
 import { usageError, writeResult } from "../lib/output.js";
 import { runPlatformLogin, runPlatformLogout } from "../lib/platform-auth.js";
 import {
@@ -61,7 +62,9 @@ export function registerAuthCommands(program: Command): void {
           apiUrl: result.apiUrl,
           authFile: result.authFilePath,
           ...(result.email !== undefined ? { email: result.email } : {}),
-          ...(result.plan !== undefined ? { plan: result.plan } : {}),
+          ...(result.organizations !== undefined
+            ? { organizations: result.organizations }
+            : {}),
           ...(result.expiresAt !== undefined
             ? { expiresAt: new Date(result.expiresAt).toISOString() }
             : {}),
@@ -106,13 +109,13 @@ export function registerAuthCommands(program: Command): void {
       const result = await runPlatformOperation(
         platformOptionsOf(command),
         globalOptions.timeout,
-        async ({ client, credentialKind }) => {
-          const me = await client.getMe();
+        async ({ client, credentialKind, signal }) => {
+          const me = await client.getMe({ signal });
           return {
             id: me.id,
             email: me.email,
             name: me.name,
-            ...(me.plan ? { plan: me.plan } : {}),
+            organizations: await listAccountOrganizations(client, signal),
             credential: credentialKind,
           };
         },

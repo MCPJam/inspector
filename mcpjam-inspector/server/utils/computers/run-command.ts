@@ -25,6 +25,7 @@ import { detectAuthUrls } from "./auth-urls.js";
 import { resolveWorkingDirectory } from "./path-confine.js";
 import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
+import type { AuthHeaderSource } from "../run-bearer.js";
 
 // Caps on what the model sees; the Convex log stores its own (smaller)
 // preview and full-output archival is a backend follow-up. Exported so the
@@ -157,8 +158,8 @@ export function truncate(text: string, cap: number): string {
 }
 
 export interface RunComputerCommandArgs {
-  /** Bearer authorization forwarded to Convex (authz + wake). */
-  authHeader: string;
+  /** Bearer authorization forwarded to Convex (authz + wake), read on each readiness poll. */
+  authHeader: AuthHeaderSource;
   /** Project whose (project, user) computer this command runs on. */
   projectId: string;
   /**

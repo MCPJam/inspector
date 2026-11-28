@@ -62,6 +62,7 @@ import {
   type McpToolResultBlobVisibility,
   type McpToolResultImageRenderingPolicy,
   type ModelVisibleMcpToolResults,
+  type ModelVisibleStructuredContent,
   type OpenAiAppsCapabilities,
   type ServerId,
 } from "./types.js";
@@ -279,6 +280,18 @@ function canonicalizeResourceVisibility(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function readModelVisibleStructuredContent(
+  value: unknown
+): ModelVisibleStructuredContent | undefined {
+  if (value === undefined) return undefined;
+  if (value === "fallback" || value === "preferred" || value === "both") {
+    return value;
+  }
+  throw new Error(
+    'hostConfigV2: modelVisibleMcpToolResults.structuredContent must be "fallback", "preferred" or "both"'
+  );
+}
+
 function canonicalizeModelVisibleMcpToolResults(
   value: unknown
 ): ModelVisibleMcpToolResults | undefined {
@@ -291,10 +304,18 @@ function canonicalizeModelVisibleMcpToolResults(
   const record = value as Record<string, unknown>;
   assertOnlyKnownKeys(
     record,
-    new Set(["directContent", "embeddedResources", "linkedResources"]),
+    new Set([
+      "structuredContent",
+      "directContent",
+      "embeddedResources",
+      "linkedResources",
+    ]),
     "modelVisibleMcpToolResults"
   );
 
+  const structuredContent = readModelVisibleStructuredContent(
+    record.structuredContent
+  );
   const directContent = canonicalizeBooleanLeaves(
     record.directContent,
     DIRECT_CONTENT_VISIBILITY_KEYS,
@@ -308,10 +329,13 @@ function canonicalizeModelVisibleMcpToolResults(
     record.linkedResources,
     "modelVisibleMcpToolResults.linkedResources"
   );
+  // Key order is part of the hash (JSON.stringify of this object), so the
+  // backend's canonicalizer must emit the same order.
   const out = {
     ...(directContent !== undefined ? { directContent } : {}),
     ...(embeddedResources !== undefined ? { embeddedResources } : {}),
     ...(linkedResources !== undefined ? { linkedResources } : {}),
+    ...(structuredContent !== undefined ? { structuredContent } : {}),
   };
   return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -2813,5 +2837,6 @@ export function canonicalizeHostConfigV2(
               }
             : {},
         }),
+    ...(input.runUnloadedToolCalls === undefined ? {} : { runUnloadedToolCalls: input.runUnloadedToolCalls }),
   };
 }

@@ -119,13 +119,15 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 import { runHarnessTurn } from "../run-harness-turn";
@@ -177,7 +179,7 @@ function options(overrides: Record<string, unknown> = {}) {
     systemPrompt: "You are Claude Code.",
     authHeader: "Bearer test",
     projectId: "project-1",
-    mcpClientManager: { getServerConfig: vi.fn() },
+    mcpClientManager: { getServerConfig: vi.fn(), getAllToolAnnotations: vi.fn(() => ({})) },
     selectedServers: ["srv-a"],
     requireToolApproval: false,
     sourceType: "eval",
@@ -288,6 +290,82 @@ describe("runHarnessTurn tool-policy accounting", () => {
 
     expect(blocks).toEqual([]);
     expect(onToolResult).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("dotted MCP tool names on Claude Code", () => {
+  // Claude Code names `cad.tray` `mcp__<key>__cad_tray` for the model and still
+  // calls the server with `cad.tray`; the turn must record the real name.
+  const dottedSnapshot: ToolPolicySnapshot = {
+    mode: "default",
+    denied: {
+      "settings.update": { reason: "denyList", classification: "destructive" },
+    },
+    known: ["cad.tray", "settings.update"],
+    unknownTool: "deny",
+  };
+  const dottedManager = () => ({
+    getServerConfig: vi.fn(),
+    getAllToolAnnotations: vi.fn(() => ({ "cad.tray": {}, "settings.update": {} })),
+  });
+
+  beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_BROKER_DELIVERY", "true");
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "test-harness-proxy-secret-32-chars");
+    harnessState.finalText = "";
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("records a call to the renamed tool under the server's tool name", async () => {
+    harnessState.streamParts = toolCallParts("mcp__srv-a__cad_tray", "tray open");
+    const onToolCall = vi.fn(async () => {});
+    const onToolResult = vi.fn(async () => {});
+
+    await runHarnessTurn(
+      options({
+        mcpClientManager: dottedManager(),
+        harnessToolPolicy: { "srv-a": dottedSnapshot },
+        onToolCall,
+        onToolResult,
+      }) as any,
+      "none",
+    );
+
+    expect(onToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: "cad.tray", serverId: "srv-a" }),
+    );
+    expect(onToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: "cad.tray", serverId: "srv-a" }),
+    );
+  });
+
+  it("reports a blocked dotted tool under its own name", async () => {
+    harnessState.streamParts = toolCallParts(
+      "mcp__srv-a__settings_update",
+      "Call blocked by tool policy: denyList",
+    );
+    const blocks: HarnessPolicyBlockRecord[] = [];
+    const onToolResult = vi.fn(async () => {});
+
+    await runHarnessTurn(
+      options({
+        mcpClientManager: dottedManager(),
+        harnessToolPolicy: { "srv-a": dottedSnapshot },
+        onToolResult,
+        onHarnessPolicyBlocks: (records: HarnessPolicyBlockRecord[]) => {
+          blocks.push(...records);
+        },
+      }) as any,
+      "none",
+    );
+
+    expect(blocks).toEqual([
+      expect.objectContaining({ toolName: "settings.update", serverId: "srv-a", reason: "denyList" }),
+    ]);
+    expect(onToolResult).not.toHaveBeenCalled();
   });
 });
 

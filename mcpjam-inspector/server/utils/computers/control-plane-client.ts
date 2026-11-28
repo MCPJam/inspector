@@ -24,6 +24,7 @@ import {
   withCapacityRetry,
 } from "../run-supervisor/capacity-retry.js";
 import { getServiceCredential } from "../../services/service-credential.js";
+import { authHeaderNow, type AuthHeaderSource } from "../run-bearer.js";
 
 export type ComputerStatus =
   | "requested"
@@ -390,9 +391,25 @@ function withPairedBrowser<T extends { browser?: PairedBrowserBox }>(
  * Every other failure (409, auth, a malformed body) is returned untouched on
  * the first attempt: only capacity is worth waiting on.
  */
+/** The phase boxes the control plane provisions for code evaluators and scripts. */
+export type EvalBoxPhase =
+  | "run_setup"
+  | "run_cleanup"
+  | "iteration_setup"
+  | "grading"
+  | "iteration_cleanup";
+
 export async function provisionEvalSandbox(
   args: (
-    | { runId: string; iterationId?: string; pairBrowser?: boolean }
+    | {
+        runId: string;
+        iterationId?: string;
+        pairBrowser?: boolean;
+        /** EFTW-90: a setup, grading or cleanup box instead of the iteration's own. */
+        phase?: EvalBoxPhase;
+        /** A grading box's one retry after a lost box: `2`. */
+        attempt?: number;
+      }
     /**
      * A SINGLE-CASE run has no suite run: the body names the iteration alone,
      * and the control plane authorizes the iteration itself. Terminal only —
@@ -434,6 +451,8 @@ export async function provisionEvalSandbox(
           ...("pairBrowser" in args && args.pairBrowser
             ? { pairBrowser: true }
             : {}),
+          ...("phase" in args && args.phase ? { phase: args.phase } : {}),
+          ...("attempt" in args && args.attempt ? { attempt: args.attempt } : {}),
         },
         signal,
       ).then(withPairedBrowser),
@@ -728,11 +747,23 @@ export interface PlaygroundTerminalSandbox {
   /** Working directory the box starts in (backend-resolved). */
   workdir?: string;
   /**
+   * The Send's provision only: this call took a box prepared before Send
+   * that no turn had used (`prepare-conversation-box.ts`). The backend says
+   * it once, on the call that takes the box; an older one never says it.
+   */
+  prepared?: true;
+  /**
    * How long the box may go unused before the backend pauses it. The backend
    * owns the value and sends it in reserve and touch replies; the Inspector
    * keeps no copy, so changing it needs no Inspector release.
    */
   idleMs?: number;
+  /**
+   * Epoch milliseconds the box keeps its running processes until: its
+   * lifetime ceiling. Sent only for a box its idle deadline pauses rather than
+   * deletes; an older backend sends none.
+   */
+  retainUntil?: number;
 }
 
 /**
@@ -807,7 +838,14 @@ export async function provisionPlaygroundTerminalSandbox(args: {
       ...(args.signal ? { signal: args.signal } : {}),
     },
   );
-  if (outcome.kind === "settled") return keepSaneIdleWindow(outcome.result);
+  if (outcome.kind === "settled") {
+    const result = keepSaneIdleWindow(outcome.result);
+    // Only `true` says the box was prepared before Send.
+    if (result.ok && result.value && result.value.prepared !== true) {
+      delete result.value.prepared;
+    }
+    return result;
+  }
   if (outcome.reason === "aborted") {
     return { ok: false, status: 499, error: "cancelled" };
   }
@@ -815,6 +853,40 @@ export async function provisionPlaygroundTerminalSandbox(args: {
     return outOfTime({ retryAfterMs: outcome.plannedDelayMs });
   }
   return outOfTime();
+}
+
+/** What a preparation's provision answers: its new box, or why it booted none. */
+export type PreparedPlaygroundTerminal =
+  | ({ outcome: "prepared" } & PlaygroundTerminalSandbox)
+  | { outcome: "skipped"; reason: string };
+
+/**
+ * Boot a new Playground conversation's box before its first message, on the
+ * preparation's own route (a backend without it answers 404). One attempt,
+ * never retried: a preparation that cannot boot a box now is skipped, and the
+ * Send boots one as before.
+ */
+export async function preparePlaygroundTerminalSandbox(args: {
+  bearer: string;
+  projectId: string;
+  chatSessionId: string;
+  projectEnvironmentId?: string;
+  harness: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<PreparedPlaygroundTerminal>> {
+  return postJson<PreparedPlaygroundTerminal>(
+    "/playground/sandbox/terminal/prepare",
+    bearerHeader(args.bearer),
+    {
+      projectId: args.projectId,
+      chatSessionId: args.chatSessionId,
+      ...(args.projectEnvironmentId
+        ? { projectEnvironmentId: args.projectEnvironmentId }
+        : {}),
+      harness: args.harness,
+    },
+    args.signal,
+  );
 }
 
 /**
@@ -1066,16 +1138,33 @@ export function readIdleMs(value: unknown): number | undefined {
     : undefined;
 }
 
-/** Drops a reply's idle window unless it is a sane one. */
-function keepSaneIdleWindow<T extends { idleMs?: number }>(
-  result: ControlPlaneResult<T>,
-): ControlPlaneResult<T> {
-  if (
-    result.ok &&
-    result.value &&
-    readIdleMs(result.value.idleMs) === undefined
-  ) {
-    delete result.value.idleMs;
+/**
+ * A backend retention deadline, if `value` is a sane one: whole epoch
+ * milliseconds still ahead, and no further out than the longest idle window.
+ * It sets how long a warm bridge outlives its turn, so a malformed one is
+ * dropped rather than keeping a bridge longer.
+ */
+export function readRetainUntil(
+  value: unknown,
+  now = Date.now(),
+): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value > now &&
+    value - now <= MAX_IDLE_WINDOW_MS
+    ? value
+    : undefined;
+}
+
+/** Drops a reply's idle window and retention deadline unless each is sane. */
+function keepSaneIdleWindow<
+  T extends { idleMs?: number; retainUntil?: number },
+>(result: ControlPlaneResult<T>): ControlPlaneResult<T> {
+  if (result.ok && result.value) {
+    if (readIdleMs(result.value.idleMs) === undefined)
+      delete result.value.idleMs;
+    if (readRetainUntil(result.value.retainUntil) === undefined)
+      delete result.value.retainUntil;
   }
   return result;
 }
@@ -1399,7 +1488,8 @@ export async function touchComputerActivity(args: {
  * machine mid-wait, and rides the same authorization as the first call.
  */
 export async function ensureComputerReady(args: {
-  bearer: string;
+  /** Read before each reserve call, so a long poll sends a renewed bearer. */
+  bearer: AuthHeaderSource;
   projectId: string;
   /** Phase 3 scope; forwarded verbatim to reserveComputer (legacy when absent). */
   executionScope?: ExecutionScope;
@@ -1415,7 +1505,10 @@ export async function ensureComputerReady(args: {
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    const reserved = await reserveComputer(args);
+    const reserved = await reserveComputer({
+      ...args,
+      bearer: authHeaderNow(args.bearer),
+    });
     if (!reserved.ok) return reserved;
     const { status } = reserved.value;
     if (status === "ready") return reserved;

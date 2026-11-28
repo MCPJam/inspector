@@ -35,30 +35,22 @@ describe("WebMCP visibility, local", () => {
     state.hosted = false;
   });
 
-  it.each([true, false, undefined])(
-    "uses only the local Browser flag (%s), preserving hydration",
-    async (enabled) => {
-      state.flags = {
-        "local-browser-enabled": enabled,
-        "hosted-browser-enabled": true,
-        "webmcp-inspector-enabled": true,
-        "sandbox-images-enabled": true,
-      };
-      // A local inspector may run against no backend; it never asks one.
-      state.availability = { inspector: true };
-      const hooks = await import("../useWebmcpInspectorEnabled");
-      expect(hooks.WEBMCP_INSPECTOR_FEATURE_FLAG).toBe("local-browser-enabled");
-      const { result } = renderHook(() => ({
-        state: hooks.useWebmcpInspectorEnabledState(),
-        visible: hooks.useWebmcpInspectorEnabled(),
-      }));
-      expect(result.current).toEqual({
-        state: enabled,
-        visible: enabled === true,
-      });
-      expect(new Set(state.reads)).toEqual(new Set(["local-browser-enabled"]));
-    },
-  );
+  it("is always visible, whatever any flag or backend says", async () => {
+    state.flags = {
+      "hosted-browser-enabled": false,
+      "webmcp-inspector-enabled": false,
+      "sandbox-images-enabled": false,
+    };
+    // A local inspector may run against no backend; it never asks one.
+    state.availability = { inspector: false };
+    const hooks = await import("../useWebmcpInspectorEnabled");
+    const { result } = renderHook(() => ({
+      state: hooks.useWebmcpInspectorEnabledState(),
+      visible: hooks.useWebmcpInspectorEnabled(),
+    }));
+    expect(result.current).toEqual({ state: true, visible: true });
+    expect(state.reads).toEqual([]);
+  });
 });
 
 describe("WebMCP visibility, hosted", () => {

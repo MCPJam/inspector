@@ -4,6 +4,7 @@ import { adapterHttp, managerHttp } from "../http-adapters.js";
 import { sessionAuthMiddleware } from "../../../middleware/session-auth.js";
 import { generateSessionToken } from "../../../services/session-token.js";
 import { tunnelManager } from "../../../services/tunnel-manager.js";
+import { recordDeliveredAccountKind } from "../../../utils/delivered-oauth-credential.js";
 
 const rpc = { jsonrpc: "2.0", id: 1, method: "tools/list" };
 describe("bridge credential boundary", () => {
@@ -140,6 +141,83 @@ describe("bridge credential boundary", () => {
       ).toBe(400);
     } finally {
       await local.reader.cancel();
+    }
+  });
+  it("refuses a public tunnel caller once the server is on a shared account", async () => {
+    const signIn = (oauthAccountKind?: "shared") =>
+      recordDeliveredAccountKind(manager, "A", {
+        config: { url: "https://a.example/mcp", credentialSource: "mcpjam-backend" },
+        authorizeResult: { oauthAccountKind },
+      });
+    signIn("shared");
+    try {
+      for (const url of [
+        "/api/mcp/adapter-http/A?k=secret-A",
+        "/api/mcp/adapter-http/A/messages?k=secret-A&sessionId=s",
+      ]) {
+        const res = await post(url);
+        expect(res.status).toBe(403);
+        expect((await res.json()).error).toContain("shared with the project");
+      }
+      expect(manager.listTools).not.toHaveBeenCalled();
+      // This person's own UI still reaches it.
+      expect((await post(`/api/mcp/adapter-http/A?_token=${token}`)).status).toBe(200);
+    } finally {
+      signIn();
+    }
+  });
+  const shareA = (oauthAccountKind?: "shared") =>
+    recordDeliveredAccountKind(manager, "A", {
+      config: { credentialSource: "mcpjam-backend" },
+      authorizeResult: { oauthAccountKind },
+    });
+  it("checks a public tunnel caller again once its body is in", async () => {
+    const { reader, endpoint } = await open("?k=secret-A");
+    try {
+      for (const url of ["/api/mcp/adapter-http/A?k=secret-A", endpoint]) {
+        // The server moves onto a shared account while the body is in flight.
+        const body = new ReadableStream(
+          {
+            pull(controller) {
+              shareA("shared");
+              controller.enqueue(new TextEncoder().encode(JSON.stringify(rpc)));
+              controller.close();
+            },
+          },
+          { highWaterMark: 0 },
+        );
+        const res = await app.request(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          duplex: "half",
+        } as RequestInit);
+        expect(res.status).toBe(403);
+        shareA();
+      }
+      expect(manager.listTools).not.toHaveBeenCalled();
+    } finally {
+      shareA();
+      await reader.cancel();
+    }
+  });
+  it("ends a public tunnel caller's notification stream once the account is shared", async () => {
+    const { reader } = await open("?k=secret-A");
+    try {
+      shareA("shared");
+      const relay = manager.addNotificationHandler.mock.calls.find(
+        ([id, method]) => id === "A" && method === "notifications/message",
+      )?.[2] as (notification: unknown) => void;
+      relay({ method: "notifications/message", params: { data: "account data" } });
+      let text = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += new TextDecoder().decode(value);
+      }
+      expect(text).not.toContain("account data");
+    } finally {
+      shareA();
     }
   });
 });

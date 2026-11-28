@@ -1066,6 +1066,119 @@ describe("web auth manager batching", () => {
     ]);
   });
 
+  it.each([
+    ["explicit OAuth", { useOAuth: true }],
+    ["discover", { authMethod: "auto" }],
+  ])("refuses a recovered token bound to another origin than the server's (%s)", async (_label, auth) => {
+    // Pass 1b recovers the token locally from material for the server's NEW
+    // address: the connection reads the old one, so the token is held back,
+    // and a discover server reports it instead of connecting bare.
+    global.fetch = vi.fn(async (input) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        return Response.json({
+          results: {
+            "server-private": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              oauthUnavailableReason: "private_authorization_server",
+              serverConfig: {
+                transportType: "http",
+                url: "http://localhost:8000/mcp",
+                headers: {},
+                ...auth,
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return Response.json(
+          {
+            success: false,
+            code: "private_authorization_server",
+            message: "Authorization server is on a private address.",
+            refresh: {
+              connectionId: "cred-1",
+              authorizationServerUrl: "http://localhost:9000",
+              serverUrl: "http://localhost:8001/mcp",
+              oauthResourceUrl: "http://localhost:8001",
+              clientId: "client-1",
+              refreshToken: "stored-refresh-token",
+            },
+          },
+          { status: 409 },
+        );
+      }
+      if (url.endsWith("/web/oauth/import-tokens")) {
+        return Response.json({ success: true });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+    localRefreshMock.mockResolvedValue({ access_token: "moved-token" });
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "bearer-token",
+        "project-1",
+        ["server-private"],
+        10_000,
+      ),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(localRefreshMock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(mcpClientManagerMock.mock.calls)).not.toContain(
+      "moved-token",
+    );
+  });
+
+  it("refuses a discover server's recovered token when the refresh names no origins", async () => {
+    // The recovery names no account, so a backend answer without origins
+    // cannot tie the token to this server; no manager is built.
+    global.fetch = vi.fn(async (input) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        return Response.json({
+          results: {
+            "server-private": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              oauthUnavailableReason: "private_authorization_server",
+              serverConfig: {
+                transportType: "http",
+                url: "http://localhost:8000/mcp",
+                headers: {},
+                authMethod: "auto",
+              },
+            },
+          },
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return Response.json({ success: true, accessToken: "unplaced-token" });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(mockContext),
+        "bearer-token",
+        "project-1",
+        ["server-private"],
+        10_000,
+      ),
+    ).rejects.toMatchObject({
+      status: 401,
+      details: expect.objectContaining({ originRefused: true }),
+    });
+    expect(mcpClientManagerMock).not.toHaveBeenCalled();
+  });
+
   it("does not report refusals unless asked to tolerate them", async () => {
     global.fetch = vi.fn(async () =>
       Response.json({
@@ -1685,6 +1798,7 @@ describe("web auth manager batching", () => {
                 accessLevel: "project_member",
                 permissions: { chatOnly: false },
                 oauthAccessToken: "old-hosted-token",
+                oauthCredentialId: "cred-1",
                 serverConfig: {
                   transportType: "http",
                   url: "https://server-1.example.com/mcp",
@@ -1705,10 +1819,12 @@ describe("web auth manager batching", () => {
       expect(init?.headers).toEqual({
         "Content-Type": "application/json",
         Authorization: "Bearer bearer-token",
+        "x-mcpjam-delivery-contract": "1",
       });
       expect(JSON.parse(init?.body as string)).toEqual({
         projectId: "project-1",
         serverId: "server-1",
+        connectionId: "cred-1",
         // This builder is shared with the hosted /web routes, but in LOCAL
         // mode this process is the one that can reach a private authorization
         // server — so it declares that, exactly as the /api/mcp resolver does.
@@ -1807,6 +1923,7 @@ describe("web auth manager batching", () => {
               oauthResourceUrl: "http://localhost:8000",
               clientId: "client-1",
               refreshToken: "stored-refresh-token",
+              connectionId: "cred-1",
             },
           }),
           { status: 409, headers: { "Content-Type": "application/json" } }
@@ -1858,6 +1975,7 @@ describe("web auth manager batching", () => {
                 accessLevel: "project_member",
                 permissions: { chatOnly: false },
                 oauthAccessToken: "old-hosted-token",
+                oauthCredentialId: "cred-1",
                 serverConfig: {
                   transportType: "http",
                   url: "https://server-1.example.com/mcp",
@@ -2062,7 +2180,9 @@ describe("web auth manager batching", () => {
         serverName: "Asana",
       },
     });
-    expect(error.message).toContain("credential export policy");
+    expect(error.message).toContain(
+      "turn on Allow credential export in Organization settings under Security",
+    );
     // Authorizing again would mint a token the same policy withholds.
     expect(error.details?.oauthRequired).toBeUndefined();
   });
@@ -2331,6 +2451,7 @@ describe("web auth manager batching", () => {
               accessLevel: "project_member",
               permissions: { chatOnly: false },
               oauthAccessToken: "stored-token",
+              oauthCredentialId: "cred-1",
               serverConfig: {
                 transportType: "http",
                 url: "https://server-1.example.com/mcp",

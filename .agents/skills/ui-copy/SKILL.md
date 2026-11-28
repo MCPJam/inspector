@@ -14,6 +14,11 @@ Peter Yang's MIT-licensed `no-ai-slop` skill to copy of five to forty words.
 
 ## Two jobs
 
+For errors, `DESIGN.md`'s **Errors** section is authoritative. Apply
+`.agents/skills/error-message-review/SKILL.md` to the surrounding control,
+recovery action and preserved input, not just the string. The patterns below
+also apply to non-error copy; they do not replace the error standard.
+
 **Detect.** For each string, name every pattern below that applies, quote the
 string, and give the fix in a few words. Do not rewrite unasked. A string with
 no pattern is fine as it is; terse labels are not slop.
@@ -27,7 +32,7 @@ exclamation mark, no emoji. Return only the new copy.
 ## What good copy does
 
 An error names the blocked action and a supported next step, in words the user
-already knows. "Your profile picture could not be updated. Try uploading it
+already knows. "Couldn't update your profile picture. Try uploading it
 again." A confirmation says what will happen: "Delete 3 runs? This cannot be
 undone." An empty state says what belongs here and how to start. A success
 toast says what is now true: "Server saved." Nothing else.
@@ -36,8 +41,8 @@ toast says what is now true: "Server saved." Nothing else.
 
 | Pattern | Looks like | Fix |
 | --- | --- | --- |
-| `vague-error` | "Something went wrong", "An unexpected error occurred", "Unknown error" | Say what failed: "Could not reach the server." |
-| `no-next-step` | "Failed to save." | Add what the user can do: "Could not save. Check the URL and try again." |
+| `vague-error` | "Something went wrong", "An unexpected error occurred", "Unknown error" | Apply the Errors standard to the full message and available actions. |
+| `no-next-step` | "Failed to save." | Name the object and a supported recovery from the surrounding flow. |
 | `apology` | "Oops!", "Sorry, we", "Unfortunately" | Delete the apology, keep the fact. |
 | `exclamation` | "Saved successfully!" | "Saved." |
 | `success-noise` | "Successfully", "has been successfully" | State what is true now: "Server added." |

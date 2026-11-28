@@ -29,6 +29,7 @@ import tasksWeb from "./tasks.js";
 import eventsWeb from "./events.js";
 import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
+import chatPrepare from "./chat-prepare.js";
 import { onboardingTurnTraceMiddleware } from "../../services/plugin-host/onboarding-trace.js";
 import mcpjamAgent from "./mcpjam-agent.js";
 import { platformAgentGate } from "../../middleware/platform-agent-gate.js";
@@ -39,6 +40,9 @@ import swarmGenerate from "./swarm-generate.js";
 import { harnessForwardingApprovals } from "./harness-forwarding.js";
 import { harnessWidgets } from "./harness-widget.js";
 import { harnessMcp } from "./harness-mcp.js";
+import mockMcp, { mockDoorMiddleware } from "./mock-mcp.js";
+import { registerMockInProcessHandler } from "../../services/mock/registry.js";
+import { inProcessMockHandler } from "../../services/mock/route.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
 import environments from "./environments.js";
@@ -53,6 +57,7 @@ import conformanceWeb from "./conformance.js";
 import conformanceShared from "./conformance-shared.js";
 import sharedResources from "./shared-resources.js";
 import conformanceShareCard from "./conformance-share-card.js";
+import { hostedServerFeatureRoutes } from "../shared/server-feature-observations.js";
 import score from "./score.js";
 import bench from "./bench.js";
 import apiKeys from "./api-keys.js";
@@ -109,6 +114,13 @@ web.use(
   // A plugin onboarding turn records its phases; any other passes through.
   onboardingTurnTraceMiddleware,
 );
+// Setting up a chat's computer before its first message is for members only.
+web.use(
+  "/chat/*",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  denyGuests("Setting up a computer"),
+);
 // MCPJAM_PLATFORM_AGENT=off answers every agent route here, ahead of auth.
 web.use("/mcpjam-agent", platformAgentGate);
 web.use("/mcpjam-agent/*", platformAgentGate);
@@ -139,7 +151,12 @@ for (const startsWork of [
 }
 web.post("/servers/checks/promote", promoteServerCheck);
 // All hosted checks share ten active slots per verified user across replicas.
-for (const spendsEgress of ["/servers/doctor", "/servers/validate"]) {
+// A canvas refresh connects, captures and probes, so it takes a slot too.
+for (const spendsEgress of [
+  "/servers/doctor",
+  "/servers/validate",
+  "/servers/canvas/refresh",
+]) {
   web.use(spendsEgress, mcpEgressRateLimitMiddleware);
 }
 // Connector Bench. Listed path-by-path rather than as `/bench/*` because
@@ -164,6 +181,9 @@ web.use("/registry/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // tool/prompt/resource leg against a freshly-authorized manager.
 web.use("/mrtr/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/server/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// A mock server's HTTP door. Its own chain (bearer auth, guest refusal) answers
+// in JSON-RPC, so it does not take the guest limiter above.
+web.use("/mock-mcp/*", ...mockDoorMiddleware);
 // `/computers/exec` runs commands — bearer required. `/computers/config` is
 // deliberately open: it returns only a boolean and a public URL, and the
 // client needs it before any authed flow to know where the terminal lives.
@@ -214,12 +234,14 @@ if (HOSTED_MODE) {
 // authz). Guests are closed out HERE and not left to the backend: every
 // endpoint on this router resolves a `signedIn*` function, so a guest bearer
 // could only ever be refused — the guest-reachable `*ForRuntimeExecution`
-// variants are used by the harness path, never by these routes.
+// variants are used by the harness path, never by these routes. Verify the
+// caller here because skill creation parses a document before calling Convex.
 web.use(
   "/skills/*",
   bearerAuthMiddleware,
   guestRateLimitMiddleware,
   denyGuests("Cloud Skills"),
+  requireVerifiedAuth(),
 );
 web.use(
   "/browser-profiles/*",
@@ -311,6 +333,7 @@ web.route("/org-gateway-test", orgGatewayTest);
 // runtimes mint their own guest via POST /api/web/guest-session.
 web.route("/audio", audioTranscriptions);
 web.route("/chat-v2", chatV2);
+web.route("/chat", chatPrepare);
 web.route("/chat-persistence", chatPersistence);
 web.route("/turn-authorization", turnAuthorization);
 // Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like
@@ -320,6 +343,10 @@ web.use("/harness-forwarding/*", bearerAuthMiddleware, denyGuests("Forwarding ap
 web.route("/harness-forwarding", harnessWidgets);
 web.route("/harness-forwarding", harnessForwardingApprovals);
 web.route("/harness-mcp", harnessMcp);
+web.route("/mock-mcp", mockMcp);
+// MCPJam's own dialers call a mock in process through this handler (hosted,
+// `npx` and the desktop app all mount this router).
+registerMockInProcessHandler(inProcessMockHandler());
 web.route("/mcpjam-agent", mcpjamAgent);
 web.route("/plugin-forms", pluginFormAnswers);
 web.route("/apps/plugin-instances", pluginInstances);
@@ -344,6 +371,7 @@ web.route("/server-connections", serverConnectionsWeb);
 web.route("/guest-token", guestToken);
 web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
+web.route("/server-features", hostedServerFeatureRoutes);
 web.route("/mrtr", mrtrContinuation);
 web.route("/registry", registryWeb);
 // `/computers/terminal` (the WS) is registered on the root app in

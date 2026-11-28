@@ -6,17 +6,11 @@ import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
-const navigateEvals = vi.hoisted(() => vi.fn());
-vi.mock("@/components/evals/create-suite-navigation", () => ({
-  navigatePlaygroundEvalsRoute: navigateEvals,
+const navigateEvaluate = vi.hoisted(() => vi.fn());
+vi.mock("@/components/evaluate/create-suite-navigation", () => ({
+  navigatePlaygroundEvalsRoute: navigateEvaluate,
 }));
 
-/**
- * The quickstart is reached from BOTH eval surfaces, and each owns its own
- * URL prefix. Landing is therefore the caller's to decide — hard-coding the
- * shipped tab's navigator sent an Evaluate reader to `/evals/...`, i.e. the
- * other surface's copy of the suite they had just made.
- */
 function options(overrides: Record<string, unknown> = {}) {
   return {
     projectId: "project-1",
@@ -33,9 +27,9 @@ function options(overrides: Record<string, unknown> = {}) {
 }
 
 describe("runExcalidrawQuickstart landing", () => {
-  it("lands where the caller says, not on the shipped Evals tab", async () => {
+  it("uses the caller's navigation override", async () => {
     const navigate = vi.fn();
-    navigateEvals.mockClear();
+    navigateEvaluate.mockClear();
 
     await runExcalidrawQuickstart(options({ navigate }));
 
@@ -43,15 +37,15 @@ describe("runExcalidrawQuickstart landing", () => {
       type: "suite-overview",
       suiteId: "suite-1",
     });
-    expect(navigateEvals).not.toHaveBeenCalled();
+    expect(navigateEvaluate).not.toHaveBeenCalled();
   });
 
-  it("still lands on the Evals tab when no caller says otherwise", async () => {
-    navigateEvals.mockClear();
+  it("defaults to the current Evaluate navigator", async () => {
+    navigateEvaluate.mockClear();
 
     await runExcalidrawQuickstart(options());
 
-    expect(navigateEvals).toHaveBeenCalledWith({
+    expect(navigateEvaluate).toHaveBeenCalledWith({
       type: "suite-overview",
       suiteId: "suite-1",
     });

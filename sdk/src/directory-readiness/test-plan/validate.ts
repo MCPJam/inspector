@@ -140,7 +140,16 @@ function checkCases(context: Context) {
     if (!testCase.arguments) add("argumentsMissing", about);
     const where = `Case ${testCase.id}`;
     const used = checkReferences(context, testCase.arguments, where, about);
-    checkWriteScope(context, entry, used, where, about);
+    checkWriteScope(context, entry, used, testCase.arguments, where, about);
+    if (
+      entry.action !== "excluded" &&
+      testCase.arguments &&
+      entry.writes.length > 0 &&
+      entry.effect === "destructive" &&
+      used.length === 0
+    ) {
+      add("writeScope.target", about);
+    }
     for (const fixture of testCase.creates ?? []) {
       if (!fixtures.has(fixture))
         add("unknownFixture", { ...about, fixture }, { where });
@@ -214,8 +223,25 @@ function checkCleanup(context: Context) {
     // A tool the plan does not run, or one that only reads, has its issue
     // above, as does the step's own fixture.
     if (runs && entry.effect !== "read") {
-      const others = used.filter((fixture) => fixture !== step.fixture);
-      checkWriteScope(context, entry, others, where, about);
+      if (origin === "created" && !used.includes(step.fixture)) {
+        add("cleanup.target", about);
+      }
+      for (const fixture of new Set(used)) {
+        if (
+          fixtures.get(fixture)?.origin === "existing" &&
+          entry.writes.includes(fixture)
+        ) {
+          add("cleanup.existing", { ...about, fixture });
+        }
+      }
+      checkWriteScope(
+        context,
+        entry,
+        used.filter((fixture) => fixture !== step.fixture),
+        step.arguments,
+        where,
+        about
+      );
     }
   }
   for (const { id, origin } of fixtures.values()) {
@@ -250,16 +276,29 @@ function checkWriteScope(
   { fixtures, add }: Context,
   entry: DirectoryToolPlan,
   used: readonly string[],
+  args: unknown,
   where: string,
   about: About
 ) {
   if (entry.effect === "read") return;
-  for (const fixture of new Set(used)) {
+  const literals = new Set(literalValues(args));
+  const aliased = [...fixtures.values()].filter((fixture) =>
+    Object.values(fixture.values ?? {}).some((value) => literals.has(value))
+  );
+  for (const fixture of new Set([...used, ...aliased.map(({ id }) => id)])) {
     // An undeclared fixture is already an issue of its own.
     if (fixtures.has(fixture) && !entry.writes.includes(fixture)) {
       add("writeScope.uses", { ...about, fixture }, { where });
     }
   }
+}
+
+function literalValues(value: unknown): Array<string | number> {
+  if (typeof value === "string" || typeof value === "number") return [value];
+  if (Array.isArray(value)) return value.flatMap(literalValues);
+  if (typeof value !== "object" || value === null || "$fixture" in value)
+    return [];
+  return Object.values(value).flatMap(literalValues);
 }
 
 function checkLimits({ plan, add }: Context, length: number) {

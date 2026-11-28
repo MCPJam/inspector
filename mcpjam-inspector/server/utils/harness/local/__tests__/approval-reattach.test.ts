@@ -159,52 +159,64 @@ async function fixture() {
     workRoot,
     command,
     bridgePort,
+    bundle,
+    runtime: resolved.runtime,
   };
+}
+
+/** Park the fixture's live bridge on approval `a1`, as a paused turn would. */
+function parkFixture(f: Awaited<ReturnType<typeof fixture>>) {
+  parkLocalSession({
+    sessionId: "s1",
+    generation: "generation",
+    userId: "user",
+    projectId: "project",
+    pendingApprovalIds: ["a1"],
+    isAlive: () => true,
+    holdModelTraffic: () => {},
+    end: async () => {
+      await f.supervisor.stopSession("s1");
+    },
+    resources: {
+      prepared: { sandbox: f.provider, permissionMode: "allow-reads", plan: { runtime: f.runtime } },
+      runtimeId: admission.runtimeId,
+      workspaceGrantId: "ws",
+      rebindLease: vi.fn(),
+    },
+  });
+}
+
+/** The turn delivering the decision for `a1`. */
+function decide() {
+  return prepareLocalHarnessTurn({
+    target: {
+      kind: "local-native",
+      machineId: "machine",
+      runtimeId: admission.runtimeId,
+      workspaceGrantId: "ws",
+      permissionProfile: "workspace-edits",
+      policyVersion: "v1",
+      grantToken: "grant",
+      actingUserId: "user",
+    },
+    harnessId: "claude-code",
+    modelId: "anthropic/claude-haiku-4.5",
+    sessionId: "s1",
+    runId: "new-run",
+    actor: { kind: "member" },
+    projectId: "project",
+    bearer: "Bearer fixture",
+    installedAdapterVersion: "1.0.121",
+    approvalContinuation: { generation: "generation", approvalIds: ["a1"] },
+  });
 }
 
 it.skipIf(!supportsOwnershipProof())(
   "blocks the real Claude adapter fallback after its adopted bridge dies",
   async () => {
     const f = await fixture();
-    parkLocalSession({
-      sessionId: "s1",
-      generation: "generation",
-      userId: "user",
-      projectId: "project",
-      pendingApprovalIds: ["a1"],
-      isAlive: () => true,
-      holdModelTraffic: () => {},
-      end: async () => {
-        await f.supervisor.stopSession("s1");
-      },
-      resources: {
-        prepared: { sandbox: f.provider, permissionMode: "allow-reads" },
-        runtimeId: admission.runtimeId,
-        workspaceGrantId: "ws",
-        rebindLease: vi.fn(),
-      },
-    });
-    const adopted = await prepareLocalHarnessTurn({
-      target: {
-        kind: "local-native",
-        machineId: "machine",
-        runtimeId: admission.runtimeId,
-        workspaceGrantId: "ws",
-        permissionProfile: "workspace-edits",
-        policyVersion: "v1",
-        grantToken: "grant",
-        actingUserId: "user",
-      },
-      harnessId: "claude-code",
-      modelId: "anthropic/claude-haiku-4.5",
-      sessionId: "s1",
-      runId: "new-run",
-      actor: { kind: "member" },
-      projectId: "project",
-      bearer: "Bearer fixture",
-      installedAdapterVersion: "1.0.121",
-      approvalContinuation: { generation: "generation", approvalIds: ["a1"] },
-    });
+    parkFixture(f);
+    const adopted = await decide();
     expect(adopted.ok).toBe(true);
     expect((await f.supervisor.stopSession("s1")).stopped).toBe(true);
     const adapter = createClaudeCode({
@@ -246,6 +258,21 @@ it.skipIf(!supportsOwnershipProof())(
       /pending action will not run/,
     );
     expect(f.starts).toHaveBeenCalledTimes(1);
+  },
+);
+
+it.skipIf(!supportsOwnershipProof())(
+  "refuses to hand the decision to a runtime whose pack changed while it waited",
+  async () => {
+    // Its bridge would start a new vendor process from that pack whenever its
+    // configuration changed or the vendor process died.
+    const f = await fixture();
+    parkFixture(f);
+    await writeFile(join(f.bundle, "bridge.mjs"), "console.log('swapped')");
+    const adopted = await decide();
+    expect(adopted).toMatchObject({ ok: false, status: "runtime-changed" });
+    // Ended, not left waiting for a decision it can no longer take.
+    expect(f.supervisor.liveProcessCount("s1")).toBe(0);
   },
 );
 

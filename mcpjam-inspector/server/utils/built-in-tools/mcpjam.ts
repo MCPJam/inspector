@@ -121,6 +121,27 @@ import {
   updateDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  createReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  exportDirectorySubmissionTestCasesOperation,
+  getDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  setDirectorySubmissionEvalsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -217,6 +238,29 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   updateDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  createReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
+  // Picking one up from its id, and recording what happened in the
+  // directory. The records change state, so each asks first.
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
+  getDirectorySubmissionTestPlanOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  getDirectorySubmissionEvalsOperation,
+  setDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  exportDirectorySubmissionTestCasesOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -358,6 +402,8 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  create_reviewer_handoff:
+    "The requester opens the sign-in link from the Readiness page. A chat tool would put that single-use link in the conversation.",
   // A person in the app reports through the Send feedback form, which shows
   // them where the text goes. A model-authored post to the MCPJam team from
   // inside someone's chat is a different act, and this surface declines it.
@@ -442,9 +488,15 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   generate_goals:
     "Same as generate_personas: spends, and the drafts want the picker the tab already has.",
   request_swarm_run_insights:
-    "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the swarm run it applies to.",
+    "Counts against the organization's shared daily insight quota. The Swarms tab has the button, next to the swarm run it applies to.",
   cancel_swarm_run_insights:
     "Paired with the request above; offering the cancel without the request is an odd half-surface.",
+  request_eval_run_insights:
+    "Counts against the organization's shared daily insight quota. The run page has the Analyze button, next to the run it applies to.",
+  cancel_eval_run_insights:
+    "Paired with the request above; offering the cancel without the request is an odd half-surface.",
+  build_eval_run_findings:
+    "The first half of the run page's Analyze button, which builds findings and then requests the analysis in one click.",
   // Launches a browser and executes the caller's tool. The Apps tab renders
   // the same widget interactively, with the console and network panes beside
   // it — a chat tool would hand back a verdict with none of that context.
@@ -618,6 +670,31 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Skill IDs are load-bearing on the agent catalog, not in in-app chat: the /skills surface lists the same rows with each one's pinnability inline, which is the half of the answer an id alone leaves out. Available on REST/CLI/MCP.",
   get_project_skill:
     "Paired with the list above; /skills renders the SKILL.md body next to the aggregateHash that says which version it is, and the body is mutable so that pairing is the point.",
+
+  open_mock_run:
+    "Starts a test run of a mock and returns its URL for a test harness. Runs belong to the harness that opens and closes them, not to a chat turn.",
+  reset_mock_run:
+    "Discards a run's records so a harness can start over. The harness that holds the run calls it; a chat turn does not own one.",
+  close_mock_run:
+    "Ends a test run and releases its records. Run lifecycle belongs to whoever opened the run.",
+
+  patch_mock_server:
+    "Changes one path of a mock and saves a version. It is an agent-surface edit that reports binding errors by path; chat has no place to show them.",
+  refresh_mock_server:
+    "Re-reads the real server and proposes changes to a mock. It dials the real server and returns a change list, which an agent surface reviews before saving.",
+
+  // Mock servers: authoring and the forwarding policy belong to the API, CLI and
+  // MCP agent surfaces, which hold the tier and the flag. Chat gets no mock tool.
+  create_mock_server:
+    "Authors a saved server that answers for a real one. The API, CLI and MCP agent surfaces carry it behind the backend's tier and flag check; chat would add a second door onto the same write.",
+  update_mock_server:
+    "Saves a new version of a mock from a full definition. Authoring goes through the agent surfaces, where a failed save reports the exact paths that were refused.",
+  get_mock_server:
+    "Reads a mock in bounded pages: a summary, then names and entries a page at a time, because a mock can hold hundreds of tools. Agents page through it on the API, CLI and MCP; a chat turn would spend its context on the pages.",
+  get_mock_forwarding_policy:
+    "The forwarding policy is read with the set call below on the agent surfaces; chat does not offer the pair.",
+  set_mock_forwarding_policy:
+    "Decides whether every mock in a workspace may call its real server, so who can reach those servers. It is gated on the agent catalog behind a person's approval, which chat does not have for this call.",
 };
 
 const OPERATIONS_BY_ID = new Map(

@@ -333,6 +333,7 @@ export function secureDriverContext(
     return wrapped;
   }
   return {
+    ...(context.proxyAuth ? { proxyAuth: context.proxyAuth } : {}),
     async newPage() {
       await policy.assertActive();
       const page = await context.newPage();

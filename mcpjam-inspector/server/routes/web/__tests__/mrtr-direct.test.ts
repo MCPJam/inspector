@@ -89,15 +89,18 @@ function makeFakeConnect(
   let seenCollectorFactory:
     | ((serverId: string) => unknown | undefined)
     | undefined;
+  let seenInputOptions: (() => { extensionClaims?: readonly string[] }) | undefined;
   const connect = (async (
     _c: unknown,
     rawBody: Record<string, unknown>,
     _schema: unknown,
     opts?: {
       mrtrInputCollectorForServer?: (serverId: string) => unknown | undefined;
+      mrtrInputOptionsForServer?: () => { extensionClaims?: readonly string[] };
     },
   ) => {
     seenCollectorFactory = opts?.mrtrInputCollectorForServer;
+    seenInputOptions = opts?.mrtrInputOptionsForServer;
     const collector = opts?.mrtrInputCollectorForServer?.(
       rawBody.serverId as string,
     );
@@ -121,6 +124,7 @@ function makeFakeConnect(
     connect,
     disconnect,
     factorySeen: () => seenCollectorFactory,
+    inputOptionsSeen: () => seenInputOptions?.(),
   };
 }
 
@@ -155,6 +159,40 @@ describe("resolveHostedMrtrGate", () => {
 });
 
 describe("runHostedDirectMrtrOperation — suspend", () => {
+  it("shows the extended review schema rather than its empty core envelope", async () => {
+    const fake = makeFakeConnect();
+    const extended = {
+      type: "object", required: ["reference", "priority", "approved", "tolerance"],
+      properties: {
+        reference: { type: "string", title: "Part reference", format: "uri", pattern: "^(mcp|cad|file):" },
+        priority: { type: "string", enum: ["low", "normal", "high"] },
+        purpose: { type: "string", "x-openai-suggestions": [{ const: "prototype", title: "Prototype" }] },
+        checks: { type: "array", items: { type: "string", "x-openai-suggestions": [{ const: "dimensions", title: "Dimensions" }] } },
+        approved: { type: "boolean" },
+        tolerance: { type: "number", minimum: 0, maximum: 10 },
+      },
+    };
+    const { ctx, captured } = makeCtx({ projectId: "project", serverId: "srv-1", hostedMrtrVersion: HOSTED_MRTR_VERSION });
+    await runHostedDirectMrtrOperation(ctx as never, {} as never, { method: "tools/call" }, async () => {
+      const collector = fake.factorySeen()?.("srv-1");
+      if (typeof collector !== "function") throw new Error("Missing form collector");
+      const state = makeState({ pendingInputRequests: { form: { method: "elicitation/create", params: {
+        mode: "form", message: "Review a CAD reference", requestedSchema: { type: "object", properties: {} },
+        _meta: { "openai/elicitation": { requestedSchema: extended } },
+      } } } });
+      return collector({ state, inputRequests: state.pendingInputRequests });
+    }, { rpcLogs: false, seams: seams(fake.connect) });
+    expect(captured.status).toBe(200);
+    expect(captured.payload).toMatchObject({
+      status: "input_required", pluginFormProfile: { origin: "server", userResources: false, previews: false },
+      inputRequests: [{ key: "form", requestedSchema: extended }],
+    });
+    expect(fake.inputOptionsSeen()).toMatchObject({
+      extensionClaims: ["openai/elicitation"],
+      selectFormSchema: expect.any(Function),
+    });
+  });
+
   it("returns a pending outcome without blocking and never leaks requestState", async () => {
     const fake = makeFakeConnect();
     const { ctx, captured } = makeCtx(

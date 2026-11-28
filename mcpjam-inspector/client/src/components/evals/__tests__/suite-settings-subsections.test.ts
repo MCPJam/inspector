@@ -11,7 +11,6 @@ describe("getSubsectionsForGroup", () => {
     isVerdictPolicyV2: true,
     showComputerEnvironment: true,
     showSchedule: true,
-    showDelete: true,
   };
 
   it("lists one entry per grading row, in the order the rows render", () => {
@@ -151,7 +150,6 @@ describe("getSubsectionsForGroup", () => {
       isVerdictPolicyV2: false,
       showComputerEnvironment: true,
       showSchedule: true,
-      showDelete: true,
     }).filter((sub) => sub.id === "policy" || sub.id === "checks");
 
     expect(pickActiveSubsectionFromScroll(root, subsections)).toBe("checks");

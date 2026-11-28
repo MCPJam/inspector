@@ -55,10 +55,13 @@ export function GuestSignInButton({
   location,
   size,
   className,
+  label = "Sign in",
 }: {
   location?: string;
   size?: ComponentProps<typeof Button>["size"];
   className?: string;
+  /** Names what signing in unlocks, when the surface has one action. */
+  label?: string;
 }) {
   const { signIn } = useInspectorAuth();
 
@@ -78,7 +81,7 @@ export function GuestSignInButton({
       className={className}
       onClick={handleSignIn}
     >
-      Sign in
+      {label}
     </Button>
   );
 }

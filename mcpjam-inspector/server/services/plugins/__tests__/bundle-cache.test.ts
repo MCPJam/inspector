@@ -73,6 +73,26 @@ describe("PluginBundleCache", () => {
     expect(entries.sort()).toEqual(["data.txt", "mcp.json", "plugin.json", "server"]);
   });
 
+  it("uses the wrapped plugin root on materialization and cache hits", async () => {
+    const wrapped = Object.fromEntries(
+      Object.entries(fixtureBundleFiles()).map(([path, content]) => [`wrapper/${path}`, content]),
+    );
+    const source = await fixtureBundleSource(wrapped);
+    const parsed = await parsePluginBundle(source, { profile: "openai-compatible" });
+    // The backend pin computes the stored hash from plugin-relative paths.
+    const original = await parsePluginBundle(await fixtureBundleSource(), {
+      profile: "openai-compatible",
+    });
+    expect(parsed.bundleHash).toBe(original.bundleHash);
+    const wrappedIdentity = { ...identity(), bundleHash: original.bundleHash };
+    const seeded = await cache.materialize(wrappedIdentity, { source, profile: "openai-compatible" });
+    expect(seeded.root).toBe(join(cache.entryPath(wrappedIdentity), "wrapper"));
+    await expect(readFile(join(seeded.root, "server/index.js"), "utf8")).resolves.toContain("tools/call");
+    const hit = await cache.materialize(wrappedIdentity, { profile: "openai-compatible" });
+    expect(hit.root).toBe(seeded.root);
+    expect(hit.parsed.executionDigest).toBe(parsed.executionDigest);
+  });
+
   it("verifies a legacy OpenAI archive on seed and cache hit while preserving strict defaults", async () => {
     const source = await fixtureBundleSource(legacyFixtureBundleFiles());
     const parsed = await parsePluginBundle(source, { profile: "openai-compatible" });

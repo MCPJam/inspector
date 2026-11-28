@@ -41,6 +41,7 @@ vi.mock("../../../routes/web/mcpjam-platform-client.js", () => ({
 }));
 import { prepareManagedTools } from "../managed-tools.js";
 import { TurnResources } from "../resources.js";
+import { TurnTiming } from "../../../utils/turn-timing.js";
 import { guestBrowserProject } from "../../../utils/computers/browser-rollout.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 
@@ -69,6 +70,7 @@ async function prepareLocalTurn() {
       bearerToken: "bearer",
       localIngress: true,
       resources: new TurnResources(() => {}),
+      timing: new TurnTiming(),
       setup,
       connections: { validatedPageTools: [] },
     });

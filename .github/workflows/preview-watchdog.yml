@@ -5,8 +5,7 @@ name: Preview watchdog
 # dispatch was lost (token expired, GitHub API blip, job crashed, etc.).
 # Today this leaves the author staring at a stale "preview requested"
 # message with no recourse. Watchdog runs every 15 minutes and nudges
-# anything older than 20 minutes with a follow-up comment and link to
-# re-run the upsert-preview workflow.
+# anything older than 20 minutes with a follow-up comment directing the author to Jamroom.
 #
 # Strictly additive — doesn't modify existing preview comments, only adds
 # a sibling `mcpjam-preview-watchdog` comment. Posts once per stuck PR and
@@ -64,14 +63,13 @@ jobs:
               const ageMinutes = Math.round(
                 (Date.now() - updatedAt) / 60000,
               );
-              const runsUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/workflows/pr-preview.yml?query=branch%3A${encodeURIComponent(pr.head.ref)}`;
               const body = [
                 watchdogMarker,
                 "### Preview watchdog",
                 `The "preview requested" state has been stuck for ~${ageMinutes} minutes.`,
                 "The backend callback probably dropped (token expired, dispatch failed, or the backend job crashed).",
                 "",
-                `Recover: re-run the [\`upsert-preview\` workflow](${runsUrl}) for this PR, or push an empty commit.`,
+                "Request a new preview for this PR through Jamroom.",
                 "",
                 "_Watchdog runs every 15 minutes; this comment updates in place when conditions change._",
               ].join("\n");

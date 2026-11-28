@@ -180,6 +180,19 @@ describe("agent op registry", () => {
         // the agent as its author.
         "create_directory_submission",
         "update_directory_submission",
+        // A test plan revision: it calls nothing until a start names it.
+        "save_directory_submission_test_plan",
+        // A submission's eval suite and the cases a package declares: they
+        // call no tool until someone runs the suite.
+        "set_directory_submission_evals",
+        "import_directory_submission_test_cases",
+        // Stops a reviewer sign-in, as cancel_readiness_run stops a run.
+        "cancel_reviewer_attempt",
+        // What happened in the directory, as the user told it or as seen in
+        // the portal: append-only records that spend nothing.
+        "record_directory_submission_status",
+        "record_directory_submission_snapshot",
+        "import_directory_finding",
         "ensure_adhoc_environment",
         "name_environment",
         createEvalSuiteOperation.name,
@@ -187,6 +200,15 @@ describe("agent op registry", () => {
         createEvalCasesOperation.name,
         updateEvalCaseOperation.name,
         updateEvalSuiteOperation.name,
+        // A mock server and its versions: saved, free, and undone by saving
+        // the version before. The backend holds the tier and the flag.
+        "create_mock_server",
+        "update_mock_server",
+        "patch_mock_server",
+        "refresh_mock_server",
+        "open_mock_run",
+        "reset_mock_run",
+        "close_mock_run",
         "create_persona",
         "update_persona",
         "create_goal",
@@ -199,6 +221,7 @@ describe("agent op registry", () => {
         "dismiss_study_finding",
         "undismiss_study_finding",
         "cancel_study_insights",
+        "cancel_eval_run_insights",
       ].sort(),
     );
   });
@@ -251,6 +274,39 @@ describe("agent op registry", () => {
         runId: "run_1",
       }),
     ).toBe("Cancel run run_1");
+    expect(
+      proposalMetaFor("request_eval_run_insights").description({
+        runId: "run_1",
+      }),
+    ).toBe("Analyze eval run run_1 with a model");
+    expect(
+      proposalMetaFor("request_eval_run_insights").description({
+        runId: "run_1",
+        force: true,
+      }),
+    ).toBe("Analyze eval run run_1 again with a model");
+    expect(
+      proposalMetaFor("build_eval_run_findings").description({
+        runId: "run_1",
+      }),
+    ).toBe("Build findings for eval run run_1");
+  });
+
+  it("names insights targets by the canonical selector, or the deprecated one", () => {
+    // Both spellings validate, so reading only the deprecated one rendered
+    // "(unnamed)" for every current caller.
+    const swarm = proposalMetaFor("request_swarm_run_insights").description;
+    expect(swarm({ swarmRun: "sr_1" })).toBe(
+      "Analyze swarm run sr_1 with a model",
+    );
+    expect(swarm({ wave: "sr_2" })).toBe("Analyze swarm run sr_2 with a model");
+    const study = proposalMetaFor("request_study_insights").description;
+    expect(study({ study: "st_1" })).toBe(
+      "Analyze user testing on st_1 with a model",
+    );
+    expect(study({ scenario: "st_2" })).toBe(
+      "Analyze user testing on st_2 with a model",
+    );
   });
 
   it("reads only the selector the operation's schema actually declares", () => {
@@ -902,6 +958,14 @@ describe("agent op registry", () => {
         client,
       }),
     ).toEqual(input);
+  });
+
+  it("says on a submission run's approval when it makes a test plan's calls", () => {
+    const describeRun = proposalMetaFor("start_directory_submission_run").description;
+    expect(describeRun({ submission: "sub_1" })).toBe("Run the checks for directory submission sub_1");
+    expect(describeRun({ submission: "sub_1", testPlanRevision: 3 })).toBe(
+      "Run the checks for directory submission sub_1, with the calls of its test plan revision 3",
+    );
   });
 
   it("freezes a directory install pin and endpoint at mint time", async () => {
@@ -2033,6 +2097,22 @@ describe("tier derives from operation.risk", () => {
         "platform-paid, so risk is none and would derive direct, but the run " +
         "dials the submission's server and persists a project row.",
     },
+    create_reviewer_attempt: {
+      tier: "gated",
+      reason:
+        "MCPJam runs the sign-in, so risk is none and would derive direct. " +
+        "Gated because it starts a run that signs in to the submission's " +
+        "server with the project's reviewer credentials.",
+    },
+    resume_reviewer_attempt: {
+      tier: "gated",
+      reason: "The same as create_reviewer_attempt: it starts the next run that signs in.",
+    },
+    create_reviewer_handoff: {
+      tier: "excluded",
+      reason:
+        "The result carries a single-use browser sign-in link. Even a gated call would put it in the agent transcript.",
+    },
     generate_eval_cases: {
       tier: "gated",
       reason:
@@ -2075,6 +2155,20 @@ describe("tier derives from operation.risk", () => {
         "Platform-paid, so risk is none. Gated on the insightsPerDay " +
         "ledger, which is SHARED with user-testing and eval-run insights — " +
         "a request here takes one from there, across the whole organization.",
+    },
+    build_eval_run_findings: {
+      tier: "gated",
+      reason:
+        "No model call, so risk is none, but a finished build on a run never " +
+        "analyzed starts the automatic analysis, which takes a unit of the " +
+        "shared insightsPerDay ledger.",
+    },
+    request_eval_run_insights: {
+      tier: "gated",
+      reason:
+        "The same shared insightsPerDay ledger as request_swarm_run_insights: " +
+        "platform-paid, so risk is none, but one agent turn can take the " +
+        "slice a person was going to use.",
     },
     request_study_insights: {
       tier: "gated",
@@ -2308,6 +2402,10 @@ const EXPECTED_PROMPT_NOTES = [
   "- `start_muse_readiness_run` is the same receipt-and-poll shape, graded against Meta's Muse connector guidelines. It takes no `submissionMode` and has no AI observations. Muse reviews every submission by hand, so a `ready` grade is a passed preflight, never an approval.",
   "- `update_directory_submission` records you as the author of each answer you write. `confirm` states that a declaration (data handling, acknowledgments) is true: confirm one only when the user told you it is. A 409 names the `conflictingKeys` someone else changed since your `expectedRevision`; read the submission again before you reapply your change.",
   "- `start_directory_submission_run` returns a RECEIPT. Poll `get_readiness_run` until it finishes, then read `get_directory_submission_results`, which places each finding under the portal step and field it belongs to.",
+  "- `save_directory_submission_test_plan` calls no tool. A run makes the plan's calls, destructive ones included, only when `start_directory_submission_run` names the plan's `revision` as `testPlanRevision`: name it only for a plan the user has reviewed.",
+  "- `create_reviewer_attempt` takes secret NAMES only. Never write a password into a call: ask the user to save it in the app as a materialized project secret whose name starts with `MCPJAM_REVIEWER_`, then pass that name.",
+  "- Given a directory submission's id or link, call `get_directory_submission_handoff` first: it says where the submission stands and lists `nextActions`, each an operation with the input to send. Do not ask the user again for anything it already holds.",
+  "- Record a directory status, snapshot or finding only as the user told you (`reported`) or as you saw it in the portal (`observed`), never inferred from MCPJam's own results. A record is never edited: to correct one, record a newer one.",
   "- `start_conformance_run` returns a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_conformance_run` and report what it says, never the receipt.",
   "- A conformance run answers three separate questions and they do not collapse. `status` is whether the run finished; `outcome` is the grade (a `completed` run can be `failed`); `score` is the number. `pending` counts checks this profile reported but did not score — do not treat them as failures.",
   "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",
@@ -2333,6 +2431,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `get_client` is the first step of every client edit, not an optional one: `update_client` and `set_client_servers` require the `configId` it returns as `expectedConfigId`, and a rename requires the `name` it returns as `expectedName`.",
   "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
   "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
+  "- `request_eval_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with goal, study and user-testing insights. Most finished runs are analyzed automatically: read `get_eval_run`'s `insights` first. The findings are `currentFindings`, and `unifiedFindings.snapshot.enrichment.status` says whether a model explained them. Request only when there is no explanation or it is `stale`, and never when `unifiedFindings.job.errorCode` is `org_model_unavailable`: that analysis cannot run until the organization's AI key policy changes.",
   "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again runs another analysis against MCPJam's daily analysis budget.",
   "- `start_eval_description_experiment` launches TWO replayed runs (original + rewrite) and spends eval-iteration credits for both. Poll `get_eval_description_experiment`. Emulated engine only; a harness source is refused.",
   "- `connect_eval_github_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_github_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do. `connect_eval_check_repo` and `list_eval_check_repos` are the pre-rename spellings of the same two operations — a `check` there is a GITHUB check, never a case's grading check.",
@@ -2346,7 +2445,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `get_swarms_overview` is the right first read for 'how are our swarms doing'. Every rate in it is over GRADED sessions, never attempted ones, and `passRate: null` means nothing has been graded yet — it does not mean everything failed.",
   "- To explain why a run failed, read `get_goal_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
   "- Launching a goal fans out real model conversations and spends credits for every one. Calling `launch_goal_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_goal`.",
-  "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+  "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with study, user-testing and eval run insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
   "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
   "- For user testing, read `get_study_metrics` and `list_study_findings` first. They answer how a study is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
   "- `get_study_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole study.",

@@ -19,7 +19,7 @@
  * layering.
  */
 import { describe, expect, it, vi } from "vitest";
-import type { ProbeMcpServerResult } from "@mcpjam/sdk";
+import type { ProbeMcpServerConfig, ProbeMcpServerResult } from "@mcpjam/sdk";
 import {
   BlockedEgressTargetError,
   createGuardedFetch,
@@ -29,6 +29,7 @@ import {
   classifyDiscoveryResult,
   DISCOVERY_TIMEOUT_MS,
   MAX_DISCOVERY_TIMEOUT_MS,
+  probeThroughEgressGuard,
   runDiscoveryPreflight,
 } from "../server-connection-discovery.js";
 
@@ -672,6 +673,56 @@ describe("runDiscoveryPreflight", () => {
       kind: "terminal",
       errorCode: "URL_NOT_ALLOWED",
     });
+  });
+
+  it("stays refused when only a metadata hop was refused, and keeps what the server answered", async () => {
+    // A public server whose metadata names an authorization server that
+    // resolves privately. Discovery must still refuse it; a caller reporting
+    // on the server gets the answer it did receive.
+    const dependencies = {
+      fetchFn: async (target: string | URL | Request) => {
+        if (String(target).startsWith("https://idp.example")) {
+          throw new BlockedEgressTargetError(
+            'Request URL hostname "idp.example" resolves to a private address',
+          );
+        }
+        return new Response("", { status: 401 });
+      },
+      probeServer: async (config: ProbeMcpServerConfig) => {
+        await config.fetchFn?.(config.url, { method: "POST" });
+        // The prober swallows a refused metadata hop and reports the rest.
+        await config
+          .fetchFn?.("https://idp.example/.well-known/oauth-authorization-server")
+          .catch(() => {});
+        return probe({ status: "oauth_required" });
+      },
+    };
+    const input = { serverUrl: "https://example.com/mcp" };
+
+    expect(await runDiscoveryPreflight(input, dependencies)).toMatchObject({
+      kind: "terminal",
+      errorCode: "URL_NOT_ALLOWED",
+    });
+    expect(await probeThroughEgressGuard(input, dependencies)).toMatchObject({
+      kind: "refused",
+      answeredProbe: { status: "oauth_required" },
+    });
+  });
+
+  it("carries no probe when the server URL itself was refused", async () => {
+    const guarded = await probeThroughEgressGuard(
+      { serverUrl: "https://evil.example/mcp" },
+      {
+        fetchFn: async () => {
+          throw new BlockedEgressTargetError(
+            'Request URL hostname "evil.example" resolves to 169.254.169.254',
+          );
+        },
+        probeServer: probeThroughFetch(),
+      },
+    );
+    expect(guarded.kind).toBe("refused");
+    expect(guarded).not.toHaveProperty("answeredProbe");
   });
 
   it("treats a resolver outage as retryable, not as a refusal", async () => {

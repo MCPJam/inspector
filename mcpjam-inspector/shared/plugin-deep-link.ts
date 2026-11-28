@@ -28,6 +28,15 @@ export function emulatedServerPluginId(serverId: string) {
   return `server-${serverId}`;
 }
 
+export function isStandalonePublishedPluginId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value === value.trim() &&
+    /^[A-Za-z0-9][A-Za-z0-9._~:-]{0,255}$/.test(value) &&
+    !value.startsWith("server-")
+  );
+}
+
 /** True when `input` uses the plugin deep-link grammar (any scheme). A cheap
  * check for intercepting clicked links; admission still parses and validates. */
 export function isPluginDeepLink(input: unknown): boolean {

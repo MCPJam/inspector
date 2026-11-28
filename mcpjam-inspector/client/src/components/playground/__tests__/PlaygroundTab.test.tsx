@@ -20,8 +20,8 @@ import {
 // screen shows, so neutralize everything else and drive `loadingState`.
 
 vi.mock("@/hooks/useComputersEnabled", () => ({
-  useBrowserWorkspaceEnabledState: () => true,
-  useBrowserEnabledState: () => true,
+  useBrowserWorkspaceEnabledState: () => webClientFixture.workspace,
+  useBrowserEnabledState: () => webClientFixture.browsers,
 }));
 const mockLoadingScreen = vi.hoisted(() => vi.fn());
 const mockPlaygroundCenter = vi.hoisted(() => vi.fn());
@@ -44,18 +44,45 @@ vi.mock("@/components/ui-playground/hooks/use-playground-state", () => ({
   PlaygroundStateProvider: ({ children }: { children?: ReactNode }) => children,
 }));
 
+// Event subscriptions have their own provider tests; layout tests do not mount
+// the Playground state or Convex providers that the events runtime consumes.
+vi.mock("../events/PlaygroundEventsProvider", () => ({
+  PlaygroundEventsProvider: ({ children }: { children?: ReactNode }) => children,
+}));
+
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
+// A signed-in person previewing a Claude web client, for the web client tests.
+const webClientFixture = vi.hoisted(() => ({
+  signedIn: false,
+  flag: false,
+  workspace: true,
+  browsers: true as boolean | undefined,
+  host: null as null | { config: { harness: string } },
+}));
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({ isAuthenticated: false }),
+  useConvexAuth: () => ({ isAuthenticated: webClientFixture.signedIn }),
   useQuery: () => undefined,
+}));
+vi.mock("@/hooks/useWebClientsEnabled", () => ({
+  useWebClientsEnabled: () => webClientFixture.flag,
+}));
+vi.mock("@/components/playground/PlaygroundBrowserPanel", async (original) => ({
+  ...(await original<
+    typeof import("@/components/playground/PlaygroundBrowserPanel")
+  >()),
+  PlaygroundBrowserPanel: ({ webClientVendor }: { webClientVendor?: string }) => (
+    <div data-testid="browser-panel" data-web-client={webClientVendor ?? ""} />
+  ),
 }));
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: (s: Record<string, unknown>) => unknown) =>
     selector({ themeMode: "light", hostStyle: "claude" }),
 }));
-vi.mock("@/hooks/useClients", () => ({ useHost: () => ({ host: null }) }));
+vi.mock("@/hooks/useClients", () => ({
+  useHost: () => ({ host: webClientFixture.host }),
+}));
 vi.mock("@/hooks/use-previewed-client-id", () => ({
-  usePreviewedHostId: () => [null, vi.fn()],
+  usePreviewedHostId: () => [webClientFixture.host ? "host-web" : null, vi.fn()],
 }));
 vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({ servers: [] }),
@@ -334,6 +361,76 @@ describe("PlaygroundTab loading branch", () => {
         onFirstRunPromptConsumed,
       }),
     );
+  });
+});
+
+describe("PlaygroundTab web clients", () => {
+  beforeEach(() => {
+    webClientFixture.signedIn = true;
+    webClientFixture.flag = true;
+    webClientFixture.host = { config: { harness: "claude-web" } };
+    useActiveChatSessionStore.setState({
+      sessionId: "chat-web",
+      restoredSession: null,
+      restorationPending: false,
+    });
+    useBrowserWorkspaceStore.setState({ conversations: {}, autoOpened: {} });
+    mockLoadingState.current = { kind: "ready" };
+  });
+  afterEach(() => {
+    webClientFixture.signedIn = false;
+    webClientFixture.flag = false;
+    webClientFixture.workspace = true;
+    webClientFixture.browsers = true;
+    webClientFixture.host = null;
+  });
+
+  it("opens only the pane, not the side panel, with the browser workspace flag off", () => {
+    webClientFixture.workspace = false;
+    render(<PlaygroundTab {...baseProps} />);
+    expect(screen.getByTestId("browser-panel")).toHaveAttribute(
+      "data-web-client",
+      "claude",
+    );
+    expect(screen.getByTestId("collapsed-right-rail")).toBeInTheDocument();
+  });
+
+  it("opens the browser pane by itself for Claude web", () => {
+    render(<PlaygroundTab {...baseProps} />);
+    expect(
+      useBrowserWorkspaceStore.getState().conversations["chat-web"]?.open,
+    ).toBe(true);
+    expect(screen.getByTestId("browser-panel")).toHaveAttribute(
+      "data-web-client",
+      "claude",
+    );
+  });
+
+  it("leaves the pane alone while the flag is off", () => {
+    webClientFixture.flag = false;
+    render(<PlaygroundTab {...baseProps} />);
+    expect(
+      useBrowserWorkspaceStore.getState().conversations["chat-web"],
+    ).toBeUndefined();
+    expect(screen.queryByTestId("browser-panel")).toBeNull();
+  });
+
+  it("keeps a closed pane closed when the chat mounts again", () => {
+    // A reload, a chat switch or a return to the Playground mounts afresh.
+    const { unmount } = render(<PlaygroundTab {...baseProps} />);
+    act(() => useBrowserWorkspaceStore.getState().closeBrowser("chat-web"));
+    unmount();
+    render(<PlaygroundTab {...baseProps} />);
+    expect(
+      useBrowserWorkspaceStore.getState().conversations["chat-web"]?.open,
+    ).toBe(false);
+    expect(screen.queryByTestId("browser-panel")).toBeNull();
+  });
+
+  it("shows no pane while hosted browsers are unavailable", () => {
+    webClientFixture.browsers = false;
+    render(<PlaygroundTab {...baseProps} />);
+    expect(screen.queryByTestId("browser-panel")).toBeNull();
   });
 });
 

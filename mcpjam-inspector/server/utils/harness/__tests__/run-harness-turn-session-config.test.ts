@@ -1,7 +1,10 @@
 /**
- * A runtime that fingerprints its MCP configuration (Cursor's ACP adapter
- * compares every header value on live and cold resume) must get the same MCP
- * config on every turn of its lane, or it starts a new session each turn.
+ * Every runtime on a hosted chat lane gets the lane's session configuration.
+ * One that fingerprints its MCP configuration (Cursor's ACP adapter compares
+ * every header value on live and cold resume) must get the same MCP config on
+ * every turn of its lane, or it starts a new session each turn. A brokered
+ * runtime takes its session grant on its model lease, and its entries carry
+ * the tool-catalog version and close every connection.
  *
  * Driven through the real runner with the scaffold of
  * `run-harness-turn-mcp-plan.test.ts`: two turns of one Playground chat in an
@@ -12,6 +15,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
+const adapterState = vi.hoisted(() => ({ brokered: false }));
 const harnessState = vi.hoisted(() => ({
   createRuntime: vi.fn((_args: Record<string, unknown>) => ({
     harnessId: "session-stable",
@@ -56,10 +60,15 @@ vi.mock("../registry.js", () => ({
     supportsMcpToolApproval: false,
     mcpDelivery: "harness",
     mcpNativeDelivery: "session-config",
-    sessionStableMcpConfig: true,
-    // Like Cursor: the customer's own account, so no model lease is minted.
-    modelAccess: "external-account",
-    externalAccountCredentialEnv: ["VENDOR_API_KEY"],
+    ...(adapterState.brokered
+      ? // Like Claude Code: MCPJam's model lease.
+        { modelAccess: "broker" }
+      : {
+          fingerprintsMcpConfig: true,
+          // Like Cursor: the customer's own account, so no model lease is minted.
+          modelAccess: "external-account",
+          externalAccountCredentialEnv: ["VENDOR_API_KEY"],
+        }),
     supportsModel: vi.fn(() => true),
     toNativeModel: vi.fn(() => "native-model"),
     createHarness: harnessState.createRuntime,
@@ -94,9 +103,11 @@ vi.mock("../harness-proxy-token-client.js", () => ({
 
 vi.mock("../external-account-credentials.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../external-account-credentials.js")>()),
-  resolveOrgKeyCredentialPlan: vi.fn(async () => ({
-    auth: { VENDOR_API_KEY: "mcpjam-brokered-credential" },
-  })),
+  resolveOrgKeyCredentialPlan: vi.fn(async () =>
+    adapterState.brokered
+      ? undefined
+      : { auth: { VENDOR_API_KEY: "mcpjam-brokered-credential" } },
+  ),
 }));
 
 vi.mock("../harness-session-state.js", async (importOriginal) => ({
@@ -114,20 +125,32 @@ vi.mock("../harness-session-state.js", async (importOriginal) => ({
 }));
 
 const revoked = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+const brokerStarts = vi.hoisted(() => ({
+  calls: [] as Array<Record<string, unknown>>,
+  grantOrigin: "https://inspector.test" as string | undefined,
+}));
 vi.mock("../harness-model-broker.js", async (importOriginal) => ({
   boxRequestFields: (await importOriginal<typeof import("../harness-model-broker.js")>()).boxRequestFields,
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async (args: Record<string, unknown>) => {
     revoked.push(args);
     return { ok: true };
   }),
-  startHarnessModelBroker: vi.fn(async () => ({
-    ok: true,
-    proxyBaseUrl: "https://broker.example",
-    expiresAt: Date.now() + 60_000,
-  })),
+  startHarnessModelBroker: vi.fn(async (args: Record<string, unknown>) => {
+    brokerStarts.calls.push(args);
+    return {
+      ok: true,
+      proxyBaseUrl: "https://broker.example",
+      expiresAt: Date.now() + 60_000,
+      ...(args.sessionGrant && brokerStarts.grantOrigin
+        ? { sessionGrantOrigin: brokerStarts.grantOrigin }
+        : {}),
+    };
+  }),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 import { runHarnessTurn } from "../run-harness-turn";
@@ -139,8 +162,15 @@ const HANDLE = "session-handle-for-lane-1";
 const binds: Array<Record<string, unknown>> = [];
 const grants: Array<Record<string, unknown>> = [];
 
+const catalog = vi.hoisted(() => ({
+  tools: [{ name: "list_issues", inputSchema: { type: "object" } }] as Array<
+    Record<string, unknown>
+  >,
+}));
+
 function manager() {
   return {
+    listTools: vi.fn(async () => ({ tools: catalog.tools })),
     getServerConfig: vi.fn(() => ({ url: "https://server.test/mcp" })),
     getInitializationInfo: vi.fn(() => ({
       transport: "streamable-http",
@@ -192,6 +222,10 @@ beforeEach(() => {
   grants.length = 0;
   revoked.length = 0;
   minted.count = 0;
+  adapterState.brokered = false;
+  brokerStarts.calls.length = 0;
+  brokerStarts.grantOrigin = "https://inspector.test";
+  catalog.tools = [{ name: "list_issues", inputSchema: { type: "object" } }];
   harnessState.createRuntime.mockClear();
   vi.stubGlobal(
     "fetch",
@@ -226,7 +260,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("a session-stable runtime's MCP config", () => {
+describe("a fingerprinting runtime's MCP config", () => {
   it("is identical on both turns of a Playground chat, with the runtime restarted between them", async () => {
     await runHarnessTurn(turn() as never, "none");
     // A restart resumes with `session/load`, which compares the same config.
@@ -388,5 +422,93 @@ describe("a session-stable runtime's MCP config", () => {
     );
     expect(binds).toHaveLength(0);
     expect(minted.count).toBe(1);
+  });
+});
+
+describe("a brokered runtime's lane configuration", () => {
+  beforeEach(() => {
+    adapterState.brokered = true;
+  });
+
+  it("is the lane's session configuration on every turn, with its grant on the model lease", async () => {
+    await runHarnessTurn(turn() as never, "none");
+    await runHarnessTurn(turn() as never, "none");
+    const [first, second] = configs();
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first));
+    const entry = Object.values(first!.mcpServers)[0]!;
+    const url = new URL(entry.url);
+    expect(`${url.origin}${url.pathname}`).toBe(
+      "https://inspector.test/api/web/harness-mcp/srv-a",
+    );
+    expect(url.searchParams.get("mcpjam_tools")).toMatch(/^[a-f0-9]{16}$/);
+    expect(entry.headers?.Connection).toBe("close");
+    const sealed = unsealHarnessProxyToken(
+      entry.headers!["X-MCPJam-Proxy-Token"],
+      "srv-a",
+    );
+    expect(sealed).toMatchObject({ session: true, token: HANDLE });
+    expect(minted.count).toBe(0);
+    // The grant rides the lease; no separate grant is started.
+    expect(grants).toHaveLength(0);
+    expect(brokerStarts.calls.map((call) => call.sessionGrant)).toEqual([
+      { laneId: "lane-1", leaseId: expect.any(String) },
+      { laneId: "lane-1", leaseId: expect.any(String) },
+    ]);
+  });
+
+  it("changes the entry when the server's tools change, and only the catalog version", async () => {
+    await runHarnessTurn(turn() as never, "none");
+    catalog.tools = [
+      { name: "list_issues", inputSchema: { type: "object", required: ["repo"] } },
+    ];
+    await runHarnessTurn(turn() as never, "none");
+    const [first, second] = configs().map(
+      (config) => Object.values(config.mcpServers)[0]!,
+    );
+    const before = new URL(first!.url);
+    const after = new URL(second!.url);
+    expect(after.searchParams.get("mcpjam_tools")).not.toBe(
+      before.searchParams.get("mcpjam_tools"),
+    );
+    after.searchParams.delete("mcpjam_tools");
+    before.searchParams.delete("mcpjam_tools");
+    expect(after.toString()).toBe(before.toString());
+    expect(second!.headers).toEqual(first!.headers);
+  });
+
+  it("keeps per-turn tokens when the backend installs no session grant", async () => {
+    brokerStarts.grantOrigin = undefined;
+    const warn = vi.spyOn(logger, "warn");
+    const onEngineError = vi.fn();
+    await runHarnessTurn(turn({ onEngineError }) as never, "none");
+    expect(onEngineError).not.toHaveBeenCalled();
+    const entry = Object.values(configs()[0]!.mcpServers)[0]!;
+    const sealed = unsealHarnessProxyToken(
+      entry.headers?.["X-MCPJam-Proxy-Token"],
+      "srv-a",
+    );
+    expect(sealed?.token).toBe("per-turn-token-1");
+    expect(sealed?.session).toBeUndefined();
+    expect(
+      warn.mock.calls.filter(([message]) =>
+        String(message).includes("session grant origin differs"),
+      ),
+    ).toEqual([
+      [
+        "[harness] session grant origin differs from the MCP proxy; using per-turn tokens",
+        { proxyOrigin: "https://inspector.test", grantOrigin: null },
+      ],
+    ]);
+    warn.mockRestore();
+  });
+
+  it("keeps per-turn tokens for an eval turn, and asks the lease for no grant", async () => {
+    await runHarnessTurn(
+      turn({ sourceType: "eval", evalIterationId: "iteration-1" }) as never,
+      "none",
+    );
+    expect(binds).toHaveLength(0);
+    expect(minted.count).toBe(1);
+    expect(brokerStarts.calls[0]?.sessionGrant).toBeUndefined();
   });
 });

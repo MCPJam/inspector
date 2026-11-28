@@ -73,7 +73,6 @@ export function SuiteJudgeCard({
     return (
       <RubricChecksJudgeCard
         judgeConfig={judgeConfig}
-        onJudgeConfigChange={onJudgeConfigChange}
         judgesCapabilities={judgesCapabilities}
         criteria={criteria}
         goalJudgeOff={goalJudgeOff}

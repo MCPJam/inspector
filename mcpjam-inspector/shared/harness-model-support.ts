@@ -135,6 +135,8 @@ export const HARNESS_PINNED_VERSIONS = {
   "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].runtimeVersion,
   "cursor": HARNESS_DESCRIPTORS["cursor"].runtimeVersion,
   "opencode": HARNESS_DESCRIPTORS["opencode"].runtimeVersion,
+  "claude-web": HARNESS_DESCRIPTORS["claude-web"].runtimeVersion,
+  "chatgpt-web": HARNESS_DESCRIPTORS["chatgpt-web"].runtimeVersion,
 } as const satisfies Record<Harness, string | null>;
 
 /** The pinned runtime version for a harness id, or undefined when the harness
@@ -224,7 +226,7 @@ export function harnessNoRunnableModelReason(
   const vendor = orgKeyProviderLabel(harnessId);
   const api = harnessWireApi(harnessId);
   if (!vendor || !api) return `${name} has no model it can run here.`;
-  const gateway = `a gateway that serves ${GATEWAY_API_LABELS[api]}`;
+  const gateway = `a custom provider that serves ${GATEWAY_API_LABELS[api]}`;
   return policy.requireOrgKeys
     ? `This organization requires its own provider keys, so ${name} runs only on an organization ${vendor} provider or ${gateway}.`
     : `${name} runs MCPJam models, your organization's ${vendor} key, or ${gateway}. Set one up in Organization models.`;
@@ -237,6 +239,8 @@ const HARNESS_DISPLAY_NAMES: Record<string, string> = {
   "copilot-cli": HARNESS_DESCRIPTORS["copilot-cli"].displayName,
   cursor: HARNESS_DESCRIPTORS.cursor.displayName,
   opencode: HARNESS_DESCRIPTORS.opencode.displayName,
+  "claude-web": HARNESS_DESCRIPTORS["claude-web"].displayName,
+  "chatgpt-web": HARNESS_DESCRIPTORS["chatgpt-web"].displayName,
 };
 
 /** The runtime's human-facing name ("Claude Code"), or the id itself. */

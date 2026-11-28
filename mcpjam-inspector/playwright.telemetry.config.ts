@@ -21,7 +21,9 @@ export default defineConfig({
   timeout: 180_000,
   // One session at a time: every test waits out real SDK flush timers, and
   // parallel pages would only compete for the same CPU those timers need.
-  fullyParallel: false,
+  // `fullyParallel` only lets `--shard` split this one file by test, so CI
+  // can spread it over machines; `workers: 1` still runs one test at a time.
+  fullyParallel: true,
   workers: 1,
   forbidOnly: !!process.env.CI,
   // No retries, deliberately. A leak that shows up one run in three is a leak;

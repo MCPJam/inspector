@@ -158,11 +158,11 @@ describe("grouped turn preparation", () => {
     expect(client.action).not.toHaveBeenCalled();
     expect(composeTurnEnvironment).not.toHaveBeenCalled();
   });
-  it("keeps external accounts on the existing credential and venue path", async () => {
+  it.each(["cursor", "claude-web", "chatgpt-web"])("prepares the external account for %s", async (harness) => {
     vi.spyOn(client, "action").mockResolvedValueOnce({
       kind: "external-account",
       hostId: "host",
-      runtimeConfig: { harness: "cursor" },
+      runtimeConfig: { harness },
     });
     await resolveChatTurn({
       ...common,
@@ -172,7 +172,7 @@ describe("grouped turn preparation", () => {
     });
     expect(composeTurnEnvironment).toHaveBeenCalledWith(
       expect.objectContaining({
-        preparedHost: { hostId: "host", config: { harness: "cursor" } },
+        preparedHost: { hostId: "host", config: { harness } },
       }),
     );
     expect(resolveEnvironmentForRuntime).toHaveBeenCalledOnce();
@@ -181,6 +181,7 @@ describe("grouped turn preparation", () => {
     null,
     { kind: "resolved", harness: null, environment: {} },
     { kind: "external-account", runtimeConfig: {} },
+    { kind: "external-account", hostId: "host", runtimeConfig: { harness: "codex" } },
     {
       kind: "external-account",
       hostId: "host",

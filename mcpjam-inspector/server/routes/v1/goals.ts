@@ -48,12 +48,8 @@
  * 403, so the route is not an existence oracle for a project the caller cannot
  * see.
  *
- * BETA. The whole surface is behind the `sandboxes-enabled` flag, enforced
- * server-side on WRITES (see the backend's `lib/sandboxesGate.ts`). Reads are
- * deliberately ungated: an empty list leaks nothing, and a fail-closed read
- * gate would blank a legitimately flagged user's screen on any PostHog hiccup.
- * These routes are therefore absent from the public OpenAPI spec and excluded
- * from the MCP/agent/workspace catalogs until GA.
+ * Reads are deliberately open: an empty list leaks nothing. Writes refuse
+ * anonymous guests server-side.
  */
 import type {
   SwarmSessionVerdict,
@@ -1130,10 +1126,6 @@ both(
 // backend's `cancelJourneyRun` landed there was no way to stop a run at all —
 // a launch made by mistake could only be waited out while it spent model
 // credits.
-//
-// NOT behind the beta gate. Cancelling REDUCES exposure and spend, so an org
-// that has just lost the `sandboxes-enabled` flag must still be able to stop
-// what is already running (see the backend's lib/sandboxesGate.ts).
 both(
   "post",
   "/projects/:projectId/goal-runs/:runId/cancel",
@@ -1204,9 +1196,8 @@ both(
 // request that declined to identify itself. Replaying a key returns the
 // ORIGINAL run with `deduped: true` and starts no second runner.
 //
-// BEHIND THE BETA GATE. Launching creates exposure and spend, so the backend
-// enforces `sandboxes-enabled` on the create; an unflagged organization gets
-// FEATURE_UNAVAILABLE through as a 403 with a real message.
+// Launching creates exposure and spend, so the backend refuses anonymous
+// guests on the create.
 both(
   "post",
   "/projects/:projectId/goals/:goalId/runs",

@@ -53,6 +53,8 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/readiness-runs/run_1/cancel",
     "/api/v1/projects/proj_1/readiness-runs/run_1/report",
     "/api/v1/projects/proj_1/readiness-runs/run_1/resume",
+    "/api/v1/projects/proj_1/servers/srv_1/revisions",
+    "/api/v1/projects/proj_1/servers/srv_1/revisions/8/diff",
     // The Readiness page: without these, every call there 401s unseen.
     "/api/v1/directory-flows",
     "/api/v1/directory-flows/claude-connector",
@@ -60,6 +62,19 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/directory-submissions/sub_1",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/runs",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/results",
+    // The handoff loop: without these the summary and the export 401.
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/handoff",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/export",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/events",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/snapshots",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/findings",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/findings/claude.endpoint.https",
+    // The test plan: without these its read, draft, save and results 401.
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plan",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plan/draft",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/tool-tests",
+    // A status someone records from the ChatGPT page's submit dialog.
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/events",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "POST" });
@@ -86,6 +101,8 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/servers/srv_1/tools",
     "/api/v1/projects/proj_1/evals",
     "/api/v1/projects/proj_1",
+    "/api/v1/projects/proj_1/servers/srv_1/revisions/export",
+    "/api/v1/projects/proj_1/servers/srv_1/revisions/8/diff/raw",
     // A path that merely starts the same way.
     "/api/v1/projects/proj_1/readiness-runs-export",
     // One segment too many under a run.
@@ -96,8 +113,17 @@ describe("authFetch bearer on directory-readiness routes", () => {
     // Submission paths stay as narrow as the run paths above.
     "/api/v1/directory-flows/claude-connector/steps",
     "/api/v1/projects/proj_1/directory-submissions-export",
-    "/api/v1/projects/proj_1/directory-submissions/sub_1/events",
     "/api/v1/projects/proj_1/directory-submissions/sub_1/runs/run_1",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/handoff/raw",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/events/evt_1",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/findings/check_1/details",
+    // A sub-path the API does not serve.
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/answers",
+    // The test plan paths take no extra segment, and no sibling.
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plan/draft/raw",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plan/2",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/tool-tests/run_1",
+    "/api/v1/projects/proj_1/directory-submissions/sub_1/test-plans",
   ]) {
     it(`does NOT attach the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "POST" });

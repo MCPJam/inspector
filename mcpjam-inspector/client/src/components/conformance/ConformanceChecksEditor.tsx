@@ -136,6 +136,13 @@ export function ConformanceChecksEditor({
     noOutputSchemas &&
     !probes.toolCallProbe &&
     probeKeyFor(checkId) === "toolCallProbe";
+  // A connected server's tools are on their way: the first render is "idle"
+  // before the fetch starts. Until they land, a check's input status (a task
+  // tool picked automatically, an output check that does not apply) is a
+  // guess that would move the counts.
+  const inputsSettling =
+    probeServer?.connectionStatus === "connected" &&
+    (probeTools.status === "idle" || probeTools.status === "loading");
   const valid = blocking.length === 0;
   useEffect(() => {
     onValidChange(valid);
@@ -153,8 +160,8 @@ export function ConformanceChecksEditor({
             tools={probeTools}
             probes={probes}
             onChange={onProbesChange}
-            onValidChange={(valid) =>
-              setProbeValid((prev) => ({ ...prev, tasksProbe: valid }))
+            onValidChange={(part, valid) =>
+              setProbeValid((prev) => ({ ...prev, [part]: valid }))
             }
           />
         ) : null
@@ -221,6 +228,7 @@ export function ConformanceChecksEditor({
         }
         return undefined;
       }}
+      inputsSettling={inputsSettling}
       checkNotApplicable={(suite, checkId) =>
         outputCheckNotApplicable(suite, checkId)
           ? "No tool on this server declares an output schema, so this check does not apply."

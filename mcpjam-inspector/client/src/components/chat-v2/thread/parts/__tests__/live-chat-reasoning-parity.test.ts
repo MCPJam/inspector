@@ -21,7 +21,6 @@ const LIVE = [
 
 /** Read-only or host-styled surfaces that choose their own mode. */
 const OWN_MODE = [
-  "ChatTabV2.tsx",
   "chat-v2/multi-model-chat-card.tsx",
   "evals/trace-viewer.tsx",
 ];

@@ -99,6 +99,36 @@ describe("workspace production guard composition", () => {
     expect(lease.state().state).toBe("free");
   });
 
+  it("hands the export the origins to leave out of the archive", async () => {
+    const profileExport = vi.fn(async () => new Uint8Array([31, 139]));
+    const stack = buildBrowserdStack(driverStub(), { token: "test", profileExport });
+    expect((await post(stack, "/v1/profile/export", {})).status).toBe(200);
+    expect(
+      (
+        await post(stack, "/v1/profile/export", {
+          excludeOrigins: ["https://signin.example.com"],
+        })
+      ).status,
+    ).toBe(200);
+    expect(profileExport.mock.calls).toEqual([
+      [{ excludeOrigins: [] }],
+      [{ excludeOrigins: ["https://signin.example.com"] }],
+    ]);
+  });
+
+  it.each([
+    ["a URL with a path", { excludeOrigins: ["https://signin.example.com/login"] }],
+    ["something that isn't a URL", { excludeOrigins: ["signin.example.com"] }],
+    ["a non-web scheme", { excludeOrigins: ["file:///home"] }],
+    ["a list that isn't one", { excludeOrigins: "https://signin.example.com" }],
+  ])("archives nothing when an exclusion is %s", async (_case, body) => {
+    const profileExport = vi.fn(async () => new Uint8Array([31, 139]));
+    const stack = buildBrowserdStack(driverStub(), { token: "test", profileExport });
+    const response = await post(stack, "/v1/profile/export", body);
+    expect(response.status).toBe(400);
+    expect(profileExport).not.toHaveBeenCalled();
+  });
+
   it("releases the export fence after a failed snapshot", async () => {
     const lease = new HandoffLease();
     const stack = buildBrowserdStack(driverStub(), {

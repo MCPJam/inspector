@@ -24,7 +24,7 @@ export const SCHEDULED_EVALS_FEATURE_FLAG = "scheduled-evals-enabled";
  * off (fail-closed) here, like every sibling flag hook. Every consumer is a
  * visibility gate rather than a route guard, so the boolean is the one to
  * reach for; {@link useScheduledEvalsEnabledState} exists for the tri-state a
- * route guard would need, and mirrors `useEvaluateEnabledState`.
+ * route guard would need.
  */
 export function useScheduledEvalsEnabled(): boolean {
   return useFeatureFlagEnabled(SCHEDULED_EVALS_FEATURE_FLAG) === true;

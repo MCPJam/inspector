@@ -237,7 +237,7 @@ export function ScenarioUsagePanel({
     ];
   }, [ratingStyle, hasNeutralHistory]);
   /**
-   * Where "Promote to test case" lands from User Testing: the SUITE, with its
+   * Where "Save as test case" lands from User Testing: the SUITE, with its
    * case list, rather than the new case's editor that the other promote
    * surfaces open. Deliberately User Testing only — Swarms, chat history and
    * the per-turn action keep the shared destination.

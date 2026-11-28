@@ -4,19 +4,21 @@
  * declares any. No configuration form and no connect switch — the server
  * belongs to the plugin's version and connects on every message.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   settingsAvailable: false,
+  settingsFailed: false,
+  retry: vi.fn(),
   sectionProps: [] as unknown[],
 }));
 
 vi.mock("../../host-workspace/use-server-settings", () => ({
   useServerSettingsAvailability: (scope: unknown) => ({
     available: !!scope && h.settingsAvailable,
-    failed: false,
-    retry: vi.fn(),
+    failed: !!scope && h.settingsFailed,
+    retry: h.retry,
   }),
 }));
 vi.mock("../../host-workspace/ServerSettingsPanel", () => ({
@@ -47,6 +49,8 @@ const scope = {
 
 beforeEach(() => {
   h.settingsAvailable = false;
+  h.settingsFailed = false;
+  h.retry.mockClear();
   h.sectionProps = [];
 });
 
@@ -90,5 +94,23 @@ describe("ServerDetailModal for a plugin's server", () => {
     );
     expect(screen.getByTestId("plugin-settings-section")).toBeTruthy();
     expect(screen.getByTestId("settings-view")).toBeTruthy();
+  });
+
+  it("offers Retry with the project server's copy when its settings fail to load", () => {
+    h.settingsFailed = true;
+    render(
+      <ServerDetailModal
+        isOpen
+        plugin={detail}
+        onClose={vi.fn()}
+        projectId="p_1"
+        extensionSettingsScope={scope}
+      />,
+    );
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Settings could not be loaded. Select Retry to load them again.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(h.retry).toHaveBeenCalledTimes(1);
   });
 });

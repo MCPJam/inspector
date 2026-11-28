@@ -14,6 +14,13 @@ import {
   wrapBackendToolsForTrace,
   wrapToolSetForEvalTrace,
 } from "../eval-trace-capture";
+import {
+  MOCK_CALLS_HEADER,
+  currentMockAnswerSink,
+  formatMockCalls,
+  observeMockAnswered,
+} from "../../mock/answer-marks";
+import { mockAnswerOf } from "@/shared/mock-answer-span";
 import { TOOL_POLICY_BLOCK_MARKER } from "../tool-policy-gate";
 import { attachAuthChallenge, parseChallengeHeader } from "@mcpjam/sdk";
 import { toolAuthChallengeOf } from "../run-setup-signals";
@@ -95,6 +102,73 @@ describe("eval-trace-capture", () => {
     expect(spans.filter((s) => s.category === "error")).toHaveLength(1);
   });
 
+  it("backend cost lands on the llm span only, on success and on failures", () => {
+    const cost = {
+      calculationVersion: 1,
+      currency: "USD" as const,
+      completeness: "complete" as const,
+      amountUsd: 0.0021,
+      source: "provider_reported" as const,
+    };
+    const meta = { inputTokens: 10, outputTokens: 4, totalTokens: 14, cost };
+    const llm = { startAbs: runAt, endAbs: runAt + 10 };
+    const success: EvalTraceSpan[] = [];
+    pushBackendStepSuccessSpans(success, runAt, 0, 0, runAt, llm, undefined, meta);
+    const toolFailure: EvalTraceSpan[] = [];
+    pushBackendStepToolFailureSpans(
+      toolFailure, runAt, 0, 0, runAt, llm, runAt + 10, runAt + 15, meta,
+    );
+    const llmFailure: EvalTraceSpan[] = [];
+    pushBackendStepLlmFailureSpans(
+      llmFailure, runAt, 0, 0, runAt, runAt, runAt + 10, meta,
+    );
+    for (const spans of [success, toolFailure, llmFailure]) {
+      expect(spans.filter((span) => span.cost)).toEqual([
+        expect.objectContaining({ category: "llm", cost, inputTokens: 10 }),
+      ]);
+    }
+  });
+
+  it("backend LLM failure with usage but no cost keeps an llm span without cost", () => {
+    const spans: EvalTraceSpan[] = [];
+    const meta = { inputTokens: 10, outputTokens: 0 };
+    const end = runAt + 5;
+    pushBackendStepLlmFailureSpans(spans, runAt, 0, 0, runAt, runAt, end, meta);
+    const categories = spans.map((span) => span.category);
+    expect(categories).toEqual(["step", "llm", "error"]);
+    const llm = spans.filter((span) => span.category === "llm");
+    expect(llm).toEqual([
+      expect.objectContaining({ status: "error", ...meta }),
+    ]);
+    expect(llm[0]).not.toHaveProperty("cost");
+  });
+
+  it.each([
+    ["output tokens", { outputTokens: 4 }],
+    ["total tokens", { totalTokens: 14 }],
+  ])(
+    "backend LLM failure reporting only %s keeps an llm span",
+    (_label, meta) => {
+      const spans: EvalTraceSpan[] = [];
+      pushBackendStepLlmFailureSpans(
+        spans, runAt, 0, 0, runAt, runAt, runAt + 5, meta,
+      );
+      expect(spans.map((span) => span.category)).toEqual([
+        "step",
+        "llm",
+        "error",
+      ]);
+    },
+  );
+
+  it("backend LLM failure with neither usage nor cost adds no llm span", () => {
+    const spans: EvalTraceSpan[] = [];
+    const meta = { modelId: "gpt-test" };
+    const end = runAt + 5;
+    pushBackendStepLlmFailureSpans(spans, runAt, 0, 0, runAt, runAt, end, meta);
+    expect(spans.map((span) => span.category)).toEqual(["step", "error"]);
+  });
+
   it("AI SDK: one step, no tools — step + LLM only", () => {
     vi.spyOn(Date, "now").mockReturnValue(runAt);
     const ctx = createAiSdkEvalTraceContext(runAt);
@@ -172,6 +246,58 @@ describe("eval-trace-capture", () => {
     expect(llm!.endMs - llm!.startMs).toBe(50);
     expect(tool?.name).toBe("search");
     expect(tool?.parentId).toBe("prompt-0-step-0");
+  });
+
+  it.each([
+    ["a saved answer", { source: "saved" as const }, "its saved answer"],
+    ["a case", { source: "saved" as const, caseIndex: 1 }, "its saved answer (case 2)"],
+    [
+      "a catch-all",
+      { source: "saved" as const, caseIndex: 0, catchAll: true },
+      "its catch-all answer (case 1, which matches any input)",
+    ],
+    ["its records", { source: "state" as const }, "its records"],
+    ["a forward", { source: "forwarded" as const, realServerId: "s1", realTool: "say" }, "forwarded to say on server s1"],
+    ["a blocked forward", { source: "blocked" as const, realTool: "say", refusal: "blocked_by_policy" }, "a forward to say was refused"],
+    ["no match", { source: "unmatched" as const }, "no saved answer matched"],
+  ])("AI SDK: a mock's call (%s) gets a label span under the tool, and the result is untouched", async (_name, extra, phrase) => {
+    vi.spyOn(Date, "now").mockReturnValue(runAt);
+    const ctx = createAiSdkEvalTraceContext(runAt);
+    registerAiSdkPrepareStep(ctx, 0);
+    // The in-process door reports to the running call, as `dispatchMockInProcess` does.
+    const tools = wrapToolSetForEvalTrace(
+      {
+        echo: {
+          description: "x",
+          inputSchema: {},
+          execute: async () => {
+            currentMockAnswerSink()?.([{ mockId: "m1", version: 2, tool: "echo", ...extra }]);
+            return { content: [{ type: "text", text: "ok" }] };
+          },
+        },
+      },
+      ctx,
+    ) as any;
+
+    const result = await tools.echo.execute({}, { toolCallId: "tc1", messages: [] });
+
+    expect(JSON.stringify(result)).not.toMatch(/mock|m1/);
+    const mark = ctx.recordedSpans.find((s) => s.parentId === "tool-tc1");
+    expect(mark?.name).toContain(`Answered by the mock: ${phrase}`);
+    expect(mark?.toolName).toBeUndefined();
+    expect(ctx.recordedSpans.filter((s) => s.category === "tool")).toHaveLength(1);
+  });
+
+  it("AI SDK: a tool no mock handled gets no label span", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(runAt);
+    const ctx = createAiSdkEvalTraceContext(runAt);
+    registerAiSdkPrepareStep(ctx, 0);
+    const tools = wrapToolSetForEvalTrace(
+      { search: { description: "x", inputSchema: {}, execute: async () => "ok" } },
+      ctx,
+    ) as any;
+    await tools.search.execute({}, { toolCallId: "tc2", messages: [] });
+    expect(ctx.recordedSpans.some((s) => s.parentId === "tool-tc2")).toBe(false);
   });
 
   it("AI SDK: failed tool execute — tool + tool error spans", async () => {
@@ -443,6 +569,68 @@ describe("eval-trace-capture", () => {
         status: "ok",
       }),
     ]);
+  });
+
+  it.each([
+    ["a saved answer", { source: "saved" as const }, "its saved answer"],
+    ["a case", { source: "saved" as const, caseIndex: 1 }, "its saved answer (case 2)"],
+    [
+      "a catch-all",
+      { source: "saved" as const, caseIndex: 0, catchAll: true },
+      "its catch-all answer (case 1, which matches any input)",
+    ],
+    [
+      "a forward",
+      { source: "forwarded" as const, realServerId: "s1", realTool: "say" },
+      "forwarded to say on server s1",
+    ],
+  ])(
+    "Playground chat: a call a mock answered (%s) is marked from the mock's response header",
+    async (_name, extra, phrase) => {
+      vi.spyOn(Date, "now").mockReturnValue(runAt);
+      // The connection's fetch reads the mock's header, as the Playground's tool call does.
+      const dial = observeMockAnswered(
+        async () =>
+          new Response("{}", {
+            headers: {
+              [MOCK_CALLS_HEADER]: formatMockCalls([
+                { mockId: "m1", version: 2, tool: "say", ...extra },
+              ]),
+            },
+          }),
+      );
+      const spans: EvalTraceSpan[] = [];
+      const tools = wrapBackendToolsForTrace(
+        {
+          say: {
+            execute: async () => {
+              await dial("https://mock.test/m1");
+              return { content: [{ type: "text", text: "ok" }] };
+            },
+            _serverId: "server-1",
+          },
+        },
+        { runStartedAt: runAt, promptIndex: 0, stepIndex: 1, spans },
+      ) as any;
+
+      const result = await tools.say.execute({}, { toolCallId: "tc1" });
+
+      expect(JSON.stringify(result)).not.toMatch(/mock|m1/);
+      const tool = spans.find((s) => s.category === "tool");
+      expect(mockAnswerOf(tool!, spans)).toContain(phrase);
+      expect(spans.filter((s) => s.category === "tool")).toHaveLength(1);
+    },
+  );
+
+  it("Playground chat: a tool no mock handled gets no mark", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(runAt);
+    const spans: EvalTraceSpan[] = [];
+    const tools = wrapBackendToolsForTrace(
+      { search: { execute: async () => "ok" } },
+      { runStartedAt: runAt, promptIndex: 0, stepIndex: 0, spans },
+    ) as any;
+    await tools.search.execute({}, { toolCallId: "tc2" });
+    expect(spans).toHaveLength(1);
   });
 
   it("captures the JSON-RPC error code when a backend tool throws with .code", async () => {

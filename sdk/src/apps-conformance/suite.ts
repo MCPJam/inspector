@@ -56,7 +56,8 @@ export class MCPAppsConformanceSuite {
   }
 
   async run(): Promise<MCPAppsConformanceSuiteResult> {
-    if (!this.config.__suppressTelemetry) void captureConformanceRun("sdk");
+    if (!this.config.__suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "apps", mode: "suite" });
     const startedAt = Date.now();
     const results: Array<MCPAppsConformanceResult & { label: string }> = [];
 

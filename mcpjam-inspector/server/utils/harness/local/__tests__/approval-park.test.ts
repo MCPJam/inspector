@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   claimParkedLocalSession,
   describeParkedLocalSession,
+  endParkIfWaiting,
   hasParkedLocalSession,
   invalidateParkedLocalSession,
   noteParkedLocalSessionEnded,
@@ -54,7 +55,7 @@ function park(overrides: Partial<Parameters<typeof parkLocalSession>[0]> = {}) {
   const end = vi.fn(async () => {});
   const hold = vi.fn();
   let alive = true;
-  const parked = parkLocalSession({
+  const entry = parkLocalSession({
     sessionId: "s1",
     generation: "gen-1",
     userId: "u1",
@@ -67,7 +68,7 @@ function park(overrides: Partial<Parameters<typeof parkLocalSession>[0]> = {}) {
     ttlMs: 60_000,
     ...overrides,
   });
-  return { parked, end, hold, kill: () => (alive = false) };
+  return { parked: entry !== null, entry, end, hold, kill: () => (alive = false) };
 }
 
 const claim = (overrides: Partial<Parameters<typeof claimParkedLocalSession>[0]> = {}) =>
@@ -237,6 +238,17 @@ describe("every way a parked session ends invalidates its decision", () => {
     await invalidateParkedLocalSession("s1", "superseded");
     expect(park({ generation: "gen-2", pendingApprovalIds: ["a2"] }).parked).toBe(true);
     expect(claim({ generation: "gen-2", approvalIds: ["a2"] })).toMatchObject({ ok: true });
+  });
+
+  it("the paused turn's late Stop ends it only while it waits, never a continuation", async () => {
+    const { entry, end } = park();
+    expect(claim()).toMatchObject({ ok: true });
+    await endParkIfWaiting(entry!, "stopped");
+    expect(end).not.toHaveBeenCalled();
+    expect(describeParkedLocalSession("s1")?.state).toBe("continuing");
+    const waiting = park({ sessionId: "s2" });
+    await endParkIfWaiting(waiting.entry!, "stopped");
+    expect(waiting.end).toHaveBeenCalledWith("stopped");
   });
 
   it("a Stop leaves its record only for the tombstone window", () => {

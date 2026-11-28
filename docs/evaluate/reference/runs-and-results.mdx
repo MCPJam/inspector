@@ -1,0 +1,155 @@
+---
+title: "Runs and results"
+description: "What each run status, comparison label, platform value, cost state and runs-table column means."
+icon: "history"
+---
+
+The words and values the Evaluate tab uses for runs. To read a run page, see [Read results](/evaluate/read-results).
+
+## Run status
+
+Shown in the run page header while a client and model pairing has no pass or fail verdict.
+
+| Status | Meaning |
+| --- | --- |
+| Pending | The run is launched but has not started executing. |
+| Running | Iterations are executing. |
+| Grading | Every iteration finished, and the run is waiting for its Required judge before it is decided. |
+| Cancelled | Someone clicked **Cancel run**. Stopped iterations are recorded as cancelled, not as failures. |
+| Inconclusive | A per-case suite measured too little to decide, under its evidence requirements. It is neither a pass nor a failure. |
+| Completed | The run finished without a stored pass or fail result. |
+
+The verdict at the top of the page reads Passed, Failed, Inconclusive or No verdict. **Cancel run** is offered while a run is Pending, Running or Grading; after that the button is **Run again**.
+
+<Frame caption="Pending, Running and Grading are in flight; the rest are where a run ends.">
+  <img className="block dark:hidden" src="/images/evaluate/run-status-light.svg" alt="States Pending, Running and Grading leading to Passed or Failed, Inconclusive or Completed; Cancel run from any of the first three leads to Cancelled" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/run-status-dark.svg" alt="States Pending, Running and Grading leading to Passed or Failed, Inconclusive or Completed; Cancel run from any of the first three leads to Cancelled" width="760" />
+</Frame>
+
+## Result column
+
+The **Runs** tables on the Overview and on a suite page show one Result per launch. When a launch fans out across several clients or models, the first matching word below wins.
+
+| Result | Meaning |
+| --- | --- |
+| Running | At least one of the launch's runs is pending or running. |
+| Grading | At least one is waiting for its judge. |
+| Failed | At least one failed. |
+| Timed out | At least one hit a time limit. See [time and retry limits](/evaluate/reference/suite-settings#time-and-retry-limits). |
+| Cancelled | At least one was cancelled. |
+| Inconclusive | At least one was inconclusive. |
+| Passed | Every run passed. |
+| No result | No verdict was recorded. |
+
+## Comparison labels
+
+A finished run is compared with the suite's previous run. The line under the verdict counts the changes, for example `vs run #12: 1 regressed · 2 fixed · 4 passing`. Each case row in the results carries a pill.
+
+| Pill | In the count line | Meaning |
+| --- | --- | --- |
+| Regressed | regressed | The case passed in the previous run and fails now. |
+| Fixed | fixed | The case failed in the previous run and passes now. |
+| Still failing | still failing | The case failed in both runs. |
+| Unchanged | passing | The case passed in both runs. |
+| New | new | The case was not in the previous run. |
+| Reconfigured | reconfigured | The case or its configuration changed between runs, so pass counts are not compared. |
+| — | removed | The case was in the previous run and is gone. It has no row, so no pill. |
+
+A pill's detail shows both pass counts, such as `6/10, was 7/10`, or "single iteration" when each side ran once. A comparison that could not load shows no pill, never Unchanged. **Compare runs** opens a table of the suite's runs to compare any two.
+
+## Platform
+
+The **Platform** column says where a run came from. The **Platform** filter above the Overview **Runs** table offers SDK, UI, API and CLI.
+
+| Value | Meaning |
+| --- | --- |
+| UI | Launched from the MCPJam app. |
+| SDK | Reported by the MCPJam SDK, from CI or a local test run. |
+| API | Launched through the public `/v1` API. |
+| CLI | Launched by the `mcpjam` CLI. Declared. |
+| GitHub | Launched by the CLI inside a GitHub Actions job. Declared. See [CI](/cli/ci). |
+
+A stamped origin is set by the platform, and a caller cannot change it: everything launched through the public API is stamped API, because CLI runs and GitHub Actions jobs reach the server as API calls. A declared origin is named by the launching process: the CLI declares CLI, or GitHub inside an Actions job. Hovering a declared value shows "declared by the launching client". A declared origin is a label, not proof, and nothing is authorized on the strength of it.
+
+## Cost
+
+Cost is the MCPJam-billed cost of the model work in a run. It shows in the header of each client and model column of the results, and on each case row.
+
+| You see | Meaning |
+| --- | --- |
+| A dollar amount | What MCPJam billed for the iterations it priced. |
+| `—` | No cost was observed: the model ran on your own provider key, or reported no token usage. A dash never means free. |
+| ` · partial` after the amount | Only some iterations were priced. Hover for "N iterations priced". |
+| A tooltip that mentions your runner | Part of the cost was reported by your SDK runner. It is real, but MCPJam neither computed nor verified it. |
+
+A run that looks cheaper may have fewer iterations priced, so check for `partial` before comparing costs. To fail CI on a cost increase, see `--max-cost-increase-percent` in [CI](/cli/ci).
+
+## Runs table columns
+
+The Overview **Runs** table has one row per launch, newest first, under the **Suite Health** chart.
+
+| Column | Shows |
+| --- | --- |
+| Run | The run number. |
+| Suite | The suite name, or "Deleted suite". |
+| Client | The client or clients the launch ran on. |
+| Model | The model or models. |
+| Result | The launch's result. See [Result column](#result-column). |
+| Rate | Iteration pass rate, with passed and total iterations beside it. |
+| Platform | Where the run came from. See [Platform](#platform). |
+| Commit | The commit the run was launched against, when one was recorded. |
+| Date | When the run was launched. |
+| Latency | Median (p50) latency. |
+| Tokens | Total tokens. |
+| Calls | Total tool calls. |
+
+The **Runs** table on a suite page has the same columns without Suite. A dash in any cell means the value was not measured.
+
+{/* Screenshot: Evaluate Overview with the Suite Health chart above the Runs table and the Platform filter open */}
+
+## Read a run from the CLI or API
+
+A run's ID is the last segment of its page URL, `/evals/suite/<suiteId>/runs/<runId>`, and `runs[].id` in the output of `mcpjam cloud eval run --format json`.
+
+```bash Status, verdict and failure diagnostics
+mcpjam cloud eval status --run "$RUN_ID" --format json
+
+# All six user value chain rows for each failing iteration
+mcpjam cloud eval status --run "$RUN_ID" --stages --format human
+```
+
+```bash Per-iteration results: pass or fail, tool calls, tokens, latency
+mcpjam cloud eval iterations --run "$RUN_ID" --limit 200 --format json
+
+# Next page, with the cursor from the previous response
+mcpjam cloud eval iterations --run "$RUN_ID" --limit 200 --cursor "$CURSOR" --format json
+```
+
+<Tip>
+  `eval status` returns at most 20 failure diagnostics unless you ask for more. When `decisionSummary.diagnostics.complete` is `false`, pass `--diagnostics-limit 200` and then `--diagnostics-cursor` with `decisionSummary.diagnostics.nextCursor` until it is `true`. See [`cloud eval status`](/cli/reference#cloud-eval-status).
+</Tip>
+
+The [Public API](/reference/public-api) serves the same data, plus a suite's recent runs, newest first:
+
+```bash API
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-suites/$SUITE_ID/runs" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/iterations" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+```
+
+<CardGroup cols={3}>
+  <Card title="Read results" icon="chart-column" href="/evaluate/read-results">
+    Read a run page, findings and the trace.
+  </Card>
+  <Card title="Suite settings" icon="settings-2" href="/evaluate/reference/suite-settings">
+    Pass criteria, evidence requirements and limits.
+  </Card>
+  <Card title="Troubleshooting" icon="life-buoy" href="/evaluate/troubleshooting">
+    Fix common run and setup problems.
+  </Card>
+</CardGroup>

@@ -227,6 +227,7 @@ export type { OpenAISubmissionEvidence } from "./checks/submission.js";
 export {
   gatherOpenAIReadinessEvidence,
   gradeOpenAIReadiness,
+  packageSelfDescription,
 } from "./runner.js";
 export type {
   GatherOpenAIReadinessEvidenceOptions,

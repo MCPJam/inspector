@@ -3,15 +3,11 @@
 #   plan → build/adopt/finish-draft → conformance → pin intent
 #                   ↘ equivalent → equivalence record intent
 #
-# Called by `local-harness-pack-prebuild.yml` in the background when a pack
-# input lands on main (so the pack exists before anyone releases), and by
-# `prepare-release.yml`, once per harness, before it opens the version PR —
-# which adopts what the prebuild published. The pipeline writes nothing to main: each harness hands the
-# release a `local-harness-pin-<harness>` artifact (a pin, an equivalence
-# record, or "up to date"), and prepare-release applies every one of them to
-# the version branch — so the version PR carries the versions AND the packs
-# Inspectors will select, under one review. There is no separate pin PR and no
-# window where main moved pack inputs nobody has published.
+# Called by `local-harness-pack-prebuild.yml` when a pack input lands on main
+# (and nightly), once per harness. The pipeline writes nothing to main: each
+# harness hands back a `local-harness-pin-<harness>` artifact (a pin, an
+# equivalence record, or "up to date"), and the prebuild's `pin-pr` job applies
+# every one of them and opens one reviewed pin PR.
 #
 # RESUMABLE BY CONSTRUCTION. Nothing here remembers anything: every run
 # re-derives its plan from what exists, keyed by (harness, inputs fingerprint)
@@ -27,10 +23,9 @@
 #                 digests publishes nothing and records an attested
 #                 equivalence; anything else publishes the next patch version.
 #
-# So a failure at any stage is resumed by preparing the release again
-# (`gh workflow run prepare-release.yml --ref main`, or Soundcheck's "Start
-# release"), and the `report` job says exactly that in the harness's failure
-# issue.
+# So a failure at any stage is resumed by running the prebuild again
+# (`gh workflow run local-harness-pack-prebuild.yml --ref main`), and the
+# `report` job says exactly that in the harness's failure issue.
 #
 # What reaches users is only ever the VERSION PR: a pack is selectable once the
 # PR recording its digests merges, and that PR is reviewed (the approval rule
@@ -162,7 +157,7 @@ jobs:
       # No install in this job: it holds `id-token: write`, and nothing an
       # install script runs should be able to mint provenance. The record and
       # its intent need builtins only; the reviewed fingerprint is re-recorded
-      # by prepare-release, in a clean install.
+      # by the prebuild's pin PR job, in a clean install.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
@@ -200,7 +195,7 @@ jobs:
         with:
           subject-path: ${{ steps.record.outputs.file }}
 
-      # prepare-release commits the record byte for byte (its sha256 is in
+      # The pin PR commits the record byte for byte (its sha256 is in
       # the intent and checked), so the attestation above covers what lands.
       - name: Hand the equivalence record to the release
         env:
@@ -272,7 +267,7 @@ jobs:
       attestations: read
     steps:
       # Builtins only, so no install: this job checks evidence and provenance
-      # and hands the pin over; prepare-release writes it in a clean install.
+      # and hands the pin over; the pin PR job writes it in a clean install.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
@@ -357,8 +352,8 @@ jobs:
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
           echo "permit previous $PREVIOUS: $permit ${reason:+($reason)}"
 
-      # prepare-release writes it (`write-pack-digests.mjs`, then the reviewed
-      # fingerprint) on the version branch, alongside the other harnesses'.
+      # The pin PR job writes it (`write-pack-digests.mjs`, then the reviewed
+      # fingerprint) on the pin branch, alongside the other harnesses'.
       - name: Hand the pin to the release
         env:
           HARNESS: ${{ inputs.harness }}

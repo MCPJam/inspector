@@ -870,6 +870,18 @@ describe("domain verification", () => {
     );
   });
 
+  it.each(["<!doctype html><html>App</html>", "", "   "])(
+    "does not establish a served challenge from a fallback or empty response",
+    (body) => {
+      const check = (declaredToken?: string) => byId(
+        runOpenAIDomainVerificationChecks({ evidence: { ...served, body }, declaredToken }, STAMP),
+        "openai.domain.challenge-served",
+      );
+      expect(check().status).toBe("not-evaluated");
+      expect(check("token-abc").status).toBe("violated");
+    },
+  );
+
   it("reports a mismatch without echoing either value", () => {
     const findings = runOpenAIDomainVerificationChecks(
       {

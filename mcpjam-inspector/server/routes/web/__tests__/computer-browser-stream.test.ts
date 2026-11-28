@@ -144,6 +144,12 @@ async function connected(overrides: Partial<BrowserStreamDeps> = {}) {
 }
 
 describe("browser stream — who may open it", () => {
+  it("lets the viewer reconnect when only the upstream stream ends", async () => {
+    const { client, upstream } = await connected();
+    upstream.socket.close();
+    expect(client.closed?.code).toBe(1001);
+  });
+
   it("closes 4401 when the token does not verify", async () => {
     const { open, client } = build({
       verifyToken: (async () => null) as never,

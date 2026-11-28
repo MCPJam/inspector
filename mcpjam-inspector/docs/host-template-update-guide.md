@@ -3,7 +3,7 @@
 **Audience:** any MCPJam engineer — no prior host-compat experience assumed.
 **Use this when:** capability drift is found (a client renders something our catalog says it can't, or vice versa), a client ships a behavior change, or a new host needs a template. This guide covers the full pipeline so a parity fix never queues behind the one person who knows it.
 
-Related public docs: [`docs/inspector/host-templates.mdx`](../../docs/inspector/host-templates.mdx) (contributor-facing "add a host" walkthrough), [`docs/inspector/compatibility.mdx`](../../docs/inspector/compatibility.mdx) (verdict semantics). This guide is the internal end-to-end version: where the data lives, how it flows, and how to prove an edit landed.
+Related docs: [`docs/inspector/host-templates.mdx`](../../docs/inspector/host-templates.mdx) (public field guide to the built-in presets), [`internal-docs/unreleased/compatibility.mdx`](../../internal-docs/unreleased/compatibility.mdx) (verdict semantics, unpublished until the compatibility feature ships). This guide is the internal end-to-end version: where the data lives, how it flows, and how to prove an edit landed.
 
 ---
 
@@ -67,6 +67,8 @@ Two facts that surprise everyone the first time:
 A host entry's capability matrix is inline in the catalog at `hostsById[<id>].mcpProfile.apps.mcpAppsOverrides` — it is **not** a reference to a preset. The 17 boolean keys (`toolInputPartial`, `toolCancelled`, `hostContextChanged`, `resourceTeardown`, `toolInfo`, `openLinks`, `serverTools`, `serverResources`, `logging`, `updateModelContext`, `message`, `sandboxPermissions`, `cspFrameDomains`, `cspBaseUriDomains`, `resourcePrefersBorder`, `downloadFile`, `requestTeardown`) plus `availableDisplayModes` and `widgetDisplayModeRequests` are enumerated in `MCP_APPS_BOOLEAN_KEYS` (`mcpjam-backend/convex/marketHostCatalog/lib.ts`). OpenAI-Apps rendering is the separate boolean `mcpProfile.apps.compatRuntime.openaiApps`.
 
 The SDK's `capabilities.ts` presets are the human-readable source those inline matrices were written from. If you change a host's capability, check whether the matching `MCP_APPS_*` preset in `capabilities.ts` (and its resolved copy in backend `templates.ts`) should change too — the playground emulates from the preset, verdicts read the catalog, and the whole point of sharing them is that they never disagree.
+
+Protocol behavior that isn't an Apps capability, such as which MCP Events delivery modes a client receives, lives in `mcpProfile.extensions` and is read through one resolver per feature (for Events, `resolveHostEventDeliveryModes`). A template saves its own value there. `hostStyle` selects the MCP Apps rendering only, so code shouldn't infer a client's protocol behavior from it.
 
 ---
 

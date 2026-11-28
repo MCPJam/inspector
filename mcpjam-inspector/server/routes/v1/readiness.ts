@@ -34,6 +34,8 @@
  * cannot write into the attempt that replaced it.
  */
 
+import { refuseMockServer } from "../../utils/mock-servers.js";
+
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
@@ -244,6 +246,10 @@ async function startRun(
     convexAuthToken,
     projectId,
     serverId,
+  );
+  refuseMockServer(
+    authorized,
+    "Directory readiness does not take mock servers. A mock is served only to you, so a host cannot reach it. Run readiness on the server the mock is based on.",
   );
 
   const receipt = await startHostedReadinessRun({
@@ -499,8 +505,11 @@ readiness.post(
       ...(typeof run.submissionId === "string"
         ? { submissionId: run.submissionId }
         : {}),
-      authorize: (runProjectId, serverId, signal) =>
-        authorizeServer(c, convexAuthToken, runProjectId, serverId, { signal }),
+      authorize: (runProjectId, serverId, signal, connectionId) =>
+        authorizeServer(c, convexAuthToken, runProjectId, serverId, {
+          signal,
+          ...(connectionId ? { connectionId } : {}),
+        }),
       analyticsActor: readinessAnalyticsActor(c, projectId),
       translateError: translateResumeRefusal,
     });

@@ -46,7 +46,7 @@ async function fixture(options: {
     invocationId: "operation", revision: "revision", toolName: "tool",
     requestedSchema: schema, expiresAt: Date.now() + 10000,
     fileResources: true, uploadTarget: "local-stdio",
-  });
+  }, "subject");
   const manager = new MCPClientManager({}, { lazyConnect: true });
   vi.spyOn(manager, "getInitializationInfo").mockReturnValue({
     protocolVersion: "2026-07-28", transport: "streamable-http",
@@ -68,6 +68,7 @@ async function fixture(options: {
   let fileResourcesEnabled = true;
   let reads = 0;
   const service = createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
     c: new Context(new Request("http://localhost/test")), bearer: "fixture",
     projectId: "project", serverId: "server", manager: () => manager,
     sourceBinding: { hostId: "host", hostRevision: "host-revision" },

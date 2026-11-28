@@ -1,21 +1,23 @@
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import type { EvalRunAccount, EvalSuiteRun } from "@/components/evals/types";
-
-/**
- * Why a run ran as someone other than whoever opened it: a schedule runs as
- * its owner, and an API, CLI or SDK launch as the owner of the key it used.
- */
-export function ranAsRole(
-  source: EvalSuiteRun["source"],
-): "Schedule owner" | "Key owner" | null {
-  if (source === "schedule") return "Schedule owner";
-  if (source === "api" || source === "sdk") return "Key owner";
-  return null;
-}
+import type { EvalRunAccount } from "@/components/evals/types";
 
 /** The name an account had when the run started; an XAA identity by its subject. */
 export function runAccountName(account: EvalRunAccount): string {
   return (account.kind === "xaa" && account.xaaSubject?.trim()) || account.name;
+}
+
+/** Whether these runs, taken together, used more than one account. */
+export function runsUsedSeveralAccounts(
+  runs: ReadonlyArray<{ accountsAtRun?: readonly EvalRunAccount[] }>,
+): boolean {
+  const seen = new Set<string>();
+  for (const run of runs) {
+    for (const account of run.accountsAtRun ?? []) {
+      seen.add(`${account.serverId}\u0000${runAccountName(account)}`);
+      if (seen.size > 1) return true;
+    }
+  }
+  return false;
 }
 
 /** A run's accounts grouped by server, in recorded order, each name once. */

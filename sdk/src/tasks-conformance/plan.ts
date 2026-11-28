@@ -1,6 +1,7 @@
 import {
   MCP_TASKS_CHECK_IDS,
   isTasksToolCheck,
+  taskCheckUsesInput,
   type MCPTasksCheckOverrides,
   type MCPTasksCheckId,
   type MCPTasksRunOptions,
@@ -17,11 +18,22 @@ export function validateTaskOverrides(value: unknown): MCPTasksCheckOverrides {
       throw new Error(`Invalid tool override for ${id}`);
     if (
       Object.keys(setup).some(
-        (key) => key !== "toolName" && key !== "toolArguments"
+        (key) =>
+          key !== "toolName" &&
+          key !== "toolArguments" &&
+          !(key === "inputResponses" && taskCheckUsesInput(id))
       )
     )
       throw new Error(`Unknown tool override field for ${id}`);
-    const { toolName, toolArguments } = setup;
+    const { toolName, toolArguments, inputResponses } = setup;
+    if (
+      inputResponses !== undefined &&
+      (!inputResponses ||
+        typeof inputResponses !== "object" ||
+        Array.isArray(inputResponses) ||
+        JSON.stringify(inputResponses).length > 10_000)
+    )
+      throw new Error(`Invalid input responses for ${id}`);
     if (typeof toolName !== "string" || !toolName.trim())
       throw new Error(`A tool name is required for ${id}`);
     if (toolName.trim().length > 256)
@@ -44,6 +56,7 @@ export function validateTaskOverrides(value: unknown): MCPTasksCheckOverrides {
       );
     result[id] = {
       toolName: toolName.trim(),
+      ...(inputResponses ? { inputResponses } : {}),
       ...(toolArguments === undefined ? {} : { toolArguments }),
     };
   }
@@ -89,17 +102,19 @@ export function planTasksConformance(
     const setup = isTasksToolCheck(id)
       ? (overrides[id] ?? {
           toolName: options.toolName,
+          inputResponses: options.inputResponses,
           toolArguments: options.toolArguments,
         })
       : {};
+    const flow = kind(id);
     const answers =
-      id === "tasks-update-ack-shape" &&
-      options.inputResponses &&
-      Object.keys(options.inputResponses).length > 0
-        ? options.inputResponses
+      (flow === "observation" || flow === "update") &&
+      setup.inputResponses &&
+      Object.keys(setup.inputResponses).length > 0
+        ? setup.inputResponses
         : undefined;
     const subject =
-      id === "tasks-update-ack-shape" && !answers ? "observation" : kind(id);
+      id === "tasks-update-ack-shape" && !answers ? "observation" : flow;
     const key = canonical([
       subject,
       setup.toolName ?? null,
@@ -107,30 +122,19 @@ export function planTasksConformance(
       answers ?? null,
     ]);
     const existing = groups.get(key);
-    if (existing) existing.checkIds.push(id);
-    else
-      groups.set(key, {
-        checkIds: [id],
-        ...(options.protocolVersion
-          ? { protocolVersion: options.protocolVersion }
-          : {}),
-        readinessIds: options.readinessIds,
-        ...(setup.toolName ? { toolName: setup.toolName } : {}),
-        ...(setup.toolArguments ? { toolArguments: setup.toolArguments } : {}),
-        ...(answers ? { inputResponses: answers } : {}),
-      });
-  }
-  const discovery = groups.get(canonical(["discovery", null, {}, null]));
-  if (
-    groups.size > 1 &&
-    discovery?.checkIds.every((id) => id === "tasks-declaration-hygiene")
-  )
-    groups.delete(canonical(["discovery", null, {}, null]));
-  // Hygiene observes every group's traffic, but is reported once by the merger.
-  if (selected.has("tasks-declaration-hygiene")) {
-    for (const group of groups.values())
-      if (!group.checkIds.includes("tasks-declaration-hygiene"))
-        group.checkIds.push("tasks-declaration-hygiene");
+    const group: MCPTasksRunGroup = existing ?? {
+      checkIds: [],
+      ...(options.protocolVersion
+        ? { protocolVersion: options.protocolVersion }
+        : {}),
+      readinessIds: options.readinessIds,
+      ...(setup.toolName ? { toolName: setup.toolName } : {}),
+      ...(setup.toolArguments ? { toolArguments: setup.toolArguments } : {}),
+    };
+    group.checkIds.push(id);
+    // Passive checks can observe the same task without creating an extra one.
+    if (answers && taskCheckUsesInput(id)) group.inputResponses = answers;
+    groups.set(key, group);
   }
   return [...groups.values()];
 }

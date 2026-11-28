@@ -11,8 +11,25 @@ import type { EvalSuite } from "../../evals/types";
 // The org's Cursor key, as the run sheet reads it; the environment
 // resolutions stay empty.
 const cursorKey = vi.hoisted(() => ({ readiness: "missing" }));
+// The org config the sheet reads: by default the key policy with one OpenAI
+// connection.
+const POLICY_ORG_CONFIG = vi.hoisted(() => ({
+  aiKeyPolicy: { requireOrgKeys: true, revision: 1 } as
+    { requireOrgKeys: boolean; revision: number } | undefined,
+  providers: [
+    {
+      id: "openai",
+      providerKey: "openai",
+      enabled: true,
+      hasSecret: true,
+      policyEligibility: { eligible: true },
+    },
+  ],
+}));
+const orgConfig = vi.hoisted(() => ({ current: POLICY_ORG_CONFIG }));
 afterEach(() => {
   cursorKey.readiness = "missing";
+  orgConfig.current = POLICY_ORG_CONFIG;
 });
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -50,18 +67,7 @@ vi.mock("@/hooks/use-hosted-org-model-config", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("@/hooks/use-hosted-org-model-config")
   >()),
-  useHostedOrgModelConfig: () => ({
-    aiKeyPolicy: { requireOrgKeys: true, revision: 1 },
-    providers: [
-      {
-        id: "openai",
-        providerKey: "openai",
-        enabled: true,
-        hasSecret: true,
-        policyEligibility: { eligible: true },
-      },
-    ],
-  }),
+  useHostedOrgModelConfig: () => orgConfig.current,
 }));
 
 const suite: EvalSuite = {
@@ -107,7 +113,7 @@ it("blocks Cursor only when its environment is selected", () => {
   ).toBe(false);
   const blocked = scopePreflightToEnvironments(result.current, ["unsupported"]);
   expect(hasBlockingPreflight(blocked)).toBe(true);
-  expect(blocked.orgKeyProblems).toEqual([
+  expect(blocked.orgConfigProblems).toEqual([
     "Ask an org admin to add a Cursor key in Organization → AI providers.",
   ]);
 });
@@ -125,7 +131,7 @@ it("lets Cursor through once the org's Cursor key is ready", () => {
   expect(hasBlockingPreflight(result.current)).toBe(false);
   expect(
     scopePreflightToEnvironments(result.current, ["unsupported"])
-      .orgKeyProblems,
+      .orgConfigProblems,
   ).toEqual([]);
 });
 
@@ -139,6 +145,52 @@ it("retains the required judge problem after deselecting Cursor", () => {
     }),
   );
   const scoped = scopePreflightToEnvironments(result.current, ["supported"]);
-  expect(scoped.orgKeyProblems).toEqual([CHOOSE_ORG_JUDGE_MODEL]);
+  expect(scoped.orgConfigProblems).toEqual([CHOOSE_ORG_JUDGE_MODEL]);
   expect(hasBlockingPreflight(scoped)).toBe(true);
+});
+
+it("blocks an Azure model with no deployment only when its environment is selected, without the key policy", () => {
+  orgConfig.current = {
+    aiKeyPolicy: undefined,
+    providers: [
+      ...POLICY_ORG_CONFIG.providers,
+      {
+        id: "azure",
+        providerKey: "azure",
+        enabled: true,
+        hasSecret: true,
+        policyEligibility: { eligible: true },
+      },
+    ],
+  };
+  const { result } = renderHook(() =>
+    useSuiteRunPreflight({
+      projectId: "project",
+      suite: { ...suite, environmentIds: ["supported", "azure"] },
+      cases: [],
+      environments: [
+        environments[0]!,
+        {
+          environmentId: "azure",
+          hostId: "codex",
+          modelId: "azure/gpt-5.1",
+          modelSelection: {
+            modelId: "azure/gpt-5.1",
+            source: "org",
+            connectionRef: { kind: "orgProvider", id: "azure" },
+          },
+        },
+      ],
+    }),
+  );
+  expect(
+    scopePreflightToEnvironments(result.current, ["azure"]).orgConfigProblems,
+  ).toEqual([
+    "azure/gpt-5.1 has no Azure deployment. Pick a deployment for it, or add one in Organization → AI providers.",
+  ]);
+  expect(
+    hasBlockingPreflight(
+      scopePreflightToEnvironments(result.current, ["supported"]),
+    ),
+  ).toBe(false);
 });

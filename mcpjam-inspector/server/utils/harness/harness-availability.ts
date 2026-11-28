@@ -44,24 +44,10 @@ import {
 } from "@/shared/harness-connection-api";
 import { isGatewayModelId } from "@/shared/harness-gateway-model";
 import {
+  HARNESS_DESCRIPTORS,
   harnessSurfaceRefusal,
   type HarnessSurface,
 } from "@/shared/harness-descriptors";
-import {
-  requiredForwardingRefusal,
-  type HarnessMcpPlanReason,
-} from "./harness-mcp-plan.js";
-
-/** Why the planner refuses a forward-only turn on each surface that never
- *  forwards; the Playground forwards. */
-const FORWARDING_CLOSED: Partial<Record<HarnessSurface, HarnessMcpPlanReason>> = {
-  // A v1 API turn runs on the web plane but hands the turn no host id.
-  api: "no host id",
-  evals: "eval iteration",
-  events: "eval iteration",
-  swarms: "journey run",
-  "user-testing": "scenario turn",
-};
 import type {
   ModelConnectionRef,
   ModelSelection,
@@ -188,6 +174,16 @@ export function harnessModelRefusal(args: {
   warning?: string;
 } {
   const { adapter } = args;
+  if (adapter.webAccount) {
+    // The vendor's app picks the model on the account; the host's model only
+    // has to be the vendor's own, so a run is never recorded under another's.
+    const verdict = adapter.modelSupport(
+      getCanonicalModelId(args.hostModelId ?? args.model.id, args.model.provider),
+    );
+    return verdict.status === "supported"
+      ? {}
+      : { refusal: { kind: "model-unsupported", reason: verdict.reason } };
+  }
   if (adapter.modelAccess === "external-account") {
     const reason = externalAccountHostModelRefusalReason({
       harnessId: adapter.id,
@@ -347,7 +343,7 @@ export function externalAccountHostModelRefusalReason(args: {
   requestedModelId?: string;
 }): string | undefined {
   const adapter = getHarnessAdapter(args.harnessId);
-  if (adapter.modelAccess !== "external-account") return undefined;
+  if (adapter.modelAccess !== "external-account" || adapter.webAccount) return undefined;
   const modelId = isRuntimeAccountModel(args.modelId) ? args.requestedModelId : args.modelId;
   if (modelId === undefined || isRuntimeAccountModel(modelId)) return undefined;
   return (
@@ -446,6 +442,22 @@ export function harnessReasoningEffortRefusalReason(args: {
 }
 
 /**
+ * Why a harness turn must not run with this system prompt, or `undefined`
+ * when it may. A web client's app runs on its own instructions, and typed
+ * into the user's message a prompt would change the chat being measured, so
+ * it is refused rather than dropped. Called from the pre-flight gate and the
+ * web turn itself, so the two can never disagree.
+ */
+export function harnessSystemPromptRefusalReason(args: {
+  adapter: HarnessRuntimeAdapter;
+  systemPrompt?: string;
+}): string | undefined {
+  const { adapter, systemPrompt } = args;
+  if (!adapter.webAccount || !systemPrompt?.trim()) return undefined;
+  return `${adapter.displayName} uses ${HARNESS_DESCRIPTORS[adapter.id].runtimeName}'s own instructions, so it can't take a system prompt. Clear this client's system prompt or choose another client.`;
+}
+
+/**
  * The approval half of this pre-flight, as a value both gate sites share.
  *
  * `runHarnessTurn` has to re-assert exactly these rules, because the eval,
@@ -463,11 +475,10 @@ export function harnessReasoningEffortRefusalReason(args: {
  * function exists to make unrepresentable — Codex's MCP tools are host-executed,
  * so `supportsMcpToolApproval` says nothing about them.
  *
- * An UNATTENDED run (evals, swarms: nobody can answer) is refused whatever the
- * adapter can do. A runtime that pauses would otherwise be admitted and then
- * fail at its first gated call (an eval turn has no session to park in) or
- * stall silently (a swarm parks a pause nobody resumes). Refusing up front is
- * the same posture a runtime that can't pause already gets.
+ * Who answers is not decided here. A run nobody can answer (an eval, a swarm,
+ * an API turn) reaches this with the switch as its approval policy applies it
+ * (`appliedToolApproval`), and MCPJam denies each request the runtime pauses
+ * on, so the same capability rules hold for it.
  */
 
 /**
@@ -530,11 +541,9 @@ export function checkHarnessRuntimeAvailable(args: {
   /** Where the turn runs. Guests are decided by the backend's capability map,
    *  and `local` comes from `localExecution`. */
   surface: Exclude<HarnessSurface, "guests" | "local">;
-  /** The host runs this runtime as another client's agent loop (VS Code or
-   *  Microsoft 365 Copilot on Copilot CLI), keeping MCPJam's MCP client. */
-  agentLoop?: boolean;
-  /** The host's resolved approval gate. The runtimes can't pause for native/MCP
-   *  tool approval, so an approval host is rejected (capability-driven). */
+  /** The host's switch as the surface's approval policy applies it
+   *  (`appliedToolApproval`): off for evals and the API. With it on, a runtime
+   *  that cannot pause where its tools run is refused (capability-driven). */
   requireToolApproval: boolean;
   /** Whether the host has any selected MCP servers. No longer a refusal on its
    *  own — every harness delivers them — but it still selects which approval
@@ -622,10 +631,12 @@ export function checkHarnessRuntimeAvailable(args: {
    * adapter has not verified it, rather than silently not applied.
    */
   reasoningEffort?: ModelReasoningEffort;
-  /** Nobody can answer an approval on this run (evals, swarms). Not derived
-   *  from `purpose`: a human scenario chat reads models strictly as `eval`
-   *  but can still answer an approval. */
-  unattended?: boolean;
+  /**
+   * The host's system prompt, when the caller has it. Refused with
+   * `setting-unsupported` for a runtime that can't take one. Absent ⇒ not
+   * checked here; the turn still refuses it.
+   */
+  systemPrompt?: string;
   /**
    * The turn's saved model selection, when it has one. A `source: 'org'`
    * selection naming a connection that serves this harness's API is
@@ -649,27 +660,6 @@ export function checkHarnessRuntimeAvailable(args: {
       : undefined);
   if (surfaceRefusal) {
     return { ok: false, kind: "surface-unsupported", reason: surfaceRefusal };
-  }
-  // A dedicated client reaches its servers only through the runtime's own MCP
-  // client, which only signed-in Playground chats forward. Refused here in the
-  // planner's words, so an eval or a study is not admitted only to fail every
-  // turn.
-  if (
-    adapter.requiredForwarding === "pass-through" &&
-    args.agentLoop !== true &&
-    args.hasSelectedMcpServers
-  ) {
-    const closed =
-      args.localExecution === true
-        ? "local execution target"
-        : FORWARDING_CLOSED[args.surface];
-    if (closed) {
-      return {
-        ok: false,
-        kind: "surface-unsupported",
-        reason: requiredForwardingRefusal({ reasons: [closed], gaps: [] }, name),
-      };
-    }
   }
 
   // Does MCPJam supply this runtime's model credential, or does the runtime
@@ -725,7 +715,6 @@ export function checkHarnessRuntimeAvailable(args: {
     mcpClient: args.mcpClient,
     requireToolApproval: args.requireToolApproval,
     hasSelectedMcpServers: args.hasSelectedMcpServers,
-    unattended: args.unattended === true,
   });
   if (approvalRefusal) {
     return { ok: false, kind: "tool-approval", reason: approvalRefusal };
@@ -742,6 +731,13 @@ export function checkHarnessRuntimeAvailable(args: {
   });
   if (effortRefusal) {
     return { ok: false, kind: "setting-unsupported", reason: effortRefusal };
+  }
+  const promptRefusal = harnessSystemPromptRefusalReason({
+    adapter,
+    systemPrompt: args.systemPrompt,
+  });
+  if (promptRefusal) {
+    return { ok: false, kind: "setting-unsupported", reason: promptRefusal };
   }
 
   // There is no MCP gate. Every adapter delivers the host's selected servers

@@ -170,6 +170,21 @@ describe("which conformance legs run", () => {
     }
   });
 
+  it("moves every macOS leg, and only those, to the runner a release names", () => {
+    const runnersByTarget = (plan: { posix_matrix: string; codex_matrix: string; runtime_matrix: string }) =>
+      [plan.posix_matrix, plan.codex_matrix, plan.runtime_matrix]
+        .flatMap((matrix) => JSON.parse(matrix) as Array<{ platform_key: string; runner: string }>)
+        .map(({ platform_key, runner }) => [platform_key, runner]);
+    const github = runnersByTarget(planConformance({ event: "push", record }));
+    const moved = runnersByTarget(planConformance({ event: "push", record, macosRunner: "blacksmith-6vcpu-macos-latest" }));
+    expect(moved.length).toBe(github.length);
+    expect(moved.some(([target]) => target.startsWith("darwin-"))).toBe(true);
+    moved.forEach(([target, runner], index) => {
+      expect(runner, target).toBe(target.startsWith("darwin-") ? "blacksmith-6vcpu-macos-latest" : github[index][1]);
+    });
+    expect(() => planConformance({ event: "push", record, macosRunner: "macos-latest\nrm -rf" })).toThrow(/not a runner label/);
+  });
+
   describe("every other local runtime", () => {
     const legs = (plan: { runtime_matrix: string }) =>
       (JSON.parse(plan.runtime_matrix) as Array<{ harness: string; platform_key: string; pack_version: string }>)

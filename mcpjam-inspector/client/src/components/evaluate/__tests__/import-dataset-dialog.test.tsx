@@ -17,6 +17,9 @@ import {
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
+vi.mock("@/hooks/use-suite-harness-targets", () => ({
+  useSuiteHarnessTargets: () => [],
+}));
 vi.mock("@/lib/apis/eval-authoring-api", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   authoringRequest: vi.fn(),

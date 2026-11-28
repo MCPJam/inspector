@@ -15,7 +15,7 @@ import {
   type PluginInstanceAdmissionRead,
   type PluginInstanceIdentity,
 } from "./instances.js";
-import { pluginBindingDigest } from "./bindings.js";
+import type { z } from "zod";
 import { PluginInvocationError } from "./invocation.js";
 import { RequestOwnedToolInvoker } from "./request-invoker.js";
 import {
@@ -31,6 +31,10 @@ import {
   modelAppControlSchema,
   publishModelApp,
 } from "./model-app-control.js";
+import {
+  DurableControlCache,
+  type CachedControl,
+} from "./durable-controls.js";
 
 const denied = () => new PluginInvocationError("MODEL_APP_UNAVAILABLE");
 const isCode = (error: unknown, ...codes: string[]) =>
@@ -51,44 +55,35 @@ type ContextCommand =
       limits?: PluginContextLimits;
     }
   | { kind: "remove-all"; request: PluginContextRemoveAll };
-/** Local closes are an optimization over the store's own closed rows. */
-const CLOSED_TOMBSTONES = 4096;
 /** A minute under the store's ceiling, so a replica whose clock runs a little
  * ahead of the store's still issues and renews leases. */
 const MODEL_APP_TTL_MS = INVOCATION_RECEIPT_TTL_MS - 60_000;
 
 /** This process's copy of a model App. The durable control is its authority;
  * everything here is rebuilt from it on any replica. */
-export interface ModelApp {
+export interface ModelApp extends CachedControl {
   readonly owner: PluginFormOwner;
   readonly toolName: string;
   readonly revision: string;
   readonly resourceUri: string;
-  readonly snapshotHash: string;
   readonly invoker: RequestOwnedToolInvoker;
-  readonly abort: AbortController;
   context: PluginContextWorkspace;
   contextVersion?: number;
-  /** The lease as this process last read it from the store. */
-  expiresAt: number;
   /** Message bindings, kept here only when there is no receipt store. */
   messages: Map<string, string>;
   formOwner: ReturnType<typeof pluginInstances.retainModelOwner>;
-  eviction?: ReturnType<typeof setTimeout>;
 }
+type ModelAppSnapshot = z.infer<typeof modelAppControlSchema>;
 
 /**
  * Model Apps published by completed model calls. Each is a durable control
- * (`model-app-control.ts`) that any replica restores: same token, owner,
- * tool revision, context and receipts. A request reads the control before it
- * acts and again beside its admission reads, so a close or expiry anywhere
- * refuses it. Nothing here is closed by a local timer: an entry this process
- * stops using is dropped, never closed, since another replica may have
- * renewed it.
+ * (`model-app-control.ts`) that any replica restores through the shared
+ * cache (`durable-controls.ts`): same token, owner, tool revision, context
+ * and receipts. This registry adds what only Apps have: versioned context,
+ * renewal and current-chat message bindings.
  */
 export class ModelAppRegistry {
-  private readonly entries = new Map<string, ModelApp>();
-  private readonly closed = new Map<string, number>();
+  private readonly controls: DurableControlCache<ModelApp, ModelAppSnapshot>;
   /** The context write each App is waiting on in this process. */
   private readonly writes = new Map<string, Promise<unknown>>();
   constructor(
@@ -99,7 +94,37 @@ export class ModelAppRegistry {
       identity: PluginInstanceIdentity,
     ) =>
       PluginInstanceControlPort | undefined = createPluginInstanceControlPort,
-  ) {}
+  ) {
+    this.controls = new DurableControlCache<ModelApp, ModelAppSnapshot>(
+      {
+        denied,
+        parse: (saved) => {
+          if (!isModelAppControl(saved)) return undefined;
+          const parsed = modelAppControlSchema.safeParse(
+            JSON.parse(saved.snapshotJson),
+          );
+          return parsed.success ? parsed.data : undefined;
+        },
+        issuedUntil: (snapshot) => snapshot.expiresAt,
+        owns: (snapshot, actor) => sameOwner(snapshot.instance.owner, actor),
+        matches: (app, actor) => matches(app.owner, actor),
+        create: ({ actor, snapshot, saved, snapshotHash, assertLive }) =>
+          this.create(actor, snapshot, saved, snapshotHash, assertLive),
+        refresh: (app, saved) => this.restoreContext(app, saved),
+        restored: (app) => this.keepFormOwner(app),
+        release: (app) => {
+          app.invoker.close();
+          app.context.close(app.owner.owner.instanceId);
+          this.memory.release(app.owner.owner.instanceId);
+        },
+        readHint: (app) => app.contextVersion,
+        // This process released the context the reply left out: read it in full.
+        retryFull: (error) =>
+          isCode(error, "INSTANCE_CONTEXT_RECOVERY_UNAVAILABLE"),
+      },
+      { ttlMs, now, portFor },
+    );
+  }
 
   /** Publish inside the invocation's execute/resume callback only. Its receipt
    * retains this token, so replay never publishes a replacement for a closed App. */
@@ -127,44 +152,17 @@ export class ModelAppRegistry {
 
   /** Whether this process already knows `token` as a model App (open or closed). */
   holds(token: string) {
-    return this.entries.has(token) || this.closed.has(token);
-  }
-
-  private port(actor: PluginInstanceIdentity) {
-    const port = this.portFor(actor);
-    if (!port) throw new PluginInvocationError("INSTANCE_STORE_UNAVAILABLE");
-    return port;
+    return this.controls.holds(token);
   }
 
   /** The durable control, restored into this process. */
-  async restore(
+  restore(
     token: string,
     actor: PluginInstanceIdentity,
     signal: AbortSignal,
-    port = this.port(actor),
+    port?: PluginInstanceControlPort,
   ) {
-    signal.throwIfAborted();
-    this.sweep();
-    if (this.closed.has(token)) throw denied();
-    const known = this.entries.get(token)?.contextVersion;
-    const read = async (knownContextVersion?: number) => {
-      try {
-        return await port.read(token, signal, knownContextVersion);
-      } catch (error) {
-        throw this.refusal(token, actor, error);
-      }
-    };
-    try {
-      return this.restoreFrom(token, actor, await read(known), signal);
-    } catch (error) {
-      // This process released the context the reply left out: read it in full.
-      if (
-        known === undefined ||
-        !isCode(error, "INSTANCE_CONTEXT_RECOVERY_UNAVAILABLE")
-      )
-        throw error;
-      return this.restoreFrom(token, actor, await read(), signal);
-    }
+    return this.controls.restore(token, actor, signal, port);
   }
 
   /** Restore a control the caller already read, such as `readOwnedApp`. */
@@ -174,111 +172,45 @@ export class ModelAppRegistry {
     saved: DurablePluginInstanceControl | null,
     signal: AbortSignal,
   ) {
-    signal.throwIfAborted();
-    this.sweep();
-    if (this.closed.has(token)) throw denied();
-    // The store keys a control by identity and token, so no row means no
-    // App for this caller. Only the caller's own copy is dropped.
-    if (!saved) {
-      if (
-        this.entries.get(token) &&
-        matches(this.entries.get(token)!.owner, actor)
-      )
-        this.tombstone(token);
-      throw denied();
-    }
-    const parsed = isModelAppControl(saved)
-      ? modelAppControlSchema.safeParse(JSON.parse(saved.snapshotJson))
-      : undefined;
-    if (!parsed?.success) throw denied();
-    const { owner, toolName, revision, resourceUri, ...source } =
-      parsed.data.instance;
-    if (!sameOwner(owner, actor)) throw denied();
-    const snapshotHash = pluginBindingDigest(saved.snapshotJson);
-    let app = this.entries.get(token);
-    if (
-      !Number.isSafeInteger(saved.expiresAt) ||
-      saved.expiresAt < parsed.data.expiresAt
-    )
-      throw denied();
-    // A lease that ended in flight refuses this request, but proves no close:
-    // this process may already hold a later renewal of the same App.
-    if (
-      saved.expiresAt <= this.now() &&
-      (!app || app.snapshotHash !== snapshotHash)
-    )
-      throw denied();
-    if (app) {
-      this.get(token, actor);
-      if (app.snapshotHash !== snapshotHash) throw denied();
-      // A reply overtaken by a later renewal never shortens the lease.
-      app.expiresAt = Math.max(app.expiresAt, saved.expiresAt);
-      this.restoreContext(app, saved);
-    } else {
-      const abort = new AbortController();
-      const formOwner: PluginFormOwner = {
-        owner,
-        subject: actor.subject,
-        ...source,
-      };
-      const candidate: Omit<ModelApp, "formOwner"> = {
-        owner: formOwner,
-        toolName,
-        revision,
-        resourceUri,
-        snapshotHash,
-        abort,
-        invoker: new RequestOwnedToolInvoker(owner, () =>
-          this.get(token, actor),
-        ),
-        context: this.workspace({ owner: formOwner, toolName, resourceUri }),
-        expiresAt: saved.expiresAt,
-        messages: new Map(),
-      };
-      this.restoreContext(candidate as ModelApp, saved);
-      try {
-        app = Object.assign(candidate, {
-          formOwner: pluginInstances.retainModelOwner(formOwner, abort.signal),
-        });
-      } catch (error) {
-        this.memory.release(owner.instanceId);
-        throw error;
-      }
-      this.entries.set(token, app);
-      this.evictAtLeaseEnd(token, app);
-    }
-    this.keepFormOwner(app);
-    return app;
+    return this.controls.restoreFrom(token, actor, saved, signal);
   }
 
-  /** Release this process's copy once the lease it last read ends, even if
-   * no other request arrives. It drops, never closes: another replica may
-   * have renewed the App, and a later read restores it. */
-  private evictAtLeaseEnd(token: string, app: ModelApp) {
-    clearTimeout(app.eviction);
-    app.eviction = setTimeout(
-      () => {
-        if (this.entries.get(token) !== app) return;
-        if (app.expiresAt > this.now()) this.evictAtLeaseEnd(token, app);
-        else this.drop(token);
-      },
-      Math.max(0, app.expiresAt - this.now()),
-    );
-    app.eviction.unref?.();
-  }
-
-  /** A store refusal for this caller's own control (the store keys it by
-   * identity) means the App is closed or expired everywhere. */
-  private refusal(
-    token: string,
+  private create(
     actor: PluginInstanceIdentity,
-    error: unknown,
-  ) {
-    if (isCode(error, "INSTANCE_DENIED")) return denied();
-    if (!isCode(error, "INSTANCE_UNAVAILABLE")) return error;
-    const app = this.entries.get(token);
-    if (!app || matches(app.owner, actor)) this.tombstone(token);
-    return denied();
+    snapshot: ModelAppSnapshot,
+    saved: DurablePluginInstanceControl,
+    snapshotHash: string,
+    assertLive: () => void,
+  ): ModelApp {
+    const { owner, toolName, revision, resourceUri, ...source } =
+      snapshot.instance;
+    const abort = new AbortController();
+    const formOwner: PluginFormOwner = {
+      owner,
+      subject: actor.subject,
+      ...source,
+    };
+    const candidate: Omit<ModelApp, "formOwner"> = {
+      owner: formOwner,
+      toolName,
+      revision,
+      resourceUri,
+      snapshotHash,
+      abort,
+      invoker: new RequestOwnedToolInvoker(owner, assertLive),
+      context: this.workspace({ owner: formOwner, toolName, resourceUri }),
+      expiresAt: saved.expiresAt,
+      messages: new Map(),
+    };
+    this.restoreContext(candidate as ModelApp, saved);
+    try {
+      return Object.assign(candidate, {
+        formOwner: pluginInstances.retainModelOwner(formOwner, abort.signal),
+      });
+    } catch (error) {
+      this.memory.release(owner.instanceId);
+      throw error;
+    }
   }
 
   /** Forms opened from this App's calls find their owner while it lives. */
@@ -345,18 +277,7 @@ export class ModelAppRegistry {
   /** This process's copy, checked against its last durable read only. Call
    * after `restore` or a `fence` read within the same request. */
   get(token: string, actor: PluginInstanceIdentity) {
-    const app = this.entries.get(token);
-    if (
-      !app ||
-      app.abort.signal.aborted ||
-      app.expiresAt <= this.now() ||
-      this.closed.has(token)
-    ) {
-      if (app) this.drop(token);
-      throw denied();
-    }
-    if (!matches(app.owner, actor)) throw denied();
-    return app;
+    return this.controls.get(token, actor);
   }
 
   /** One fence: `query` (an admission read), then the durable control. The
@@ -368,13 +289,7 @@ export class ModelAppRegistry {
     actor: PluginInstanceIdentity,
     signal: AbortSignal,
   ): PluginInstanceAdmissionRead {
-    return async (query) => {
-      const admitted = await query();
-      await this.restore(token, actor, signal);
-      signal.throwIfAborted();
-      this.get(token, actor);
-      return admitted;
-    };
+    return this.controls.fence(token, actor, signal);
   }
 
   /** Compare-and-set on the stored context, retried on a concurrent write.
@@ -404,7 +319,7 @@ export class ModelAppRegistry {
     command: ContextCommand,
     signal: AbortSignal,
   ) {
-    const port = this.port(actor);
+    const port = this.controls.port(actor);
     if (!port.writeContext)
       throw new PluginInvocationError("INSTANCE_CONTEXT_UNAVAILABLE");
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -444,9 +359,9 @@ export class ModelAppRegistry {
           );
         } catch (error) {
           // Back to what this process holds; a dropped copy holds nothing.
-          if (this.entries.get(token) === app) this.holdMemory(app);
+          if (this.controls.peek(token) === app) this.holdMemory(app);
           if (isCode(error, "INSTANCE_CONTEXT_CONFLICT")) continue;
-          throw this.refusal(token, actor, error);
+          throw this.controls.refusal(token, actor, error);
         }
         // The write is stored: this copy follows it before any abort, so its
         // memory charge matches what it holds. The reply leaves out the
@@ -526,7 +441,7 @@ export class ModelAppRegistry {
     signal: AbortSignal,
     authorize: (app: ModelApp) => Promise<void>,
   ) {
-    const port = this.port(actor);
+    const port = this.controls.port(actor);
     if (!port.renew)
       throw new PluginInvocationError("INSTANCE_RENEWAL_UNAVAILABLE");
     const app = await this.restore(token, actor, signal, port);
@@ -548,7 +463,7 @@ export class ModelAppRegistry {
       // predates model App renewal. Neither ends a live App: report the
       // stored lease as it stands, or refuse if it is gone.
       if (!isCode(error, "INVALID_INSTANCE_CONTROL", "INSTANCE_UNAVAILABLE"))
-        throw this.refusal(token, actor, error);
+        throw this.controls.refusal(token, actor, error);
       const current = await this.restore(token, actor, signal, port);
       return { expiresAt: current.expiresAt, renewed: false };
     }
@@ -567,45 +482,8 @@ export class ModelAppRegistry {
 
   /** Close everywhere: the store refuses the token on every replica. Cleanup
    * survives rollout denial; the caller still proves actor and subject. */
-  async close(
-    token: string,
-    actor: PluginInstanceIdentity,
-    signal: AbortSignal,
-  ) {
-    const app = this.entries.get(token);
-    if (app && !matches(app.owner, actor)) throw denied();
-    const port = this.port(actor);
-    // Stop this process's use at once; an unknown handle is tombstoned only
-    // once the store confirms it was this caller's App.
-    if (app) this.tombstone(token);
-    const closed = await port.close(token, signal);
-    if (closed?.ownerHash) this.tombstone(token);
-  }
-
-  private drop(token: string) {
-    const app = this.entries.get(token);
-    if (!app) return;
-    this.entries.delete(token);
-    clearTimeout(app.eviction);
-    app.abort.abort();
-    app.invoker.close();
-    app.context.close(app.owner.owner.instanceId);
-    this.memory.release(app.owner.owner.instanceId);
-  }
-  private tombstone(token: string) {
-    this.drop(token);
-    this.closed.delete(token);
-    this.closed.set(token, this.now() + this.ttlMs);
-    for (const key of this.closed.keys()) {
-      if (this.closed.size <= CLOSED_TOMBSTONES) break;
-      this.closed.delete(key);
-    }
-  }
-  private sweep() {
-    for (const [token, expiry] of this.closed)
-      if (expiry <= this.now()) this.closed.delete(token);
-    for (const [token, app] of this.entries)
-      if (app.expiresAt <= this.now()) this.drop(token);
+  close(token: string, actor: PluginInstanceIdentity, signal: AbortSignal) {
+    return this.controls.close(token, actor, signal);
   }
 }
 export const modelApps = new ModelAppRegistry();

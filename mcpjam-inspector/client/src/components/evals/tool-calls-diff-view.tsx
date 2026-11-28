@@ -2,7 +2,9 @@ import { useMemo, useState, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { evaluateToolCalls } from "@/shared/eval-matching";
+import type { RefusedToolCall } from "@/shared/eval-tool-call-projection";
 import type { TraceViewerEvalToolCall } from "./trace-viewer";
+import { RefusedToolCalls } from "./refused-tool-calls";
 
 /**
  * Expected-vs-actual tool-call diff, rendered as a single status-led ledger.
@@ -22,12 +24,15 @@ export function ToolCallsDiffView({
   isNegativeTest = false,
   isLoading = false,
   headerTrailing,
+  refused = [],
 }: {
   expected: TraceViewerEvalToolCall[];
   actual: TraceViewerEvalToolCall[];
   isNegativeTest?: boolean;
   isLoading?: boolean;
   headerTrailing?: ReactNode;
+  /** Calls refused before dispatch: listed after the diff, never compared. */
+  refused?: readonly RefusedToolCall[];
 }) {
   const result = useMemo(
     () => evaluateToolCalls(expected, actual, { isNegativeTest }),
@@ -69,6 +74,7 @@ export function ToolCallsDiffView({
             <DiffRow key={`pair-${idx}`} row={row} index={idx} />
           ))
         )}
+        <RefusedToolCalls calls={refused} />
       </div>
     </div>
   );

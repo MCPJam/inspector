@@ -22,7 +22,7 @@ import { normalizedError, useToastSpecimen } from "./_support/specimens";
  * in the product. (The specimens pin `duration: Infinity` so they can be read.)
  */
 const meta = {
-  title: "Error Patterns/4. Toast",
+  title: "Components/Error Patterns/4. Toast",
   parameters: {
     layout: "padded",
     docs: {

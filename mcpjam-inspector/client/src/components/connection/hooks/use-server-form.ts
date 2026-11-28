@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useReducer, useRef } from "react";
+import isEqual from "fast-deep-equal";
 import {
   ServerFormData,
   normalizeOauthProtocolMode,
@@ -19,14 +20,9 @@ import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
-import {
-  credentialClearAcknowledgementKey,
-  pendingCredentialClearForStdioTargetEdit,
-  pendingCredentialClearForUrlEdit,
-  rowHoldsStoredCredential,
-  type PendingCredentialClear,
-} from "@/lib/credential-origin";
 import { parseCommandInput } from "@/lib/command-input";
+import { isStandalonePublishedPluginId } from "@/shared/plugin-deep-link";
+import { getServerFormSource } from "./server-form-source";
 import {
   getRedactedConfigFlag,
   isAuthorizationHeader,
@@ -56,6 +52,7 @@ function quoteCommandToken(token: string): string {
 
 interface InitialFormValues {
   name: string;
+  publishedPluginId: string;
   type: "stdio" | "http";
   url: string;
   commandInput: string;
@@ -135,6 +132,7 @@ export function useServerForm(
   },
 ) {
   const [name, setName] = useState("");
+  const [publishedPluginId, setPublishedPluginId] = useState("");
   const [type, setType] = useState<"stdio" | "http">("http");
   const [commandInput, setCommandInput] = useState("");
   const [url, setUrl] = useState("");
@@ -150,16 +148,6 @@ export function useServerForm(
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [hasStoredClientSecret, setHasStoredClientSecret] = useState(false);
-  // Where the row POINTS as saved, kept beside the editable fields so the form
-  // can tell a destination change from an edit that keeps the credentials
-  // (MJ-003) — a cross-origin repoint, or a stdio row pointed at a different
-  // process.
-  const [savedUrl, setSavedUrl] = useState<string | null>(null);
-  const [savedCommand, setSavedCommand] = useState<string | null>(null);
-  const [savedArgs, setSavedArgs] = useState<string[]>([]);
-  // The destination the user has explicitly accepted losing credentials for.
-  const [credentialClearAcknowledgedFor, setCredentialClearAcknowledgedFor] =
-    useState<string | null>(null);
   const [clearClientSecret, setClearClientSecret] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
   // True when the server has a saved bearer token whose value was stripped
@@ -225,6 +213,11 @@ export function useServerForm(
   const [showAuthSettings, setShowAuthSettings] = useState<boolean>(false);
 
   const initialValues = useRef<InitialFormValues | null>(null);
+  const [saveVersion, reloadSavedValues] = useReducer((version) => version + 1, 0);
+  const previousSource = useRef<{
+    values: ReturnType<typeof getServerFormSource>;
+    saveVersion: number;
+  } | null>(null);
   const projectConnectionDefaults = getEffectiveProjectConnectionDefaults(
     options?.projectClientConfig,
   );
@@ -241,7 +234,17 @@ export function useServerForm(
 
   // Initialize form with server data (for edit mode)
   useEffect(() => {
+    if (!server) previousSource.current = null;
     if (server) {
+      const values = getServerFormSource(server);
+      const previous = previousSource.current;
+      if (
+        previous?.saveVersion === saveVersion &&
+        isEqual(previous.values, values)
+      ) {
+        return;
+      }
+      previousSource.current = { values, saveVersion };
       const config = server.config;
       const isHttpServer = "url" in config;
 
@@ -364,13 +367,10 @@ export function useServerForm(
         (config.capabilities as Record<string, unknown> | undefined);
 
       setName(server.name);
+      setPublishedPluginId(server.publishedPluginId ?? "");
       setType(serverType);
       setUrl(serverUrl);
-      setSavedUrl(serverUrl || null);
       setCommandInput(fullCommand);
-      setSavedCommand(server.config.command ?? null);
-      setSavedArgs(server.config.args ? [...server.config.args] : []);
-      setCredentialClearAcknowledgedFor(null);
 
       // Don't set a default scope for existing servers - use what's configured
       // Only set default for new servers
@@ -476,12 +476,14 @@ export function useServerForm(
       setShowConfiguration(
         headersArray.length > 0 ||
           timeoutValue.trim() !== "" ||
+          Boolean(server.publishedPluginId) ||
           clientCapabilitiesOverrideValue != null,
       );
 
       // Capture initial values for change detection (deep copy arrays to avoid aliasing)
       initialValues.current = {
         name: server.name,
+        publishedPluginId: server.publishedPluginId ?? "",
         type: serverType,
         url: serverUrl,
         commandInput: fullCommand,
@@ -520,7 +522,7 @@ export function useServerForm(
         xaaEmail: server.xaaEmail ?? "",
       };
     }
-  }, [server]);
+  }, [server, saveVersion]);
 
   const effectiveXaaRegistrationMode =
     registrationMode === "cimd" || registrationMode === "dcr"
@@ -542,6 +544,10 @@ export function useServerForm(
   const validateForm = (): string | null => {
     if (!name || name.trim() === "") {
       return "Server name is required";
+    }
+    const pluginId = publishedPluginId.trim();
+    if (pluginId && !isStandalonePublishedPluginId(pluginId)) {
+      return "Enter a published plugin ID, such as plugin_abc123.";
     }
 
     if (type === "stdio") {
@@ -760,6 +766,12 @@ export function useServerForm(
         ? parseCapabilitiesOverride(clientCapabilitiesOverrideText)
         : undefined;
 
+    const pluginId = publishedPluginId.trim();
+    const pluginIdEdit =
+      pluginId !== (initialValues.current?.publishedPluginId ?? "")
+        ? { publishedPluginId: pluginId || null }
+        : {};
+
     // Handle stdio-specific data
     if (type === "stdio") {
       const { command, args } = parseCommandInput(commandInput);
@@ -778,6 +790,7 @@ export function useServerForm(
       return {
         name: name.trim(),
         type: "stdio",
+        ...pluginIdEdit,
         command: command.trim(),
         args,
         ...(includeEnv ? { env } : {}),
@@ -873,6 +886,7 @@ export function useServerForm(
     return {
       name: name.trim(),
       type: "http",
+      ...pluginIdEdit,
       url: url.trim(),
       headers: explicitHeaders,
       ...(secretPatch ? { secretPatch } : {}),
@@ -939,13 +953,10 @@ export function useServerForm(
 
   const resetForm = () => {
     setName("");
+    setPublishedPluginId("");
     setType("http");
     setCommandInput("");
     setUrl("");
-    setSavedUrl(null);
-    setSavedCommand(null);
-    setSavedArgs([]);
-    setCredentialClearAcknowledgedFor(null);
     setOauthScopesInput("");
     setOauthProtocolMode(DEFAULT_OAUTH_PROTOCOL_MODE);
     setOauthRegistrationMode(DEFAULT_OAUTH_REGISTRATION_MODE);
@@ -989,6 +1000,7 @@ export function useServerForm(
     const iv = initialValues.current;
     return (
       name !== iv.name ||
+      publishedPluginId.trim() !== iv.publishedPluginId ||
       type !== iv.type ||
       url !== iv.url ||
       commandInput !== iv.commandInput ||
@@ -1043,33 +1055,6 @@ export function useServerForm(
     (type === "http" &&
       authType === "xaa" &&
       confidentialCimdBlockReason !== null);
-  // MJ-003. Moving where a credential-bearing row POINTS makes the backend wipe
-  // its stored credentials, including ones this user never entered and cannot
-  // see. Two vectors, decided by which transport the form is submitting: an
-  // http url that crosses its credentials' origin, and a stdio `command`/`args`
-  // swap. Which rows count is `rowHoldsStoredCredential`'s business.
-  const holdsStoredCredential = rowHoldsStoredCredential(server);
-  const nextStdioTarget = parseCommandInput(commandInput);
-  const pendingCredentialClear: PendingCredentialClear | null =
-    type === "http"
-      ? pendingCredentialClearForUrlEdit({
-          savedUrl,
-          nextUrl: url,
-        })
-      : pendingCredentialClearForStdioTargetEdit({
-          holdsStoredCredential,
-          savedCommand,
-          savedArgs,
-          nextCommand: nextStdioTarget.command,
-          nextArgs: nextStdioTarget.args,
-        });
-  // Blocked until acknowledged, following `authConfigurationBlocksSubmit`. A
-  // destructive side effect on somebody else's credential should not happen on
-  // a single Save click.
-  const credentialClearBlocksSubmit =
-    pendingCredentialClear !== null &&
-    credentialClearAcknowledgedFor !==
-      credentialClearAcknowledgementKey(pendingCredentialClear);
   const oauthAuthorizationHeaderWarning =
     type === "http" &&
     authType === "oauth" &&
@@ -1080,15 +1065,14 @@ export function useServerForm(
   return {
     // Change detection
     hasChanges,
+    reloadSavedValues,
     preregisteredOauthBlocksSubmit,
     authConfigurationBlocksSubmit,
-    pendingCredentialClear,
-    credentialClearBlocksSubmit,
-    credentialClearAcknowledgedFor,
-    acknowledgeCredentialClear: setCredentialClearAcknowledgedFor,
 
     // Form data
     name,
+    publishedPluginId,
+    setPublishedPluginId,
     setName,
     type,
     setType,

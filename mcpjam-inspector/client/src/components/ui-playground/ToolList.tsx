@@ -30,6 +30,9 @@ import { WEBMCP_TOOL_NAME_PREFIX } from "@/shared/declared-tools";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import type { BrowserToolsState } from "@/hooks/useBrowserTools";
 
+const NO_SERVER_COPY =
+  "No server connected yet. Connect one to load its tools and use them in chat.";
+
 interface ToolListProps {
   appGroups?: AppPaneGroup[];
   selectedAppKey?: string | null;
@@ -182,6 +185,23 @@ export function ToolList({
     !browserTools?.localConsent &&
     !browserTools?.catalogError;
 
+  const connectServerAction = connectServerControl ?? (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        if (onAddServerRequested) {
+          onAddServerRequested();
+          return;
+        }
+        navigate(routePaths.servers);
+      }}
+    >
+      <Plug className="h-3.5 w-3.5" />
+      Connect a server
+    </Button>
+  );
+
   return (
     <div className="h-full flex flex-col">
       {/* Search */}
@@ -202,34 +222,27 @@ export function ToolList({
           </div>
         ) : totalShown === 0 ? (
           <div className="text-center py-8 px-2 space-y-3">
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground text-pretty">
               {!hasNoTools
                 ? "No tools match your search"
                 : hasConnectedServer
                   ? "No tools found. Try refreshing and make sure the server is running."
-                  : "No server connected yet. Connect one to load its tools and use them in chat."}
+                  : NO_SERVER_COPY}
             </p>
-            {hasNoTools &&
-              !hasConnectedServer &&
-              (connectServerControl ?? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    if (onAddServerRequested) {
-                      onAddServerRequested();
-                      return;
-                    }
-                    navigate(routePaths.servers);
-                  }}
-                >
-                  <Plug className="h-3.5 w-3.5" />
-                  Connect a server
-                </Button>
-              ))}
+            {hasNoTools && !hasConnectedServer && connectServerAction}
           </div>
         ) : (
           <div className="space-y-3">
+            {!hasConnectedServer && appToolCount === 0 && !searchQuery.trim() ? (
+              <ToolSourceHeader title="Servers">
+                <div className="text-center pt-2 pb-4 px-2 space-y-3">
+                  <p className="text-xs text-muted-foreground text-pretty">
+                    {NO_SERVER_COPY}
+                  </p>
+                  {connectServerAction}
+                </div>
+              </ToolSourceHeader>
+            ) : null}
             {browserTools ? (
               <BrowserToolsSection
                 tools={browserTools.tools}

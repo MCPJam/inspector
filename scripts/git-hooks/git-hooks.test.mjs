@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { FILE_BUDGET } from "../slop/hook.mjs";
 import { HOOKS_PATH, decide, isCI, main } from "./install.mjs";
 
 const SCRIPTS = dirname(dirname(fileURLToPath(import.meta.url)));
+
+// Scripts copied into a temp repo resolve `typescript` from there, and it
+// has no node_modules. Child processes find the package these tests load.
+process.env.NODE_PATH = dirname(
+  dirname(createRequire(import.meta.url).resolve("typescript/package.json")),
+);
 
 /** A repo with the real slop scripts and hooks, and an origin/main ref. */
 function makeRepo() {
@@ -129,6 +137,47 @@ describe("pre-commit", () => {
     git("add", "sdk/src/b.ts");
     writeFileSync(join(repo, "sdk/src/b.ts"), "export const b = c as any;\n");
     assert.equal(commit(repo).code, 0);
+  });
+});
+
+describe("pre-commit during a merge", () => {
+  const { repo, git } = makeRepo();
+  after(() => rmSync(repo, { recursive: true, force: true }));
+  main(repo, {});
+  const write = (path, lines) =>
+    writeFileSync(join(repo, path), "export const x = 1;\n".repeat(lines));
+
+  write("sdk/src/big.ts", FILE_BUDGET - 10);
+  write("sdk/src/mine.ts", FILE_BUDGET - 10);
+  git("add", ".");
+  git("commit", "-qm", "near the budget", "--no-verify");
+  git("branch", "topic");
+  // Main pushes big.ts over the budget and adds a cast, as two PRs that each
+  // passed CI, or one under a waiver, can.
+  write("sdk/src/big.ts", FILE_BUDGET + 10);
+  writeFileSync(join(repo, "sdk/src/a.ts"), "export const a = b as any;\n");
+  git("commit", "-qam", "main grows", "--no-verify");
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
+  git("checkout", "-q", "topic");
+
+  it("judges a merge of main by the branch's change, not main's", () => {
+    git("merge", "-q", "--no-ff", "--no-commit", "origin/main");
+    write("sdk/src/mine.ts", FILE_BUDGET + 10);
+    git("add", "sdk/src/mine.ts");
+    const blocked = commit(repo);
+    assert.equal(blocked.code, 1);
+    assert.match(blocked.stderr, /sdk\/src\/mine\.ts: \d+ -> \d+ lines/);
+    assert.doesNotMatch(blocked.stderr, /big\.ts|as any/);
+    git("checkout", "-q", "HEAD", "--", "sdk/src/mine.ts");
+    assert.equal(commit(repo).code, 0);
+  });
+
+  it("still fails the branch's own budget violation after the merge", () => {
+    write("sdk/src/mine.ts", FILE_BUDGET + 10);
+    git("add", "sdk/src/mine.ts");
+    const blocked = commit(repo);
+    assert.equal(blocked.code, 1);
+    assert.match(blocked.stderr, /sdk\/src\/mine\.ts: \d+ -> \d+ lines/);
   });
 });
 

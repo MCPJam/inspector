@@ -10,6 +10,14 @@ import type { Command } from "commander";
 import { deploymentPolicy } from "@mcpjam/sdk/internal/deployment";
 import { PostHog } from "posthog-node";
 import {
+  argvOptsOutOfTelemetry,
+  recordCommandOutcome,
+  resolveRegisteredCommandPath,
+  UNKNOWN_COMMAND,
+  type CommandOutcome,
+} from "./command-outcome.js";
+import type { McpJamToolCall } from "./mcp-tool-runner.js";
+import {
   getUpdateCacheDir,
   type CachePathOptions,
   type StderrLike,
@@ -21,8 +29,12 @@ const TELEMETRY_STATE_FILE = "telemetry.json";
 const TELEMETRY_EVENT_NAME = "cli_command";
 /** One per conformance run, the same name the SDK and the Inspector send. */
 const CONFORMANCE_EVENT_NAME = "conformance_run_triggered";
+const MCP_TOOL_EVENT_NAME = "cli_mcp_tool_called";
 const TELEMETRY_STATE_VERSION = 1;
 const DEFAULT_FLUSH_TIMEOUT_MS = 3_000;
+/** A forced quit was asked for twice, so it waits on telemetry for less. */
+const FORCED_EXIT_FLUSH_TIMEOUT_MS = 1_000;
+const INTERRUPTED_EXIT_CODE = 130;
 
 const SAFE_ERROR_CODES = new Set([
   "USAGE_ERROR",
@@ -42,6 +54,17 @@ export type TelemetryDisableReason =
   | "state";
 
 export type TelemetryTransport = "http" | "stdio";
+
+/** Which conformance family ran. `run` is `conformance run`, which mixes them. */
+export type ConformanceSuiteName =
+  | "protocol"
+  | "oauth"
+  | "apps"
+  | "tasks"
+  | "events"
+  | "run";
+/** One test, or a suite of several from a config file. */
+export type ConformanceRunMode = "single" | "suite";
 
 export interface TelemetryState {
   version: 1;
@@ -96,6 +119,9 @@ interface TelemetryDecision {
 interface ActiveTelemetryRun {
   cliVersion: string;
   options: TelemetryOptions;
+  program: Command;
+  initializedAtMs: number;
+  forcedExitStarted: boolean;
   command?: string;
   commandOptOut: boolean;
   startedAtMs?: number;
@@ -189,6 +215,9 @@ export function initTelemetry(
   const run: ActiveTelemetryRun = {
     cliVersion,
     options,
+    program,
+    initializedAtMs: Date.now(),
+    forcedExitStarted: false,
     commandOptOut: false,
     shouldCapture: false,
     captured: false,
@@ -213,23 +242,25 @@ export function initTelemetry(
   });
 
   return {
-    async flush() {
-      const client = run.client;
-      if (!client) {
-        return;
-      }
-
-      try {
-        const timeoutMs = options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
-        await withTimeout(
-          flushClient(run, client, timeoutMs),
-          timeoutMs,
-        );
-      } catch {
-        // Telemetry is best-effort and must never affect CLI behavior.
-      }
-    },
+    flush: () =>
+      flushRun(run, options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS),
   };
+}
+
+async function flushRun(
+  run: ActiveTelemetryRun,
+  timeoutMs: number,
+): Promise<void> {
+  const client = run.client;
+  if (!client) {
+    return;
+  }
+
+  try {
+    await withTimeout(flushClient(run, client, timeoutMs), timeoutMs);
+  } catch {
+    // Telemetry is best-effort and must never affect CLI behavior.
+  }
 }
 
 async function flushClient(
@@ -247,6 +278,7 @@ async function flushClient(
 
 export function captureCommandEvent(
   exitCode: number,
+  outcome: CommandOutcome,
   errorCode?: string,
 ): void {
   const run = activeRun;
@@ -279,6 +311,7 @@ export function captureCommandEvent(
       command: run.command,
       success: exitCode === 0,
       exit_code: exitCode,
+      outcome,
       duration_ms: Math.max(0, Date.now() - run.startedAtMs),
       cli_version: run.cliVersion,
       os: process.platform,
@@ -296,7 +329,9 @@ export function captureCommandEvent(
     }
 
     const safeErrorCode =
-      exitCode === 0 ? undefined : normalizeTelemetryErrorCode(errorCode);
+      outcome === "error" || outcome === "usage_error"
+        ? normalizeTelemetryErrorCode(errorCode)
+        : undefined;
     if (safeErrorCode) {
       properties.error_code = safeErrorCode;
     }
@@ -308,12 +343,63 @@ export function captureCommandEvent(
 }
 
 /**
+ * Count a usage error. Commander raises most of them while parsing, before
+ * `preAction` names the command, so the command is resolved from argv
+ * against the registered tree: the longest matching path of registered
+ * names, or "(unknown)". Unmatched argv tokens are never sent.
+ */
+export function captureUsageErrorEvent(
+  argv: readonly string[],
+  exitCode = 2,
+): void {
+  const run = activeRun;
+  if (!run || run.captured) {
+    return;
+  }
+
+  if (!run.command) {
+    const commandPath = resolveRegisteredCommandPath(run.program, argv);
+    run.command =
+      commandPath.length > 0 ? commandPath.join(" ") : UNKNOWN_COMMAND;
+    run.commandOptOut = argvOptsOutOfTelemetry(argv);
+    run.startedAtMs = run.initializedAtMs;
+    run.shouldCapture = commandPath[0] !== "telemetry";
+  }
+
+  captureCommandEvent(exitCode, "usage_error", "USAGE_ERROR");
+}
+
+/**
+ * The forced quit of a long-running command (its second Ctrl+C). Records the
+ * run as interrupted, waits at most 1s for telemetry, then exits with 130.
+ * Called again while that wait is running, it exits at once.
+ */
+export async function exitInterrupted(
+  exit: (code: number) => void = (code) => process.exit(code),
+): Promise<void> {
+  const run = activeRun;
+  if (!run || run.forcedExitStarted) {
+    exit(INTERRUPTED_EXIT_CODE);
+    return;
+  }
+
+  run.forcedExitStarted = true;
+  recordCommandOutcome("interrupted");
+  captureCommandEvent(INTERRUPTED_EXIT_CODE, "interrupted");
+  await flushRun(run, FORCED_EXIT_FLUSH_TIMEOUT_MS);
+  exit(INTERRUPTED_EXIT_CODE);
+}
+
+/**
  * Count one conformance run as `conformance_run_triggered`. Each conformance
  * command calls this right before the SDK runs, and tells the SDK to send
  * nothing itself, so the ping follows the CLI's own opt-outs and install id.
  * At most once per command. Always `run_source: "cli"`, also in CI.
  */
-export function captureConformanceRunEvent(): void {
+export function captureConformanceRunEvent(
+  suite: ConformanceSuiteName,
+  mode: ConformanceRunMode,
+): void {
   const run = activeRun;
   if (!run || !run.shouldCapture || run.conformanceCaptured || !run.command) {
     return;
@@ -336,7 +422,50 @@ export function captureConformanceRunEvent(): void {
       decision,
       resolveInstallId(run, decision.state),
       CONFORMANCE_EVENT_NAME,
-      { run_source: "cli" },
+      { run_source: "cli", suite, mode, cli_version: run.cliVersion },
+    );
+  } catch {
+    // Telemetry is best-effort and must never affect CLI behavior.
+  }
+}
+
+/**
+ * One `cli_mcp_tool_called` per tool call that `mcpjam mcp` serves, under the
+ * same opt-outs and install id as the command. The tool name is from a fixed
+ * list, and nothing about arguments, results or error text is sent.
+ */
+export function captureMcpToolEvent(call: McpJamToolCall): void {
+  const run = activeRun;
+  if (!run || !run.shouldCapture || !run.command) {
+    return;
+  }
+
+  try {
+    const decision = resolveTelemetryDecision({
+      ...run.options,
+      commandOptOut: run.commandOptOut,
+    });
+
+    if (!decision.enabled) {
+      return;
+    }
+
+    const properties: Record<string, unknown> = {
+      tool: call.tool,
+      success: call.success,
+      duration_ms: Math.max(0, Math.round(call.durationMs)),
+      cli_version: run.cliVersion,
+    };
+    if (!call.success) {
+      properties.error_code = normalizeTelemetryErrorCode(call.errorCode);
+    }
+
+    sendEvent(
+      run,
+      decision,
+      resolveInstallId(run, decision.state),
+      MCP_TOOL_EVENT_NAME,
+      properties,
     );
   } catch {
     // Telemetry is best-effort and must never affect CLI behavior.
@@ -358,7 +487,18 @@ function sendEvent(
   const client = getOrCreateClient(run);
   const pendingCapture = client.capture({ distinctId, event, properties });
   if (pendingCapture) {
-    run.pendingCaptures.push(pendingCapture.catch(() => {}));
+    // Dropped once settled: `mcpjam mcp` can send one per tool call for hours.
+    const settled: Promise<void> = pendingCapture
+      .catch(() => {
+        // A failed send is dropped, like every other telemetry failure.
+      })
+      .then(() => {
+        const index = run.pendingCaptures.indexOf(settled);
+        if (index !== -1) {
+          run.pendingCaptures.splice(index, 1);
+        }
+      });
+    run.pendingCaptures.push(settled);
   }
 }
 

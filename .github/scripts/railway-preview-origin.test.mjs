@@ -147,9 +147,9 @@ test('the executable emits exactly one validated origin and emits none on refusa
   }
 });
 
-test('all preview jobs resolve a concrete service origin before registering it', () => {
+test('the backend preview callback resolves a concrete service origin before registering it', () => {
   const workflow = readFileSync(new URL('../workflows/pr-preview.yml', import.meta.url), 'utf8');
-  assert.equal((workflow.match(/node \.github\/scripts\/railway-preview-origin\.mjs/g) || []).length, 3);
+  assert.equal((workflow.match(/node \.github\/scripts\/railway-preview-origin\.mjs/g) || []).length, 1);
   assert.doesNotMatch(workflow, /printenv RAILWAY_PUBLIC_DOMAIN/);
   assert.doesNotMatch(workflow, /id: preview_domain\n\s+continue-on-error: true/);
   const checks = readFileSync(new URL('../workflows/preview-cleanup-checks.yml', import.meta.url), 'utf8');

@@ -37,11 +37,15 @@
     "cleanup.existing": "{fixture} was in the reviewer's account before the sweep, so cleanup must not remove it. Remove the step.",
     "cleanup.tool": "Cleanup calls {tool}, which the plan does not run. Use a tool the plan includes.",
     "cleanup.readOnly": "Cleanup calls {tool}, which only reads data. Use a tool that can remove {fixture}.",
+    "cleanup.target": "Cleanup must reference {fixture}. Use that fixture in the arguments.",
+    "writeScope.target": "{tool} needs a target fixture. Use a permitted fixture in the arguments, or exclude this case.",
     "cleanup.writes": "Cleanup removes {fixture} with {tool}, which may not write it. Add {fixture} to the tool's permitted writes."
   },
   "cases": {
     "ambiguous": "The call started and did not finish, so it may have changed data. Check what it changed, then record what happened or rerun it.",
     "staleAccount": "It ran as another reviewer account. Run it again.",
+    "staleNoAccount": "It ran with no account, and tests now run as the reviewer account. Run it again.",
+    "staleSignedIn": "It ran as a reviewer account, and the submission now says the server needs no sign-in. Run it again.",
     "staleInputs": "The case, a fixture it uses or the tool's schema changed after it ran. Run it again.",
     "running": "The call has not finished. A read that stopped runs again when the sweep resumes.",
     "refused": "The server refused the call before the tool ran. Check the reviewer's sign-in and permissions, then run it again.",
@@ -52,6 +56,7 @@
     "notDrafted": "Its arguments are not drafted yet. Draft or enter them.",
     "fixtureMissing": "{fixture} was not found in the reviewer's account. Add it there, or update the fixture.",
     "fixtureNotCreated": "{fixture} was not created: case {creator} is {status}.",
+    "notCaptured": "Case {creator} returned no {value} for {fixture}. Correct the fixture's capture path, then run again.",
     "notRun": "It has not run yet.",
     "budget": "The sweep used its call budget before this case. Raise the budget and run again.",
     "deadline": "The run reached its time limit before this case. Run again to continue.",

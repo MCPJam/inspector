@@ -14,6 +14,7 @@
  */
 
 import {
+  actionRows,
   insertStepAfter,
   isAssertStep,
   isInteractStep,
@@ -166,6 +167,85 @@ export function isToolCalledWithAssert(step: TestStep): boolean {
     step.assertion.type === "toolCalledWith" &&
     checkRole(step.assertion) !== "advisory"
   );
+}
+
+export type ToolCalledWithStep = Extract<TestStep, { kind: "assert" }> & {
+  assertion: Extract<Predicate, { type: "toolCalledWith" }>;
+};
+
+/** Any `toolCalledWith` assert, advisory included: what "No tools" removes. */
+function isAnyToolCalledWith(step: TestStep): step is ToolCalledWithStep {
+  return (
+    step.kind === "assert" &&
+    "type" in step.assertion &&
+    step.assertion.type === "toolCalledWith"
+  );
+}
+
+/** An assert "No tools" set aside, with the ids before it, nearest first. */
+export type StashedToolCheck = {
+  step: ToolCalledWithStep;
+  preceding: string[];
+  /** The action it was graded after; null when it led the case. */
+  owner?: string | null;
+};
+
+/** Each step's action: itself for an action, the one it follows for an assert. */
+function ownerOf(steps: TestStep[]): Map<string, string | null> {
+  const { leading, actions } = actionRows(steps);
+  const owners = new Map<string, string | null>();
+  for (const child of leading) owners.set(child.step.id, null);
+  for (const action of actions) {
+    owners.set(action.step.id, action.step.id);
+    for (const child of action.checks)
+      owners.set(child.step.id, action.step.id);
+  }
+  return owners;
+}
+
+export function stashToolChecks(steps: TestStep[]): StashedToolCheck[] {
+  const ids = steps.map((step) => step.id);
+  const owners = ownerOf(steps);
+  return steps.flatMap((step, index) =>
+    isAnyToolCalledWith(step)
+      ? [
+          {
+            step,
+            preceding: ids.slice(0, index).reverse(),
+            owner: owners.get(step.id) ?? null,
+          },
+        ]
+      : [],
+  );
+}
+
+/**
+ * Each stashed assert back, unchanged, after the nearest earlier step still
+ * under its own action (any earlier step, once that action is gone), else
+ * after the first prompt; one that led the case goes back first. One still in
+ * the case stays put.
+ */
+export function restoreToolChecks(
+  steps: TestStep[],
+  stash: StashedToolCheck[],
+): TestStep[] {
+  const next = [...steps];
+  for (const { step, preceding, owner } of stash) {
+    if (next.some((item) => item.id === step.id)) continue;
+    const owners = ownerOf(next);
+    const anyAction =
+      owner === undefined || (owner !== null && !owners.has(owner));
+    const anchor = preceding.find(
+      (id) => owners.has(id) && (anyAction || owners.get(id) === owner),
+    );
+    const index = anchor
+      ? next.findIndex((item) => item.id === anchor)
+      : owner === null || preceding.length === 0
+        ? -1
+        : next.findIndex((item) => item.kind === "prompt");
+    next.splice(index + 1, 0, step);
+  }
+  return next;
 }
 
 export function isWidgetAssertStep(step: TestStep): step is WidgetAssertStep {
@@ -437,17 +517,7 @@ export function writeSimpleCase(
   if (view.noTool) {
     // Negative applies to every model turn (and the backend rejects a negative
     // case that kept any `toolCalledWith`), so this drops them list-wide.
-    return [
-      ...lead,
-      ...rest.filter(
-        (step) =>
-          !(
-            step.kind === "assert" &&
-            "type" in step.assertion &&
-            step.assertion.type === "toolCalledWith"
-          ),
-      ),
-    ];
+    return [...lead, ...rest.filter((step) => !isAnyToolCalledWith(step))];
   }
 
   const prevTools = rest.filter(isToolCalledWithAssert);

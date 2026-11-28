@@ -217,6 +217,7 @@ export async function invokePluginRequest(
                 authorization: import("./invocation.js").ResolvedInvocationContext,
                 next: PluginToolCallParams,
                 signal: AbortSignal,
+                pending?: PluginInvocationSuspension,
               ) => {
                 ran();
                 if (!runtime.resumeMrtr)
@@ -229,6 +230,7 @@ export async function invokePluginRequest(
                   next,
                   input.resume!,
                   signal,
+                  pending,
                 );
                 if (!(result instanceof PluginInvocationSuspension))
                   validateResult?.(result);

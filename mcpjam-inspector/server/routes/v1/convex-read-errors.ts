@@ -81,6 +81,15 @@ const AUTHENTICATION_FAILURE =
   /\b(unauthenticated|invalid token|token (has )?expired|expired token|jwt)\b/i;
 
 /**
+ * A gateway's or the client's timeout. It answers 504 TIMEOUT, the status and
+ * code the write translator gives it through `mapRuntimeError`, so a write
+ * catch that reads status errors here first still answers a timeout the same
+ * way.
+ */
+const TIMEOUT_FAILURE = /timed out|timeout/i;
+const TIMEOUT_STATUSES: ReadonlySet<number> = new Set([408, 504]);
+
+/**
  * The production-masked refusal on a SCOPING READ that otherwise reports
  * through the WRITE translator, answered as the 404 it is — or `undefined`
  * for anything else, so the caller's own translator keeps deciding.
@@ -208,12 +217,12 @@ export class ConvexHttpStatusError extends Error {
 }
 
 /**
- * The `fetch` for a `ConvexHttpClient` whose failures go through
- * `translateConvexReadError`. The client turns a non-2xx answer into
- * `new Error(body)` and drops the status, and Sentry keeps neither the body
- * nor the log message, so the only record of the failure was the word
- * "Error" (INSPECTOR-HONO-17). Throwing here, before the client reads the
- * response, keeps the status for the upstream report.
+ * The `fetch` for the Convex clients that `createConvexClient` and
+ * `createConvexClients` build. The client turns a non-2xx answer into
+ * `new Error(body)` and drops the status, and Sentry keeps
+ * neither the body nor the log message, so the only record of the failure was
+ * the word "Error" (INSPECTOR-HONO-17). Throwing here, before the client reads
+ * the response, keeps the status for the upstream report.
  */
 export const convexReadFetch: typeof fetch = async (input, init) => {
   const response = await fetch(input, init);
@@ -243,14 +252,41 @@ export type ConvexReadFailure =
   | { kind: "redacted" }
   | { kind: "upstream" };
 
+/**
+ * A known HTTP status outranks the body text where the two disagree. Convex
+ * answers a rejected credential with 401 whatever the body says, and that is
+ * a 401 for the caller, not a retryable 502. And a status error never reads
+ * as `redacted`: the function did not run, while a redacted refusal comes back
+ * as a 560 the client reads itself, so a proxy's "500 Internal Server Error"
+ * is an outage and must not answer 404 at a preflight.
+ */
 export function classifyConvexReadError(error: unknown): ConvexReadFailure {
   const message = error instanceof Error ? error.message : String(error);
+  const convexStatus =
+    error instanceof ConvexHttpStatusError ? error.convexStatus : undefined;
+  if (convexStatus === 401) return { kind: "authentication" };
   if (MEMBERSHIP_REFUSAL.test(message)) return { kind: "membership" };
   if (AUTHENTICATION_FAILURE.test(message)) return { kind: "authentication" };
   if (ARGUMENT_VALIDATION_FAILURE.test(message))
     return { kind: "invalid-argument" };
-  if (REDACTED_SERVER_ERROR.test(message)) return { kind: "redacted" };
+  if (convexStatus === undefined && REDACTED_SERVER_ERROR.test(message))
+    return { kind: "redacted" };
   return { kind: "upstream" };
+}
+
+/**
+ * `translateConvexReadError`'s answer for a failure Convex's HTTP layer
+ * returned before the function ran, or `undefined` for anything else. For a
+ * catch whose own translator, or a rethrow to the v1 boundary, would read the
+ * body as prose: "401 Unauthorized" as a refusal, a proxy's 500 as our own.
+ */
+export function translateConvexStatusError(
+  error: unknown,
+  options: Parameters<typeof translateConvexReadError>[1],
+): WebRouteError | undefined {
+  return error instanceof ConvexHttpStatusError
+    ? translateConvexReadError(error, options)
+    : undefined;
 }
 
 /**
@@ -354,9 +390,17 @@ export function translateConvexReadError(
         ? { slug }
         : {}),
   });
-  return new WebRouteError(
-    502,
-    ErrorCode.SERVER_UNREACHABLE,
-    "Upstream request failed",
-  );
+  const timedOut =
+    (error instanceof ConvexHttpStatusError &&
+      TIMEOUT_STATUSES.has(error.convexStatus)) ||
+    TIMEOUT_FAILURE.test(
+      error instanceof Error ? error.message : String(error),
+    );
+  return timedOut
+    ? new WebRouteError(504, ErrorCode.TIMEOUT, "Upstream request timed out")
+    : new WebRouteError(
+        502,
+        ErrorCode.SERVER_UNREACHABLE,
+        "Upstream request failed",
+      );
 }

@@ -56,6 +56,12 @@ export const tokensCss: string = `@theme {
      the hover fill and the hairline were 0.0045 L apart, so hovering a
      secondary button erased its own outline. */
   --chrome-control-hover: oklch(0.83 0.0235 80.6762);
+  /* Header buttons (Ask MCPJam, Star, Sign in): a paper fill one step above
+     the linen ground, so they read as buttons and the beige server selector
+     stays the only --chrome-control fill in the bar. Hairline is
+     --chrome-control-border. */
+  --chrome-button: oklch(0.9818 0.0054 95.0986);
+  --chrome-button-hover: oklch(0.9468 0.0102 92.3);
   --divider: oklch(0.8829 0.0171 88.0071);
   --input: oklch(0.7621 0.0156 98.3528);
   --ring: oklch(0.6171 0.1375 39.0427);
@@ -91,6 +97,21 @@ export const tokensCss: string = `@theme {
   --run-origin-cli-bg: oklch(0.65 0.11 195 / 0.1);
   --run-origin-agent-border: oklch(0.62 0.21 330 / 0.5);
   --run-origin-agent-bg: oklch(0.62 0.21 330 / 0.1);
+  /* Account avatar tokens: six tints, one picked per account from its id,
+     so an account keeps its color on every screen. Role-based; used only
+     by the eval account avatar. Each background carries its own alpha. */
+  --account-avatar-1-bg: oklch(0.65 0.15 255 / 0.16);
+  --account-avatar-1-fg: oklch(0.45 0.15 255);
+  --account-avatar-2-bg: oklch(0.65 0.15 295 / 0.16);
+  --account-avatar-2-fg: oklch(0.45 0.15 295);
+  --account-avatar-3-bg: oklch(0.65 0.15 160 / 0.16);
+  --account-avatar-3-fg: oklch(0.45 0.15 160);
+  --account-avatar-4-bg: oklch(0.65 0.15 75 / 0.16);
+  --account-avatar-4-fg: oklch(0.45 0.15 75);
+  --account-avatar-5-bg: oklch(0.65 0.15 15 / 0.16);
+  --account-avatar-5-fg: oklch(0.45 0.15 15);
+  --account-avatar-6-bg: oklch(0.65 0.15 210 / 0.16);
+  --account-avatar-6-fg: oklch(0.45 0.15 210);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:
@@ -228,6 +249,10 @@ export const tokensCss: string = `@theme {
      value, so sharing it filled a hovered control with exactly its own
      hairline colour and the outline vanished. A step past it instead. */
   --chrome-control-hover: oklch(0.3951 0.0106 106.8928);
+  /* The panel value, a step above the dark ground; hover brightens to the
+     raised --chrome-control value. */
+  --chrome-button: oklch(0.2679 0.0036 106.6427);
+  --chrome-button-hover: oklch(0.3085 0.0035 106.6039);
   --divider: oklch(0.3618 0.0101 106.8928);
   --input: oklch(0.4336 0.0113 100.2195);
   --ring: oklch(0.6724 0.1308 38.7559);
@@ -254,6 +279,18 @@ export const tokensCss: string = `@theme {
   --run-origin-cli-bg: oklch(0.78 0.1 195 / 0.15);
   --run-origin-agent-border: oklch(0.74 0.18 330 / 0.5);
   --run-origin-agent-bg: oklch(0.74 0.18 330 / 0.15);
+  --account-avatar-1-bg: oklch(0.7 0.13 255 / 0.22);
+  --account-avatar-1-fg: oklch(0.84 0.1 255);
+  --account-avatar-2-bg: oklch(0.7 0.13 295 / 0.22);
+  --account-avatar-2-fg: oklch(0.84 0.1 295);
+  --account-avatar-3-bg: oklch(0.7 0.13 160 / 0.22);
+  --account-avatar-3-fg: oklch(0.84 0.1 160);
+  --account-avatar-4-bg: oklch(0.7 0.13 75 / 0.22);
+  --account-avatar-4-fg: oklch(0.84 0.1 75);
+  --account-avatar-5-bg: oklch(0.7 0.13 15 / 0.22);
+  --account-avatar-5-fg: oklch(0.84 0.1 15);
+  --account-avatar-6-bg: oklch(0.7 0.13 210 / 0.22);
+  --account-avatar-6-fg: oklch(0.84 0.1 210);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:

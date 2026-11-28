@@ -16,6 +16,7 @@ import { IterationReportScorecard } from "../case-scorecard/iteration-report-sub
 import { authoredForTrial } from "../case-scorecard/trial-authored";
 import type { RunResultsMatrixData } from "../run-results-matrix-model";
 import type { TrialChainDisplay } from "../case-scorecard/trial-chain-state";
+import { readRunExecutionEngine } from "../description-experiment-model";
 import { outcomeLabel } from "./outcome";
 import { modeForTab, tabForMode } from "./iteration-tab";
 
@@ -64,6 +65,7 @@ export function IterationReport({
     // The trace below names the account each tool call ran on.
     <RunAccountsProvider
       accounts={target.run.accountsAtRun ?? fullRun?.accountsAtRun}
+      testCaseId={iteration.testCaseId}
     >
       <div className="flex min-h-0 flex-1 flex-col">
         <IterationDetails
@@ -73,6 +75,10 @@ export function IterationReport({
           iteration={iteration}
           testCase={null}
           layoutMode="full"
+          executionEngine={
+            target.run.configSnapshot?.executionEngine ||
+            (fullRun ? readRunExecutionEngine(fullRun) : undefined)
+          }
           traceDetailPlacement={traceDetailPlacement}
           // A link without a tab opens on the scorecard, even after an
           // in-page click moved the tab elsewhere.

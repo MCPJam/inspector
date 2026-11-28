@@ -13,6 +13,8 @@ export interface RemoteBrowserAuthorizationInput {
 export interface RemoteBrowserAuthorizationCode {
   code: string;
   state?: string;
+  /** RFC 9207 `iss` from the callback, passed on for the runner's issuer check. */
+  iss?: string;
 }
 
 /**
@@ -37,8 +39,9 @@ export interface RemoteBrowserAuthorizationController {
 
   /**
    * Deliver an authorization code from your user-facing callback. If
-   * `expectedState` was captured and `state` here does not match, the pending
-   * `authorize` call is rejected with a state-mismatch error.
+   * `expectedState` was captured and `state` here is missing or does not
+   * match, the pending `authorize` call is rejected with a state-mismatch
+   * error.
    */
   deliverCode(result: RemoteBrowserAuthorizationCode): void;
 
@@ -123,20 +126,16 @@ export function createRemoteBrowserAuthorizationController(
 
   return {
     awaitAuthorizationUrl,
-    deliverCode({ code, state }) {
-      if (
-        activeExpectedState !== undefined &&
-        state !== undefined &&
-        state !== activeExpectedState
-      ) {
+    deliverCode({ code, state, iss }) {
+      if (activeExpectedState !== undefined && state !== activeExpectedState) {
         const err = new Error(
-          `Authorization state mismatch. Expected ${activeExpectedState}, received ${state}`,
+          `Authorization state mismatch. Expected ${activeExpectedState}, received ${state ?? "missing"}`,
         );
         pendingReject?.(err);
         clearPending();
         return;
       }
-      pendingResolve?.({ code });
+      pendingResolve?.({ code, ...(iss ? { iss } : {}) });
       clearPending();
     },
     fail(error) {

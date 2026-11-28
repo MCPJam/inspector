@@ -35,6 +35,7 @@ import type {
   EvalTraceSpanCategory,
 } from "@/shared/eval-trace";
 import { mcpErrorCodeLabel } from "@/shared/eval-trace";
+import { mockAnswerOf } from "@/shared/mock-answer-span";
 import {
   BrowserStepDetail,
   browserStepLabel,
@@ -62,6 +63,18 @@ import {
   RecordedTraceToolbar,
   type TimelineFilter,
 } from "./recorded-trace-toolbar";
+import { selectRowCost, type RowCost } from "./trace-cost/cost-view";
+import { TraceEventSection, TraceEventTestBadge } from "./trace-event-section";
+import { eventPromptLabel, type LiveChatTraceTurnEvent } from "./trace-turn-event";
+import type { IterationCostContext } from "./trace-cost/iteration-model-calls";
+import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
+import {
+  TraceCostChips,
+  TraceCostHoverBlock,
+  TraceCostInline,
+  TraceCostSummary,
+  useTraceCostSpans,
+} from "./trace-cost/trace-cost-display";
 
 const ALL_AXIS_TICK_PERCENTS = [0, 25, 50, 75, 100] as const;
 
@@ -1519,18 +1532,24 @@ function turnRuntimeLabel(runtime: TraceTurnRuntime): string {
 
 function TimelineDetailPane({
   row,
+  recordedSpans,
   projectedMessages,
   transcriptMessages,
   onRevealInTranscript,
   turnRuntimeByPromptIndex,
+  turnEvent,
 }: {
   row: TimelineRow | undefined;
+  recordedSpans?: EvalTraceSpan[] | null;
   projectedMessages?: boolean;
   transcriptMessages: TranscriptMessage[];
   onRevealInTranscript?: (selection: TraceRevealSelection) => void;
   turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
+  /** The event that started the selected prompt row's turn, if one did. */
+  turnEvent?: LiveChatTraceTurnEvent;
 }) {
   const spanAccount = useSpanAccountName();
+  const costEnabled = useTraceCostEnabled();
   if (!row) {
     return (
       <div
@@ -1656,6 +1675,7 @@ function TimelineDetailPane({
     row.kind === "span" && toolData.errorText ? toolData.errorText : null;
 
   const showRevealInChat = Boolean(revealSelection && onRevealInTranscript);
+  const rowCost = costEnabled ? selectRowCost(row, recordedSpans) : undefined;
 
   return (
     <div
@@ -1743,7 +1763,9 @@ function TimelineDetailPane({
                     : ""}
                 </>
               ) : null}
+              <TraceCostInline cost={rowCost} />
             </div>
+            <TraceCostChips cost={rowCost} />
 
             {row.kind === "span"
               ? (() => {
@@ -1753,6 +1775,16 @@ function TimelineDetailPane({
                       ? spanThroughputPerSec(span.outputTokens, durationMs)
                       : null;
                   const items: Array<{ label: string; value: string }> = [];
+                  // Who answered a call a mock handled; the model never sees this.
+                  const mockAnswer =
+                    span.category === "tool"
+                      ? mockAnswerOf(span, recordedSpans)
+                      : undefined;
+                  if (mockAnswer)
+                    items.push({
+                      label: "Answered by",
+                      value: `the mock: ${mockAnswer}`,
+                    });
                   if (span.provider)
                     items.push({ label: "Provider", value: span.provider });
                   if (span.finishReason)
@@ -1817,6 +1849,8 @@ function TimelineDetailPane({
           </div>
         ) : null}
       </div>
+
+      {row.kind === "prompt" && turnEvent ? <TraceEventSection turnEvent={turnEvent} /> : null}
 
       {row.kind === "prompt" && promptUserMessage ? (
         <div className="min-h-0 max-h-[min(60vh,28rem)] flex-1 overflow-auto rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs leading-relaxed text-foreground">
@@ -1899,10 +1933,14 @@ export interface TraceTimelineProps {
   viewportMaxMs?: number;
   /** Runtime used for each live chat turn, keyed by promptIndex. */
   turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
+  /** The MCP event that started each turn an event started, keyed by promptIndex. */
+  turnEventByPromptIndex?: Map<number, LiveChatTraceTurnEvent>;
   /** When true, timeline fills a flex parent (e.g. run detail) instead of using viewport-based max height alone. */
   fillContent?: boolean;
   /** "auto" puts the span detail beside the waterfall when there is room. */
   detailPlacement?: TraceDetailPlacement;
+  /** An eval iteration's stored cost total and harness calls, for the summary. */
+  iterationCost?: IterationCostContext;
 }
 
 export function TraceTimeline({
@@ -1924,8 +1962,10 @@ export function TraceTimeline({
   onExpandedStepIdsChange,
   viewportMaxMs: viewportMaxMsProp,
   turnRuntimeByPromptIndex,
+  turnEventByPromptIndex,
   fillContent = false,
   detailPlacement = "below",
+  iterationCost,
 }: TraceTimelineProps) {
   const { containerRef, direction } = useTraceDetailDirection(detailPlacement);
   const beside = direction === "horizontal";
@@ -1936,8 +1976,22 @@ export function TraceTimeline({
     [projectedMessages, sourceSpans, transcriptMessages],
   );
   const recordedSpans = projected?.spans ?? sourceSpans;
+  // Cost reads these: a harness llm span carries its matched call's cost.
+  const traceCost = useTraceCostSpans(recordedSpans, iterationCost);
+  const costSpans = traceCost.spans;
   const shouldReduceMotion = useReducedMotion();
   const spanAccount = useSpanAccountName();
+  const costEnabled = useTraceCostEnabled();
+  // Spans with cost evidence, their own or a matched harness call's.
+  const costedSpanIds = useMemo(
+    () =>
+      new Set(
+        costEnabled
+          ? (costSpans ?? []).filter((span) => span.cost).map((span) => span.id)
+          : [],
+      ),
+    [costEnabled, costSpans],
+  );
   const mode =
     recordedSpans && recordedSpans.length > 0
       ? "recorded"
@@ -2130,9 +2184,12 @@ export function TraceTimeline({
         };
       }
 
-      // Skip overhead LLM spans (framework routing/dispatch, no actual generation)
+      // Skip overhead LLM spans (framework routing/dispatch, no actual
+      // generation). A call with cost evidence is billed, so it stays
+      // selectable while the totals count it.
       const isOverheadLlm =
         node.span.category === "llm" &&
+        !costedSpanIds.has(node.span.id) &&
         typeof node.span.totalTokens !== "number" &&
         typeof node.span.inputTokens !== "number" &&
         typeof node.span.outputTokens !== "number" &&
@@ -2228,13 +2285,17 @@ export function TraceTimeline({
       );
 
       const aggTokens = aggregateLlmTokenTotals(group.spans);
+      const turnEvent = turnEventByPromptIndex?.get(group.promptIndex);
 
       nextRows.push({
         kind: "prompt",
         key: group.key,
         promptIndex: group.promptIndex,
         label: group.label,
-        conversationLabel: userPreview ? `User: "${userPreview}"` : undefined,
+        // A turn an event started reads as that event, not as its stored prompt text.
+        conversationLabel: turnEvent
+          ? eventPromptLabel(turnEvent.event)
+          : userPreview ? `User: "${userPreview}"` : undefined,
         startMs: group.startMs,
         endMs: group.endMs,
         messageStartIndex: group.messageStartIndex,
@@ -2262,6 +2323,8 @@ export function TraceTimeline({
     mode,
     transcriptMessages,
     projectedMessages,
+    costedSpanIds,
+    turnEventByPromptIndex,
   ]);
 
   const fullyExpandedStepIds = useMemo(
@@ -2366,8 +2429,9 @@ export function TraceTimeline({
       rowEndTimestamp:
         traceStartAnchorMs !== null ? traceStartAnchorMs + endMs : null,
       glyphCategory,
+      cost: costEnabled ? selectRowCost(hoveredRow, costSpans) : undefined,
     };
-  }, [hoveredRow, recordedSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount]);
+  }, [hoveredRow, recordedSpans, costSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount, costEnabled]);
 
   const handleWaterfallKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -2415,17 +2479,34 @@ export function TraceTimeline({
     ],
   );
 
+  // Shown in every timing mode: an iteration with no recorded spans still has
+  // its stored total, and a harness's calls are listed as unmatched.
+  const costSummary = (
+    <>
+      {traceCost.loader}
+      <TraceCostSummary
+        spans={costSpans}
+        iteration={iterationCost}
+        unmatched={traceCost.unmatched}
+      />
+    </>
+  );
+
   if (mode === "none") {
     return (
-      <div className="text-xs text-muted-foreground">
-        No timing data recorded for this iteration.
-      </div>
+      <>
+        {costSummary}
+        <div className="text-xs text-muted-foreground">
+          No timing data recorded for this iteration.
+        </div>
+      </>
     );
   }
 
   if (mode === "estimated") {
     return (
       <div className="space-y-3">
+        {costSummary}
         <div className="flex items-center gap-2">
           <Badge className="border-warning/50 bg-warning/50 text-foreground">
             Estimated total only
@@ -2534,6 +2615,7 @@ export function TraceTimeline({
           </div>
         </div>
       ) : null}
+      {costSummary}
 
       <div
         ref={containerRef}
@@ -2867,6 +2949,7 @@ export function TraceTimeline({
                               <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                                 {label}
                               </span>
+                              {row.kind === "prompt" ? <TraceEventTestBadge event={turnEventByPromptIndex?.get(row.promptIndex)?.event} /> : null}
                               {/* The tool's name truncates first: the account stays readable. */}
                               <ToolCallAccountTag name={row.kind === "span" ? spanAccount(row.span) : undefined} />
                               {row.kind === "prompt" && row.hasAnyFailure ? (
@@ -2951,9 +3034,11 @@ export function TraceTimeline({
               <TimelineDetailPane
                 projectedMessages={projectedMessages}
                 row={selectedRow}
+                recordedSpans={costSpans}
                 transcriptMessages={transcriptMessages}
                 onRevealInTranscript={onRevealInTranscript}
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
+                turnEvent={selectedRow?.kind === "prompt" ? turnEventByPromptIndex?.get(selectedRow.promptIndex) : undefined}
               />
             </div>
           </ResizablePanel>
@@ -2983,6 +3068,7 @@ type HoveredRowInfo = {
   rowStartTimestamp: number | null;
   rowEndTimestamp: number | null;
   glyphCategory: EvalTraceSpanCategory | "prompt" | "interaction";
+  cost?: RowCost;
 };
 
 function HoveredRowInspector({
@@ -3116,6 +3202,7 @@ function HoveredRowInspector({
               </div>
             </div>
           </div>
+          <TraceCostHoverBlock cost={info.cost} />
         </div>
       </motion.div>
     </div>,

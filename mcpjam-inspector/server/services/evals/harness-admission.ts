@@ -42,6 +42,7 @@ import { isLocalHarnessVenue } from "../../utils/harness/local/run-resources.js"
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { getCanonicalModelId } from "@/shared/types";
+import { appliedToolApproval } from "@/shared/tool-approval";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
 import {
   selectionCacheKey,
@@ -65,7 +66,7 @@ import type { ModelDefinition } from "@/shared/types";
  */
 export type EvalHarnessAdmission =
   | { ok: true; harness?: Harness }
-  | { ok: false; harness: Harness; reason: string };
+  | { ok: false; harness: Harness; reason: string; kind?: HarnessUnavailableKind };
 
 /** The one case-shaped input the gate reads. Matches the recorder's
  *  `config.tests` rows, so callers pass those straight through. */
@@ -137,7 +138,7 @@ export function harnessOfHostConfig(
  * been booted and charged. Refusing at admission makes it a pre-flight failure
  * that spends nothing and says what to change.
  */
-function harnessNeedsProjectReason(harness: Harness): string {
+export function harnessNeedsProjectReason(harness: Harness): string {
   const name = getHarnessAdapter(harness).displayName;
   return (
     `the ${name} harness runs each eval iteration on a computer provisioned ` +
@@ -253,9 +254,10 @@ export function resolveEvalCaseModelDefinition(args: {
   const caseModel = { modelDefinition: args.caseModel, externalAccount: false };
   const harness = harnessOfHostConfig(args.hostConfig);
   if (!harness) return caseModel;
-  if (getHarnessAdapter(harness).modelAccess !== "external-account") {
-    return caseModel;
-  }
+  const adapter = getHarnessAdapter(harness);
+  if (adapter.modelAccess !== "external-account") return caseModel;
+  // A web client's case runs on the project's web account, not MCPJam's key.
+  if (adapter.webAccount) return { ...caseModel, externalAccount: true };
   const hostConfig = args.hostConfig as Record<string, unknown>;
   const hostModelId =
     typeof hostConfig.modelId === "string" ? hostConfig.modelId.trim() : "";
@@ -284,8 +286,7 @@ export function checkEvalHarnessStaticAdmission(args: {
   /** The run's resolved server set (the manager connects exactly this). */
   serverIds?: readonly string[];
   /** Servers contributed by the environment's pinned plugin versions. They
-   *  COUNT: a host whose MCP servers come solely from a plugin would otherwise
-   *  slip the approval gate this exists to close. */
+   *  count as selected servers, like the run's own. */
   pluginServerIds?: readonly string[];
 }): EvalHarnessAdmission {
   const harness = harnessOfHostConfig(args.hostConfig);
@@ -315,9 +316,9 @@ export function checkEvalHarnessStaticAdmission(args: {
   const pinnedRow: { id: string; hosted?: boolean } = { id: hostModelId ?? "" };
   const pinnedModel = withSelectionRouting(pinnedRow, pinnedSelection);
   const availability = checkHarnessRuntimeAvailable({
-    harnessId: harness, surface: "evals", agentLoop: hostConfig.agentLoop !== undefined,
+    harnessId: harness, surface: "evals",
     localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
-    requireToolApproval: hostConfig.requireToolApproval === true,
+    requireToolApproval: appliedToolApproval("eval", hostConfig.requireToolApproval),
     hasSelectedMcpServers,
     // A blank probe id is deliberately NOT hosted-eligible, so skip the model
     // rules rather than fail on a model nobody named: `checkModelEligibility`
@@ -337,11 +338,11 @@ export function checkEvalHarnessStaticAdmission(args: {
     // Evals refuse an unverified harness × model pair ("not verified for
     // <harness> <version>") rather than run it.
     purpose: "eval",
-    unattended: true,
     // The host's saved effort is known here; refusing it now costs nothing.
     ...(hostSavedReasoningEffort(hostConfig) !== undefined
       ? { reasoningEffort: hostSavedReasoningEffort(hostConfig) }
       : {}),
+    systemPrompt: typeof hostConfig.systemPrompt === "string" ? hostConfig.systemPrompt : undefined,
   });
   if (!availability.ok) {
     // With no host-pinned model, a model-eligibility refusal is about the
@@ -350,7 +351,7 @@ export function checkEvalHarnessStaticAdmission(args: {
     if (!hostModelId && isModelKind(availability.kind)) {
       return { ok: true, harness };
     }
-    return { ok: false, harness, reason: availability.reason };
+    return { ok: false, harness, reason: availability.reason, kind: availability.kind };
   }
   return { ok: true, harness };
 }
@@ -395,7 +396,7 @@ export function checkEvalHarnessAdmission(args: {
   const hasSelectedMcpServers = hasSelectedMcpServersForAdmission(args);
   const xaaEnterprisePolicyOn =
     readXaaEnterprisePolicy(hostConfig.mcpProfile).kind !== "off";
-  const requireToolApproval = hostConfig.requireToolApproval === true;
+  const requireToolApproval = appliedToolApproval("eval", hostConfig.requireToolApproval);
   // Read once for the external-account rule below. Absent ⇒ the host pinned no
   // model, and the gate holds the case's own model to the rule instead.
   const fullCheckHostModelId =
@@ -438,7 +439,7 @@ export function checkEvalHarnessAdmission(args: {
       };
       const routedCaseModel = withSelectionRouting(caseRow, selection);
       const availability = checkHarnessRuntimeAvailable({
-        harnessId: harness, surface: "evals", agentLoop: hostConfig.agentLoop !== undefined,
+        harnessId: harness, surface: "evals",
     localExecution: args.localExecution === true && isLocalHarnessVenue(harness, "unattended"),
         requireToolApproval,
         hasSelectedMcpServers,
@@ -450,8 +451,8 @@ export function checkEvalHarnessAdmission(args: {
         ...(fullCheckHostModelId ? { hostModelId: fullCheckHostModelId } : {}),
         xaaEnterprisePolicyOn,
         purpose: "eval",
-        unattended: true,
         ...(effort !== undefined ? { reasoningEffort: effort } : {}),
+        systemPrompt: typeof hostConfig.systemPrompt === "string" ? hostConfig.systemPrompt : undefined,
       });
       verdict = availability.ok
         ? undefined
@@ -467,12 +468,12 @@ export function checkEvalHarnessAdmission(args: {
   }
 
   if (ineligible.length > 0) {
-    // Non-model refusals (approval, MCP support, broker delivery, enterprise
-    // policy) are properties of the HOST and identical for every case — report
-    // one of them plainly rather than repeating it per case.
+    // Non-model refusals (MCP support, broker delivery, enterprise policy)
+    // are properties of the HOST and identical for every case — report one of
+    // them plainly rather than repeating it per case.
     const hostLevel = ineligible.find((entry) => !isModelKind(entry.kind));
     if (hostLevel) {
-      return { ok: false, harness, reason: hostLevel.reason };
+      return { ok: false, harness, reason: hostLevel.reason, kind: hostLevel.kind };
     }
     const names = [...new Set(ineligible.map((entry) => entry.title))];
     return {

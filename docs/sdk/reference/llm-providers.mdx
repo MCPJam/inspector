@@ -20,7 +20,7 @@ All models use the format `provider/model-id`:
 
 ## MCPJam-hosted (no provider key)
 
-Prefix a model with `mcpjam/` and MCPJam calls the provider for you, billing your organization's credits. The only secret you need is an MCPJam API key — which is usually already in your CI for saving results.
+Prefix a model with `mcpjam/` and MCPJam calls the provider for you, billing your organization's credits. The only secret you need is an MCPJam API key, which is usually already in your CI for saving results.
 
 | Property | Value |
 |----------|-------|
@@ -40,11 +40,11 @@ const agent = new HostRunner({
 
 #### Available models
 
-`mcpjam/anthropic/claude-*` and `mcpjam/openai/gpt-5*`. Other vendors are not hosted — use their own prefix and key.
+`mcpjam/anthropic/claude-*` and `mcpjam/openai/gpt-5*`. Other vendors are not hosted; use their own prefix and key.
 
 #### Reasoning effort
 
-Pass a `ModelSelection` with `settings.reasoningEffort` when constructing `McpjamLeaseClient` or `McpjamModelLeaseScope` directly to request a specific effort level. The selection must have `source: "hosted"` and its `modelId` must match the `model` option — the constructor throws if they disagree. Check `supportedReasoningEfforts` on the model's catalog row before choosing a level; an unsupported level is refused before any spend.
+Pass a `ModelSelection` with `settings.reasoningEffort` when constructing `McpjamLeaseClient` or `McpjamModelLeaseScope` directly to request a specific effort level. The selection must have `source: "hosted"` and its `modelId` must match the `model` option; the constructor throws if they disagree. Check `supportedReasoningEfforts` on the model's catalog row before choosing a level; an unsupported level is refused before any spend.
 
 ```typescript
 import { McpjamModelLeaseScope } from "@mcpjam/sdk";
@@ -70,7 +70,7 @@ await McpjamModelLeaseScope.run(
 
 #### Which project pays
 
-By default the API key's organization Default project, which is also where results are saved — so nothing extra to configure. Set `MCPJAM_PROJECT_ID` to bill a specific project.
+By default the API key's organization Default project, which is also where results are saved, so nothing extra to configure. Set `MCPJAM_PROJECT_ID` to bill a specific project.
 
 #### Cost
 
@@ -82,7 +82,7 @@ Handled for you, but worth knowing about if you see one in a log:
 
 - Leases last 30 minutes and are renewed automatically.
 - Each lease has its own spend and call ceiling; the SDK mints a fresh one when it is used up.
-- Your organization's credit balance and spend budget are checked on every call. "Spending limit reached" means add credits — it is not retried.
+- Your organization's credit balance and spend budget are checked on every call. "Spending limit reached" means add credits; it is not retried.
 - A suite revokes its leases when it finishes. If you build runs by hand, call `releaseMcpjamModelLeases()` in an `afterAll`.
 
 ```typescript

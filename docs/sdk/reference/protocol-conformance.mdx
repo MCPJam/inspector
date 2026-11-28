@@ -175,13 +175,13 @@ Check ids:
 - `tools-list`
 - `tools-input-schemas-valid`
 - `tools-x-mcp-header-declarations-valid` (2026-07-28 only)
+- `modern-tool-output-schema-conformant` (2025-06-18, 2025-11-25 and 2026-07-28): calls only the tools named in `fixtures.toolCalls` and checks each result against the tool's `outputSchema`
 - `prompts-list`
 - `resources-list`
-- `protocol-invalid-method-error`
-- `localhost-host-rebinding-rejected` — requires HTTP 403 when the run explicitly pins `protocolVersion` to `2025-11-25` or later; accepts any 4xx on earlier pins or when no version is pinned
+- `protocol-invalid-method-error`: requires the JSON-RPC error `-32601`; on `2026-07-28` it also requires HTTP 404, and `-32601` on any other status fails
+- `localhost-host-rebinding-rejected`: requires HTTP 403 when the run explicitly pins `protocolVersion` to `2025-11-25` or later; accepts any 4xx on earlier pins or when no version is pinned
 - `localhost-host-valid-accepted`
 - `server-sse-polling-session`
-- `server-accepts-multiple-post-streams`
 - `server-sse-streams-functional`
 - `notification-post-accepted` (2025 revisions only)
 - `get-stream-or-405` (2025 revisions only)
@@ -206,8 +206,8 @@ Check ids:
 
 Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipped"`:
 
-- `"not-applicable"` — the check cannot apply to this server (era-gated check on the wrong protocol version, unadvertised capability, localhost-only requirement against a remote server). These never hold a run back.
-- `"could-not-run"` — the check applies but was never exercised (broken session, missing `inputRequiredProbe`, subscription stream unavailable). These make the run `incomplete`.
+- `"not-applicable"`: the check cannot apply to this server (era-gated check on the wrong protocol version, unadvertised capability, localhost-only requirement against a remote server). These never hold a run back.
+- `"could-not-run"`: the check applies but was never exercised (broken session, missing `inputRequiredProbe`, subscription stream unavailable). These make the run `incomplete`.
 
 `MCPConformanceSuite.run()` returns an `MCPConformanceSuiteResult`:
 
@@ -215,7 +215,7 @@ Each `MCPCheckResult` includes a `skipReason` field whenever `status` is `"skipp
 |----------|------|-------------|
 | `name` | `string` | Suite name |
 | `serverUrl` | `string` | Shared server URL |
-| `passed` | `boolean` | `true` iff every run passed |
+| `passed` | `boolean` | `true` only when every run passes |
 | `results` | `Array<MCPConformanceResult & { label: string }>` | Per-run results |
 | `summary` | `string` | Human-readable suite summary |
 | `durationMs` | `number` | Total suite duration |
@@ -234,7 +234,7 @@ An incomplete run carries a root `incompleteReason` naming the checks that did n
 
 ## Readiness advice
 
-Every run also collects a `readiness` channel: advisory observations about server behavior that the spec does not mandate but that indicate potential issues. Readiness items never affect `outcome`, `passed`, or exit codes — they are informational only.
+Every run also collects a `readiness` channel: advisory observations about server behavior that the spec does not mandate but that indicate potential issues. Readiness items never affect `outcome`, `passed`, or exit codes; they are informational only.
 
 Each `MCPReadinessWarning` has:
 
@@ -250,8 +250,9 @@ The CLI prints readiness items as an `Advice` section on stderr after each `prot
 
 Current readiness checks:
 
-- `readiness-session-termination` — on 2025-era runs, fires when a session-termination `DELETE` returns anything other than a 2xx or HTTP 405. On 2026-era runs, fires when `GET` or `DELETE` traffic from an older client is not answered with HTTP 405 (the 2026 backward-compat `SHOULD`).
-- `readiness-log-level-filtering` — 2026-07-28 runs with a `logProbe` only. Calls the tool asking for logs at `logProbe.level` (default `warning`). Fires when no logs come back, or when any log comes back below that level or with an unknown level. The spec says a server `MAY` send logs at or above the requested level, so this costs no points.
+- `readiness-session-termination`: on 2025-era runs, fires when a session-termination `DELETE` returns anything other than a 2xx or HTTP 405. On 2026-era runs, fires when `GET` or `DELETE` traffic from an older client is not answered with HTTP 405 (the 2026 backward-compat `SHOULD`).
+- `readiness-server-identity`: 2026-07-28 runs only. Reads one `server/discover` result and fires when it carries no `io.modelcontextprotocol/serverInfo` in `_meta`. The spec says servers SHOULD include it in every result unless configured not to, and types the field optional, so a server without it is advised and never failed. A malformed one fails `modern-server-discover` instead.
+- `readiness-log-level-filtering`: 2026-07-28 runs with a `logProbe` only. Calls the tool asking for logs at `logProbe.level` (default `warning`). Fires when no logs come back, or when any log comes back below that level or with an unknown level. The spec says a server `MAY` send logs at or above the requested level, so this costs no points.
 
 ## CI reporting
 

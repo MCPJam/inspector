@@ -43,6 +43,8 @@ vi.mock("../auth.js", async () => ({
 }));
 
 vi.mock("../../../services/evals/suite-account-choices.js", () => ({
+  assertEvalAccountConnections: () => {},
+  loadQuickRunAccounts: async () => ({}),
   loadSuiteConnectionIdSets: async () => undefined,
 }));
 vi.mock("../../../services/evals/route-helpers.js", async () => ({

@@ -17,6 +17,7 @@ import {
 import type { RequestLogContext } from "./log-events.js";
 import { resolveEnvironment } from "./log-events.js";
 import { HOSTED_MODE } from "../config.js";
+import { scrubDeliveredSecretsDeep } from "../../shared/delivered-secret-registry.js";
 import {
   resolveFeatureFlagSource,
   rolloutAnswerWithoutPostHog,
@@ -98,6 +99,46 @@ function getClient(forFeatureFlags = false): PostHog | null {
   return client;
 }
 
+let batchedClient: PostHog | null = null;
+
+/**
+ * For high-volume events, such as one per Platform API request, where an
+ * event lost at process exit costs a data point, not a decision. The default
+ * client flushes each event on its own POST.
+ */
+function getBatchedClient(): PostHog | null {
+  if (isAnalyticsDisabled()) return null;
+  if (!batchedClient) {
+    batchedClient = new PostHog(POSTHOG_PROJECT_KEY, {
+      host: POSTHOG_HOST,
+      disableCompression: true,
+      enableExceptionAutocapture: false,
+      fetch: analyticsTransport(
+        POSTHOG_HOST,
+        POSTHOG_PROJECT_KEY,
+        isAnalyticsDisabled,
+      ),
+      flushAt: 20,
+      flushInterval: 5000,
+    });
+  }
+  return batchedClient;
+}
+
+/**
+ * API-key and AuthKit bearer callers never pass the Convex authorize exchange
+ * that fills `userExternalId`; the WorkOS user id from bearer auth IS the
+ * actorKey the identity contract requires. Call before `captureServerEvent`
+ * on a `/v1` route.
+ */
+export function fillAnalyticsActorFromBearer(c: Context): void {
+  const ctx = c.var.requestLogContext as RequestLogContext | undefined;
+  const workosUserId = c.get("workosUserId");
+  if (ctx && !ctx.userExternalId && workosUserId) {
+    c.set("requestLogContext", { ...ctx, userExternalId: workosUserId });
+  }
+}
+
 /**
  * Capture a server-authoritative event for the actor behind a request.
  * Never throws; silently drops when analytics is disabled or the request
@@ -151,15 +192,16 @@ export function captureServerEventForActor(
   actor: ServerAnalyticsActor,
   event: ServerAnalyticsEventName,
   properties: Record<string, unknown> = {},
+  options: { batched?: boolean } = {},
 ): void {
   try {
-    const posthog = getClient();
+    const posthog = options.batched ? getBatchedClient() : getClient();
     if (!posthog) return;
     posthog.capture({
       event,
       distinctId: actor.distinctId,
       properties: {
-        ...properties,
+        ...scrubDeliveredSecretsDeep(properties),
         // Retry-dedupe key: posthog-node may resend on transient failures.
         $insert_id: randomUUID(),
         platform: serverPlatform(),
@@ -182,10 +224,10 @@ export function captureServerEventForActor(
  * caller's force-exit timer is the backstop).
  */
 /** Rollout evaluation does not emit exposure events or trust client flags. */
-export async function evaluateBrowserRollout(
-  key: "local-browser-enabled" | "hosted-browser-enabled",
+export async function evaluateHostedBrowserRollout(
   distinctId: string,
 ): Promise<boolean> {
+  const key = "hosted-browser-enabled";
   if (!rolloutActorId(distinctId)) return false;
   const answer = rolloutAnswerWithoutPostHog(key);
   if (answer !== undefined) return answer;
@@ -193,9 +235,6 @@ export async function evaluateBrowserRollout(
     return (
       (await getClient(true)?.isFeatureEnabled(key, distinctId, {
         sendFeatureFlagEvents: false,
-        ...(key === "local-browser-enabled"
-          ? { personProperties: { local_browser_security_version: "1" } }
-          : {}),
       })) === true
     );
   } catch {
@@ -204,24 +243,74 @@ export async function evaluateBrowserRollout(
 }
 
 
+/**
+ * A local harness rollout's own answer: yes, no, or `undefined` when the
+ * request failed. Only a refusal's explanation needs the third state.
+ */
+export async function localHarnessRolloutAnswer(
+  distinctId: string,
+  trustedEmail?: string,
+  flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
+): Promise<boolean | undefined> {
+  return serverRolloutAnswer(
+    flagKey,
+    distinctId,
+    { deployment: "self_hosted" },
+    trustedEmail,
+  );
+}
+
 /** Same server-owned rollout decision for setup, launches and client visibility. */
 export async function evaluateLocalHarnessRollout(
   distinctId: string,
   trustedEmail?: string,
   flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
 ): Promise<boolean> {
+  return (await localHarnessRolloutAnswer(distinctId, trustedEmail, flagKey)) === true;
+}
+
+/**
+ * A boolean rollout the server enforces, from the same flag source and person
+ * properties `GET /api/web/flags` uses. No exposure events; any failure is off.
+ */
+export async function evaluateServerRollout(
+  flagKey: string,
+  distinctId: string,
+  personProperties: Record<string, string>,
+  trustedEmail?: string,
+): Promise<boolean> {
+  return (
+    (await serverRolloutAnswer(
+      flagKey,
+      distinctId,
+      personProperties,
+      trustedEmail,
+    )) === true
+  );
+}
+
+/**
+ * {@link evaluateServerRollout}'s decision, or `undefined` when there was
+ * none to read: the PostHog request failed or did not evaluate the flag. A
+ * caller that keeps answers keeps only a definite one.
+ */
+export async function serverRolloutAnswer(
+  flagKey: string,
+  distinctId: string,
+  personProperties: Record<string, string>,
+  trustedEmail?: string,
+): Promise<boolean | undefined> {
   if (!rolloutActorId(distinctId)) return false;
   const answer = rolloutAnswerWithoutPostHog(flagKey);
   if (answer !== undefined) return answer;
   try {
-    return (
-      (await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
-        sendFeatureFlagEvents: false,
-        personProperties: rolloutPersonProperties({ deployment: "self_hosted" }, trustedEmail),
-      })) === true
-    );
+    return await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
+      sendFeatureFlagEvents: false,
+      personProperties: rolloutPersonProperties(personProperties, trustedEmail),
+    });
   } catch {
-    return false;
+    // A request that failed is no answer; callers read it as off.
+    return undefined;
   }
 }
 
@@ -253,11 +342,18 @@ export async function evaluateClientFeatureFlags(
 }
 
 export async function shutdownAnalytics(): Promise<void> {
-  if (!client) return;
-  try {
-    await client.shutdown(2000);
-  } catch {
-    // Losing a final flush beats hanging shutdown.
-  }
+  const clients = [client, batchedClient].filter(
+    (c): c is PostHog => c !== null,
+  );
   client = null;
+  batchedClient = null;
+  await Promise.all(
+    clients.map(async (c) => {
+      try {
+        await c.shutdown(2000);
+      } catch {
+        // Losing a final flush beats hanging shutdown.
+      }
+    }),
+  );
 }

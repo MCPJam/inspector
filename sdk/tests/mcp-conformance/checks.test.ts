@@ -2,6 +2,8 @@ import { MCPConformanceTest } from "../../src/mcp-conformance/index.js";
 import { runTransportChecks } from "../../src/mcp-conformance/checks/transport.js";
 import { TOOL_CHECKS } from "../../src/mcp-conformance/checks/tools.js";
 import * as operations from "../../src/operations.js";
+import { ProtocolVersionPinUnsupported } from "../../src/mcp-client-manager/managed-mcp-client.js";
+import { computeConformanceScore } from "../../src/conformance-score.js";
 
 vi.mock("../../src/operations.js", () => ({
   listPrompts: vi.fn(),
@@ -257,6 +259,278 @@ describe("mcp conformance unit checks", () => {
     });
     expect(result.categorySummary.protocol.passed).toBe(1);
     expect(result.categorySummary.core.total).toBe(0);
+  });
+
+  it.each(["2025-06-18", "2025-11-25"])(
+    "sends MCP-Protocol-Version on the invalid-method probe after initialize on %s",
+    async (version) => {
+      mockedOperations.withEphemeralClient.mockImplementation(
+        async (_config, fn) =>
+          fn(
+            {
+              getManagedClient: vi.fn().mockReturnValue({}),
+              getInitializationInfo: vi.fn().mockReturnValue({
+                protocolVersion: version,
+              }),
+            } as any,
+            "server-1",
+          ),
+      );
+      const sent: Array<{ method?: string; headers: Headers }> = [];
+      const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+        sent.push({ method: body.method, headers: new Headers(init?.headers) });
+
+        if (body.method === "initialize") {
+          return jsonResponse(
+            { jsonrpc: "2.0", id: 1, result: { protocolVersion: version } },
+            { headers: { "mcp-session-id": "session-1" } },
+          );
+        }
+
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: 99,
+          error: { code: -32601, message: "Method not found" },
+        });
+      }) as typeof fetch;
+
+      const result = await new MCPConformanceTest({
+        serverUrl: "https://example.com/mcp",
+        protocolVersion: version,
+        checkIds: ["protocol-invalid-method-error"],
+        fetchFn,
+      }).run();
+
+      expect(result.checks[0]).toMatchObject({
+        id: "protocol-invalid-method-error",
+        status: "passed",
+      });
+      const initialize = sent.find((request) => request.method === "initialize");
+      const probe = sent.find(
+        (request) => request.method === "nonexistent/method_that_does_not_exist",
+      );
+      // The header belongs to the requests AFTER initialize, not to it.
+      expect(initialize?.headers.has("mcp-protocol-version")).toBe(false);
+      expect(probe?.headers.get("mcp-protocol-version")).toBe(version);
+      expect(probe?.headers.get("mcp-session-id")).toBe("session-1");
+    },
+  );
+
+  it("does not send the invalid-method probe when the server agreed to another version than the pin", async () => {
+    mockedOperations.withEphemeralClient.mockImplementation(
+      async (_config, fn) =>
+        fn(
+          {
+            getManagedClient: vi.fn().mockReturnValue({}),
+            getInitializationInfo: vi.fn().mockReturnValue({
+              protocolVersion: "2025-06-18",
+            }),
+          } as any,
+          "server-1",
+        ),
+    );
+    const sent: Array<{ method?: string; headers: Headers }> = [];
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+      sent.push({ method: body.method, headers: new Headers(init?.headers) });
+
+      if (body.method === "initialize") {
+        // A server whose newest version is 2025-06-18 answers a 2025-11-25
+        // request with the version it does speak.
+        return jsonResponse(
+          { jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" } },
+          { headers: { "mcp-session-id": "session-older" } },
+        );
+      }
+
+      return jsonResponse({
+        jsonrpc: "2.0",
+        id: 99,
+        error: { code: -32601, message: "Method not found" },
+      });
+    }) as typeof fetch;
+
+    const result = await new MCPConformanceTest({
+      serverUrl: "https://example.com/mcp",
+      protocolVersion: "2025-11-25",
+      checkIds: ["protocol-invalid-method-error"],
+      fetchFn,
+    }).run();
+
+    // A run is about one version: the probe is not sent on the server's
+    // version either, and the stop is the caller's setup gap, not a failure.
+    expect(result.checks[0]).toMatchObject({
+      id: "protocol-invalid-method-error",
+      status: "skipped",
+      skipReason: "could-not-run",
+      details: {
+        requestedProtocolVersion: "2025-11-25",
+        negotiatedProtocolVersion: "2025-06-18",
+        missingInput: "protocolVersion",
+      },
+    });
+    expect(
+      sent.some(
+        (request) => request.method === "nonexistent/method_that_does_not_exist"
+      )
+    ).toBe(false);
+  });
+
+  it("sends MCP-Protocol-Version on the DELETE that closes a transport probe session", async () => {
+    const deletes: Headers[] = [];
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        deletes.push(new Headers(init.headers));
+        return new Response(null, { status: 200 });
+      }
+      return jsonResponse(
+        { jsonrpc: "2.0", id: 1, result: {} },
+        { headers: { "mcp-session-id": "session-close-1" } },
+      );
+    }) as typeof fetch;
+    const base = createTransportContext(fetchFn);
+
+    const results = await runTransportChecks(
+      { ...base, config: { ...base.config, protocolVersion: "2025-06-18" } } as any,
+      new Set(["server-sse-polling-session"]),
+    );
+
+    expect(results[0]).toMatchObject({
+      id: "server-sse-polling-session",
+      status: "passed",
+    });
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].get("mcp-protocol-version")).toBe("2025-06-18");
+    expect(deletes[0].get("mcp-session-id")).toBe("session-close-1");
+  });
+
+  it("sends the version the server agreed to, not the pin, on the closing DELETE", async () => {
+    const deletes: Headers[] = [];
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        deletes.push(new Headers(init.headers));
+        return new Response(null, { status: 200 });
+      }
+      // A server whose newest version is 2025-06-18 answers a 2025-11-25
+      // request with the version it does speak.
+      return jsonResponse(
+        { jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" } },
+        { headers: { "mcp-session-id": "session-older-close" } },
+      );
+    }) as typeof fetch;
+    const base = createTransportContext(fetchFn);
+
+    await runTransportChecks(
+      { ...base, config: { ...base.config, protocolVersion: "2025-11-25" } } as any,
+      new Set(["server-sse-polling-session"]),
+    );
+
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].get("mcp-protocol-version")).toBe("2025-06-18");
+    expect(deletes[0].get("mcp-session-id")).toBe("session-older-close");
+  });
+
+  it("stops a whole pinned run when the server does not speak the pin", async () => {
+    mockedOperations.withEphemeralClient.mockRejectedValue(
+      new Error("connect failed", {
+        cause: new ProtocolVersionPinUnsupported("server-1", "2025-11-25", {
+          supportedVersions: ["2025-06-18"],
+        }),
+      })
+    );
+    const fetchFn = vi.fn(async () => {
+      throw new Error("no request should reach the server");
+    }) as unknown as typeof fetch;
+
+    const result = await new MCPConformanceTest({
+      serverUrl: "https://example.com/mcp",
+      protocolVersion: "2025-11-25",
+      fetchFn,
+    }).run();
+
+    const message =
+      "The server does not support protocol version 2025-11-25, which this run uses, so nothing could be checked on it. Run it on 2025-06-18 instead.";
+    // Not one raw probe or advice probe: there is no session on 2025-11-25.
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(result.readiness ?? []).toEqual([]);
+    expect(result.checks.length).toBeGreaterThan(1);
+    expect(result.checks.some((check) => check.status === "failed")).toBe(
+      false
+    );
+    const unrun = result.checks.filter(
+      (check) => check.skipReason === "could-not-run"
+    );
+    expect(unrun.map((check) => check.id)).toContain("server-initialize");
+    expect(unrun.map((check) => check.id)).toContain(
+      "protocol-invalid-method-error"
+    );
+    for (const check of unrun) {
+      expect(check.error?.message).toBe(message);
+      expect(check.details).toMatchObject({
+        requestedProtocolVersion: "2025-11-25",
+        offeredProtocolVersions: ["2025-06-18"],
+        missingInput: "protocolVersion",
+      });
+    }
+    // Like a missing login: no points lost, and no verdict either way.
+    expect(result.outcome).toBe("incomplete");
+    expect(computeConformanceScore(result.checks).applicable).toBe(0);
+  });
+
+  it("does not let a refused pin pass when no selected check applies to its era", async () => {
+    mockedOperations.withEphemeralClient.mockRejectedValue(
+      new ProtocolVersionPinUnsupported("server-1", "2026-07-28", {
+        supportedVersions: ["2025-11-25"],
+      })
+    );
+    const fetchFn = vi.fn(async () => {
+      throw new Error("no request should reach the server");
+    }) as unknown as typeof fetch;
+
+    // server-initialize is legacy-only, so on a 2026 pin it does not apply.
+    const result = await new MCPConformanceTest({
+      serverUrl: "https://example.com/mcp",
+      protocolVersion: "2026-07-28",
+      checkIds: ["server-initialize"],
+      fetchFn,
+    }).run();
+
+    expect(result.checks).toHaveLength(1);
+    expect(result.checks[0]).toMatchObject({
+      id: "server-initialize",
+      status: "skipped",
+      skipReason: "could-not-run",
+    });
+    expect(result.passed).toBe(false);
+    expect(result.outcome).toBe("incomplete");
+  });
+
+  it("does not call a refused pin a setup gap when the server offers only versions MCPJam does not speak", async () => {
+    mockedOperations.withEphemeralClient.mockRejectedValue(
+      new ProtocolVersionPinUnsupported("server-1", "2025-11-25", {
+        supportedVersions: ["2099-01-01"],
+      })
+    );
+    const fetchFn = vi.fn(async () => {
+      throw new Error("no request should reach the server");
+    }) as unknown as typeof fetch;
+
+    const result = await new MCPConformanceTest({
+      serverUrl: "https://example.com/mcp",
+      protocolVersion: "2025-11-25",
+      checkIds: ["server-initialize"],
+      fetchFn,
+    }).run();
+
+    // No pin gets around it, so the advice to change versions would be
+    // wrong, and the check costs its point like any other that could not run.
+    expect(result.checks[0].error?.message).toBe(
+      "The server does not support protocol version 2025-11-25, which this run uses, so nothing could be checked on it. It offers only 2099-01-01, which MCPJam does not support."
+    );
+    expect(result.checks[0].details).not.toHaveProperty("missingInput");
+    expect(computeConformanceScore(result.checks).applicable).toBe(1);
+    expect(result.outcome).toBe("incomplete");
   });
 
   it("does not count truncated SSE frames as complete events", async () => {
@@ -568,6 +842,11 @@ describe("mcp conformance unit checks", () => {
         );
       }
 
+      // The handshake ends with this notification, before the three probes.
+      if (body.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+
       postCount += 1;
       if (postCount === 1) {
         throw new Error("request boom");
@@ -581,22 +860,14 @@ describe("mcp conformance unit checks", () => {
 
     const results = await runTransportChecks(
       createTransportContext(fetchFn) as any,
-      new Set([
-        "server-accepts-multiple-post-streams",
-        "server-sse-streams-functional",
-      ]),
+      new Set(["server-sse-streams-functional"]),
     );
     const byId = Object.fromEntries(results.map((result) => [result.id, result]));
 
-    expect(byId["server-accepts-multiple-post-streams"]).toMatchObject({
-      status: "failed",
-      details: expect.objectContaining({
-        requestErrors: ["request boom", undefined, undefined],
-      }),
-    });
     expect(byId["server-sse-streams-functional"]).toMatchObject({
       status: "failed",
       details: expect.objectContaining({
+        requestErrors: ["request boom", undefined, undefined],
         eventCounts: [1, 0],
         readErrors: [undefined, "stream boom"],
       }),

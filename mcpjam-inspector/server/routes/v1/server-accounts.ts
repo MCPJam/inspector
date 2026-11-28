@@ -4,8 +4,9 @@
  *
  * Tokens are write-only. `PUT` uploads them and no route returns one: every
  * answer is the account view, projected in `server-account-backend.ts`. An
- * account `PUT` writes is hosted-only, so hosted runs use it and nothing hands
- * its token to a local app, a browser or a sandbox.
+ * account `PUT` writes is never revealed or sent to a browser or sandbox.
+ * Hosted runs use it, and local apps receive it only where a project admin
+ * allowed local runs (or its owner's own app, on a personal server).
  *
  * An upload never connects to the MCP server, so nothing checks who a token
  * belongs to: a name is the caller's own label, and replacing a token

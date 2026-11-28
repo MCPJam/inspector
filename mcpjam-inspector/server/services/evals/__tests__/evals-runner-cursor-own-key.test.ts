@@ -248,7 +248,7 @@ function traceWrites(client: ReturnType<typeof convexClient>) {
 /** The cases the organization's AI-key policy refused, as the run logs them. */
 function policyRefusals(warn: ReturnType<typeof vi.spyOn>) {
   return warn.mock.calls.filter(([message]) =>
-    String(message).includes("refused by the organization AI-key policy"),
+    String(message).includes("refused by the organization's AI configuration"),
   );
 }
 

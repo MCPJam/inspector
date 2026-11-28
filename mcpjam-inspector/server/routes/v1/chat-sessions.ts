@@ -45,6 +45,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import { readEventAtTurn, type EventAtTurn } from "@/shared/event-at-turn";
 import { createConvexClient } from "./convex-client.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -129,6 +130,8 @@ type TurnTraceRow = {
   spanCount?: number;
   spansBlobUrl?: string | null;
   browserAtTurn?: { browserSessionId: string; bootId?: string; box?: unknown };
+  /** The MCP event that started the turn; absent on every other turn. */
+  eventAtTurn?: EventAtTurn;
 };
 
 /**
@@ -462,10 +465,14 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
           url: step.screenshotUrl,
           ts: step.ts,
         }));
+      // Copied field by field, so nothing the backend adds to its record
+      // reaches the public shape without a change here.
+      const event = readEventAtTurn(row.eventAtTurn);
       const base = {
         ...(row.browserAtTurn
           ? { browser: row.browserAtTurn, screenshots }
           : {}),
+        ...(event ? { event } : {}),
         turnId: row.turnId,
         promptIndex: row.promptIndex,
         startedAt: row.startedAt,

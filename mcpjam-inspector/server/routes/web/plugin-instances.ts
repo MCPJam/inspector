@@ -1054,15 +1054,20 @@ instances.post("/activation/open", (c) =>
               })
             ).get(current.serverIdentity.pluginId)
           : undefined;
-      const validateLink = (resolved: typeof current) =>
-        admittedPluginDeepLink(body.deepLink, {
-          serverIdentity: resolved.serverIdentity,
-          runtime: resolved.runtime,
+      const validateLink = (publishedPluginId: string | undefined) => {
+        if (body.deepLink === undefined) return undefined;
+        return admittedPluginDeepLink(body.deepLink, {
+          serverIdentity: current.serverIdentity,
+          runtime: current.runtime,
           toolName: body.toolName,
           kind: body.kind,
-          names: linkNames,
+          names:
+            current.serverIdentity.kind === "standalone"
+              ? { publishedId: publishedPluginId }
+              : linkNames,
         });
-      validateLink(current);
+      };
+      validateLink(catalog.publishedPluginId);
       const listedFile =
         body.kind === "file"
           ? await resolveListedFileResource(
@@ -1160,9 +1165,9 @@ instances.post("/activation/open", (c) =>
       const toolsMetadata = pluginAppToolsMetadata(catalog.tools);
       // Final fence: ONE batched read proves the actor is still admitted and
       // the host and saved server identity are unchanged after the write.
-      await runtime.verifyCurrent(c.req.raw.signal);
+      const publishedPluginId = await runtime.verifyCurrent(c.req.raw.signal);
       c.req.raw.signal.throwIfAborted();
-      const link = validateLink(current);
+      const link = validateLink(publishedPluginId);
       const navigationNamespace =
         current.extensions?.capabilities.deepLinks === false
           ? undefined
@@ -1285,6 +1290,7 @@ async function invoke(
     bearer,
     { hostId: instance.hostId, serverId: instance.owner.serverId },
     instance,
+    { ownerRef: { kind: "app", token: body.instanceToken } },
   );
   const resolveActivation: typeof runtime.resolve =
     origin === "quick-action"
@@ -1492,10 +1498,12 @@ instances.post("/deep-link/resolve", (c) =>
       runtime: pluginRuntimeProfile(config),
       candidates: identities.map((candidate) => ({
         ...candidate,
-        ...(candidate.serverIdentity.kind === "plugin" &&
-        names.has(candidate.serverIdentity.pluginId)
-          ? { names: names.get(candidate.serverIdentity.pluginId) }
-          : {}),
+        names:
+          candidate.serverIdentity.kind === "plugin"
+            ? names.get(candidate.serverIdentity.pluginId)
+            : {
+                publishedId: context.publishedPluginIdsByServerId?.[candidate.serverId],
+              },
       })),
     });
     let target = servers[0];
@@ -1708,7 +1716,7 @@ for (const action of ["execute", "call-tool"] as const)
       const call = action === "call-tool" ? callSchema.parse(raw) : undefined;
       const body = call ?? executeSchema.parse(raw);
       const { admission, bearer, actor } = await admitted(c, body);
-      const current = getPluginFormApp({
+      const current = await getPluginFormApp({
         actor,
         bearer,
         token: body.instanceToken,

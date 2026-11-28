@@ -1,17 +1,18 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
+import { makeFunctionReference } from "convex/server";
 import { DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT } from "@mcpjam/sdk/contract";
+import {
+  isAwaitingFirstRunAfterTour,
+  takeFirstRunAfterTour,
+} from "@/components/evaluate/tour/tour-attribution";
 import { toast } from "sonner";
 import { convexErrMessage } from "@/lib/convex-error";
+import { withLaunchReason } from "@/lib/eval-launch-reason";
 import { aiLaunchRefusalSentence } from "@/lib/ai-launch-problems";
 import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
-import {
-  buildEvalsRunsPath,
-  buildEvalsPath,
-  buildEvaluatePath,
-  navigateApp,
-} from "@/lib/app-navigation";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
 import type {
   EvalCase,
@@ -53,6 +54,7 @@ import {
   type GenerationOptions,
 } from "@/lib/apis/evals-api";
 import { isHostedMode } from "@/lib/apis/mode-client";
+import { serverIdsForRefs, type SharedEvalAccountSelection } from "@/lib/evals/eval-accounts";
 import { normalizeHostedServerNames } from "@/lib/apis/web/context";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
 import { useConvexAccessToken } from "@/hooks/use-convex-access-token";
@@ -83,14 +85,14 @@ export type EvalRerunLaunch = {
 
 type EvalsNavigationContext = "evals" | "ci-evals" | "evaluate";
 
-function navigateEvalRoute(route: EvalRoute, context: EvalsNavigationContext) {
-  navigateApp(
-    context === "ci-evals"
-      ? buildEvalsRunsPath(route)
-      : context === "evaluate"
-      ? buildEvaluatePath(route)
-      : buildEvalsPath(route),
-  );
+const resolveEnvironmentAccountServers = makeFunctionReference<
+  "query",
+  { projectId: string; environmentId: string; serverSource: "environment_only" },
+  { servers: Array<{ serverId: string }> }
+>("projectEnvironments:resolveEnvironmentForLaunch");
+
+function navigateEvalRoute(route: EvalRoute) {
+  navigateApp(buildEvaluatePath(route));
 }
 import type { RemoteServer } from "@/hooks/useProjects";
 import {
@@ -155,6 +157,11 @@ export function formatEnsureServersReadyError(
 
   if (result.failedServerNames.length > 0) {
     const names = result.failedServerNames;
+    const errors = names.flatMap((name) => result.failedServerErrors?.[name] ? [result.failedServerErrors[name]] : []);
+    if (errors.length > 0) {
+      const remaining = names.length - errors.length;
+      return errors.join("\n") + (remaining > 0 ? `\nWe couldn't connect to all required servers. Try again to ${actionLabel}.` : "");
+    }
     const opts = { remoteServers: projectServers };
     if (
       names.length > 0 &&
@@ -263,9 +270,9 @@ interface UseEvalHandlersProps {
   ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
-   * Prefix for handler-driven navigation (create case, duplicate, post-run
-   * landing). `ci-evals` stays on Runs (`/evals/runs/...`); `evaluate` stays
-   * on Evaluate (New) (`/evaluate/...`). Defaults to Suites (`/evals/...`).
+   * Selects the landing view after deleting a test case: `ci-evals` opens
+   * the suite's test-cases view; other values open its overview. All handler
+   * navigation uses `/evaluate`. Defaults to `evaluate`.
    */
   evalsNavigationContext?: EvalsNavigationContext;
   /** For user-facing server labels (names instead of raw Convex ids). */
@@ -306,7 +313,7 @@ export function useEvalHandlers({
   connectedServerNames,
   ensureServersReady,
   latestRunBySuiteId,
-  evalsNavigationContext = "evals",
+  evalsNavigationContext = "evaluate",
   projectServers,
   isDirectGuest = false,
   availableModels,
@@ -382,6 +389,8 @@ export function useEvalHandlers({
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
+  const [suiteToDeleteHasUnsavedEdits, setSuiteToDeleteHasUnsavedEdits] =
+    useState(false);
   const [duplicatingSuiteId, setDuplicatingSuiteId] = useState<string | null>(
     null,
   );
@@ -410,9 +419,9 @@ export function useEvalHandlers({
             view?: SuiteOverviewView;
           },
     ) => {
-      navigateEvalRoute(route as EvalRoute, evalsNavigationContext);
+      navigateEvalRoute(route as EvalRoute);
     },
-    [evalsNavigationContext],
+    [],
   );
 
   // Query to get test cases for a suite
@@ -687,15 +696,12 @@ export function useEvalHandlers({
         });
 
         if (result?.suiteId && result?.runId) {
-          navigateEvalRoute(
-            {
-              type: "run-detail",
-              suiteId: result.suiteId,
-              runId: result.runId,
-              insightsFocus: true,
-            },
-            "ci-evals",
-          );
+          navigateEvalRoute({
+            type: "run-detail",
+            suiteId: result.suiteId,
+            runId: result.runId,
+            insightsFocus: true,
+          });
         }
 
         toast.success("Replay started!", {
@@ -780,8 +786,9 @@ export function useEvalHandlers({
         /** The selected case explicitly opts out of launch-triggered judging. */
         skipJudge?: boolean;
         caseLaunchId?: string;
+        runAccounts?: SharedEvalAccountSelection[];
         /**
-         * Throw a launch failure instead of toasting it, so the Setup Run
+         * Throw a launch failure instead of toasting it, so the Set up run
          * sheet can show it inline and stay open. Unlike `stayOnPage`, the
          * launch still navigates and may still replay.
          */
@@ -834,6 +841,10 @@ export function useEvalHandlers({
               "Live suite servers are unavailable. Connect them before running from eval chat.",
             );
           // Replay uses saved counts and cannot honor a per-run override.
+          if (options?.runAccounts?.length) {
+            fail("Connect the suite servers before choosing accounts for a run.");
+            return;
+          }
           if (options?.iterationOverride !== undefined) {
             fail(
               "Replay cannot honor the requested iteration count. Connect the suite servers and try again.",
@@ -862,6 +873,10 @@ export function useEvalHandlers({
                 "Live suite servers are unavailable. Connect them before running from eval chat.",
               );
             // Replay uses saved counts and cannot honor a per-run override.
+            if (options?.runAccounts?.length) {
+              fail("Connect the suite servers before choosing accounts for a run.");
+              return;
+            }
             if (options?.iterationOverride !== undefined) {
               fail(
                 "Replay cannot honor the requested iteration count. Connect the suite servers and try again.",
@@ -1043,6 +1058,24 @@ export function useEvalHandlers({
           return;
         }
 
+        const runAccounts = options?.runAccounts;
+        const accountsByTarget = runAccounts?.length && projectId
+          ? await Promise.all(runPlans.map(async (plan) => {
+              const serverIds = plan.environmentId
+                ? (await convex.query(resolveEnvironmentAccountServers, {
+                    projectId,
+                    environmentId: plan.environmentId,
+                    serverSource: "environment_only",
+                  })).servers.map((server) => server.serverId)
+                : serverIdsForRefs(plan.serverIds, projectServers);
+              return runAccounts.filter(({ serverId }) => serverIds.includes(serverId));
+            }))
+          : undefined;
+        const coveredAccounts = new Set(accountsByTarget?.flat());
+        if (runAccounts?.some((account) => !coveredAccounts.has(account))) {
+          throw new Error("This run doesn't include an MCP server you chose an account for. Clear the account choice or select a client and model that use that server.");
+        }
+
         // Partial-failure tolerant: a failure on one host shouldn't cancel
         // runs already started against other hosts. We collect failures
         // and toast a summary at the end.
@@ -1077,6 +1110,7 @@ export function useEvalHandlers({
                     }
                   : {}),
                 ...(wantedCaseIds?.length ? { caseIds: wantedCaseIds } : {}),
+                ...(accountsByTarget?.[index]?.length ? { runAccounts: accountsByTarget[index] } : {}),
                 iterationOverride: options?.iterationOverride,
                 matchOptionsOverride: options?.matchOptionsOverride,
                 refreshSnapshot: options?.refreshSnapshot,
@@ -1103,10 +1137,11 @@ export function useEvalHandlers({
                 runId.length > 0
               ) {
                 openedRun = true;
-                navigateEvalRoute(
-                  { type: "run-detail", suiteId: suite._id, runId },
-                  evalsNavigationContext,
-                );
+                navigateEvalRoute({
+                  type: "run-detail",
+                  suiteId: suite._id,
+                  runId,
+                });
               }
               return response;
             }),
@@ -1147,6 +1182,10 @@ export function useEvalHandlers({
           num_hosts: runPlans.length,
           fan_out_axis: fanOutAxis,
           num_environments: numEnvironments,
+          // A batch where every launch was rejected isn't the first run.
+          after_tour:
+            failures.length < runPlans.length &&
+            takeFirstRunAfterTour(suite._id),
         });
 
         track("eval_suite_run_start_requests_completed", {
@@ -1280,7 +1319,7 @@ export function useEvalHandlers({
           const message = policyRefusal ?? launchMessage;
           if (options?.stayOnPage || options?.throwOnFailure) {
             toast.dismiss(runStartedToastId);
-            throw policyRefusal ? error : new Error(message);
+            throw policyRefusal ? error : withLaunchReason(new Error(message), error);
           }
           toast.error(message, { id: runStartedToastId });
         }
@@ -1302,7 +1341,6 @@ export function useEvalHandlers({
       labeledProjectEnvironments,
       getSuiteExecutionContext,
       handleReplayRun,
-      evalsNavigationContext,
       openEvalIterationWall,
       convex,
     ],
@@ -1554,6 +1592,7 @@ export function useEvalHandlers({
           return null;
         }
 
+        const afterTour = isAwaitingFirstRunAfterTour(suite._id);
         const runResults = await Promise.all(
           preparedRuns.map(async (preparedRun) => {
             track("eval_test_case_run_started", {
@@ -1561,6 +1600,7 @@ export function useEvalHandlers({
               suite_id: suite._id,
               test_case_id: testCase._id,
               model: preparedRun.modelValue,
+              after_tour: afterTour,
             });
 
             try {
@@ -1616,6 +1656,7 @@ export function useEvalHandlers({
             data: any;
           } => result.ok,
         );
+        if (successfulRuns.length > 0) takeFirstRunAfterTour(suite._id);
         const failedRuns = runResults.filter(
           (
             result,
@@ -1715,8 +1756,9 @@ export function useEvalHandlers({
 
   // Delete handler - opens confirmation modal
   const handleDelete = useCallback(
-    (suite: EvalSuite) => {
+    (suite: EvalSuite, options?: { hasUnsavedEdits?: boolean }) => {
       if (deletingSuiteId) return;
+      setSuiteToDeleteHasUnsavedEdits(options?.hasUnsavedEdits === true);
       setSuiteToDelete(suite);
     },
     [deletingSuiteId],
@@ -1736,7 +1778,7 @@ export function useEvalHandlers({
 
       // If we're viewing this suite, go back to the list
       if (selectedSuiteId === suiteToDelete._id) {
-        navigateEvalRoute({ type: "list" }, "evals");
+        navigateEvalRoute({ type: "list" });
       }
 
       setSuiteToDelete(null);
@@ -1779,13 +1821,10 @@ export function useEvalHandlers({
 
         // Navigate to the new duplicated suite
         if (newSuite && newSuite._id) {
-          navigateEvalRoute(
-            {
-              type: "suite-overview",
-              suiteId: newSuite._id,
-            },
-            "evals",
-          );
+          navigateEvalRoute({
+            type: "suite-overview",
+            suiteId: newSuite._id,
+          });
         }
       } catch (error) {
         console.error("Failed to duplicate suite:", error);
@@ -2355,6 +2394,7 @@ export function useEvalHandlers({
     cancellingRunId,
     deletingSuiteId,
     suiteToDelete,
+    suiteToDeleteHasUnsavedEdits,
     setSuiteToDelete,
     duplicatingSuiteId,
     deletingRunId,

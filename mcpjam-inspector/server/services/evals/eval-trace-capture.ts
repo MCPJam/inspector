@@ -1,8 +1,16 @@
+import { withToolNotifications } from "../chat-turn/tool-notifications.js";
+import type { ToolNotification } from "../../../shared/tool-notification.js";
+import {
+  mockAnswerSpan,
+  withMockAnswerSink,
+} from "../mock/answer-marks.js";
+import type { MockCallMark } from "../../../shared/mock-answer-span.js";
 import { toolOrigin } from "@/shared/tool-origin";
 import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCallToolResultError } from "@mcpjam/sdk";
 import type { EvalTraceSpan, EvalTraceSpanStatus } from "@/shared/eval-trace";
+import type { ModelCallCostEvidence } from "@mcpjam/sdk";
 import {
   appendDedupedModelMessages,
   createOffsetInterval,
@@ -52,6 +60,8 @@ type StepSpanMeta = {
   responseId?: string;
   responseTimestamp?: string;
   ttfcMs?: number;
+  /** The step's one provider call; applied to the llm span alone, never the step. */
+  cost?: ModelCallCostEvidence;
 };
 
 /** Mutable state for `generateText` eval tracing (prepareStep + wrapped tools + onStepFinish). */
@@ -84,6 +94,8 @@ export type AiSdkEvalTraceContext = {
   prepareStepEverCalled: boolean;
   lastStepClosedEndAt: number;
   recordedResponseMessageCount: number;
+  /** Where the progress and logs a server sends during a tool call go (the chat stream); absent for evals. */
+  onToolNotification?: (notification: ToolNotification) => void;
 };
 
 type BackendStepToolPhase = {
@@ -284,8 +296,20 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
         let policyBlocked = false;
         let mcpErrorCode: number | undefined;
         let authChallenge: ToolAuthChallengeFinding | undefined;
+        // What a mock did with this call, read off the connection's responses.
+        const mockMarks: MockCallMark[] = [];
         try {
-          const result = await origExecute(input, options);
+          const result = await withMockAnswerSink(
+            (marks) => mockMarks.push(...marks),
+            () => {
+              const emit = ctx.onToolNotification;
+              return emit
+                ? withToolNotifications({ toolCallId, serverId, emit }, () =>
+                    origExecute(input, options),
+                  )
+                : origExecute(input, options);
+            },
+          );
           policyBlocked = isToolPolicyBlockResult(result);
           if (policyBlocked) return result;
           if (isCallToolResultError(result)) {
@@ -345,6 +369,19 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               });
             }
             ctx.recordedSpans.push(toolSpan);
+            if (mockMarks.length > 0) {
+              ctx.recordedSpans.push(
+                mockAnswerSpan(mockMarks, {
+                  id: `mock-${toolCallId}`,
+                  parentId: toolSpan.id,
+                  promptIndex: resolvedPromptIndex,
+                  stepIndex: stepNumber,
+                  serverId,
+                  startMs: toolSpan.startMs,
+                  endMs: toolSpan.endMs,
+                }),
+              );
+            }
             if (!success) {
               ctx.recordedSpans.push({
                 id: `tool-err-${toolCallId}`,
@@ -399,6 +436,7 @@ export function emitAiSdkOnStepFinish(
     stepIndex: sn,
     status: spanMeta?.status ?? "ok",
     ...createOffsetInterval(ctx.runStartedAt, stepMeta.startAt, llmEnd),
+    ...(spanMeta?.cost ? { cost: spanMeta.cost } : {}),
   };
   applyStepMeta(llmSpan, {
     modelId: spanMeta?.modelId ?? stepMeta.modelId,
@@ -662,6 +700,7 @@ export function pushBackendStepSuccessSpans(
     stepIndex,
     status: meta?.status ?? "ok",
     ...createOffsetInterval(runStartedAt, llm.startAbs, llm.endAbs),
+    ...(meta?.cost ? { cost: meta.cost } : {}),
   };
   applyStepMeta(llmSpan, meta);
   spans.push(llmSpan);
@@ -703,6 +742,30 @@ export function pushBackendStepLlmFailureSpans(
   };
   applyStepMeta(stepSpan, { ...meta, status: "error" });
   spans.push(stepSpan);
+  // Reported usage or cost means the provider answered, even with no content.
+  // Model-call counts, llm token totals and cost rollups read llm spans only,
+  // so that call keeps one, as on the success path. Totals never read the
+  // step span, so its tokens are not counted twice, and it never carries cost.
+  if (
+    meta?.cost ||
+    typeof meta?.inputTokens === "number" ||
+    typeof meta?.outputTokens === "number" ||
+    typeof meta?.totalTokens === "number"
+  ) {
+    const llmSpan: EvalTraceSpan = {
+      id: `${stepParentId}-llm`,
+      parentId: stepParentId,
+      name: formatRecordedLlmSpanName(meta.modelId),
+      category: "llm",
+      promptIndex,
+      stepIndex,
+      status: "error",
+      ...createOffsetInterval(runStartedAt, llmPhaseStartAbs, failAbs),
+      ...(meta.cost ? { cost: meta.cost } : {}),
+    };
+    applyStepMeta(llmSpan, { ...meta, status: "error" });
+    spans.push(llmSpan);
+  }
   spans.push({
     id: `${stepParentId}-err`,
     parentId: stepParentId,
@@ -749,6 +812,7 @@ export function pushBackendStepToolFailureSpans(
     stepIndex,
     status: "ok",
     ...createOffsetInterval(runStartedAt, llm.startAbs, llm.endAbs),
+    ...(meta?.cost ? { cost: meta.cost } : {}),
   };
   applyStepMeta(llmSpan, meta);
   spans.push(llmSpan);
@@ -846,8 +910,13 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
         let success = true;
         let mcpErrorCode: number | undefined;
         let authChallenge: ToolAuthChallengeFinding | undefined;
+        // What a mock did with this call, read off the connection's responses.
+        const mockMarks: MockCallMark[] = [];
         try {
-          const result = await origExecute(input, options);
+          const result = await withMockAnswerSink(
+            (marks) => mockMarks.push(...marks),
+            () => origExecute(input, options),
+          );
           if (isCallToolResultError(result)) {
             success = false;
             authChallenge = classifyToolAuthChallenge(
@@ -904,6 +973,19 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             });
           }
           params.spans.push(toolSpan);
+          if (mockMarks.length > 0) {
+            params.spans.push(
+              mockAnswerSpan(mockMarks, {
+                id: `mock-${toolCallId}`,
+                parentId: toolSpan.id,
+                promptIndex: params.promptIndex,
+                stepIndex: params.stepIndex,
+                ...(raw._serverId ? { serverId: raw._serverId } : {}),
+                startMs: toolSpan.startMs,
+                endMs: toolSpan.endMs,
+              }),
+            );
+          }
           if (!success) {
             params.spans.push({
               id: `backend-tool-err-${toolCallId}`,

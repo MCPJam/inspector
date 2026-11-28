@@ -37,7 +37,7 @@ export function rememberIterations(suiteId: string, count: number) {
 }
 
 /**
- * The per-case iteration count a suite run launches with. Setup Run starts
+ * The per-case iteration count a suite run launches with. Set up run starts
  * from this and agent-started runs use it as-is, so both surfaces plan the
  * same run. `preferred` wins over the remembered and suite defaults; `floor`
  * defaults to the suite minimum.

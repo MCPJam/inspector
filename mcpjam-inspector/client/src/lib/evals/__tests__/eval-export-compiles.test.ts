@@ -239,17 +239,32 @@ function typecheck(files: Record<string, string>): string[] {
     });
 }
 
+// One program for every fixture, built on first use. Each program loads the
+// whole SDK source graph, and a second one took this file's peak from about
+// 1.5 GB to 2.3 GB, enough to get a pool worker killed on a crowded runner.
+let allDiagnostics: string[] | undefined;
+function diagnosticsFor(...names: string[]): string[] {
+  allDiagnostics ??= typecheck({
+    "single.test.ts": SINGLE_TURN,
+    "multi.test.ts": MULTI_TURN,
+    "negative.test.ts": NEGATIVE,
+    "empty.test.ts": EMPTY_TURNS,
+    "quickstart.test.ts": SDK_EVAL_QUICKSTART_RUN,
+  });
+  return allDiagnostics.filter((d) => names.some((n) => d.startsWith(`${n}:`)));
+}
+
 describe("exported SDK test files compile against the real SDK", () => {
   it(
     "emits only live SDK symbols for single-turn, multi-turn and negative cases",
     () => {
       expect(
-        typecheck({
-          "single.test.ts": SINGLE_TURN,
-          "multi.test.ts": MULTI_TURN,
-          "negative.test.ts": NEGATIVE,
-          "empty.test.ts": EMPTY_TURNS,
-        })
+        diagnosticsFor(
+          "single.test.ts",
+          "multi.test.ts",
+          "negative.test.ts",
+          "empty.test.ts"
+        )
       ).toEqual([]);
     },
     120_000
@@ -258,7 +273,7 @@ describe("exported SDK test files compile against the real SDK", () => {
   it(
     "keeps the in-app quickstart snippet compiling",
     () => {
-      expect(typecheck({ "quickstart.test.ts": SDK_EVAL_QUICKSTART_RUN })).toEqual(
+      expect(diagnosticsFor("quickstart.test.ts")).toEqual(
         []
       );
     },

@@ -4,6 +4,7 @@
 import {
   APPS_CHECK_CATALOG,
   CHECK_ERAS,
+  checkRunsOnVersion,
   CONFORMANCE_CHECK_METADATA,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
@@ -33,10 +34,9 @@ import type { CatalogEntry } from "./ConformanceCheckRows";
  */
 export function protocolCatalog(pin: ProtocolVersionPin): CatalogEntry[] {
   const pinnedEra = pin === "auto" ? undefined : PROTOCOL_VERSION_ERAS[pin];
-  return MCP_CHECK_IDS.filter((id) => {
-    const eras = CHECK_ERAS[id] as readonly string[];
-    return pinnedEra === undefined || eras.includes(pinnedEra);
-  }).map((id) => {
+  return MCP_CHECK_IDS.filter(
+    (id) => pin === "auto" || checkRunsOnVersion(id, pin),
+  ).map((id) => {
     const eras = CHECK_ERAS[id] as readonly string[];
     return {
       id,

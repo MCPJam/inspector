@@ -26,11 +26,11 @@ import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js
  */
 
 import type { ModelMessage } from "ai";
+import type { TranscriptToolDeclaration } from "@mcpjam/sdk/predicates";
 import type { PredicateResult, ToolErrorRecord } from "@/shared/eval-matching";
 import {
   buildIterationTranscript,
   checkRole,
-  evaluatePredicates,
   extractFinalAssistantMessage,
   summarizeRenderObservations,
   widgetCallToToolCall,
@@ -56,7 +56,16 @@ import {
 } from "@/shared/steps";
 import type { BrowserSessionContext } from "../browser-session-context";
 import { MAX_WIDGET_FOLLOWUP_TURNS } from "./drive-hosted-eval-turn.js";
+import {
+  assertionScope,
+  evaluateWithPinnedResults,
+  recordPinnedCall,
+  type AssertionScope,
+  type PinnedCallRecord,
+} from "./pinned-call-grading";
+import type { PinnedCallEvidence } from "./pinned-turn";
 import { extractTranscriptEvidence } from "./transcript-evidence";
+import type { AccountRouting } from "./account-routing";
 import { logger } from "../../utils/logger.js";
 
 /** Accumulated token usage in AI-SDK-canonical shape. */
@@ -110,6 +119,12 @@ export interface StepExecutionState {
   /** Tool failures observed outside any trace (pinned calls, etc.). */
   toolErrors: ToolErrorRecord[];
   /**
+   * Each `toolCall` step that ran, with its call's own result, which
+   * `messages` leaves out: what a result assertion about it grades, and which
+   * calls are not the agent's (see `pinned-call-grading.ts`).
+   */
+  pinnedCalls: PinnedCallRecord[];
+  /**
    * Trace spans the engine recorded for the steps run so far. With `messages`
    * they are the evidence result and timing checks read — the same two
    * channels the case-level verdict extracts from the finished trace.
@@ -129,6 +144,15 @@ export interface StepExecutionState {
   skippedSteps: SkippedStep[];
   /** Accumulated usage across `prompt` steps. */
   usage: UsageSummary;
+  /**
+   * What the selected servers declared, so an `assert` step's checks that
+   * read declarations (such as declared output schemas) see the same
+   * inventory the case-level verdict does.
+   */
+  toolDeclarations?: TranscriptToolDeclaration[];
+  declarationsCaptured?: "complete" | "partial" | "absent";
+  accountRouting?: AccountRouting;
+  connectionKeys?: ReadonlyMap<string, string>;
 }
 
 /** A step that fail-fast skipped (an earlier step failed). */
@@ -140,12 +164,17 @@ export interface SkippedStep {
   reason: string;
 }
 
-export function createStepExecutionState(): StepExecutionState {
+type DeclarationField = "toolDeclarations" | "declarationsCaptured" | "accountRouting" | "connectionKeys";
+export function createStepExecutionState(
+  declarations: Pick<StepExecutionState, DeclarationField> = {},
+): StepExecutionState {
   return {
+    ...declarations,
     messages: [],
     toolCalls: [],
     toolCallsByTurn: [],
     toolErrors: [],
+    pinnedCalls: [],
     spans: [],
     widgetRenderObservations: [],
     assertionResults: [],
@@ -163,6 +192,8 @@ export interface StepEngineOutcome {
   toolCalls?: ToolCall[];
   /** Tool failures observed during this step (folded into the transcript). */
   toolErrors?: ToolErrorRecord[];
+  /** A `toolCall` step's own result: its `messages` are text-only. */
+  pinnedCall?: PinnedCallEvidence;
   /** Trace spans recorded during this step (tool timings for step checks). */
   spans?: EvalTraceSpan[];
   /** Usage delta for this step (`prompt` only; `toolCall` issues none). */
@@ -313,23 +344,32 @@ function applyOutcome(
   }
 }
 
-/** Snapshot the state as an `IterationTranscript` for point-in-time predicate eval. */
-function snapshotTranscript(state: StepExecutionState) {
+/**
+ * Snapshot the state as an `IterationTranscript` for point-in-time predicate
+ * eval. `scope` replaces the channels one assertion reads differently.
+ */
+function snapshotTranscript(
+  state: StepExecutionState,
+  scope: AssertionScope = {},
+) {
   const finalAssistantMessage = extractFinalAssistantMessage(state.messages);
   // Tool results and per-call timings, read from the messages and spans the
   // steps so far produced — exactly how the case-level verdict reads them from
   // the finished trace (`iteration-verdict.ts`). Without these, every result or
   // timing check scored at an assert step reported "no tool results captured".
-  const evidence = extractTranscriptEvidence({
-    messages: state.messages,
-    spans: state.spans,
-  });
+  const evidence = extractTranscriptEvidence(
+    { messages: state.messages, spans: state.spans },
+    state.accountRouting,
+    state.connectionKeys,
+  );
   return buildIterationTranscript({
     toolCalls: state.toolCalls,
     toolResults: evidence.toolResults,
     resultsCaptured: evidence.resultsCaptured,
     toolCallTimings: evidence.toolCallTimings,
     timingsCaptured: evidence.timingsCaptured,
+    toolDeclarations: state.toolDeclarations,
+    declarationsCaptured: state.declarationsCaptured,
     ...(finalAssistantMessage !== undefined ? { finalAssistantMessage } : {}),
     usage:
       state.usage.inputTokens ||
@@ -344,6 +384,7 @@ function snapshotTranscript(state: StepExecutionState) {
     // Counted here rather than passed as a `trace`: a trace would also feed
     // its tool errors in, double-counting `state.toolErrors`.
     turnCount: state.messages.filter((m) => m.role === "user").length,
+    ...scope,
   });
 }
 
@@ -474,9 +515,11 @@ async function runAssertStep(
   }
   // Transcript-level predicate: evaluate against the state snapshot at this
   // exact position (point-in-time).
-  const [result] = evaluatePredicates(snapshotTranscript(state), [
-    step.assertion,
-  ]);
+  const [result] = evaluateWithPinnedResults(
+    snapshotTranscript(state, assertionScope(state, step.assertion)),
+    [step.assertion],
+    state.pinnedCalls,
+  );
   state.assertionResults.push({
     stepId: step.id,
     stepIndex,
@@ -700,7 +743,9 @@ export async function executeSteps(args: {
         stepIndex,
         turnOrdinal,
       });
+      const callsBefore = state.toolCalls.length;
       applyOutcome(state, outcome, turnOrdinal);
+      recordPinnedCall(state, { step, stepIndex, outcome, callsBefore });
       if (outcome.cancelled)
         return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {
@@ -773,6 +818,10 @@ export async function executeSteps(args: {
       emitStatus(stepIndex, "running");
       await runAssertStep(step, stepIndex, browser, state);
       const last = state.assertionResults[state.assertionResults.length - 1];
+      if (last?.predicateResult?.status === "not_applicable") {
+        emitStatus(stepIndex, "not_applicable");
+        continue;
+      }
       const gatingFailed =
         last &&
         !last.passed &&

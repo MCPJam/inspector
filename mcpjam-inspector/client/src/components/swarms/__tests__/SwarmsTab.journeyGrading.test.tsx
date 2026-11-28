@@ -157,13 +157,13 @@ describe("SwarmsTab — journey grading editor", () => {
     viewerId = "collaborator";
     openGradingEditor();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "requires Team or Enterprise",
+      "These settings are read-only on your plan",
     );
     expect(
       screen.getByText("Ask your organization owner to upgrade to Team."),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("link", { name: "View Team plans" }),
+      screen.queryByRole("link", { name: "Review Team upgrade" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
     expect(updateJourneyMutation).not.toHaveBeenCalled();
@@ -174,7 +174,7 @@ describe("SwarmsTab — journey grading editor", () => {
     canManageBilling = true;
     openGradingEditor();
     expect(
-      screen.getByRole("link", { name: "View Team plans" }),
+      screen.getByRole("link", { name: "Review Team upgrade" }),
     ).toHaveAttribute("href", "/organizations/org-1/plans");
     expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
     expect(updateJourneyMutation).not.toHaveBeenCalled();

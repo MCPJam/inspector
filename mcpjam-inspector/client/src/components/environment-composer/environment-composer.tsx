@@ -28,6 +28,7 @@ import { ServerPicker } from "@/components/hosts/server-picker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
 import { ModelsPill } from "@/components/environment-composer/models-pill";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
+import { stackSkillChoices } from "@/components/environment-composer/stack-skills";
 import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
   composerStateFromEnvironments,
@@ -521,6 +522,8 @@ export function EnvironmentComposer({
             projectId={projectId}
             value={value.stack.skillSelection}
             onChange={(skillSelection) => patchStack({ skillSelection })}
+            // A saved environment's scope and server skills ride in its stack.
+            {...stackSkillChoices(value.stack, patchStack)}
             disabled={slotsDisabled}
             testId={testId("skills-picker")}
             inModal={inModal}

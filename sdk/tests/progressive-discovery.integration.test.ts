@@ -207,7 +207,7 @@ describe("runWithClient with progressive tool discovery (real MCP server)", () =
         TARGET,
       ]);
       expect(offered.map((names) => names.length)).toEqual([2, 2, 3, 3]);
-      expect(forced[0]).toEqual({ type: "tool", toolName: "search_mcp_tools" });
+      expect(forced[0]).toEqual({ type: "auto" });
     }
   );
 

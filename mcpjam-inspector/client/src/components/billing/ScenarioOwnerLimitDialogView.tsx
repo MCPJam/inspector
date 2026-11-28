@@ -9,6 +9,8 @@ import {
 } from "@mcpjam/design-system/dialog";
 
 export interface ScenarioOwnerLimitDialogViewProps {
+  /** Which of the owner's limits it was. Credits unless said otherwise. */
+  description?: string;
   onDismiss: () => void;
 }
 
@@ -18,6 +20,7 @@ export interface ScenarioOwnerLimitDialogViewProps {
  * upgrade, or sign in to would lift it — the dialog only explains.
  */
 export function ScenarioOwnerLimitDialogView({
+  description = "The owner of this test is out of MCPJam credits. Let them know, or try again later.",
   onDismiss,
 }: ScenarioOwnerLimitDialogViewProps) {
   return (
@@ -34,8 +37,7 @@ export function ScenarioOwnerLimitDialogView({
             className="text-pretty"
             data-testid="limit-dialog-description"
           >
-            The owner of this test is out of MCPJam credits. Let them know, or
-            try again later.
+            {description}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

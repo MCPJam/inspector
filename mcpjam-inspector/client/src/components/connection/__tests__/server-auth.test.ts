@@ -14,6 +14,7 @@ import type { ServerWithName } from "@/state/app-types";
 import {
   headerNamesWithoutBearer,
   resolveServerAuth,
+  serverHasSignIn,
   splitAuthorizationHeader,
 } from "../server-auth";
 
@@ -205,5 +206,32 @@ describe("headerNamesWithoutBearer", () => {
     expect(
       headerNamesWithoutBearer("bearer", false, ["Authorization"]),
     ).toEqual(["Authorization"]);
+  });
+});
+
+describe("serverHasSignIn", () => {
+  beforeEach(() => {
+    vi.mocked(hasOAuthConfig).mockReturnValue(false);
+  });
+
+  it.each<[string, ServerWithName | undefined, boolean]>([
+    ["no server", undefined, false],
+    ["no auth", httpServer(), false],
+    ["a bearer token", httpServer({ Authorization: "Bearer t" }), true],
+    ["an API key header", httpServer({ "X-Api-Key": "k" }), true],
+    ["OAuth", httpServer(undefined, { authMethod: "oauth" }), true],
+    [
+      "Automatic, never signed in",
+      httpServer(undefined, { authMethod: "auto" }),
+      false,
+    ],
+    [
+      "Automatic, through OAuth",
+      httpServer(undefined, { authMethod: "auto", useOAuth: true }),
+      true,
+    ],
+    ["explicitly none", httpServer(undefined, { authMethod: "none" }), false],
+  ])("%s", (_label, server, expected) => {
+    expect(serverHasSignIn(server)).toBe(expected);
   });
 });

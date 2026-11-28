@@ -5,6 +5,8 @@ import {
   type CreateTunnelResult,
 } from "@mcpjam/sdk/platform";
 import { cliError, usageError, writeResult } from "../lib/output.js";
+import { recordCommandOutcome } from "../lib/command-outcome.js";
+import { exitInterrupted } from "../lib/telemetry.js";
 import {
   announceCloudContext,
   preflightCloudCredentials,
@@ -260,11 +262,12 @@ export function registerTunnelCommands(program: Command): void {
         const onSignal = () => {
           sigints += 1;
           if (sigints === 1) {
+            recordCommandOutcome("interrupted");
             status("Shutting down tunnel... (Ctrl-C again to force quit)");
             void session.stop();
             return;
           }
-          process.exit(130);
+          void exitInterrupted();
         };
         // Attached BEFORE start(): an interrupt while the grant/bridge/relay
         // are still coming up must run the same graceful stop (revoking

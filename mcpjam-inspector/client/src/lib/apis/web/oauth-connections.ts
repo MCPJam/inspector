@@ -10,11 +10,17 @@ export async function listOAuthConnections(
 ) {
   const result = await webPost<
     unknown,
-    { connections: OAuthConnection[]; shared?: boolean }
+    {
+      connections: OAuthConnection[];
+      shared?: boolean;
+      localDeliveryAllowed?: boolean;
+    }
   >("/api/web/oauth/connections", { projectId, serverId });
   return {
     connections: result.connections ?? [],
     shared: result.shared === true,
+    // Whether members' local apps may receive a shared server's tokens.
+    localDeliveryAllowed: result.localDeliveryAllowed === true,
   };
 }
 export async function updateOAuthConnection(

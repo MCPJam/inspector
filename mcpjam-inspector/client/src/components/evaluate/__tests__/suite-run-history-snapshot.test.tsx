@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { SuiteRunHistorySnapshot } from "../suite-run-history-snapshot";
+import {
+  SuiteRunHistorySnapshot,
+  buildSuiteHistoryLaunches,
+} from "../suite-run-history-snapshot";
 import { metricsByRunFromIterations } from "../../evals/run-metrics";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 
@@ -229,5 +232,98 @@ describe("SuiteRunHistorySnapshot", () => {
     expect(screen.queryByText("All iterations passed")).toBeNull();
     expect(screen.getByText("0%")).toBeVisible();
     expect(screen.getByText("0/1 passed")).toBeVisible();
+  });
+});
+
+describe("buildSuiteHistoryLaunches health", () => {
+  const scored = (suiteRunId: string, passed: number, failed: number) => [
+    ...Array.from({ length: passed }, (_, i) =>
+      iteration({ _id: `${suiteRunId}-p${i}`, suiteRunId, result: "passed" }),
+    ),
+    ...Array.from({ length: failed }, (_, i) =>
+      iteration({ _id: `${suiteRunId}-f${i}`, suiteRunId, result: "failed" }),
+    ),
+  ];
+  const finished = (partial: Partial<EvalSuiteRun>) =>
+    run({ suiteId: "suite-1", status: "completed", ...partial });
+
+  it("gives a running launch its table verdict and no health", () => {
+    const [launch] = buildSuiteHistoryLaunches(
+      [finished({ _id: "r1", runNumber: 7, status: "running", result: "pending" })],
+      metricsByRunFromIterations(scored("r1", 2, 0)),
+    );
+    expect(launch.verdict).toBe("Running");
+    expect(launch.health).toBeNull();
+  });
+
+  it("leaves a rerun of failed cases out of health", () => {
+    const [launch] = buildSuiteHistoryLaunches(
+      [finished({ _id: "r1", runNumber: 8, result: "passed", rerunScope: "failed_cases" })],
+      metricsByRunFromIterations(scored("r1", 2, 0)),
+    );
+    expect(launch.verdict).toBe("Passed");
+    expect(launch.health).toBeNull();
+  });
+
+  it("counts only scored trials, and only the runs the filters keep", () => {
+    const runs = [
+      finished({ _id: "a", runNumber: 9, result: "failed", runGroupId: "g" }),
+      finished({ _id: "b", runNumber: 10, result: "passed", runGroupId: "g" }),
+    ];
+    const metrics = metricsByRunFromIterations([
+      ...scored("a", 1, 3),
+      iteration({ _id: "a-skipped", suiteRunId: "a", status: "skipped", result: "pending" }),
+      ...scored("b", 4, 0),
+    ]);
+    const [all] = buildSuiteHistoryLaunches(runs, metrics);
+    expect(all.health).toEqual({ passed: 5, total: 8 });
+    const [onlyB] = buildSuiteHistoryLaunches(runs, metrics, (id) => id === "b");
+    expect(onlyB.health).toEqual({ passed: 4, total: 4 });
+  });
+
+  it("applies the filters before checking for a running client", () => {
+    const runs = [
+      finished({ _id: "a", runNumber: 12, status: "running", result: "pending", runGroupId: "g2" }),
+      finished({ _id: "b", runNumber: 13, result: "passed", runGroupId: "g2" }),
+    ];
+    const metrics = metricsByRunFromIterations(scored("b", 4, 0));
+    expect(buildSuiteHistoryLaunches(runs, metrics)[0].health).toBeNull();
+    expect(
+      buildSuiteHistoryLaunches(runs, metrics, (id) => id === "b")[0].health,
+    ).toEqual({ passed: 4, total: 4 });
+  });
+
+  it("dates a launch by its latest run", () => {
+    const [launch] = buildSuiteHistoryLaunches(
+      [
+        finished({ _id: "a", runNumber: 14, createdAt: 1_000, runGroupId: "g3" }),
+        finished({ _id: "b", runNumber: 15, createdAt: 3_000, runGroupId: "g3" }),
+      ],
+      metricsByRunFromIterations(scored("a", 1, 0)),
+    );
+    expect(launch.date).toBe(3_000);
+  });
+
+  it("skips an inconclusive run", () => {
+    const [launch] = buildSuiteHistoryLaunches(
+      [finished({ _id: "r1", runNumber: 11, result: "inconclusive" as EvalSuiteRun["result"] })],
+      metricsByRunFromIterations(scored("r1", 1, 1)),
+    );
+    expect(launch.verdict).toBe("Inconclusive");
+    expect(launch.health).toBeNull();
+  });
+
+  it("shows the health row before any launch has metrics", () => {
+    render(
+      <SuiteRunHistorySnapshot
+        runs={[finished({ _id: "r1", runNumber: 1, status: "running", result: "pending" })]}
+        metricsByRun={metricsByRunFromIterations([])}
+        nav={{ threshold: null, onOpenRun: vi.fn() }}
+      />,
+    );
+    const health = screen.getByTestId("nav-suite-health");
+    expect(health).toHaveTextContent("No scored runs");
+    expect(health).toHaveTextContent("Last run #1 · Running");
+    expect(screen.queryByTestId("suite-run-history-snapshot")).toBeNull();
   });
 });

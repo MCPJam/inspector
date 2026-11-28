@@ -42,6 +42,10 @@ vi.mock("@/hooks/useCodexHostEnabled", () => ({
 vi.mock("@/hooks/useCursorHostEnabled", () => ({
   useCursorHostEnabled: () => true,
 }));
+const flags = vi.hoisted(() => ({ openCode: false }));
+vi.mock("@/hooks/useOpenCodeHostEnabled", () => ({
+  useOpenCodeHostEnabled: () => flags.openCode,
+}));
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (select: (s: { themeMode: string }) => unknown) =>
     select({ themeMode: "light" }),
@@ -75,6 +79,7 @@ vi.mock("@/lib/toast", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  flags.openCode = false;
   createHost.mockResolvedValue({ hostId: "host-1", hostConfigId: "cfg-1" });
 });
 
@@ -113,6 +118,36 @@ describe("CreateHostDialog", () => {
       screen.getByRole("button", { name: "Cancel" }),
     );
     expect(screen.getByRole("button", { name: "VS Code" })).toBeEnabled();
+  });
+
+  it("keeps the template a member picked when a rollout flag resolves", async () => {
+    const dialog = (
+      <CreateHostDialog
+        isOpen
+        onClose={vi.fn()}
+        projectId="project-1"
+        onCreated={vi.fn()}
+      />
+    );
+    const { rerender } = render(dialog);
+    await userEvent.click(screen.getByRole("button", { name: "VS Code" }));
+    // The OpenCode flag resolves after the dialog opened: the list grows.
+    flags.openCode = true;
+    rerender(
+      <CreateHostDialog
+        isOpen
+        onClose={vi.fn()}
+        projectId="project-1"
+        onCreated={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "OpenCode" })).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "VS Code" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("keeps a custom name when switching templates and can cancel", async () => {

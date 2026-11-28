@@ -24,6 +24,7 @@ import {
   harnessDisplayName,
   harnessModelSupportAtPinnedVersion,
 } from "@/shared/harness-model-support";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 
 export type WorksWithRow = {
   id: string;
@@ -45,22 +46,32 @@ const SERVERS_ONLY =
 const POLICY_BLOCKS =
   "Your organization's key policy doesn't allow calls from each user's Inspector.";
 
-/** Harness clients in descriptor order, with Cursor (no org path) last. */
-const HARNESS_IDS = Object.keys(HARNESS_DESCRIPTORS).sort(
-  (a, b) =>
-    Number(harnessWireApi(a) === null) - Number(harnessWireApi(b) === null),
-);
+/**
+ * Harness clients in descriptor order, with Cursor (no org path) last. Web
+ * clients are left out: they run the vendor's own model on a project's web
+ * account, never on a model connection, and they stay behind their own flag.
+ */
+const HARNESS_IDS = Object.keys(HARNESS_DESCRIPTORS)
+  .filter((id) => !isWebClientRuntimeId(id))
+  .sort(
+    (a, b) =>
+      Number(harnessWireApi(a) === null) - Number(harnessWireApi(b) === null),
+  );
 
-const joinNames = (names: readonly string[]) =>
+export const joinNames = (names: readonly string[]) =>
   names.length < 2
     ? (names[0] ?? "")
     : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 
-/** The line under each API saying which features use it. */
-export function gatewayApiUsedBy(api: GatewayApi): string {
-  const harnesses = HARNESS_IDS.filter((id) => harnessWireApi(id) === api).map(
+/** The harness clients that call an API, by name. */
+export const harnessesOn = (api: GatewayApi) =>
+  HARNESS_IDS.filter((id) => harnessWireApi(id) === api).map(
     harnessDisplayName,
   );
+
+/** The line under each API saying which features use it. */
+export function gatewayApiUsedBy(api: GatewayApi): string {
+  const harnesses = harnessesOn(api);
   switch (api) {
     case "chatCompletions":
       return "Used by Playground chat, evals, judges, insights, test generation and Ask MCPJam.";
@@ -73,12 +84,14 @@ export function gatewayApiUsedBy(api: GatewayApi): string {
   }
 }
 
-export function gatewayWorksWith(input: {
+type WorksWithInput = {
   apis: readonly GatewayApi[];
   runtimeLocation: GatewayRuntimeLocation;
   models: readonly GatewayModel[];
   requireOrgKeys: boolean;
-}): WorksWithRow[] {
+};
+
+export function gatewayWorksWith(input: WorksWithInput): WorksWithRow[] {
   const served = new Set(input.apis);
   const chat = CHAT_APIS.some((api) => served.has(api));
   const local = input.runtimeLocation === "local";
@@ -119,7 +132,7 @@ export function gatewayWorksWith(input: {
       );
     if (!served.has(api)) {
       return row(
-        `Needs ${GATEWAY_API_LABELS[api]}, which this gateway doesn't serve.`,
+        `Needs ${GATEWAY_API_LABELS[api]}, which this provider doesn't serve.`,
       );
     }
     if (!harnessTakesOrgKeys(harnessId)) {
@@ -137,7 +150,7 @@ export function gatewayWorksWith(input: {
     return verified
       ? row()
       : row(
-          `No model here maps to one ${label} is verified on. Map a gateway model under Models.`,
+          `No model here maps to one ${label} is verified on. Map one under Models.`,
         );
   };
 
@@ -147,4 +160,33 @@ export function gatewayWorksWith(input: {
     feature("judges", "Judges", false),
     ...HARNESS_IDS.map(harness),
   ];
+}
+
+/** Harness clients no setting here makes ready (Cursor, say). */
+const NEVER_READY = new Set(
+  HARNESS_IDS.filter(
+    (id) => harnessWireApi(id) === null || !harnessTakesOrgKeys(id),
+  ),
+);
+
+/**
+ * What a custom provider's row and configure panel flag for an admin: the
+ * features a setting here could make ready but doesn't, and the models not
+ * mapped to a catalog model.
+ */
+export function providerAttention(input: WorksWithInput) {
+  const rows = gatewayWorksWith(input);
+  return {
+    rows,
+    blocked: rows.filter((row) => !row.ready && !NEVER_READY.has(row.id)),
+    unmapped: input.models.filter((model) => !model.modelId).length,
+  };
+}
+
+/** "Codex and GitHub Copilot CLI unavailable", or "3 features unavailable". */
+export function blockedLabel(blocked: readonly WorksWithRow[]): string | null {
+  if (blocked.length === 0) return null;
+  return blocked.length > 2
+    ? `${blocked.length} features unavailable`
+    : `${joinNames(blocked.map((row) => row.label))} unavailable`;
 }

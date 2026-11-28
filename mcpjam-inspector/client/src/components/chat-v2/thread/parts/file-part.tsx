@@ -1,8 +1,3 @@
-import {
-  FileLink,
-  FileOpenWith,
-  type FileResourceReference,
-} from "@/components/host-workspace/file-actions";
 import { FileText, Image, FileSpreadsheet, File } from "lucide-react";
 import type { AnyPart } from "../thread-helpers";
 
@@ -59,13 +54,7 @@ function truncateFilename(name: string, maxLength: number = 24): string {
   return baseName.slice(0, maxBaseLength) + "..." + ext;
 }
 
-export function FilePart({
-  part,
-  resource,
-}: {
-  part: FilePart;
-  resource?: FileResourceReference;
-}) {
+export function FilePart({ part }: { part: FilePart }) {
   const filename = part.filename ?? "Attachment";
   const isImage = isImageMediaType(part.mediaType);
 
@@ -78,7 +67,6 @@ export function FilePart({
           alt={filename}
           className="max-w-xs max-h-48 rounded-md object-contain border border-border"
         />
-        <FileOpenWith reference={resource} />
         {part.filename && (
           <div
             className="text-xs text-muted-foreground mt-1 truncate max-w-xs text-right"
@@ -97,14 +85,11 @@ export function FilePart({
   return (
     <div className="inline-flex items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 text-sm">
       <FileIcon className="h-5 w-5 text-muted-foreground flex-shrink-0" />
-      {/* The file name opens its viewer (one match) or the "Open with…"
-          chooser (several). Plain text when no viewer can apply. */}
-      <span className="min-w-0" title={filename}>
-        <FileLink
-          reference={resource}
-          label={truncateFilename(filename)}
-          className="font-medium text-foreground truncate max-w-[200px]"
-        />
+      <span
+        className="font-medium text-foreground truncate max-w-[200px]"
+        title={filename}
+      >
+        {truncateFilename(filename)}
       </span>
     </div>
   );

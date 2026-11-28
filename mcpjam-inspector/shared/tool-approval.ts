@@ -3,7 +3,8 @@
  *
  * Every tool a turn advertises carries a `needsApproval` declaration, and this
  * module is where the value comes from. There is exactly one input besides the
- * tool's own nature: the host's `requireToolApproval` switch.
+ * tool's own nature: the host's `requireToolApproval` switch. Whether that
+ * switch applies to a turn, and who answers, is {@link turnApprovalPolicy}'s.
  *
  * Local harness Off is pre-approval after explicit consent: MCPJam answers
  * native runtime approval requests while the runtime keeps its ask mode.
@@ -22,8 +23,9 @@
  *
  * What is left at `never` is not a carve-out from that rule so much as the
  * absence of anything to decide: looking at something, listing your own
- * projects, the discovery meta-tools. Pausing an observation buys no safety
- * and costs a click, and it is what the setting's own copy promises.
+ * projects, the discovery meta-tools, loading a skill or reading its files.
+ * Pausing an observation buys no safety and costs a click, and it is what the
+ * setting's own copy promises.
  *
  * `always` is for what must ask whatever the switch says, because the switch
  * is a preference the REQUEST carries and these are not preferences. One
@@ -31,11 +33,11 @@
  * (`built-in-tools/mcpjam.ts`, MJ-008). The workspace family's other gated
  * members, the reads that open a connection to a saved server, are handed a
  * setting the server resolves from saved configuration; the request's switch
- * can raise it but not lower it. The other thing that
- * asks unconditionally declares it as a function, because the answer depends
- * on which value the model named — a third party's instructions entering the
- * turn (`computers/effective-skill-tools.ts`), which is a trust boundary
- * rather than a preference.
+ * can raise it but not lower it. The other thing that asks unconditionally is
+ * a gate rather than a floor: while an MCP server's skill is in the
+ * conversation, the shell and the saved-server resource read ask
+ * (`server-skill-acting-gate.ts`). SEP-2640 puts the approval on acting on a
+ * server's skill, not on reading it, so loading the skill sits at `never`.
  *
  * WHY A FLOOR RATHER THAN A BOOLEAN AT EACH BUILDER. Before this, each builder
  * wrote its own expression — `isLocal ? true : opts.requireToolApproval ===
@@ -78,3 +80,76 @@ export function needsApprovalFor(
       return requireToolApproval === true;
   }
 }
+
+/**
+ * Where a turn comes from decides, before any tool is built, whether the
+ * host's switch applies and who answers a call that needs approval. MCPJam's
+ * engine and every harness read this one table, so a policy change edits it
+ * and nothing else.
+ *
+ *  - `chat`      Playground and User Testing participants: the switch
+ *                applies, and the person answers.
+ *  - `eval`      Suite and quick runs: the switch does not apply, so only
+ *                `always` tools need approval, and MCPJam denies them.
+ *  - `synthetic` Swarms and simulated User Testing sessions: the switch
+ *                applies, and MCPJam denies each gated call.
+ *  - `api`       The v1 chat API: the switch does not apply; `toolMode`
+ *                narrows the tools instead.
+ *  - `event`     MCP Events: the switch does not apply; the trigger's
+ *                `approvalPolicy` decides what runs.
+ *
+ * `toolMode` and `approvalPolicy` decide which tools may run at all; this
+ * table decides only who answers.
+ */
+export type ApprovalOrigin = "chat" | "eval" | "synthetic" | "api" | "event";
+
+export type TurnApprovalPolicy = {
+  /** The host's `requireToolApproval` switch applies to this turn's tools. */
+  readonly applySwitch: boolean;
+  /** `deny`: nobody can answer, so MCPJam refuses the call with
+   *  {@link SYNTHETIC_SESSION_APPROVAL_DENIAL} and the model carries on. */
+  readonly answer: "person" | "deny";
+};
+
+const TURN_APPROVAL_POLICY: Readonly<
+  Record<ApprovalOrigin, TurnApprovalPolicy>
+> = {
+  chat: { applySwitch: true, answer: "person" },
+  eval: { applySwitch: false, answer: "deny" },
+  synthetic: { applySwitch: true, answer: "deny" },
+  api: { applySwitch: false, answer: "deny" },
+  event: { applySwitch: false, answer: "deny" },
+};
+
+export function turnApprovalPolicy(origin: ApprovalOrigin): TurnApprovalPolicy {
+  return TURN_APPROVAL_POLICY[origin];
+}
+
+/** The host's switch as a turn from `origin` applies it. */
+export function appliedToolApproval(
+  origin: ApprovalOrigin,
+  requireToolApproval: unknown,
+): boolean {
+  return turnApprovalPolicy(origin).applySwitch && requireToolApproval === true;
+}
+
+/** MCPJam's engine pauses for the person (`prompt`) or answers each gated
+ *  call itself with a denial and continues (`auto-deny`). */
+export function engineApprovalMode(
+  origin: ApprovalOrigin,
+): "prompt" | "auto-deny" {
+  return turnApprovalPolicy(origin).answer === "person" ? "prompt" : "auto-deny";
+}
+
+/** The answer a turn's `approvalMode` carries, for an engine that is handed
+ *  the setting rather than the origin, such as a harness. */
+export function approvalAnswerOf(
+  approvalMode: string | undefined,
+): TurnApprovalPolicy["answer"] {
+  return approvalMode === "auto-deny" ? "deny" : "person";
+}
+
+/** What the model reads when MCPJam denies a call nobody can answer, on
+ *  every engine, so a run reads the same whichever one ran it. */
+export const SYNTHETIC_SESSION_APPROVAL_DENIAL =
+  "approval-denied (synthetic session)";

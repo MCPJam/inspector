@@ -195,3 +195,30 @@ export function resolveServerAuth(server: ServerWithName): ServerAuth {
 
   return { method, bearer, headers };
 }
+
+/**
+ * Whether connecting to the server signs MCPJam in: OAuth, XAA or a bearer
+ * token, custom headers (an API key, say), or an Automatic server that has
+ * gone through OAuth. Read from the saved config, so a header that isn't a
+ * credential still counts. Events uses it to prefer webhook, which a server
+ * accepts only from an authenticated principal (SEP-3415).
+ */
+export function serverHasSignIn(server: ServerWithName | undefined): boolean {
+  if (!server) return false;
+  const auth = resolveServerAuth(server);
+  if (auth.bearer !== null || auth.headers !== null) return true;
+  switch (auth.method) {
+    case "oauth":
+    case "xaa":
+    case "bearer":
+      return true;
+    case "auto":
+      return (
+        server.useOAuth === true ||
+        server.oauthTokens != null ||
+        server.oauthFlowProfile != null
+      );
+    case "none":
+      return false;
+  }
+}

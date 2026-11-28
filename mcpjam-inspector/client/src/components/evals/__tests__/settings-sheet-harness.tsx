@@ -102,7 +102,6 @@ export type SettingsNavOptions = {
   isVerdictPolicyV2?: boolean;
   showComputerEnvironment?: boolean;
   showSchedule?: boolean;
-  showDelete?: boolean;
 };
 
 function settingsNavOptionsForSuite(
@@ -114,7 +113,6 @@ function settingsNavOptionsForSuite(
       overrides.isVerdictPolicyV2 ?? suite.verdictPolicyVersion === 2,
     showComputerEnvironment: overrides.showComputerEnvironment ?? true,
     showSchedule: overrides.showSchedule ?? true,
-    showDelete: overrides.showDelete ?? true,
   };
 }
 

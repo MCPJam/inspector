@@ -160,6 +160,20 @@ describe("initServerSentry", () => {
     expect(JSON.stringify(send.mock.calls)).toContain('"unknown_operation"');
   });
 
+  it("never sends a delivered token, with or without a Bearer prefix", async () => {
+    initServerSentry();
+    const token = "tok_EFTW41_SECRET_sentry";
+    const transport = lastConfig().transport({});
+    await transport.send([{}, [[{ type: "event" }, {
+      message: token,
+      exception: { values: [{ type: "TypeError", value: `upstream said ${token}` }] },
+      extra: { message: token, detail: `Bearer ${token}` },
+      breadcrumbs: [{ category: "console", message: token }],
+    }]]]);
+    expect(send).toHaveBeenCalledOnce();
+    expect(JSON.stringify(send.mock.calls)).not.toContain(token);
+  });
+
   // The baked version is captured at module load (it has to stay a literal
   // `process.env.X` so esbuild's `define` can substitute it), so these two
   // re-import the module rather than stubbing after the fact.

@@ -59,6 +59,7 @@ export type HeroPairingStatDeltas = {
 export type HeroPairingPass = {
   key: string;
   client: string;
+  hostStyle?: string;
   model: string;
   passed: number;
   failed: number;
@@ -302,6 +303,7 @@ export function buildHeroPairings({
     return {
       key: target.key,
       client: target.client,
+      hostStyle: runClientIdentity(target.run).hostStyle,
       model: target.model,
       passed: counts.passed,
       failed: counts.failed,

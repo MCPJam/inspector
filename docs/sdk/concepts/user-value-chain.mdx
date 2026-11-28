@@ -30,14 +30,14 @@ Four of the six. Every [predicate](/sdk/reference/eval-reporting#predicate-gate)
 | Response | 7 |
 | User value | 9 |
 
-**Connection, Discovery, Tool call, and Response each carry a built-in runner check.** The runner measures these four stages on every iteration whether or not you author anything there. Each check appears on the scorecard with a **Built-in** badge — it reports what the stage analysis decided, in the same Expected / Actual form as your evaluators, but it never gates a trial and is never a score row.
+**Connection, Discovery, Tool call, and Response each carry a built-in runner check.** The runner measures these four stages on every iteration whether or not you author anything there. Each check appears on the scorecard with a **Built-in** badge; it reports what the stage analysis decided, in the same Expected / Actual form as your evaluators, but it never gates a trial and is never a score row.
 
-- **Connection** — passes when the session initializes; fails when the configured server was reached but initialize failed.
-- **Discovery** — passes when tools/list succeeds; fails when listing tools failed. Discovery also supports optional catalog assertions (six kinds) that inspect the raw per-server catalog before deduplication.
-- **Tool call** — passes when the call returned a result; fails when the call never produced one (protocol error). Present on the scorecard only when the case gives the runner a call to measure.
-- **Response** — passes when the result came back without a tool error; fails when the server reported a tool error. Present only when the case implies a measurable response.
+- **Connection**: passes when the session initializes; fails when the configured server was reached but initialize failed.
+- **Discovery**: passes when tools/list succeeds; fails when listing tools failed. Discovery also supports optional catalog assertions (six kinds) that inspect the raw per-server catalog before deduplication.
+- **Tool call**: passes when the call returned a result; fails when the call never produced one (protocol error). Present on the scorecard only when the case gives the runner a call to measure.
+- **Response**: passes when the result came back without a tool error; fails when the server reported a tool error. Present only when the case implies a measurable response.
 
-When a stage fails for an evaluator's reason — a required assertion, a rejected argument, a widget that did not render — the runner check for that stage stays undecided rather than also showing failed. The failure already has its evaluator's row; two red rows for one failure would read as two failures.
+When a stage fails for an evaluator's reason (a required assertion, a rejected argument, a widget that did not render) the runner check for that stage stays undecided rather than also showing failed. The failure already has its evaluator's row; two red rows for one failure would read as two failures.
 
 Missing or partial catalog capture at Discovery reports an evaluator error, not a pass. Scored gating catalog failures can fail Discovery; advisory failures remain visible evaluator results without failing the stage. A description-based deprecation check is advisory only.
 
@@ -45,12 +45,9 @@ Missing or partial catalog capture at Discovery reports an evaluator error, not 
 
 A check's link says where its evidence is recorded. It does not assert that a failure originated there.
 
-`noToolErrors` is the clearest case. It files at **Response**, because a tool error is the server's answer. Until analyzer version 11 it filed at User value, and the same defect was counted twice: the analyzer already failed Response on an observed tool error, while the predicate row failed User value. Which link a reader saw as the first break depended on which row they looked at first.
+`noToolErrors` is the clearest case. It files at **Response**, because a tool error is the server's answer.
 
-Two consequences worth keeping in mind:
-
-- A failure at one link is frequently caused upstream of it. Selection failing because two tools have near-identical descriptions is a Discovery problem wearing a Selection label.
-- Moving a check to a different link changes where historical failures are attributed, so it is a versioned analyzer change rather than an edit anyone can make locally. The three `widget*` kinds are current candidates to move to Response.
+A failure at one link is frequently caused upstream of it. Selection failing because two tools have near-identical descriptions is a Discovery problem wearing a Selection label.
 
 ## Graders that are not predicates
 
@@ -69,9 +66,9 @@ A **gating** `toolCalledWith` is promoted into the matcher's expectations and gr
 
 Coverage is the question the six links exist to answer, and it is easy to write a plausible-looking suite that leaves most of the chain untouched.
 
-A case with `toolCalledWith`, `noToolErrors` and `responseContains` measures Selection, Response and User value. It says nothing about Tool call — whether the arguments the model sent were valid against the tool's own schema — and has no authored Discovery assertions. Connection, Discovery, Tool call, and Response each show their built-in runner check, but a runner check is not an authored assertion: it reports what the stage analysis decided and never closes the gap a predicate would fill.
+A case with `toolCalledWith`, `noToolErrors` and `responseContains` measures Selection, Response and User value. It says nothing about Tool call, whether the arguments the model sent were valid against the tool's own schema, and has no authored Discovery assertions. Connection, Discovery, Tool call, and Response each show their built-in runner check, but a runner check is not an authored assertion: it reports what the stage analysis decided and never closes the gap a predicate would fill.
 
-To cover Tool call, add `argumentsMatchToolSchema` for arguments that are valid against the tool's schema, or `toolInputMatches` for input that carries what the request asked for — every pattern matching within one call, with `min` and `max` counting matching calls. On its own, a `toolInputMatches` whose tool was never called also files at Tool call; pair it with `toolCalledWith` so that case fails at Selection first. Its output-side twin, `toolResultMatches`, files at Response: every pattern within one result, with `min` and `max` counting matching results. To inspect catalog metadata, configure Discovery assertions and read their evaluator rows alongside the runner check.
+To cover Tool call, add `argumentsMatchToolSchema` for arguments that are valid against the tool's schema, or `toolInputMatches` for input that carries what the request asked for; every pattern matching within one call, with `min` and `max` counting matching calls. On its own, a `toolInputMatches` whose tool was never called also files at Tool call; pair it with `toolCalledWith` so that case fails at Selection first. Its output-side twin, `toolResultMatches`, files at Response: every pattern within one result, with `min` and `max` counting matching results. To inspect catalog metadata, configure Discovery assertions and read their evaluator rows alongside the runner check.
 
 Two habits keep coverage honest:
 
@@ -88,6 +85,6 @@ They still file at a link, which is what places them in the right group when you
 
 ## Where to go next
 
-- [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) — every kind, its fields, and the link it measures
-- [Running evals](/sdk/concepts/running-evals) — authoring a suite and reading its results
-- [Validators](/sdk/reference/validators) — the tool-call matcher that files at Selection
+- [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate): every kind, its fields, and the link it measures
+- [Running evals](/sdk/concepts/running-evals): authoring a suite and reading its results
+- [Validators](/sdk/reference/validators): the tool-call matcher that files at Selection

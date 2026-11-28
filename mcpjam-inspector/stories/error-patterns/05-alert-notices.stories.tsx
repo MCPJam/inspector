@@ -24,7 +24,7 @@ import { normalizedError } from "./_support/specimens";
  * is a different component (ErrorCard), so it looks different.
  */
 const meta = {
-  title: "Error Patterns/Alert (not an error surface)",
+  title: "Components/Error Patterns/Alert (not an error surface)",
   component: Alert,
   parameters: {
     layout: "padded",

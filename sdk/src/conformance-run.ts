@@ -22,6 +22,7 @@ import type { MCPConformanceConfig } from "./mcp-conformance/types.js";
 import { OAuthConformanceTest } from "./oauth-conformance/runner.js";
 import type { OAuthConformanceConfig } from "./oauth-conformance/types.js";
 import { resolveOAuthLoginAuthorizationPlan } from "./oauth-login.js";
+import { http1Fetch } from "./http1-fetch.js";
 import { MCPTasksConformanceTest } from "./tasks-conformance/runner.js";
 import {
   captureConformanceRun,
@@ -253,6 +254,10 @@ async function resolveOAuthRegistration(
     ...oauth,
     registrationStrategy: undefined,
     registrationMode: "auto",
+    // This probe dials the MCP server before the OAuth suite applies its own
+    // default, so it gets the same one: HTTP/1.1 where Node's fetch would
+    // negotiate HTTP/2 (see `http1-fetch.ts`).
+    fetchFn: oauth.fetchFn ?? http1Fetch,
   });
   if (plan.status !== "ready" || !plan.registrationStrategy) {
     throw new Error(plan.blockers[0] ?? plan.summary);
@@ -285,7 +290,10 @@ export async function runConformance(
   }
   // One event for the whole run; every inner suite is told to stay quiet.
   if (!config.__suppressTelemetry) {
-    void captureConformanceRun(config.__telemetryRunSource ?? "sdk");
+    void captureConformanceRun(config.__telemetryRunSource ?? "sdk", {
+      suite: "run",
+      mode: "suite",
+    });
   }
   const startedAt = Date.now();
   const reports: Partial<Record<ConformanceSuiteKind, ConformanceReport>> = {};

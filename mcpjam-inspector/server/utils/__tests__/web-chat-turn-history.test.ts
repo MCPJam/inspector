@@ -1152,7 +1152,10 @@ it("resolves authorization at final persistence without rerunning the completed 
   expect(getAuthorization).toHaveBeenCalledOnce();
   expect(modelRequests).toHaveLength(1);
   const { persistChatSessionToConvex } = await import("../chat-ingestion.js");
-  expect(vi.mocked(persistChatSessionToConvex)).toHaveBeenLastCalledWith(expect.objectContaining({ authHeader: "Bearer renewed-at-completion" }));
+  expect(vi.mocked(persistChatSessionToConvex)).toHaveBeenLastCalledWith(
+    expect.objectContaining({ authHeader: "Bearer renewed-at-completion" }),
+    expect.anything(),
+  );
 });
 
 it("returns a failed receipt when final save authorization is unavailable, without rerunning the turn", async () => {

@@ -1,0 +1,57 @@
+---
+title: "Overview"
+description: "Run MCP conformance checks against your server and see which protocol requirements it meets."
+icon: "shield-check"
+---
+
+Conformance checks how your MCP server behaves against a selected protocol revision. MCPJam connects to the server, makes requests, and checks the responses against the rules for that revision. Run it after changing your server's transport, capabilities, authentication, or extensions to see which behavior you need to fix.
+
+To test whether a model and client use your server to satisfy a user's request, use [Evaluate](/evaluate/overview). To try individual operations interactively, use the [Inspector guides](/inspector/tools-prompts-resources).
+
+## What Conformance checks
+
+| Suite | What it checks |
+| --- | --- |
+| **Protocol** | Connection and discovery, advertised capabilities, and core operations such as listing tools, resources, and prompts. |
+| **Apps** | MCP App tools, their UI metadata, and the HTML resources they reference. |
+| **Tasks** | Task creation and lifecycle behavior, using the task protocol the server offers. |
+| **OAuth** | Authorization discovery, client registration where applicable, and making an authorized MCP request. |
+
+## Run your first check in Inspector
+
+### Before you begin
+
+- [Add your server](/inspector/connecting-servers). Use the hosted Inspector for a public HTTPS server or the local Inspector for servers running on your machine.
+- Use an HTTP endpoint for Protocol or OAuth. In the local Inspector, Apps and Tasks also support STDIO.
+- Have a safe tool and sample arguments ready if you plan to run checks that invoke a tool.
+
+### Start a run
+
+1. Open **Verify** → **Conformance** in the sidebar and click **Run conformance checks**.
+2. Choose your server and a protocol version. Use **Auto (negotiated)** to let MCPJam resolve the version, or choose a specific revision to test it directly. Click **Continue**.
+3. Select your suites and checks. The available checks depend on the server's capabilities and the protocol version. Fill in any inputs for the checks you want to run.
+4. Click **Run conformance checks**. If you selected OAuth and are prompted to sign in, complete the authorization flow to continue those checks.
+
+If MCPJam can't connect, use **Sign in** if prompted, or **Edit connection** to check the server URL and authentication settings before retrying.
+
+## Read your results
+
+Expand a suite, then a check, to see what MCPJam expected and the details it captured.
+
+| Result label | What to do |
+| --- | --- |
+| **PASSED** | The scored checks that ran passed. Look for any checks marked **Not run** if you expected them to be covered. |
+| **FAILED** | Open a failed check to see the expected behavior and what your server returned. |
+| **INCOMPLETE** | Open the checks that could not run and address the reason shown, such as a timeout or failed sign-in. |
+| **NOT APPLICABLE** | Check the reason shown if you expected the suite to apply. For example, OAuth can be inapplicable on an endpoint that requires no sign-in. |
+| **NOT SELECTED** | Select the suite in your next run if you want to include it. |
+| **ERROR** | Review the suite's error and retry after addressing it. |
+| **Not run** | Open the check to see which input it needs, then supply that input and rerun it. |
+
+When **Additional enhancements** appears above the suites, expand it to review suggested (`SHOULD`) and optional (`MAY`) changes. These recommendations are outside the conformance score.
+
+After fixing an issue, rerun the checks with the same protocol version and inputs. For runs saved in a project, open **History** to return to the results. Filter by server or search by protocol version.
+
+## Run Conformance in CI
+
+Use [`mcpjam conformance run`](/cli/reference#conformance-run) from a shell or CI. It can produce JSON or JUnit XML reports. To run checks from a TypeScript test suite, see the [Protocol](/sdk/reference/protocol-conformance), [Apps](/sdk/reference/apps-conformance), [Tasks](/sdk/reference/tasks-conformance), and [OAuth](/sdk/reference/oauth-conformance) SDK references.

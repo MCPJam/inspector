@@ -27,6 +27,7 @@ import {
   isTerminalLifecycleStatus,
   type TaskLifecycleIdentity,
   type TaskLifecycleObservation,
+  type TaskLifecycleError,
   type TaskLifecycleSnapshot,
 } from "./task-lifecycle.js";
 import {
@@ -38,6 +39,12 @@ import {
   type TaskInputDriverOptions,
   type TaskInputRejection,
 } from "./task-input-driver.js";
+import { isRequestTimeoutError } from "../conformance-timeout.js";
+import {
+  inputCallWait,
+  serverErrorAnswer,
+  settleFromInputCall,
+} from "./legacy-input-result-call.js";
 
 /** How the drive ended. Every one is deterministic and reportable. */
 export type TaskAwaitOutcome =
@@ -92,7 +99,14 @@ export interface DriveTaskToTerminalArgs {
    * is the entire point of waiting.
    */
   getResult?: (
-    identity: TaskLifecycleIdentity
+    identity: TaskLifecycleIdentity,
+    /**
+     * Set only on the call sent while the task asks for input: how long that
+     * request may stay open, and the drive's signal. Pass both on to the
+     * request, so it ends (and is cancelled) at that bound or when the drive
+     * is interrupted, not at the client's default request timeout.
+     */
+    options?: { timeoutMs: number; signal?: AbortSignal }
   ) => Promise<Record<string, unknown> | null>;
   /** Submits input responses. Resolving means the server acknowledged them. */
   updateTask?: (
@@ -101,6 +115,27 @@ export interface DriveTaskToTerminalArgs {
   ) => Promise<void>;
   /** Answers `input_required` rounds. Absent ⇒ any input ends the drive. */
   input?: TaskInputDriverOptions;
+  /**
+   * LEGACY only: how long the one `tasks/result` sent on `input_required` may
+   * stay open. 2025-11-25 says a requestor that meets `input_required` SHOULD
+   * call `tasks/result` right away (tasks.mdx:449): that open call is where
+   * the server delivers its questions, and it only answers once the task has
+   * ended. Short by default, so a task nobody here can answer still ends the
+   * drive as `input-required` instead of looking like a hang. A surface with
+   * an elicitation handler passes a longer bound (`Number.POSITIVE_INFINITY`
+   * for "until the drive's deadline"); the deadline always caps it, and the
+   * capped, finite value is what `getResult` gets as its `timeoutMs`.
+   */
+  inputRequiredResultWaitMs?: number;
+  /**
+   * LEGACY only: do not send that `tasks/result` at all. For a connection that
+   * declares an input capability (`elicitation`, `sampling`, `roots`) with
+   * nothing behind it to answer: a server may then ask over the call, get a
+   * refusal, and end the task the user meant to answer later. A client that
+   * declares none of them cannot be asked (2025-11-25 `basic/lifecycle.mdx`:
+   * only negotiated capabilities are used), so the call is safe there.
+   */
+  skipInputRequiredResultCall?: boolean;
   /** Total wall-clock budget. The whole drive, not a single read. */
   timeoutMs?: number;
   /** Consecutive failed reads tolerated before giving up. */
@@ -186,13 +221,32 @@ export async function driveTaskToTerminal(
   let inputRounds = 0;
   let lastError: unknown;
   let unansweredInput: TaskInputRejection[] | undefined;
+  /** Legacy: the `tasks/result` for `input_required` is sent once per drive. */
+  let resultCalledForInput = false;
+  /** Legacy: what that call returned, kept so the result is not fetched twice. */
+  let earlyResult: Record<string, unknown> | undefined;
+  /**
+   * Legacy: the JSON-RPC error that call returned. For a task that has ended,
+   * `tasks/result` returns exactly the error its request ended with
+   * (tasks.mdx:466), so this is the task's failure reason.
+   */
+  let earlyError: TaskLifecycleError | undefined;
+  /**
+   * Legacy: failures of that call in a row. Counted here, not on the engine: the
+   * `tasks/get` between two calls succeeds and resets the engine's count.
+   */
+  let inputCallFailures = 0;
 
   for (;;) {
     if (args.signal?.aborted) {
-      return { outcome: "aborted", task: engine.snapshot(identity) };
+      return orEarly({ outcome: "aborted", task: engine.snapshot(identity) });
     }
     if (now() >= deadline) {
-      return { outcome: "timeout", task: engine.snapshot(identity), lastError };
+      return orEarly({
+        outcome: "timeout",
+        task: engine.snapshot(identity),
+        lastError,
+      });
     }
 
     // Checked before EVERY dispatch, not just the first. On a shared engine an
@@ -216,11 +270,11 @@ export async function driveTaskToTerminal(
     }
     if (existing && existing.nextPollAt > now()) {
       if (!(await waitUntilDue())) {
-        return {
+        return orEarly({
           outcome: "timeout",
           task: engine.snapshot(identity),
           lastError,
-        };
+        });
       }
       continue;
     }
@@ -234,11 +288,11 @@ export async function driveTaskToTerminal(
       // Somebody else is mid-read on this exact handle. Wait for their result
       // rather than issuing a duplicate of it.
       if (!(await waitUntilDue())) {
-        return {
+        return orEarly({
           outcome: "timeout",
           task: engine.snapshot(identity),
           lastError,
-        };
+        });
       }
       continue;
     }
@@ -247,14 +301,14 @@ export async function driveTaskToTerminal(
     try {
       const bounded = await leasedRead(existing !== undefined);
       if (bounded === TIMED_OUT) {
-        return {
+        return orEarly({
           outcome: "timeout",
           task: engine.snapshot(identity),
           lastError,
-        };
+        });
       }
       if (bounded === ABORTED) {
-        return { outcome: "aborted", task: engine.snapshot(identity) };
+        return orEarly({ outcome: "aborted", task: engine.snapshot(identity) });
       }
       observation = bounded;
     } catch (error) {
@@ -265,7 +319,7 @@ export async function driveTaskToTerminal(
         engine.markExpired(identity);
         const expired = engine.snapshot(identity);
         if (expired) args.onState?.(expired);
-        return { outcome: "expired", task: expired };
+        return orEarly({ outcome: "expired", task: expired });
       }
       // A 429/503's `Retry-After` — when any layer preserved it on the error —
       // becomes the engine's scheduling floor, so the next `waitUntilDue`
@@ -274,19 +328,19 @@ export async function driveTaskToTerminal(
         retryAfterMs: retryAfterMsFromError(error, now()),
       });
       if (record.consecutiveErrors >= maxErrors) {
-        return {
+        return orEarly({
           outcome: "unreachable",
           task: engine.snapshot(identity),
           lastError,
-        };
+        });
       }
       const waited = await waitUntilDue();
       if (!waited) {
-        return {
+        return orEarly({
           outcome: "timeout",
           task: engine.snapshot(identity),
           lastError,
-        };
+        });
       }
       continue;
     }
@@ -301,14 +355,60 @@ export async function driveTaskToTerminal(
     }
 
     if (snapshot.status === "input_required") {
+      // 2025-11-25: call `tasks/result` as soon as the task asks for input
+      // (tasks.mdx:449, a SHOULD). Once per drive: a call that brought nothing
+      // would bring nothing again.
+      if (
+        identity.wire === "legacy" &&
+        args.getResult &&
+        !args.skipInputRequiredResultCall &&
+        !resultCalledForInput
+      ) {
+        resultCalledForInput = true;
+        const call = await callResultForInput();
+        if (call === ABORTED)
+          return orEarly({ outcome: "aborted", task: snapshot });
+        // The drive ran out of time while the call was open: that is a
+        // timeout, not a task nobody can answer.
+        if (call === TIMED_OUT) {
+          return orEarly({ outcome: "timeout", task: snapshot, lastError });
+        }
+        // The server answered the call, so the task in hand is stale.
+        if (call === "moved") continue;
+        if (call === "retry") {
+          // The call failed on its own (a dropped stream) before any bound,
+          // on a drive that waits for an answer: back off like a failed read,
+          // then read the task and send the call again.
+          resultCalledForInput = false;
+          inputCallFailures += 1;
+          if (inputCallFailures >= maxErrors) {
+            return orEarly({
+              outcome: "unreachable",
+              task: snapshot,
+              lastError,
+            });
+          }
+          engine.observeError(identity, {
+            retryAfterMs: retryAfterMsFromError(lastError, now()),
+          });
+          if (!(await waitUntilDue())) {
+            return orEarly({
+              outcome: "timeout",
+              task: engine.snapshot(identity),
+              lastError,
+            });
+          }
+          continue;
+        }
+      }
       // No handlers, or no way to submit ⇒ this is exactly the deterministic
       // outcome the plan asks for, rather than a hang.
       if (!args.input || !args.updateTask) {
-        return {
+        return orEarly({
           outcome: "input-required",
           task: snapshot,
           unansweredInput,
-        };
+        });
       }
       const pending = engine.pendingInputKeys(identity);
       if (pending.length === 0) {
@@ -322,13 +422,17 @@ export async function driveTaskToTerminal(
           // elicitation stamped with `relatedTaskId`. There is nothing this
           // driver can ever answer, so report it rather than re-polling an
           // unchanging state until the deadline.
-          return { outcome: "input-required", task: snapshot, unansweredInput };
+          return orEarly({
+            outcome: "input-required",
+            task: snapshot,
+            unansweredInput,
+          });
         }
         // Every key in this snapshot is already answered. `tasks/update` is
         // eventually consistent, so wait for the next snapshot rather than
         // re-submitting.
         if (!(await waitUntilDue())) {
-          return { outcome: "timeout", task: snapshot, lastError };
+          return orEarly({ outcome: "timeout", task: snapshot, lastError });
         }
         continue;
       }
@@ -340,7 +444,11 @@ export async function driveTaskToTerminal(
       // catches up, and a slowly-converging task would report
       // `input-required` even though nothing was blocking it.
       if (++inputRounds > maxInputRounds) {
-        return { outcome: "input-required", task: snapshot, unansweredInput };
+        return orEarly({
+          outcome: "input-required",
+          task: snapshot,
+          unansweredInput,
+        });
       }
 
       const collected = await collectTaskInputResponses({
@@ -362,17 +470,17 @@ export async function driveTaskToTerminal(
       // `input-required` while every other interrupt in the drive settles as
       // `aborted`. The signal is the ground truth for which one happened.
       if (args.signal?.aborted) {
-        return { outcome: "aborted", task: snapshot, unansweredInput };
+        return orEarly({ outcome: "aborted", task: snapshot, unansweredInput });
       }
 
       if (collected.answeredKeys.length === 0) {
         // Nothing answerable and nothing left pending elsewhere: stop, and say
         // which keys blocked it.
-        return {
+        return orEarly({
           outcome: "input-required",
           task: snapshot,
           unansweredInput: collected.rejections,
-        };
+        });
       }
 
       try {
@@ -383,10 +491,10 @@ export async function driveTaskToTerminal(
           )
         );
         if (ack === TIMED_OUT) {
-          return { outcome: "timeout", task: snapshot, lastError };
+          return orEarly({ outcome: "timeout", task: snapshot, lastError });
         }
         if (ack === ABORTED) {
-          return { outcome: "aborted", task: snapshot };
+          return orEarly({ outcome: "aborted", task: snapshot });
         }
         // Marked responded ONLY after the acknowledgement. An optimistic mark
         // would silently discard the answers if the update failed.
@@ -397,13 +505,17 @@ export async function driveTaskToTerminal(
           retryAfterMs: retryAfterMsFromError(error, now()),
         });
         if (record.consecutiveErrors >= maxErrors) {
-          return { outcome: "unreachable", task: snapshot, lastError };
+          return orEarly({ outcome: "unreachable", task: snapshot, lastError });
         }
       }
     }
 
     if (!(await waitUntilDue())) {
-      return { outcome: "timeout", task: engine.snapshot(identity), lastError };
+      return orEarly({
+        outcome: "timeout",
+        task: engine.snapshot(identity),
+        lastError,
+      });
     }
   }
 
@@ -422,14 +534,15 @@ export async function driveTaskToTerminal(
    * the transport itself never settles.
    */
   async function raceDeadline<T>(
-    work: Promise<T>
+    work: Promise<T>,
+    capMs = Number.POSITIVE_INFINITY
   ): Promise<T | typeof TIMED_OUT | typeof ABORTED> {
     // If the bound wins, nobody is left awaiting `work`. Attach a no-op
     // handler now so a later rejection from the call we stopped waiting on
     // does not surface as an unhandled rejection — it is noise, not a signal.
     work.catch(() => undefined);
 
-    const remaining = deadline - now();
+    const remaining = Math.min(deadline - now(), capMs);
     if (remaining <= 0) return TIMED_OUT;
     if (args.signal?.aborted) return ABORTED;
 
@@ -454,6 +567,78 @@ export async function driveTaskToTerminal(
   }
 
   /**
+   * Legacy: the one `tasks/result` sent while the task asks for input.
+   *
+   * - `"moved"`: the server answered it, with a result or with a JSON-RPC
+   *   error. Either way the task has moved and must be read again.
+   * - `"parked"`: no answer, and nobody here waits for one: the short default
+   *   wait ended, or the call failed. The task is parked.
+   * - `"retry"`: the call failed on its own (no numeric code, not our
+   *   timeout) on a drive that waits for an answer.
+   * - `TIMED_OUT`: a drive that waits for an answer ran out of time.
+   */
+  async function callResultForInput(): Promise<
+    "moved" | "parked" | "retry" | typeof ABORTED | typeof TIMED_OUT
+  > {
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) return TIMED_OUT;
+    const callerWaitMs = args.inputRequiredResultWaitMs;
+    const { waitMs, deadlineBound } = inputCallWait(callerWaitMs, remainingMs);
+    const boundEnded = () => (deadlineBound ? TIMED_OUT : "parked");
+    try {
+      const fetched = await raceDeadline(
+        args.getResult!(identity, {
+          timeoutMs: waitMs,
+          ...(args.signal ? { signal: args.signal } : {}),
+        }),
+        waitMs
+      );
+      if (fetched === ABORTED) return ABORTED;
+      if (fetched === TIMED_OUT) return boundEnded();
+      // A `null` payload is not kept, so the normal fetch still runs for it.
+      if (fetched !== null) earlyResult = fetched;
+      return "moved";
+    } catch (error) {
+      if (args.signal?.aborted) return ABORTED;
+      // The server answered with an error: the next read says how it ended.
+      const answer = serverErrorAnswer(error);
+      if (answer) {
+        earlyError = answer;
+        return "moved";
+      }
+      lastError = error;
+      // Our own bound, raised by the request instead of by the race.
+      if (isRequestTimeoutError(error)) return boundEnded();
+      return callerWaitMs !== undefined ? "retry" : "parked";
+    }
+  }
+
+  /**
+   * After the input call returned the task's result or error, no exit may drop
+   * it: every return in the loop goes through here, and an exit the server did
+   * not confirm is settled from that answer (see `settleFromInputCall`).
+   */
+  function orEarly(result: TaskAwaitResult): TaskAwaitResult {
+    // A status the server confirmed is kept as it is.
+    if (
+      result.outcome === "completed" ||
+      result.outcome === "failed" ||
+      result.outcome === "cancelled"
+    ) {
+      return result;
+    }
+    const last = result.task ?? engine.snapshot(identity);
+    const settled = last && settleFromInputCall(last, earlyResult, earlyError);
+    if (!settled) return result;
+    // The state reporter sees the state the outcome reports.
+    args.onState?.(settled);
+    return {
+      outcome: settled.status === "failed" ? "failed" : "completed",
+      task: settled,
+    };
+  }
+
+  /**
    * Turns a terminal snapshot into the drive's result, fetching the legacy
    * payload when there is one to fetch.
    *
@@ -472,9 +657,25 @@ export async function driveTaskToTerminal(
       ...(lastError === undefined ? {} : { lastError }),
     };
     if (
+      earlyResult &&
+      snapshot.result === undefined &&
+      (outcome === "completed" || outcome === "failed")
+    ) {
+      // Already in hand: the call made on `input_required` returned it. Kept
+      // for a `failed` task too: a tool result with `isError` ends the task
+      // as `failed` (tasks.mdx:721), and the payload is still its result.
+      return { ...base, task: { ...snapshot, result: earlyResult } };
+    }
+    if (outcome === "failed" && earlyError && snapshot.error === undefined) {
+      // The error that call returned is this task's failure reason
+      // (tasks.mdx:466); a `failed` legacy task is not fetched again.
+      return { ...base, task: { ...snapshot, error: earlyError } };
+    }
+    if (
       outcome !== "completed" ||
       identity.wire !== "legacy" ||
-      snapshot.result !== undefined
+      snapshot.result !== undefined ||
+      earlyResult
     ) {
       return base;
     }

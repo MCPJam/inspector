@@ -13,7 +13,10 @@
  * agent through it instead.
  */
 import { pinEvalTurn, readEvalScope } from "@/lib/mcpjam-agent/eval-scope";
-import { rejectedInputTurn } from "@/lib/mcpjam-agent/rejected-input";
+import {
+  conversationTooLarge,
+  rejectedInputTurn,
+} from "@/lib/mcpjam-agent/rejected-input";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { generateId } from "ai";
@@ -530,7 +533,10 @@ export function useMcpjamAgentSession(
       const trimmed = text.trim();
       if (!trimmed) return;
       // A refused turn must not ride on the next request, even when the user
-      // types a replacement instead of using Edit message.
+      // types a replacement instead of using Edit message. One that has to
+      // stay (its tools already ran), or a chat still too large without it,
+      // would be refused again, so don't send.
+      if (conversationTooLarge(chat.messages, chat.error?.message)) return;
       editRejectedMessage();
       // Typing instead of answering IS an answer to the clarifying question:
       // the user moved on. The message is NOT fed in as the answer — it's the

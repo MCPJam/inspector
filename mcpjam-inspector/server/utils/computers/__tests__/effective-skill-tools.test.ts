@@ -195,7 +195,7 @@ describe("prompt catalog", () => {
 });
 
 describe("loadSkill", () => {
-  it("delivers captured MCP-server skills under their pinned ref and requires approval", async () => {
+  it("delivers captured MCP-server skills under their pinned ref", async () => {
     const { tools, systemPromptSection } = getEffectiveSkillToolsAndPrompt(
       set({
         serverSkills: [
@@ -229,12 +229,52 @@ describe("loadSkill", () => {
       '> Origin: MCP server "Acme Billing" (skill://acme/refunds/SKILL.md), captured v3 on 1970-01-01'
     );
     expect(loaded).toContain("no stored digest");
-    const needsApproval = (
-      tools.loadSkill as {
-        needsApproval: (input: { name: string }) => boolean;
-      }
-    ).needsApproval;
-    expect(needsApproval({ name: "acme/refunds" })).toBe(true);
+  });
+
+  it("asks for approval on no skill tool, whatever the skill's origin", () => {
+    // Reading a skill acts on nothing, so loading or reading one never asks:
+    // not a Library skill, not a plugin's, not a server's.
+    const { tools } = getEffectiveSkillToolsAndPrompt(
+      set({
+        standaloneSkills: [
+          {
+            ref: "pdf-processing",
+            skillId: "sk_library",
+            name: "pdf-processing",
+            description: "Process PDFs",
+            content: "LIBRARY BODY",
+            aggregateHash: "agg_library",
+            files: [],
+            channels: [],
+          },
+        ],
+        pluginSkills: DUPLICATE_NAME_SET.pluginSkills,
+        serverSkills: [
+          {
+            ref: "acme/refunds",
+            skillId: "server_skill_1",
+            name: "refunds",
+            description: "Handle refunds",
+            content: "CAPTURED SERVER BODY",
+            aggregateHash: "version_hash_1",
+            files: [],
+            serverId: "server_1",
+            serverLabel: "Acme Billing",
+            skillUri: "skill://acme/refunds/SKILL.md",
+            versionId: "version_1",
+            versionNumber: 3,
+            capturedAt: 1,
+          },
+        ],
+      }),
+    );
+    for (const name of ["loadSkill", "listSkillFiles", "readSkillFile"]) {
+      expect(
+        (tools as Record<string, { needsApproval?: unknown }>)[name]
+          ?.needsApproval,
+        name,
+      ).toBe(false);
+    }
   });
 
   const capturedWithDigest = async (content: string, storedOf: string) =>

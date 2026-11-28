@@ -77,7 +77,10 @@ function renderTable(
 
 describe("SuiteScorerTable rubric checks", () => {
   /** A deployment that grades rubric checks, with this goal-judge policy. */
-  function withRubricChecks(goalEnabled: boolean): SuiteCapabilities {
+  function withRubricChecks(
+    goalEnabled: boolean,
+    yesNo = false,
+  ): SuiteCapabilities {
     return {
       judge: judgeCapabilities(),
       judges: {
@@ -101,6 +104,7 @@ describe("SuiteScorerTable rubric checks", () => {
         rubricChecks: {
           role: "advisory",
           template: { version: 1, hash: "r" },
+          ...(yesNo ? { questionKinds: ["choice", "score", "yesno"] } : {}),
           execution: "wired",
           calibration: "unavailable",
         },
@@ -141,6 +145,32 @@ describe("SuiteScorerTable rubric checks", () => {
       "disabled",
       false,
     );
+  });
+
+  it("authors questions in one place: the library, not the card", async () => {
+    const user = userEvent.setup();
+    renderTable({ capabilities: withRubricChecks(true, true) });
+    const card = within(screen.getByTestId("suite-judge-card-rubricChecks"));
+    expect(card.queryByRole("button", { name: "Yes/no" })).toBeNull();
+    expect(card.queryByRole("button", { name: "Choice" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "From library" }));
+    await user.click(
+      screen.getByRole("button", { name: "Decision questions" }),
+    );
+    const types = within(screen.getByRole("group", { name: "Question type" }));
+    expect(types.getByRole("button", { name: "Yes/no" })).toBeInTheDocument();
+  });
+
+  it("offers only choice and score where yes/no is not listed", async () => {
+    const user = userEvent.setup();
+    renderTable({ capabilities: withRubricChecks(true) });
+    await user.click(screen.getByRole("button", { name: "From library" }));
+    await user.click(
+      screen.getByRole("button", { name: "Decision questions" }),
+    );
+    const types = within(screen.getByRole("group", { name: "Question type" }));
+    expect(types.queryByRole("button", { name: "Yes/no" })).toBeNull();
+    expect(types.getByRole("button", { name: "Choice" })).toBeEnabled();
   });
 });
 

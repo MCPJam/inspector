@@ -22,6 +22,12 @@ import { MockLanguageModelV3 } from "ai/test";
 import { main } from "../src/index.js";
 import { sha256HexOfBuffer } from "../src/lib/eval-run-file.js";
 import { captureProcessOutput, telemetryDisabled } from "./support/cli-run.js";
+import type { TelemetryOptions } from "../src/lib/telemetry.js";
+import {
+  cleanTelemetryEnv,
+  createRecordingClient,
+  createStatePath,
+} from "./support/telemetry-harness.js";
 
 const FIXTURE = fileURLToPath(
   new URL("./fixtures/policy-target-server.mjs", import.meta.url)
@@ -226,6 +232,7 @@ async function runTest(
   options: {
     script?: (userText: string, afterTool: boolean) => Step;
     env?: Record<string, string>;
+    telemetry?: TelemetryOptions;
   } = {}
 ) {
   const script = options.script ?? byVerb;
@@ -244,7 +251,7 @@ async function runTest(
         ...args,
       ],
       {
-        telemetry: telemetryDisabled,
+        telemetry: options.telemetry ?? telemetryDisabled,
         localTest: {
           cwd: ws.dir,
           env: {
@@ -511,4 +518,24 @@ test("missing MCPJam identity stops a BYOK run before connecting or calling the 
   assert.equal(run.starts.length, 0);
   assert.equal(existsSync(ws.callsFile), false);
   assert.equal(existsSync(ws.cwdFile), false);
+});
+
+test("an untargeted --server is counted as a usage error, not an error", async () => {
+  const ws = workspace(suite(CASES.read));
+  const recorder = createRecordingClient();
+  const run = await runTest(ws, ["--server", "ghost=http://127.0.0.1:1/mcp"], {
+    telemetry: {
+      statePath: await createStatePath(),
+      env: cleanTelemetryEnv(),
+      createId: () => "11111111-1111-4111-8111-111111111111",
+      createClient: recorder.createClient,
+    },
+  });
+  assert.equal(run.result.exitCode, 2, run.stderr);
+  const events = recorder.events.filter((event) => event.event === "cli_command");
+  assert.equal(events.length, 1);
+  assert.equal(events[0].properties.command, "test");
+  assert.equal(events[0].properties.outcome, "usage_error");
+  assert.equal(events[0].properties.error_code, "USAGE_ERROR");
+  assert.doesNotMatch(JSON.stringify(events[0]), /ghost/);
 });

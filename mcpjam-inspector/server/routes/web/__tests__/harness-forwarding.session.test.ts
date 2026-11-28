@@ -1,8 +1,9 @@
 /**
  * Session envelopes on the native forwarding route (`?native=1`).
  *
- * A runtime that fingerprints its MCP config (Cursor) sends the lane's session
- * envelope on every turn. These pin that the owner comes from the handle, the
+ * A chat lane's runtime sends the lane's session envelope on every turn: Cursor,
+ * which fingerprints its MCP config, and any runtime whose session grant reaches
+ * the forwarder. These pin that the owner comes from the handle, the
  * turn and its policy come from the egress-injected grant, and that Cursor's
  * own 60-second cancel holds: the cancel reaches the server, a cancelled
  * request never runs, and MCPJam's 300-second outer timeout never fires first.
@@ -203,6 +204,35 @@ describe("session envelopes on the native forwarding route", () => {
     // No tool-call id reaches the server from this runtime, so none is read.
     expect(control.prepared[0]).not.toHaveProperty("nativeToolCallId");
     expect(toolCalls()).toHaveLength(1);
+  });
+
+  it("names the call by the runtime's correlation key, and the server never sees MCPJam's key", async () => {
+    const keyed = sealHarnessSessionEnvelope({
+      handle: sessionHandle(),
+      serverId: "srv-a",
+      policy,
+      correlationKey: "mcpjam/toolCallId",
+    });
+    const response = await post(
+      {
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "fast_write",
+          arguments: { text: "a" },
+          _meta: { "mcpjam/toolCallId": "call-7" },
+        },
+      },
+      keyed,
+    );
+    expect(response.status).toBe(200);
+    // The call is bound to the stream's tool call, as on a per-turn context.
+    expect(control.prepared[0]).toMatchObject({
+      turnId: "grant-turn",
+      nativeToolCallId: "call-7",
+    });
+    const sent = toolCalls()[0] as { params: { _meta?: Record<string, unknown> } };
+    expect(sent.params._meta ?? {}).not.toHaveProperty("mcpjam/toolCallId");
   });
 
   it("refuses an envelope whose policy is not the one this turn bound", async () => {

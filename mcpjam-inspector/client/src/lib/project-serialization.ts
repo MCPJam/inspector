@@ -259,6 +259,9 @@ export function deserializeServersFromConvex(
 
     const server: ServerWithName = {
       name: serverData.name || serverId,
+      ...(typeof serverData.publishedPluginId === "string"
+        ? { publishedPluginId: serverData.publishedPluginId }
+        : {}),
       config,
       lastConnectionTime: new Date(),
       connectionStatus: "disconnected" as ConnectionStatus,

@@ -237,10 +237,12 @@ vi.mock("../harness-session-state.js", async (importOriginal) => ({
 }));
 vi.mock("../harness-model-broker.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../harness-model-broker.js")>()),
+  revokeHarnessModelBroker: vi.fn(async () => ({ ok: true })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
   reserveHarnessBox: vi.fn(async () => ({ ok: true })),
   renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  revokeHarnessModelBroker: vi.fn(async () => ({ ok: true })),
 }));
 
 import { runHarnessTurn } from "../run-harness-turn";
@@ -257,6 +259,7 @@ script.recorded = () =>
 function manager() {
   const value = {
     getServerConfig: vi.fn(() => ({ url: "https://server.test/mcp", timeout: 300_000 })),
+    getAllToolAnnotations: vi.fn(() => ({})),
     getInitializationInfo: vi.fn(() => ({
       transport: "streamable-http",
       protocolVersion: "2025-11-25",

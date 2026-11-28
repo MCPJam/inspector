@@ -36,6 +36,11 @@ import {
   type HostedReadinessReceipt,
   type ReadinessPublisher,
 } from "./readiness-runs.js";
+import {
+  authorizedReviewerAccount,
+  reviewerAccountForRun,
+  reviewerAttemptForRun,
+} from "./reviewer-attempts.js";
 
 /** The run's own start inputs, as the backend's resume hands them back. */
 interface ResumedRun {
@@ -114,11 +119,15 @@ export interface ResumeHostedReadinessRunInput {
   runId: string;
   /** The submission the run grades, read off the run: its answers are frozen. */
   submissionId?: string;
-  /** The surface's authorize exchange, with the caller's bearer. */
+  /**
+   * The surface's authorize exchange, with the caller's bearer: the server's
+   * own account, or the one `connectionId` names.
+   */
   authorize: (
     projectId: string,
     serverId: string,
     signal: AbortSignal,
+    connectionId?: string,
   ) => Promise<AuthorizedReadinessServer>;
   analyticsActor?: ServerAnalyticsActor;
   /** Maps a Convex refusal onto the surface's own error vocabulary. */
@@ -231,6 +240,32 @@ export async function resumeHostedReadinessRun(
 
   const { includeLlmObservations, lazyAuthProbe, claimedFeatures } =
     resumed.options;
+  // The node that held the attempt in memory stopped; the attempt still names
+  // this run.
+  const reviewerAttemptId = input.submissionId
+    ? await reviewerAttemptForRun(input.convex, input.submissionId, resumed.runId)
+    : undefined;
+  const reviewer =
+    input.submissionId &&
+    (await reviewerAccountForRun(
+      input.convex,
+      input.submissionId,
+      (connectionId) =>
+        authorizeWithin(
+          (signal) =>
+            input.authorize(resumed.projectId, serverId, signal, connectionId),
+          AUTHORIZE_TIMEOUT_MS,
+        ),
+    ));
+  // The account a resumed sign-in connects, on the resume's own authorize.
+  const authorizeReviewer = (accountId: string) =>
+    authorizedReviewerAccount(accountId, (connectionId) =>
+      authorizeWithin(
+        (signal) =>
+          input.authorize(resumed.projectId, serverId, signal, connectionId),
+        AUTHORIZE_TIMEOUT_MS,
+      ),
+    );
   executeHostedReadinessRunDetached(
     {
       lease,
@@ -243,6 +278,9 @@ export async function resumeHostedReadinessRun(
       ...(lazyAuthProbe?.enabled === true ? { lazyAuthProbe } : {}),
       ...(claimedFeatures?.length ? { claimedFeatures } : {}),
       ...(input.submissionId ? { submissionId: input.submissionId } : {}),
+      ...(reviewerAttemptId ? { reviewerAttemptId } : {}),
+      ...(reviewer ? { reviewer } : {}),
+      ...(reviewerAttemptId ? { authorizeReviewer } : {}),
       analyticsActor: input.analyticsActor,
     },
     authorized,

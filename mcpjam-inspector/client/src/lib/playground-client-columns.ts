@@ -55,6 +55,7 @@ export interface PlaygroundClientColumn {
   executionConfig: ExecutionConfig;
   hostSnapshot: HostSnapshot;
   hostConfig: HostDetail["config"];
+  preferAppThemeInCompare?: boolean;
 }
 
 export type PlaygroundClientResolution =
@@ -71,6 +72,7 @@ export type PlaygroundClientResolution =
       model?: ModelDefinition;
       /** Set once the client loads, so pane settings can fix the model. */
       hostConfig?: HostDetail["config"];
+      preferAppThemeInCompare?: boolean;
       modelRows?: ModelDefinition[];
     };
 
@@ -125,6 +127,10 @@ export function resolvePlaygroundClientColumn({
         : "This client is unavailable. Remove it to continue.",
     };
   const config = host.config;
+  const client = {
+    hostConfig: config,
+    preferAppThemeInCompare: host.preferAppThemeInCompare,
+  };
   const selection = config.modelSelection;
   if (
     selection &&
@@ -152,7 +158,7 @@ export function resolvePlaygroundClientColumn({
       ...identity,
       status: "loading",
       reason: "Loading saved configuration…",
-      hostConfig: config,
+      ...client,
       modelRows,
     };
   if (!model || model.disabled)
@@ -161,7 +167,7 @@ export function resolvePlaygroundClientColumn({
       status: "unavailable",
       reason: picked ? UNAVAILABLE_PICK_REASON : UNAVAILABLE_SAVED_REASON,
       ...(model ? { model } : {}),
-      hostConfig: config,
+      ...client,
       modelRows,
     };
   return {
@@ -180,7 +186,7 @@ export function resolvePlaygroundClientColumn({
         requireToolApproval: config.requireToolApproval,
       },
       hostSnapshot: snapshotFromHostConfig(config),
-      hostConfig: config,
+      ...client,
     },
   };
 }

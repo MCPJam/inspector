@@ -116,6 +116,7 @@ function ControlledModelSelector() {
 
   return (
     <ModelSelector
+      harnessScope="not-client-run"
       currentModel={currentModel}
       availableModels={models}
       onModelChange={(model) => {
@@ -144,6 +145,7 @@ function OpenChangeProbe({
 }) {
   return (
     <ModelSelector
+      harnessScope="not-client-run"
       currentModel={models[0]}
       availableModels={models}
       onModelChange={() => {}}
@@ -197,6 +199,7 @@ function ProviderIntentControlledModelSelector({
           if the hand-off never moved. Assert on the id instead. */}
       <span data-testid="current-model-id">{String(currentModel.id)}</span>
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={currentModel}
         availableModels={availableModels}
         onModelChange={(model, options) => {
@@ -233,6 +236,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={models[0]!}
         availableModels={models}
         onModelChange={vi.fn()}
@@ -304,6 +308,7 @@ describe("ModelSelector", () => {
 
     const { rerender } = render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={models[0]}
         availableModels={models}
         onModelChange={onModelChange}
@@ -320,6 +325,7 @@ describe("ModelSelector", () => {
 
     rerender(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={models[0]}
         availableModels={models}
         onModelChange={onModelChange}
@@ -347,6 +353,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={searchModels[0]}
         availableModels={searchModels}
         onModelChange={() => {}}
@@ -373,6 +380,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={searchModels[0]}
         availableModels={searchModels}
         onModelChange={() => {}}
@@ -397,6 +405,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={searchModels[0]}
         availableModels={searchModels}
         onModelChange={() => {}}
@@ -424,6 +433,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={weakMatchModels[0]}
         availableModels={weakMatchModels}
         onModelChange={() => {}}
@@ -451,6 +461,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={weakMatchModels[0]}
         availableModels={weakMatchModels}
         onModelChange={() => {}}
@@ -473,6 +484,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={weakMatchModels[0]}
         availableModels={weakMatchModels}
         onModelChange={() => {}}
@@ -608,6 +620,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         // Already on their own key — the reporter's state after manually
         // picking Haiku. Re-selecting here is what made the choice look
         // like it never stuck.
@@ -634,6 +647,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={byokIntentModels[1]!}
         availableModels={byokIntentModels}
         onModelChange={() => {}}
@@ -665,6 +679,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={byokIntentModels[1]!}
         availableModels={byokIntentModels}
         onModelChange={() => {}}
@@ -688,6 +703,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={freeOnly[0]!}
         availableModels={freeOnly}
         onModelChange={() => {}}
@@ -716,6 +732,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={noRunnableHarnessModel("claude-code")}
         availableModels={[]}
         onModelChange={() => {}}
@@ -727,7 +744,7 @@ describe("ModelSelector", () => {
 
     expect(
       await screen.findByText(
-        "Claude Code runs MCPJam models, your organization's Anthropic key, or a gateway that serves Anthropic Messages. Set one up in Organization models."
+        "Claude Code runs MCPJam models, your organization's Anthropic key, or a custom provider that serves Anthropic Messages. Set one up in Organization models."
       )
     ).toBeVisible();
     expect(screen.queryByText("No matching models.")).not.toBeInTheDocument();
@@ -743,6 +760,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={freeOnly[0]!}
         availableModels={freeOnly}
         onModelChange={() => {}}
@@ -762,6 +780,7 @@ describe("ModelSelector", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={byokIntentModels[0]!}
         availableModels={byokIntentModels}
         onModelChange={() => {}}
@@ -832,6 +851,7 @@ describe("model routing selection", () => {
       const onModelChange = vi.fn();
       render(
         <ModelSelector
+          harnessScope="not-client-run"
           currentModel={hosted}
           availableModels={[hosted, byok]}
           onModelChange={onModelChange}
@@ -888,6 +908,7 @@ describe("catalog observations", () => {
     const user = userEvent.setup();
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={verified}
         availableModels={catalog}
         onModelChange={vi.fn()}
@@ -917,6 +938,7 @@ describe("catalog observations", () => {
     const onModelChange = vi.fn();
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={verified}
         availableModels={catalog}
         onModelChange={onModelChange}
@@ -942,6 +964,7 @@ describe("catalog observations", () => {
     const onModelChange = vi.fn();
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={verified}
         availableModels={catalog}
         onModelChange={onModelChange}
@@ -965,6 +988,7 @@ describe("catalog observations", () => {
     const user = userEvent.setup();
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={verified}
         availableModels={catalog}
         onModelChange={vi.fn()}
@@ -981,6 +1005,7 @@ describe("catalog observations", () => {
     const user = userEvent.setup();
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={legacy}
         availableModels={[legacy]}
         onModelChange={vi.fn()}
@@ -1016,6 +1041,7 @@ describe("multi-select rows are keyed by source and connection", () => {
     const onSelectedModelsChange = vi.fn();
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={orgTwin}
         availableModels={[hosted, orgTwin]}
         onModelChange={vi.fn()}
@@ -1040,6 +1066,7 @@ describe("multi-select rows are keyed by source and connection", () => {
     const onSelectedModelsChange = vi.fn();
     const { rerender } = render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={hosted}
         availableModels={[hosted]}
         onModelChange={vi.fn()}
@@ -1054,6 +1081,7 @@ describe("multi-select rows are keyed by source and connection", () => {
 
     rerender(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={hosted}
         availableModels={[hosted]}
         onModelChange={vi.fn()}
@@ -1073,6 +1101,7 @@ describe("multi-select rows are keyed by source and connection", () => {
     const onSelectedModelsChange = vi.fn();
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={hosted}
         availableModels={[hosted]}
         onModelChange={vi.fn()}
@@ -1115,6 +1144,7 @@ describe("per-row efforts", () => {
     const onRemovePickedEntry = vi.fn();
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={gpt}
         availableModels={models}
         onModelChange={vi.fn()}
@@ -1168,6 +1198,7 @@ describe("per-row efforts", () => {
     const onModelEffortSelect = vi.fn();
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={claude}
         availableModels={models}
         onModelChange={vi.fn()}
@@ -1221,6 +1252,7 @@ describe("ModelSelector — organization requires its own keys", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={placeholder}
         availableModels={[]}
         onModelChange={() => {}}
@@ -1248,6 +1280,7 @@ describe("ModelSelector — organization requires its own keys", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={noRunnableHarnessModel("codex", {
           requireOrgKeys: true,
         })}
@@ -1261,7 +1294,7 @@ describe("ModelSelector — organization requires its own keys", () => {
     await user.click(screen.getByTestId("model-selector-trigger"));
     const empty = await screen.findByTestId("model-selector-org-keys-empty");
     expect(empty).toHaveTextContent(
-      "This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider or a gateway that serves Responses.",
+      "This organization requires its own provider keys, so Codex runs only on an organization OpenAI provider or a custom provider that serves Responses.",
     );
     expect(empty).not.toHaveTextContent(/MCPJam models/);
     expect(
@@ -1278,6 +1311,7 @@ describe("ModelSelector — organization requires its own keys", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={savedHosted}
         availableModels={[savedHosted]}
         onModelChange={() => {}}
@@ -1310,6 +1344,7 @@ describe("ModelSelector — organization requires its own keys", () => {
 
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={savedHosted}
         availableModels={[orgModel, savedHosted]}
         onModelChange={() => {}}
@@ -1334,6 +1369,7 @@ describe("ModelSelector — organization requires its own keys", () => {
   it("shows an allowed organization model on the trigger as usual", () => {
     render(
       <ModelSelector
+        harnessScope="not-client-run"
         currentModel={orgModel}
         availableModels={[orgModel]}
         onModelChange={() => {}}
@@ -1345,6 +1381,48 @@ describe("ModelSelector — organization requires its own keys", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("model-selector-trigger")).toHaveTextContent(
       "Claude Sonnet 4.5",
+    );
+  });
+});
+
+describe("ModelSelector harness scope", () => {
+  const harnessModels = [
+    { id: "openai/gpt-5.5", name: "GPT-5.5", provider: "openai", hosted: true },
+    {
+      id: "openai/gpt-5.6-luna",
+      name: "GPT-5.6 Luna",
+      provider: "openai",
+      hosted: true,
+    },
+  ] as ModelDefinition[];
+  const option = (name: RegExp) => screen.getByRole("option", { name });
+  const open = async (
+    harnessScope: Parameters<typeof ModelSelector>[0]["harnessScope"],
+  ) => {
+    const user = userEvent.setup();
+    render(
+      <ModelSelector
+        harnessScope={harnessScope}
+        currentModel={harnessModels[0]!}
+        availableModels={harnessModels}
+        onModelChange={() => {}}
+        onAddProvider={null}
+      />,
+    );
+    await user.click(screen.getByTestId("model-selector-trigger"));
+  };
+
+  it("disables a model the client's runtime can't run for an eval", async () => {
+    await open({ targets: [{ harnessId: "codex" }], purpose: "eval" });
+    expect(option(/gpt-5\.6 luna/i)).toHaveAttribute("aria-disabled", "true");
+    expect(option(/gpt-5\.5/i)).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("locks nothing for an emulated client", async () => {
+    await open({ targets: [null], purpose: "eval" });
+    expect(option(/gpt-5\.6 luna/i)).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
     );
   });
 });

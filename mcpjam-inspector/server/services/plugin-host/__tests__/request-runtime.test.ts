@@ -1448,7 +1448,7 @@ describe("a pending form and the client's current capability toggles", () => {
         },
         origin,
       );
-      const { source, signal } = pluginFormSources.get(form.token, owner, {
+      const { source, signal } = pluginFormSources.get(form.token, { ...owner, subject: "subject" }, {
         kind: "legacy",
         id: rendezvousId,
         round: 0,
@@ -1631,7 +1631,7 @@ describe("a pending form and the client's current capability toggles", () => {
       },
       requestedSchema: { type: "object", properties: {} },
       expiresAt: Date.now() + 60_000,
-    });
+    }, "subject");
     const live = await runtime(expected);
     await live.resolve("app", new AbortController().signal);
     const ended = live.resumeMrtr(
@@ -1651,7 +1651,7 @@ describe("a pending form and the client's current capability toggles", () => {
     });
     // Its form source closed with it: no later answer can find it.
     expect(() =>
-      pluginFormSources.get(bound.token, owner, {
+      pluginFormSources.get(bound.token, { ...owner, subject: "subject" }, {
         kind: "mrtr",
         id: "continuation",
         round: 1,

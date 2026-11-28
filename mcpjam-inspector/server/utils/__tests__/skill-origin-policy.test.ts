@@ -35,6 +35,9 @@ import {
 function mockManager(tools: Record<string, unknown> = {}) {
   return {
     getToolsForAiSdk: vi.fn(async () => tools),
+    // The turn asks each server for its log records, so a running tool call can show them.
+    setPerRequestLogLevel: vi.fn(),
+    onLogMessage: vi.fn(),
     listTools: vi.fn(async () => ({ tools: [] })),
     getSkillsSupport: vi.fn(() => ({
       declared: false,
@@ -53,6 +56,8 @@ function liveSkillsManager() {
   const uri = "skill://srv/refunds/SKILL.md";
   return {
     getToolsForAiSdk: vi.fn(async () => ({})),
+    setPerRequestLogLevel: vi.fn(),
+    onLogMessage: vi.fn(),
     listTools: vi.fn(async () => ({ tools: [] })),
     hasServer: vi.fn(() => true),
     getSkillsSupport: vi.fn(() => ({
@@ -240,8 +245,8 @@ describe("the origin matrix", () => {
   });
 
   it("an eval run: pinned content only, and never under approval", async () => {
-    // Pinned is the ONLY kind that bypasses approval, because an eval run
-    // auto-denies and a paused approval would fail every iteration.
+    // An eval run auto-denies, so a skill tool that asked would fail every
+    // iteration. No skill tool asks, on any kind.
     const result = await prepareChatV2({
       ...base,
       mcpClientManager: mockManager(),

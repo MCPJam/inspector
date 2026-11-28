@@ -28,6 +28,7 @@ export { PARKED_EXPLANATION } from "./events/TriggerRuns";
 export type { ValidatedTriggerFields } from "./events/TriggerForm";
 
 interface EventTriggersTabProps {
+  initialTriggerId?: string | null;
   /** The Convex project; triggers live in the hosted registry only. */
   projectId: string | null;
   /** A signed-in project member (guests cannot own unattended runs). */
@@ -47,7 +48,7 @@ function errorMessage(error: unknown, fallback: string): string {
 
 type Selection = { kind: "new" } | { kind: "trigger"; id: string } | null;
 
-function TriggersWorkspace({ projectId }: { projectId: string }) {
+function TriggersWorkspace({ projectId, initialTriggerId }: { projectId: string; initialTriggerId?: string | null }) {
   const triggers = useQuery(EVENT_TRIGGERS_API.list, { projectId });
   const subscriptionRows = useQuery(EVENT_SUBSCRIPTIONS_API.list, {
     projectId,
@@ -72,7 +73,7 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
   const setTriggerEnabled = useMutation(EVENT_TRIGGERS_API.setEnabled);
   const removeTrigger = useMutation(EVENT_TRIGGERS_API.remove);
 
-  const [selection, setSelection] = useState<Selection>(null);
+  const [selection, setSelection] = useState<Selection>(initialTriggerId ? { kind: "trigger", id: initialTriggerId } : null);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -406,6 +407,7 @@ function TriggersWorkspace({ projectId }: { projectId: string }) {
 }
 
 export function EventTriggersTab({
+  initialTriggerId,
   projectId,
   isSignedInMember,
 }: EventTriggersTabProps) {
@@ -426,5 +428,5 @@ export function EventTriggersTab({
       />
     );
   }
-  return <TriggersWorkspace projectId={projectId} />;
+  return <TriggersWorkspace projectId={projectId} initialTriggerId={initialTriggerId} />;
 }

@@ -66,23 +66,12 @@ export function mergeTasksConformanceResults(
         durationMs: 0,
         error: { message: "The selected check produced no result." },
       };
-    const chosen =
+    return (
       observations.find((c) => c.status === "failed") ??
       observations.find((c) => c.skipReason === "could-not-run") ??
       observations.find((c) => c.status === "passed") ??
-      observations[0]!;
-    if (id !== "tasks-declaration-hygiene") return chosen;
-    return {
-      ...chosen,
-      durationMs: observations.reduce((sum, c) => sum + c.durationMs, 0),
-      details: {
-        ...chosen.details,
-        inspectedRequests: observations.reduce(
-          (sum, c) => sum + Number(c.details?.inspectedRequests ?? 0),
-          0
-        ),
-      },
-    };
+      observations[0]!
+    );
   });
   const profile = conformanceProfile("mcp-tasks");
   const { scored, pending } = partitionByProfile(checks, profile);
@@ -101,6 +90,17 @@ export function mergeTasksConformanceResults(
     .filter(
       (r, i, all) =>
         !readiness.some((other) => other.id === r.id) &&
+        all.findIndex((other) => other.id === r.id) === i
+    );
+  // A matrix run can pass advice on one group and miss it on another; the
+  // miss wins, so a pass is listed only where no group warned or went
+  // unchecked.
+  const passedAdvice = results
+    .flatMap((r) => r.passedAdvice ?? [])
+    .filter(
+      (r, i, all) =>
+        !readiness.some((other) => other.id === r.id) &&
+        !uncheckedAdvice.some((other) => other.id === r.id) &&
         all.findIndex((other) => other.id === r.id) === i
     );
   const observed =
@@ -155,5 +155,6 @@ export function mergeTasksConformanceResults(
     },
     ...(readiness.length ? { readiness } : {}),
     ...(uncheckedAdvice.length ? { uncheckedAdvice } : {}),
+    ...(passedAdvice.length ? { passedAdvice } : {}),
   };
 }

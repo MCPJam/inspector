@@ -42,128 +42,12 @@
 import { promises as dns } from "node:dns";
 import { HOSTED_MODE } from "../config.js";
 import { logger } from "./logger.js";
+import { egressTier } from "./egress-tier.js";
 import {
-  ipv6Bytes,
-  normalizeEgressHost,
   parsePrivateEgressAllowlist,
   type PrivateEgressAllowlist,
   type PrivateEgressDestination,
 } from "./private-egress-allowlist.js";
-
-/** Parse a dotted-quad IPv4 literal into octets, or null if not well-formed. */
-function parseIpv4Octets(
-  host: string
-): [number, number, number, number] | null {
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (!m) return null;
-  const o = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
-  if (o.some((n) => n > 255)) return null;
-  return [o[0], o[1], o[2], o[3]];
-}
-
-/** Metadata aliases: they resolve to link-local, but the names are refused too. */
-const METADATA_NAMES = new Set([
-  "metadata",
-  "metadata.google.internal",
-  "metadata.goog",
-]);
-
-/**
- * Names that only mean something on the machine itself or its container host:
- * the loopback aliases `/etc/hosts` ships and Docker's host gateways.
- */
-const MACHINE_LOCAL_NAMES = new Set([
-  "ip6-localhost",
-  "ip6-loopback",
-  "host.docker.internal",
-  "gateway.docker.internal",
-]);
-
-/** AWS's IPv6 instance metadata address, inside the ULA range. */
-const AWS_IPV6_METADATA = ipv6Bytes("fd00:ec2::254");
-
-type EgressTier = "never" | "private" | "public";
-
-/**
- * Where a literal hostname or address sits in the threat model above.
- *
- *   - `never`: an empty host, cloud-metadata names and addresses (including
- *     Alibaba's inside CGNAT and AWS's inside ULA), IPv4/IPv6 link-local
- *     (169.254/16, fe80::/10), multicast and reserved space (224/4, 240/4,
- *     ff00::/8), and the unspecified address (0.0.0.0/8, ::).
- *   - `private`: loopback and `.localhost`, the machine-local names above,
- *     RFC-1918, CGNAT (100.64/10), and IPv6 ULA (fc00::/7).
- *   - `public`: everything else, including every other name — a name is
- *     judged again on what it resolves to.
- */
-function egressTier(hostname: string): EgressTier {
-  // `normalizeEgressHost` strips a terminal dot. It is the same NAME to a
-  // resolver ("localhost." resolves to loopback) but a different STRING to
-  // every comparison below, so `http://metadata.google.internal./` would
-  // otherwise walk past the alias check.
-  const host = normalizeEgressHost(hostname);
-  // Nothing left to judge: fail closed.
-  if (!host) return "never";
-  if (METADATA_NAMES.has(host)) return "never";
-  if (
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    MACHINE_LOCAL_NAMES.has(host)
-  ) {
-    return "private";
-  }
-
-  const v4 = parseIpv4Octets(host);
-  if (v4) {
-    const [a, b, c, d] = v4;
-    if (a === 169 && b === 254) return "never"; // link-local incl. cloud metadata
-    if (a === 0) return "never"; // "this network" / unspecified
-    if (a >= 224) return "never"; // multicast 224/4, reserved 240/4
-    if (a === 100 && b === 100 && c === 100 && d === 200) return "never"; // Alibaba metadata
-    if (a === 127) return "private"; // loopback 127.0.0.0/8
-    if (a === 10) return "private"; // 10.0.0.0/8
-    if (a === 192 && b === 168) return "private"; // 192.168.0.0/16
-    if (a === 172 && b >= 16 && b <= 31) return "private"; // 172.16.0.0/12
-    if (a === 100 && b >= 64 && b <= 127) return "private"; // CGNAT 100.64.0.0/10
-    return "public";
-  }
-
-  if (host.includes(":")) {
-    // IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) — judge the embedded v4.
-    const mapped = /(?:^|:)((?:\d{1,3}\.){3}\d{1,3})$/.exec(host);
-    if (mapped) return egressTier(mapped[1]);
-    // The SAME address in hex. `new URL()` rewrites the dotted spelling into
-    // this one (`[::ffff:169.254.169.254]` → `[::ffff:a9fe:a9fe]`), so a check
-    // that only knew the dotted form let the metadata endpoint through the
-    // moment the host came from a parsed URL rather than a raw string.
-    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-    if (mappedHex) {
-      const high = parseInt(mappedHex[1], 16);
-      const low = parseInt(mappedHex[2], 16);
-      return egressTier(
-        `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${
-          low & 0xff
-        }`
-      );
-    }
-    if (host === "::") return "never"; // unspecified
-    if (/^fe[89ab]/.test(host)) return "never"; // link-local fe80::/10
-    if (/^ff[0-9a-f]{2}:/.test(host)) return "never"; // multicast ff00::/8
-    const bytes = ipv6Bytes(host);
-    if (
-      bytes &&
-      AWS_IPV6_METADATA &&
-      bytes.every((byte, i) => byte === AWS_IPV6_METADATA[i])
-    ) {
-      return "never";
-    }
-    if (host === "::1") return "private"; // loopback
-    if (/^f[cd]/.test(host)) return "private"; // ULA fc00::/7
-    return "public";
-  }
-
-  return "public";
-}
 
 /** Read once per distinct value, so a bad value is reported once rather than per request. */
 let loadedAllowlist:
@@ -188,7 +72,7 @@ export function loadPrivateEgressAllowlist(): PrivateEgressAllowlist {
       logger.error(
         `[egress] MCPJAM_PRIVATE_EGRESS_ALLOWLIST is ignored, so hosted mode will dial no private address: ${invalid
           .map(({ position, reason }) => `entry ${position} ${reason}`)
-          .join("; ")}. Fix the entries and restart.`
+          .join("; ")}. Fix the entries and restart.`,
       );
     }
     loadedAllowlist = { raw, allowlist };
@@ -208,7 +92,7 @@ export function loadPrivateEgressAllowlist(): PrivateEgressAllowlist {
  * `0.0.0.0/0` — reaches cloud metadata or link-local.
  */
 export function admitsPrivateEgress(
-  destination: PrivateEgressDestination
+  destination: PrivateEgressDestination,
 ): boolean {
   if (egressTier(destination.hostname) === "never") return false;
   if (
@@ -252,7 +136,7 @@ export function hostedPrivateEgressAdmission():
  */
 export function isBlockedEgressHost(
   hostname: string,
-  blockPrivate: boolean
+  blockPrivate: boolean,
 ): boolean {
   const tier = egressTier(hostname);
   if (tier !== "private") return tier === "never";
@@ -266,7 +150,7 @@ export function isBlockedEgressHost(
  */
 export function isBlockedEgressAddress(
   hostname: string,
-  address: string
+  address: string,
 ): boolean {
   const tier = egressTier(address);
   if (tier !== "private") return tier === "never";
@@ -323,7 +207,7 @@ function isNoRecordError(reason: unknown): boolean {
 }
 
 export const defaultEgressHostResolver: EgressHostResolver = async (
-  hostname
+  hostname,
 ) => {
   const resolved: string[] = [];
   // Both families are asked independently: a host with an A record and no
@@ -342,10 +226,11 @@ export const defaultEgressHostResolver: EgressHostResolver = async (
   // make the EgressResolutionError path unreachable and turn every SERVFAIL
   // into a permanent 400 telling the user their server is forbidden.
   const failures = [v4, v6].filter(
-    (settled): settled is PromiseRejectedResult => settled.status === "rejected"
+    (settled): settled is PromiseRejectedResult =>
+      settled.status === "rejected",
   );
   const transient = failures.filter(
-    (settled) => !isNoRecordError(settled.reason)
+    (settled) => !isNoRecordError(settled.reason),
   );
   // ANY transient failure, not only an all-transient one. A mixed result —
   // v4 says ENODATA, v6 says SERVFAIL — means we never learned whether an
@@ -380,7 +265,7 @@ function isIpLiteral(host: string): boolean {
 let activeResolver: EgressHostResolver = defaultEgressHostResolver;
 
 export function setEgressHostResolverForTests(
-  resolver: EgressHostResolver | null
+  resolver: EgressHostResolver | null,
 ): void {
   activeResolver = resolver ?? defaultEgressHostResolver;
 }
@@ -399,7 +284,7 @@ export function setEgressHostResolverForTests(
 export async function assertAllowedHostedTargetUrl(
   rawUrl: string,
   label: string,
-  options: { resolver?: EgressHostResolver; hosted?: boolean } = {}
+  options: { resolver?: EgressHostResolver; hosted?: boolean } = {},
 ): Promise<string[]> {
   const hosted = options.hosted ?? HOSTED_MODE;
   if (!hosted) return [];
@@ -412,14 +297,14 @@ export async function assertAllowedHostedTargetUrl(
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new BlockedEgressTargetError(
-      `${label} must be an http(s) URL (got "${parsed.protocol}")`
+      `${label} must be an http(s) URL (got "${parsed.protocol}")`,
     );
   }
 
   const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (isBlockedEgressHost(host, true)) {
     throw new BlockedEgressTargetError(
-      `${label} points at a private or internal address ("${host}") that the hosted inspector will not dial. Run this server locally in the inspector instead.`
+      `${label} points at a private or internal address ("${host}") that the hosted inspector will not dial. Run this server locally in the inspector instead.`,
     );
   }
   // An IP literal has already been judged on its own terms; resolving it would
@@ -437,7 +322,7 @@ export async function assertAllowedHostedTargetUrl(
     throw new EgressResolutionError(
       `Could not check "${host}" for a safe address: ${
         error instanceof Error ? error.message : String(error)
-      }`
+      }`,
     );
   }
   if (resolvedIps.length === 0) {
@@ -445,7 +330,7 @@ export async function assertAllowedHostedTargetUrl(
     // and "we couldn't look it up" is a more useful thing to tell a user than
     // a connection error thirty seconds later.
     throw new BlockedEgressTargetError(
-      `${label} hostname "${host}" could not be resolved, so it cannot be checked for a safe address.`
+      `${label} hostname "${host}" could not be resolved, so it cannot be checked for a safe address.`,
     );
   }
   for (const ip of resolvedIps) {
@@ -457,7 +342,7 @@ export async function assertAllowedHostedTargetUrl(
       // mapped. The host they typed is theirs already; the answer is not.
       throw new BlockedEgressTargetError(
         `${label} hostname "${host}" resolves to a private or internal address that the hosted inspector will not dial.`,
-        { cause: new Error(`resolved address: ${ip}`) }
+        { cause: new Error(`resolved address: ${ip}`) },
       );
     }
   }
@@ -518,7 +403,7 @@ export function createGuardedFetch(
       // as a real one. Refusing is the honest option; callers that need a body
       // can pass it through `init`, which is replayable.
       throw new BlockedEgressTargetError(
-        "A Request with a body cannot be dialed through the egress guard; pass the body via the init argument so it can be replayed across a redirect."
+        "A Request with a body cannot be dialed through the egress guard; pass the body via the init argument so it can be replayed across a redirect.",
       );
     }
     let currentUrl = fromRequest
@@ -570,7 +455,7 @@ export function createGuardedFetch(
       }
       if (rejectsRedirect) {
         throw new BlockedEgressTargetError(
-          `The request refused redirects (redirect: "error") but "${currentUrl}" answered ${response.status}.`
+          `The request refused redirects (redirect: "error") but "${currentUrl}" answered ${response.status}.`,
         );
       }
 
@@ -590,7 +475,7 @@ export function createGuardedFetch(
       // redirects by hand means inheriting that duty rather than the default.
       if (new URL(nextUrl).origin !== new URL(currentUrl).origin) {
         const headers = new Headers(
-          (currentInit.headers as HeadersInit | undefined) ?? {}
+          (currentInit.headers as HeadersInit | undefined) ?? {},
         );
         for (const name of [
           "authorization",
@@ -631,7 +516,7 @@ export function createGuardedFetch(
         // say so than to silently send an empty body and report whatever the
         // server makes of it as the target's behavior.
         throw new BlockedEgressTargetError(
-          `Redirect to "${nextUrl}" would need the request body replayed, which is not possible for a streamed body.`
+          `Redirect to "${nextUrl}" would need the request body replayed, which is not possible for a streamed body.`,
         );
       }
 
@@ -639,7 +524,7 @@ export function createGuardedFetch(
     }
 
     throw new BlockedEgressTargetError(
-      `Too many redirects (more than ${MAX_GUARDED_REDIRECTS}) starting from the request URL.`
+      `Too many redirects (more than ${MAX_GUARDED_REDIRECTS}) starting from the request URL.`,
     );
   };
 

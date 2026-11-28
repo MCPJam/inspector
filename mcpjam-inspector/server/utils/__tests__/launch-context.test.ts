@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { Hono } from "hono";
 import {
   MAX_CI_HEADER_BYTES,
   MAX_LAUNCHER_HEADER_BYTES,
   parseCiHeader,
   parseLauncherHeader,
+  readClientDeclaration,
+  readLaunchContext,
 } from "../launch-context";
 
 /**
@@ -192,5 +195,28 @@ describe("parseCiHeader", () => {
     "http://buildkite.internal/builds/12",
   ])("keeps %s", (runUrl) => {
     expect(parseCiHeader(JSON.stringify({ runUrl }))).toEqual({ runUrl });
+  });
+});
+
+describe("x-mcpjam-client", () => {
+  it("is read for analytics and never becomes a stored launch label", async () => {
+    const app = new Hono();
+    let seen: unknown;
+    app.get("/", (c) => {
+      seen = {
+        client: readClientDeclaration(c),
+        launch: readLaunchContext(c),
+      };
+      return c.text("ok");
+    });
+    await app.request("/", {
+      headers: {
+        "x-mcpjam-client": JSON.stringify({ kind: "mcp", client: "claude-code" }),
+      },
+    });
+    expect(seen).toEqual({
+      client: { kind: "mcp", client: "claude-code" },
+      launch: undefined,
+    });
   });
 });

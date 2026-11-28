@@ -1,0 +1,30 @@
+{
+  "build": "2026.11.05-86047df",
+  "archives": {
+    "darwin-arm64": {
+      "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/darwin/arm64/agent-cli-package.tar.gz",
+      "sha256": "67847e47e3ebd32b64c3fb4e6f36d475f1971b76e033b0ed6c9e01a3c1b440d7",
+      "bytes": 174484846
+    },
+    "darwin-x64": {
+      "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/darwin/x64/agent-cli-package.tar.gz",
+      "sha256": "75f345ce7638ff136e5cd09c45c3b2de4e73e5f590b50655e01e826c02bd7cfa",
+      "bytes": 182110953
+    },
+    "linux-arm64": {
+      "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/linux/arm64/agent-cli-package.tar.gz",
+      "sha256": "131554bfdbf683d8ebfef83a2bb46ac4e5d060f198711040b07ed063c2471871",
+      "bytes": 174742182
+    },
+    "linux-x64": {
+      "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/linux/x64/agent-cli-package.tar.gz",
+      "sha256": "170b77786cbf4c93064d64fff12b71a178b968730561c64afc2e8e752535442e",
+      "bytes": 176081904
+    },
+    "win32-x64": {
+      "url": "https://downloads.cursor.com/lab/2026.11.05-86047df/windows/x64/agent-cli-package.zip",
+      "sha256": "c886cf57681e596163318814d1ec559b10ce81ca2d050aab7a6ad12592840184",
+      "bytes": 79418789
+    }
+  }
+}

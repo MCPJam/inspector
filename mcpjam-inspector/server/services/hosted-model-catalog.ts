@@ -200,7 +200,7 @@ export function isHostedCatalogModel(
  * plus the one fact the id and provider cannot carry — an explicit
  * `hosted: false` from the picker.
  *
- * 25 of the bare BYOK ids in `SUPPORTED_MODELS` (`claude-fable-5`, `gpt-5-nano`,
+ * Most bare BYOK ids in `SUPPORTED_MODELS` (`claude-fable-5`, `gpt-5-nano`,
  * `gemini-2.5-pro`, …) canonicalize, with their provider, to a hosted twin
  * (`anthropic/claude-fable-5`, `openai/gpt-5-nano`, …). That canonicalization
  * is deliberate — legacy host pins store bare hosted ids and must keep billing

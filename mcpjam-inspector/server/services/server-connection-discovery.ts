@@ -356,7 +356,19 @@ export async function runDiscoveryPreflight(
  */
 export type GuardedProbeResult =
   | { kind: "probed"; probe: ProbeMcpServerResult }
-  | { kind: "refused"; errorCode: string; detail: string }
+  | {
+      kind: "refused";
+      errorCode: string;
+      detail: string;
+      /**
+       * Set when the server URL itself answered and the guard refused only a
+       * later request, such as an authorization server its metadata named.
+       * The verdict stays `refused`; this is what the probe learned from the
+       * server, for a caller that reports on the server rather than deciding
+       * whether to connect it.
+       */
+      answeredProbe?: ProbeMcpServerResult;
+    }
   | { kind: "unreachable"; detail: string };
 
 /**
@@ -494,7 +506,10 @@ export async function probeThroughEgressGuard(
    * after the race, so the deadline and the generic catch could both mask a
    * refusal.
    */
-  const refusalOutcome = (): GuardedProbeResult | null =>
+  const refusalOutcome = (): Extract<
+    GuardedProbeResult,
+    { kind: "refused" }
+  > | null =>
     refusal.blocked === null
       ? null
       : {
@@ -572,7 +587,12 @@ export async function probeThroughEgressGuard(
 
   const recorded = refusalOutcome();
   if (recorded !== null) {
-    return recorded;
+    // A refused server URL leaves the probe at `error`: its initialize request
+    // throws before any answer. Any other status means the server answered and
+    // the refusal was a later hop, which the caller may still want to report.
+    return probe.status === "error"
+      ? recorded
+      : { ...recorded, answeredProbe: probe };
   }
 
   return { kind: "probed", probe };

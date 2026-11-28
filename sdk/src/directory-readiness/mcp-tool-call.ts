@@ -36,6 +36,37 @@ export interface DirectoryToolCallEvidence {
   /** Nothing readable answered: a transport failure or a bodyless non-error. */
   unreachable?: boolean;
   error?: string;
+  /**
+   * The values at the dot paths the caller named, from `structuredContent`:
+   * a test plan's created fixture reads its ids this way. Nothing else of
+   * the result is kept.
+   */
+  captured?: Record<string, string | number>;
+}
+
+/** A fixture value is an id or a name, never a document. */
+const MAX_CAPTURED_LENGTH = 512;
+
+function readCaptured(
+  structured: unknown,
+  paths: readonly string[]
+): Record<string, string | number> {
+  const found = paths.flatMap((path) => {
+    const value = path
+      .split(".")
+      .reduce<unknown>(
+        (at, key) =>
+          typeof at === "object" && at !== null && Object.hasOwn(at, key)
+            ? (at as Record<string, unknown>)[key]
+            : undefined,
+        structured
+      );
+    const kept =
+      (typeof value === "string" && value.length <= MAX_CAPTURED_LENGTH) ||
+      (typeof value === "number" && Number.isFinite(value));
+    return kept ? [[path, value] as const] : [];
+  });
+  return Object.fromEntries(found);
 }
 
 /** An input-validation failure as MCP servers commonly word it. */
@@ -70,7 +101,8 @@ export async function dialToolCall(
   toolName: string,
   sessionId?: string,
   id = 900,
-  args: Record<string, unknown> = {}
+  args: Record<string, unknown> = {},
+  capture: readonly string[] = []
 ): Promise<DirectoryToolCallEvidence> {
   const call = await callJsonRpc(
     options,
@@ -133,6 +165,9 @@ export async function dialToolCall(
     },
     ...(isError && reportsInputValidation(result.content)
       ? { invalidArguments: true as const }
+      : {}),
+    ...(!isError && capture.length > 0
+      ? { captured: readCaptured(result.structuredContent, capture) }
       : {}),
   };
 }

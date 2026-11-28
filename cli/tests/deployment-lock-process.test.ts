@@ -175,7 +175,10 @@ test("locked to A with a saved login for B: a request exits 3, a key and cloud l
 
     const keyed = await cli(["cloud", "whoami", "--api-key", "sk_a"]);
     assert.equal(keyed.exitCode, 0, keyed.stderr);
-    assert.deepEqual(A.requests.map((request) => request.headers.authorization), ["Bearer sk_a"]);
+    assert.deepEqual(
+      A.requests.map((request) => request.headers.authorization),
+      ["Bearer sk_a", "Bearer sk_a"],
+    );
 
     let callback: Promise<Response> | undefined;
     const login = await runGuarded(CLI_ENTRY, ["cloud", "login", "--no-browser"], {
@@ -250,10 +253,10 @@ test("an unlocked IT file is the organization default, and --api-url still overr
   scenario({ version: 1, apiUrl: apiA(), lock: false }, async () => {
     const byDefault = await cli(["cloud", "whoami", "--api-key", "sk_a"]);
     assert.equal(byDefault.exitCode, 0, byDefault.stderr);
-    assert.deepEqual(paths(A), ["/api/v1/me"]);
+    assert.deepEqual(paths(A), ["/api/v1/me", "/api/v1/organizations"]);
     const overridden = await cli(["cloud", "whoami", "--api-key", "sk_a", "--api-url", apiB()]);
     assert.equal(overridden.exitCode, 0, overridden.stderr);
-    assert.deepEqual(paths(B), ["/api/v1/me"]);
+    assert.deepEqual(paths(B), ["/api/v1/me", "/api/v1/organizations"]);
     assert.deepEqual(await blockedAttempts(sandbox), []);
   }));
 

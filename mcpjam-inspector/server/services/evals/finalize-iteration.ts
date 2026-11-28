@@ -1,3 +1,4 @@
+import { inspectorDiscoveryRunMetadata } from "../../utils/discovery-run-metadata";
 import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
@@ -62,6 +63,10 @@ import {
   type GradingEngineMode,
 } from "./grading-mode.js";
 import {
+  codeEvaluatorLogs,
+  type CodeGradingResult,
+} from "./sandbox-phases/code-score-family.js";
+import {
   buildHostedScoreContract,
   shadowVerdictFromScores,
   type HostedEvaluationLike,
@@ -80,6 +85,7 @@ import {
   type SelectionCatalogToolLike,
 } from "./selection-tool-catalog.js";
 import type { AgentActivityAssessment } from "./agent-activity.js";
+import type { PlatformGateEvidence } from "./platform-gate-rows.js";
 
 /**
  * The canonical lifecycle vocabulary, imported rather than re-spelled: this
@@ -412,6 +418,7 @@ function narrowEvaluation(
 function buildScoreMetadata(args: {
   mode: GradingEngineMode;
   agentActivity?: AgentActivityAssessment;
+  platformGates?: PlatformGateEvidence;
   predicateResults?: unknown[];
   evaluation: Record<string, unknown>;
   matchOptions?: Record<string, unknown>;
@@ -422,6 +429,7 @@ function buildScoreMetadata(args: {
   /** The authoritative verdict, compared against but never derived from. */
   passed: boolean;
   stageMetadata: Record<string, unknown>;
+  codeGrading?: CodeGradingResult;
 }): {
   keys: Record<string, unknown>;
   /** Present ONLY at `enforce`. The verdict the gating rows derive. */
@@ -437,6 +445,8 @@ function buildScoreMetadata(args: {
     ...(args.matchOptions ? { matchOptions: args.matchOptions } : {}),
     ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
     ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
+    ...(args.platformGates ? { platformGates: args.platformGates } : {}),
+    ...(args.codeGrading ? { codeGrading: args.codeGrading } : {}),
     // The judge has not run yet on this pass; its row arrives in the second.
   });
   if (scores.length === 0) {
@@ -629,8 +639,12 @@ function buildSelectionToolCatalogMetadata(args: {
 export function buildIterationFinishParams(args: {
   iterationId: string | undefined;
   passed: boolean;
+  /** EFTW-90: the code evaluators' outcomes, or why grading didn't run. */
+  codeGrading?: CodeGradingResult;
   /** @see assessAgentActivity */
   agentActivity?: AgentActivityAssessment;
+  /** The verdict's gate inputs, for the platform score rows. */
+  platformGates?: PlatformGateEvidence;
   /** `evaluation` drives both `toolsCalled` and `buildIterationMetadata`. */
   evaluation: { toolsCalled: ToolCallRecord[] } & Record<string, unknown>;
   usage: UsageTotals;
@@ -722,6 +736,7 @@ export function buildIterationFinishParams(args: {
   // Metadata includes structured timeout and experiment attribution.
   iterationMetadataBase: Record<string, unknown>;
   hostPolicy?: HostExecutionPolicy;
+  nativeHarness?: boolean;
   toolSignals?: ToolExposureSignals;
   /**
    * Folded run-level connect / tools-list evidence. Threaded into the
@@ -861,10 +876,12 @@ export function buildIterationFinishParams(args: {
     passed,
     stageMetadata,
     ...(args.agentActivity ? { agentActivity: args.agentActivity } : {}),
+    ...(args.platformGates ? { platformGates: args.platformGates } : {}),
     ...(args.runId ? { runId: args.runId } : {}),
     ...(iterationId ? { iterationId } : {}),
     ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
     ...(isNegativeTest ? { isNegativeTest } : {}),
+    ...(args.codeGrading ? { codeGrading: args.codeGrading } : {}),
   });
   // Gated on the same `gradingMode` that decides whether `scoreMetadata`
   // above writes anything — D7 changes nothing outside `dual_write` (see the
@@ -1030,6 +1047,9 @@ export function buildIterationFinishParams(args: {
         ? { agentActivity: args.agentActivity }
         : {}),
       ...scoreMetadata,
+      ...(args.codeGrading && Object.keys(args.codeGrading.outcomes).length
+        ? { codeEvaluatorLogs: codeEvaluatorLogs(args.codeGrading) }
+        : {}),
       ...selectionToolCatalogMetadata,
       ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals
@@ -1040,6 +1060,7 @@ export function buildIterationFinishParams(args: {
             injectOpenAiCompat === true,
           )
         : {}),
+      ...inspectorDiscoveryRunMetadata(hostPolicy?.runUnloadedToolCalls, args.nativeHarness),
     },
   };
 }
@@ -1339,6 +1360,14 @@ export async function finalizeEvalIteration(
 
   const fanout = await persistEvalTraceFanout({
     convexClient,
+    ...(typeof metadata?.engineVersion === "string" ? {
+      discoveryAtTurn: {
+        engineVersion: metadata.engineVersion,
+        ...(typeof metadata.runUnloadedToolCalls === "boolean"
+          ? { runUnloadedToolCalls: metadata.runUnloadedToolCalls }
+          : {}),
+      },
+    } : {}),
     iterationId,
     iterationStartedAt: startedAt,
     messages,

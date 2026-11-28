@@ -12,8 +12,11 @@ import {
   setManagerResourceHostConfig,
   setManagerResourceSnapshots,
 } from "../../../mcp-connections";
-import { requestExecutionControl } from "../execution-control";
-vi.mock("../execution-control", () => ({ requestExecutionControl: vi.fn() }));
+import { ExecutionControlError, requestExecutionControl } from "../execution-control";
+vi.mock("../execution-control", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../execution-control")>()),
+  requestExecutionControl: vi.fn(),
+}));
 beforeEach(() => {vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true"); vi.stubEnv("HISTORY_PROVENANCE_SECRET", "retained-resource-unit-test-secret");});
 afterEach(() => {vi.clearAllMocks(); vi.unstubAllEnvs();});
 function producer(transport = "streamable-http") {
@@ -43,6 +46,9 @@ function producer(transport = "streamable-http") {
       },
     ],
   });
+  vi.spyOn(manager, "getToolMetadata").mockReturnValue({
+    ui: { resourceUri: "ui://fixture/app" },
+  });
   setManagerResourceHostConfig(manager, "original-host-config", "original-host");
   setManagerResourceSnapshots(
     manager,
@@ -56,6 +62,7 @@ function producer(transport = "streamable-http") {
     laneId: () => "lane",
     turnId: "producing-turn",
     sources: new Map<string, RetainedResourcePresentation>(),
+    refused: new Set<string>(),
   };
   return { ...args, executor: retainedResourceExecutor(args)! };
 }
@@ -122,14 +129,74 @@ it.each(["sse", "stdio"])(
     expect(p.sources.size).toBe(0);
   },
 );
-it("refuses changed producer authority before dispatch", async () => {
+it("runs the call and marks its App refused when the producer authority changed", async () => {
   const p = producer();
-  const run = vi.fn();
-  vi.mocked(requestExecutionControl).mockRejectedValueOnce(
-    new Error("scope_mismatch"),
+  const raw = { content: [{ type: "text", text: "the tool ran" }] };
+  const run = vi.fn(async () => raw);
+  vi.mocked(requestExecutionControl).mockRejectedValue(
+    new ExecutionControlError("control_409", "harness_execution_owner_unavailable"),
   );
-  await expect(p.executor(execution, run)).rejects.toThrow("scope_mismatch");
-  expect(run).not.toHaveBeenCalled();
+  expect(await p.executor(execution, run)).toBe(raw);
+  expect(run).toHaveBeenCalledOnce();
+  expect(p.sources.size).toBe(0);
+  expect(p.refused.has("call")).toBe(true);
+});
+it("asks again for a chat whose preparation was refused", async () => {
+  const p = producer();
+  const binding = { binding: {
+    owner: { kind: "chat", userId: "user", harnessSessionId: "lane", serverId: "server", connectionId: "account-b" },
+    digest: "digest", projectId: "project", chatSessionId: "chat",
+  }};
+  vi.mocked(requestExecutionControl)
+    .mockRejectedValueOnce(new ExecutionControlError("control_503"))
+    .mockResolvedValue(binding);
+  await p.executor(execution, async () => ({ content: [] }));
+  await p.executor({ ...execution, toolCallId: "second" }, async () => ({ content: [] }));
+  expect(p.refused.has("call")).toBe(true);
+  expect(p.sources.get("second")?.owner.connectionId).toBe("account-b");
+  expect(
+    vi.mocked(requestExecutionControl).mock.calls.filter(
+      ([request]) => (request as { operation: { kind: string } }).operation.kind === "prepare_resource_chat",
+    ),
+  ).toHaveLength(2);
+});
+it("settles the App binding before a failed call's error returns", async () => {
+  const p = producer();
+  let finishBinding!: () => void;
+  vi.mocked(requestExecutionControl).mockImplementation(
+    () =>
+      new Promise((_, reject) => {
+        finishBinding = () =>
+          reject(new ExecutionControlError("control_409", "harness_execution_scope_mismatch"));
+      }),
+  );
+  const run = vi.fn(async () => {
+    queueMicrotask(() => finishBinding());
+    throw new Error("tool failed");
+  });
+  await expect(p.executor(execution, run)).rejects.toThrow("tool failed");
+  expect(p.refused.has("call")).toBe(true);
+  expect(p.sources.size).toBe(0);
+});
+it("leaves a tool without an App alone", async () => {
+  const p = producer();
+  vi.mocked(p.manager.getToolMetadata).mockReturnValue(undefined);
+  const run = vi.fn(async () => ({ content: [{ type: "text", text: "plain" }] }));
+  await p.executor(execution, run);
+  expect(run).toHaveBeenCalledOnce();
+  expect(requestExecutionControl).not.toHaveBeenCalled();
+  expect(p.refused.size).toBe(0);
+});
+it("binds an inline MCP-UI App once its result shows it", async () => {
+  const p = producer();
+  vi.mocked(p.manager.getToolMetadata).mockReturnValue(undefined);
+  vi.mocked(requestExecutionControl).mockResolvedValue({ binding: {
+    owner: { kind: "chat", userId: "user", harnessSessionId: "lane", serverId: "server", connectionId: "account-b" },
+    digest: "digest", projectId: "project", chatSessionId: "chat",
+  }});
+  const raw = { content: [{ type: "resource", resource: { uri: "ui://fixture/inline", mimeType: "text/html", text: "<p>app</p>" } }] };
+  expect(await p.executor(execution, async () => raw)).toBe(raw);
+  expect(p.sources.get("call")?.owner.connectionId).toBe("account-b");
 });
 it("preserves the disabled path", () => {
   const p = producer();

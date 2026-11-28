@@ -91,6 +91,8 @@ export interface OwnedModelAppPorts {
   /** Compare lanes publish context without accepting App-initiated messages. */
   messagesEnabled?: boolean;
   observeLaunch?: (token: string) => ExtensionLaunchObservation | undefined;
+  /** Which client profile App messages are counted under. */
+  profile?: ExtensionLaunchProfile;
 }
 const ModelAppPortsContext = createContext<OwnedModelAppPorts | null>(null);
 /** Root composer owns publication and dispatch; render leaves own no chat session. */
@@ -239,6 +241,7 @@ export function useOwnedModelAppWorkspace(
       registerMessageSource,
       displayBehavior,
       observeLaunch,
+      profile: launchProfile,
     }),
     [
       publishContext,
@@ -246,6 +249,7 @@ export function useOwnedModelAppWorkspace(
       registerMessageSource,
       displayBehavior,
       observeLaunch,
+      launchProfile,
     ],
   );
   const contexts =
@@ -498,6 +502,7 @@ function ModelApp({
           threadId: scope.threadId,
           isLive: () => mounted.current && !lifetime.signal.aborted,
           send: ports.sendMessage,
+          profile: ports.profile,
         })
       : withFiles;
   }, [

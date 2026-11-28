@@ -1,5 +1,5 @@
 import { modelApps, readOwnedApp } from "./model-apps.js";
-import { messagePreparations } from "./message-preparations.js";
+import { messagePreparationStore } from "./message-preparation-store.js";
 import type { Context } from "hono";
 import type { UIMessage } from "ai";
 import {
@@ -61,13 +61,19 @@ export async function preparePluginMessageTurn(
       options.threadId === intent.sourceThreadId
     )
       throw deny();
-    const prepared = messagePreparations.read(preparationToken, {
+    const preparations = messagePreparationStore();
+    const identity = {
       actorId: actor.actorId,
       projectId: actor.projectId,
       subject: actor.subject,
       hostId: options.hostId,
       intentDigest,
-    });
+    };
+    const prepared = await preparations.read(
+      preparationToken,
+      identity,
+      c.req.raw.signal,
+    );
     const message = options.messages.at(-1);
     const parts = pluginMessageParts(intent.params);
     if (
@@ -94,9 +100,11 @@ export async function preparePluginMessageTurn(
         throw deny();
       await admission.revalidate({ signal: c.req.raw.signal });
       c.req.raw.signal.throwIfAborted();
-      messagePreparations.bind(
+      await preparations.bind(
         preparationToken,
+        identity,
         pluginBindingDigest([actor.workspaceId, options.threadId, message.id]),
+        c.req.raw.signal,
       );
       return options.messages.map((entry) =>
         entry === message ? { ...entry, parts } : entry,
@@ -174,21 +182,25 @@ export async function preparePluginMessageTurn(
           c.req.raw.signal,
         );
       c.req.raw.signal.throwIfAborted();
-      return messagePreparations.issue({
-        actorId: actor.actorId,
-        projectId: actor.projectId,
-        subject: actor.subject,
-        hostId: instance.hostId,
-        serverId: instance.owner.serverId,
-        toolName: instance.activation.toolName,
-        // What the transfer re-resolves: that tool alone (a quick action's
-        // activation revision also binds its source and planned call).
-        revision:
-          "toolRevision" in current && typeof current.toolRevision === "string"
-            ? current.toolRevision
-            : instance.activation.revision,
-        intentDigest,
-      });
+      return messagePreparationStore().issue(
+        {
+          actorId: actor.actorId,
+          projectId: actor.projectId,
+          subject: actor.subject,
+          hostId: instance.hostId,
+          serverId: instance.owner.serverId,
+          toolName: instance.activation.toolName,
+          // What the transfer re-resolves: that tool alone (a quick action's
+          // activation revision also binds its source and planned call).
+          revision:
+            "toolRevision" in current &&
+            typeof current.toolRevision === "string"
+              ? current.toolRevision
+              : instance.activation.revision,
+          intentDigest,
+        },
+        c.req.raw.signal,
+      );
     }
     const fingerprint = pluginBindingDigest([
       options.threadId,

@@ -49,6 +49,7 @@ export function ConformanceSetup({
   initialServerName,
   initialVersionPin,
   initialSelection,
+  initialDefaults,
   defaultsFor,
   defaultsLoaded = true,
   onConnectServer,
@@ -72,6 +73,8 @@ export function ConformanceSetup({
   initialVersionPin: ProtocolVersionPin;
   /** The last run's picks on `initialServerName`; absent means everything. */
   initialSelection?: ConformanceSelection;
+  /** Start at the checks when Overview already resolved the target and defaults. */
+  initialDefaults?: ConformanceDefaults;
   /** A server's saved default checks, from its Conformance Settings. */
   defaultsFor?: (serverName: string) => ConformanceSelection | undefined;
   /** False while the saved defaults are still loading: step 2 waits. */
@@ -94,7 +97,9 @@ export function ConformanceSetup({
 }) {
   // The tools the checks that must call one may use, set in step 2's list,
   // and whether each one's arguments box (and the Tasks answers) parses.
-  const [probes, setProbes] = useState<ConformanceProbes>({});
+  const [probes, setProbes] = useState<ConformanceProbes>(
+    initialDefaults?.inputs ?? {},
+  );
   const [inputsValid, setInputsValid] = useState(true);
   // A draft until Run, so Cancel leaves the page's selection as it was.
   const [serverName, setServerName] = useState(initialServerName);
@@ -103,17 +108,20 @@ export function ConformanceSetup({
     currentServerName.current = serverName;
   }, [serverName]);
   const [versionPin, setVersionPin] = useState(initialVersionPin);
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(initialDefaults ? 1 : 0);
   // Step 2 starts from the picked server's checks: the last run's on the same
   // server, otherwise its saved defaults, otherwise everything.
   const startingSelection = (name: string | null): ConformanceSelection =>
     (name === initialServerName ? initialSelection : undefined) ??
     (name ? defaultsFor?.(name) : undefined) ??
     {};
-  // Built on the first Continue, not here: the saved defaults may still be
-  // loading when the steps open.
-  const [selection, setSelection] = useState<ConformanceSelection>({});
-  const [selectionFor, setSelectionFor] = useState<string | null>(null);
+  // Without preloaded defaults, Continue loads them for the selected server.
+  const [selection, setSelection] = useState<ConformanceSelection>(
+    initialDefaults?.selection ?? {},
+  );
+  const [selectionFor, setSelectionFor] = useState(
+    initialDefaults ? initialServerName : null,
+  );
   const serverLabelId = useId();
   const versionLabelId = useId();
   const picked = servers.find((server) => server.name === serverName);
@@ -403,7 +411,11 @@ export function ConformanceSetup({
               Set what you'd like to test
             </h2>
             <p className="mt-1.5 text-sm leading-relaxed font-medium">
-              Pick the suites and checks this run covers.
+              {initialDefaults &&
+              serverName === initialServerName &&
+              versionPin === initialVersionPin
+                ? "This protocol version has new optional inputs. Configure them or run without them."
+                : "Pick the suites and checks this run covers."}
             </p>
 
             {/* The protocol list follows the revision picked in step 1. */}

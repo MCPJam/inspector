@@ -367,7 +367,7 @@ export function CreateSuiteDialog({
             <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
               <div className="space-y-0.5">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Where it runs
+                  Clients and models
                 </h3>
                 <p className="text-xs text-muted-foreground">
                   Start from a client, or build one here. Each client fans out

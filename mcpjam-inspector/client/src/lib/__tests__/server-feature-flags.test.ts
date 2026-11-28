@@ -92,9 +92,13 @@ describe("server-evaluated feature flags", () => {
         token: "guest-token",
         expiresAt: Date.now() + 60_000,
       };
-      vi.mocked(fetch).mockResolvedValueOnce(flagsResponse({ xaa: false }));
+      vi.mocked(fetch).mockResolvedValueOnce(
+        flagsResponse({ "learn-more-enabled": false }),
+      );
 
-      expect(await loadBootstrapFeatureFlags()).toEqual({ xaa: false });
+      expect(await loadBootstrapFeatureFlags()).toEqual({
+        "learn-more-enabled": false,
+      });
       expect(requestedUrl().searchParams.get("distinct_id")).toBe("guest-1");
       expect(requestedAuthorization()).toBe("Bearer guest-token");
     });
@@ -164,7 +168,7 @@ describe("server-evaluated feature flags", () => {
     it("evaluates a signed-in actor through its access token", async () => {
       const posthog = { updateFlags: vi.fn() };
       vi.mocked(fetch).mockResolvedValueOnce(
-        flagsResponse({ "billing-entitlements-ui": true }),
+        flagsResponse({ "learn-more-enabled": true }),
       );
 
       await refreshServerFeatureFlagsForActor(posthog, {
@@ -175,7 +179,7 @@ describe("server-evaluated feature flags", () => {
 
       expect(requestedAuthorization()).toBe("Bearer access-token");
       expect(posthog.updateFlags).toHaveBeenCalledWith({
-        "billing-entitlements-ui": true,
+        "learn-more-enabled": true,
       });
     });
 
@@ -224,7 +228,9 @@ describe("server-evaluated feature flags", () => {
         expiresAt: Date.now() + 60_000,
       };
       const posthog = { updateFlags: vi.fn() };
-      vi.mocked(fetch).mockResolvedValueOnce(flagsResponse({ xaa: true }));
+      vi.mocked(fetch).mockResolvedValueOnce(
+        flagsResponse({ "learn-more-enabled": true }),
+      );
 
       await refreshServerFeatureFlagsForActor(posthog, {
         actorKey: "guest-1",
@@ -232,7 +238,9 @@ describe("server-evaluated feature flags", () => {
       });
 
       expect(requestedAuthorization()).toBe("Bearer guest-token");
-      expect(posthog.updateFlags).toHaveBeenCalledWith({ xaa: true });
+      expect(posthog.updateFlags).toHaveBeenCalledWith({
+        "learn-more-enabled": true,
+      });
     });
 
     it("clears stale flags when the server has no values", async () => {
@@ -254,7 +262,7 @@ describe("server-evaluated feature flags", () => {
         .mockImplementationOnce(
           () => new Promise<Response>((resolve) => (resolveFirst = resolve)),
         )
-        .mockResolvedValueOnce(flagsResponse({ xaa: true }));
+        .mockResolvedValueOnce(flagsResponse({ "learn-more-enabled": true }));
 
       const first = refreshServerFeatureFlagsForActor(posthog, {
         actorKey: "anon-device-1",
@@ -264,11 +272,13 @@ describe("server-evaluated feature flags", () => {
         actorKey: "anon-device-2",
         isAuthedActor: false,
       });
-      resolveFirst(flagsResponse({ xaa: false }));
+      resolveFirst(flagsResponse({ "learn-more-enabled": false }));
       await first;
 
       expect(posthog.updateFlags).toHaveBeenCalledTimes(1);
-      expect(posthog.updateFlags).toHaveBeenCalledWith({ xaa: true });
+      expect(posthog.updateFlags).toHaveBeenCalledWith({
+        "learn-more-enabled": true,
+      });
     });
   });
 });

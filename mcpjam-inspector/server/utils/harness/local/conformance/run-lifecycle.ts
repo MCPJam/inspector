@@ -24,6 +24,7 @@ import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
 import { localPackTarget, LOCAL_HARNESS_POLICY_VERSION, type LocalPlatform } from "../targets.js";
 import { listProcessRecords } from "../process-registry.js";
 import { installedAdapterVersion } from "./adapter-version.js";
+import { descendants } from "./process-checks.js";
 
 
 const execFileP = promisify(execFile);
@@ -95,8 +96,6 @@ function assert(condition: boolean, message: string): void {
 /** Windows arms, for the same reason as in `run-native-turn.ts`: no `ps`, no
  *  `pgrep`, and the MSYS `ps` Git Bash ships cannot see native processes. */
 const WIN = process.platform === "win32";
-const powershell = (script: string) =>
-  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], { windowsHide: true });
 
 async function running(pid: number): Promise<boolean> {
   if (WIN) {
@@ -122,19 +121,6 @@ async function stillRunning(pids: readonly number[]): Promise<number[]> {
   return pids.filter((_, i) => states[i]);
 }
 
-async function descendants(pid: number): Promise<number[]> {
-  const out: number[] = [];
-  const walk = async (p: number) => {
-    let kids = "";
-    try {
-      kids = WIN
-        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
-        : (await execFileP("pgrep", ["-P", String(p)])).stdout;
-    } catch { return; }
-    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) { out.push(k); await walk(k); }
-  };
-  await walk(pid); return out;
-}
 async function psLine(pid: number) { try { return (await execFileP("ps", ["-o", "pid=,ppid=,pgid=,rss=,command=", "-p", String(pid)])).stdout.trim(); } catch { return ""; } }
 /**
  * Every helper process this run started, so a FAILURE can take them down too.

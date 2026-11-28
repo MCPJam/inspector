@@ -6,6 +6,11 @@
  */
 import type { DirectoryFlow } from "@mcpjam/sdk/browser";
 import type {
+  PlatformDirectorySubmissionEvent,
+  PlatformDirectorySubmissionEventBody,
+  PlatformDirectorySubmissionFinding,
+  PlatformDirectorySubmissionHandoff,
+  PlatformDirectorySubmissionPlugin,
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionUpdateBody,
   PlatformDirectorySubmissionView,
@@ -14,7 +19,12 @@ import { readinessPlatformClient as client } from "@/lib/apis/directory-readines
 
 export type SubmissionView = PlatformDirectorySubmissionView;
 export type SubmissionSummary = PlatformDirectorySubmissionSummary;
+export type SubmissionHandoff = PlatformDirectorySubmissionHandoff;
+export type SubmissionPlugin = PlatformDirectorySubmissionPlugin;
 export type SubmissionScope = { projectId: string; submissionId: string };
+export type SubmissionEvent = PlatformDirectorySubmissionEvent;
+export type SubmissionEventBody = PlatformDirectorySubmissionEventBody;
+export type StoredFinding = PlatformDirectorySubmissionFinding;
 
 /** The flow as served by the API that stamps its wording on each write. */
 export const getDirectoryFlow = (flowId: string): Promise<DirectoryFlow> =>
@@ -22,11 +32,12 @@ export const getDirectoryFlow = (flowId: string): Promise<DirectoryFlow> =>
 
 export async function listServerSubmissions(
   projectId: string,
-  serverId: string,
+  serverId: string | undefined,
   signal?: AbortSignal,
+  flowId?: string,
 ): Promise<SubmissionSummary[]> {
   const page = await client().listDirectorySubmissions(
-    { projectId, serverId },
+    { projectId, serverId, flowId, limit: 100 },
     { signal },
   );
   return page.items;
@@ -46,7 +57,62 @@ export const updateDirectorySubmission = (
   body: PlatformDirectorySubmissionUpdateBody,
 ) => client().updateDirectorySubmission({ ...scope, ...body });
 
+/** A ChatGPT plugin's run also names the stored version it grades. */
+/**
+ * A ChatGPT plugin's run also names the stored version it grades. Naming a
+ * saved test plan revision authorizes that plan's calls; without one, the
+ * run calls none of the server's tools.
+ */
 export const startDirectorySubmissionRun = (
   scope: SubmissionScope,
   idempotencyKey: string,
-) => client().startDirectorySubmissionRun({ ...scope, idempotencyKey });
+  pluginVersionId?: string,
+  testPlanRevision?: number,
+) =>
+  client().startDirectorySubmissionRun({
+    ...scope,
+    idempotencyKey,
+    pluginVersionId,
+    testPlanRevision,
+  });
+
+/** Where to resume, built from the record on every read, as an agent reads it. */
+export const getDirectorySubmissionHandoff = (
+  scope: SubmissionScope,
+  signal?: AbortSignal,
+): Promise<SubmissionHandoff> =>
+  client().getDirectorySubmissionHandoff(scope, { signal });
+
+/** The pack as a file. `content` is its exact bytes: save it as it is. */
+export const exportDirectorySubmission = (
+  scope: SubmissionScope,
+  format: "json" | "markdown",
+) => client().exportDirectorySubmission({ ...scope, format });
+
+/** One check's stored result, with the observation behind it in `details`. */
+export const getSubmissionFinding = (
+  scope: SubmissionScope,
+  checkId: string,
+  signal?: AbortSignal,
+): Promise<StoredFinding> =>
+  client().getDirectorySubmissionFinding({ ...scope, checkId }, { signal });
+
+/** One kind of recorded event, newest first. */
+export async function listSubmissionEvents(
+  scope: SubmissionScope,
+  kind: SubmissionEvent["kind"],
+  signal?: AbortSignal,
+): Promise<SubmissionEvent[]> {
+  const page = await client().listDirectorySubmissionEvents(
+    { ...scope, kind, limit: 100 },
+    { signal },
+  );
+  return page.items;
+}
+
+/** A retry with the same `idempotencyKey` is answered from the first write. */
+export const recordSubmissionEvent = (
+  scope: SubmissionScope,
+  body: SubmissionEventBody,
+): Promise<SubmissionEvent> =>
+  client().recordDirectorySubmissionEvent({ ...scope, ...body });

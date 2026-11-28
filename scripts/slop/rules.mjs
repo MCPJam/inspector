@@ -4,11 +4,13 @@
  * remove, and `check-file.mjs` reports them on one file as an agent edits it.
  * All three read this list, so a rule added here is enforced everywhere.
  *
- * These are text counts, not a parser. A rule earns its place by being cheap,
- * stable and hard to hit by accident; anything that needs types belongs in
- * ESLint instead.
+ * Most are text counts. A rule that has to tell code from comments, strings
+ * or JSX text reads the syntax tree from `parse.mjs`. A rule earns its place
+ * by being cheap, stable and hard to hit by accident; anything that needs
+ * types belongs in ESLint instead.
  */
 
+import { parse, typescript, walk } from "./parse.mjs";
 import { extractUiStrings, isUiFile } from "./ui-strings.mjs";
 
 const SOURCE_EXTENSIONS = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
@@ -30,6 +32,7 @@ export function isMeasuredFile(path) {
 }
 
 const SERVER_PATH = /^mcpjam-inspector\/server\//;
+const CLIENT_PATH = /^mcpjam-inspector\/client\//;
 
 /** A comment line: `//`, or a line inside a block comment that starts with `*`. */
 const COMMENT_LINE = /^\s*(?:\/\/|\/?\*)/;
@@ -59,6 +62,48 @@ const HISTORY =
 
 function countMatches(text, regex) {
   return text.match(regex)?.length ?? 0;
+}
+
+const EFFECTS = new Set(["useEffect", "useLayoutEffect"]);
+
+const TIMERS = new Set([
+  "setTimeout",
+  "setInterval",
+  "requestAnimationFrame",
+  "requestIdleCallback",
+]);
+
+/**
+ * Calls to one of `names`, bare or as a member (`window.setTimeout`). They
+ * are read from the syntax tree, so a call named in a comment, a string, a
+ * regex literal or JSX text does not count.
+ */
+function countCalls(path, text, names) {
+  const { isCallExpression, isIdentifier, isPropertyAccessExpression } =
+    typescript();
+  let count = 0;
+  walk(parse(path, text), (node) => {
+    if (!isCallExpression(node)) return;
+    const callee = isPropertyAccessExpression(node.expression)
+      ? node.expression.name
+      : node.expression;
+    if (isIdentifier(callee) && names.has(callee.text)) count += 1;
+  });
+  return count;
+}
+
+/** `catch` clauses whose block has no statement but has a comment. */
+function countCommentOnlyCatches(path, text) {
+  const { isCatchClause } = typescript();
+  let count = 0;
+  walk(parse(path, text), (node) => {
+    if (!isCatchClause(node) || node.block.statements.length) return;
+    // A block with no statement holds only whitespace and comments.
+    if (/\S/.test(text.slice(node.block.getStart() + 1, node.block.end - 1))) {
+      count += 1;
+    }
+  });
+  return count;
 }
 
 function countCommentLines(text, regex) {
@@ -124,6 +169,27 @@ export const RULES = [
       countMatches(text, /\bcatch\s*(?:\(\s*[\w{}\s,:]*\))?\s*\{\s*\}/g),
   },
   {
+    id: "comment-only-catch",
+    label: "`catch` blocks that hold only a comment",
+    fix: "Propagate the error, or return a failure the caller can tell apart from success. Log it only where the code falls back on purpose, and say what the fallback is.",
+    count: (text, path) => countCommentOnlyCatches(path, text),
+  },
+  {
+    id: "client-effect",
+    label: "`useEffect` / `useLayoutEffect` calls in the inspector client",
+    appliesTo: (path) => CLIENT_PATH.test(path),
+    fix: "Derive the value during render, do the work in the event handler that causes it, reset state with a `key`, or subscribe with `useSyncExternalStore`. If an effect is the only option, replace an existing one in the same change.",
+    count: (text, path) => countCalls(path, text, EFFECTS),
+  },
+  {
+    id: "client-timer",
+    label:
+      "`setTimeout` / `setInterval` / `requestAnimationFrame` / `requestIdleCallback` calls in the inspector client",
+    appliesTo: (path) => CLIENT_PATH.test(path),
+    fix: "A timer that waits for React to commit or for state to settle hides an ordering bug. Act on the event or state change that makes the work possible.",
+    count: (text, path) => countCalls(path, text, TIMERS),
+  },
+  {
     id: "eslint-disable",
     label: "`eslint-disable` directives",
     count: (text) => countMatches(text, /eslint-disable/g),
@@ -167,7 +233,7 @@ export function countFile(path, text) {
   const counts = {};
   for (const rule of RULES) {
     counts[rule.id] =
-      rule.appliesTo && !rule.appliesTo(path) ? 0 : rule.count(text);
+      rule.appliesTo && !rule.appliesTo(path) ? 0 : rule.count(text, path);
   }
   return counts;
 }

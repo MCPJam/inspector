@@ -18,6 +18,8 @@ import { toMintedPageToolRecords } from "@/shared/declared-tools";
 import { type Context } from "hono";
 import { HOSTED_MODE } from "../../config.js";
 import { advertisedPageToolsOnly } from "../../utils/chat-v2-orchestration.js";
+import { eventToolsFromBody } from "./event-tools-body.js";
+import { eventAtTurnFromBody } from "./event-at-turn-body.js";
 import { buildDirectHostConfig } from "../../utils/chat-ingestion.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
 import { captureServerEvent } from "../../utils/analytics.js";
@@ -37,7 +39,13 @@ import { logger } from "../../utils/logger.js";
 import { resolveManagedTurnSetup } from "./managed-setup.js";
 import { prepareManagedConnections } from "./managed-connections.js";
 import { prepareManagedTools } from "./managed-tools.js";
+import {
+  harnessBoxFirstEnabled,
+  playgroundBoxPlan,
+} from "./playground-box-plan.js";
+import { startPlaygroundBoxEarly } from "./owned-playground-box.js";
 import { TurnTiming } from "../../utils/turn-timing.js";
+import { harnessTurnEventSink } from "../../utils/harness/harness-turn-event.js";
 import {
   conversationExecutionArgs,
   startBoundConversationExecutionCheck,
@@ -49,7 +57,10 @@ export async function handleManagedChatTurn(
   normalizedBody?: Record<string, unknown>,
 ): Promise<Response> {
   const localIngress = ingress === "local" && !HOSTED_MODE;
-  const timing = new TurnTiming();
+  // A harness turn on a local runtime reports the `local` surface itself.
+  const timing = new TurnTiming({
+    harnessTurnEvent: harnessTurnEventSink(c, "web"),
+  });
   // NOTE: This route does NOT use handleRoute() because handleMCPJamFreeChatModel
   // returns a streaming Response. Wrapping it in handleRoute → c.json() would
   // serialize the Response object as '{}' instead of forwarding the stream.
@@ -146,6 +157,22 @@ export async function handleManagedChatTurn(
       harnessComputerWorkdir,
       executionBound,
     } = setup.value;
+    // The box is the turn's longest wait before the stream: with the switch on
+    // it is booked now, by the same plan the tools stage books it by, and
+    // boots while the turn is authorized and its connections are made. The
+    // turn's resources own it either way, so a turn that fails before the
+    // tools stage still releases it.
+    const boxPlan = harnessBoxFirstEnabled()
+      ? playgroundBoxPlan({ c, bearerToken, timing, setup: setup.value })
+      : undefined;
+    const earlyPlaygroundBox = boxPlan
+      ? startPlaygroundBoxEarly(
+          resources,
+          boxPlan.reason,
+          boxPlan.args,
+          Boolean(c.get("guestId")),
+        )
+      : undefined;
 
     const turnAuthorization = await prepareTurnAuthorization(c, {
       projectId: hostedBody.projectId, chatSessionId: body.chatSessionId, executionTarget,
@@ -214,11 +241,13 @@ export async function handleManagedChatTurn(
       }),
     );
     const tools = await prepareManagedTools({
+      ...(earlyPlaygroundBox ? { earlyPlaygroundBox } : {}),
       c,
       rawBody,
       bearerToken,
       localIngress,
       resources,
+      timing,
       setup: setup.value,
       connections,
     });
@@ -242,6 +271,8 @@ export async function handleManagedChatTurn(
       // own route (mcpjam-agent.ts) and never lands here.
       const origin = turnMode === "recorded" ? "scenario" : "playground";
       const isDirectChat = turnMode === "interactive";
+      // The Playground's own conversation only, like `eventTools`.
+      const eventAtTurn = isDirectChat ? eventAtTurnFromBody(body.eventAtTurn) : undefined;
       // The turn's servers minus the ones a plugin contributed, for the
       // trace's host config (see where it is built below).
       const pluginServerIdSet = new Set(
@@ -293,7 +324,7 @@ export async function handleManagedChatTurn(
                 environmentSpec.servers.baseEffectiveServerIds?.length ??
                 environmentSpec.servers.effectiveServerIds.length,
               environment_effective_server_count: effectiveServerIds.length,
-              environment_skill_count: turnSkills.box?.skills.length ?? 0,
+              environment_skill_count: turnSkills.environmentSkillCount,
               environment_skill_delivery: skillDelivery,
               environment_plugin_version_ids: (
                 environmentSpec.pluginVersions ?? []
@@ -328,7 +359,7 @@ export async function handleManagedChatTurn(
               environment_id: scenarioEnvironment.environmentRef.environmentId,
               environment_revision: scenarioEnvironment.environmentRef.revision,
               environment_effective_server_count: effectiveServerIds.length,
-              environment_skill_count: turnSkills.box?.skills.length ?? 0,
+              environment_skill_count: turnSkills.environmentSkillCount,
             }
           : {}),
       });
@@ -421,6 +452,7 @@ export async function handleManagedChatTurn(
             : {}),
           requireToolApproval,
           respectToolVisibility,
+          runUnloadedToolCalls: resolvedExecution.runUnloadedToolCalls,
           modelVisibleMcpToolResults,
           // Server-resolved, never from the body, and authoritative whenever a
           // host config resolved: an EMPTY record means "cancels normally" and
@@ -471,6 +503,10 @@ export async function handleManagedChatTurn(
             : {}),
           appTools: validatedAppTools,
           pageTools: validatedPageTools,
+          // The Playground's own conversation only: a study has no Events pane.
+          ...(isDirectChat
+            ? { eventTools: eventToolsFromBody(body.eventTools) }
+            : {}),
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
           // GROW THE TOOL SET AS THE PAGE CHANGES. The model navigates on one
@@ -529,28 +565,19 @@ export async function handleManagedChatTurn(
           ...(resolvedExecution.harness && harnessExecutionTarget
             ? { harnessExecutionTarget }
             : {}),
-          // Harness-engine delivery of the same plan's skills, with the set
-          // that carries their supporting files and the pinned plugin
-          // versions that fork an incompatible resumed sandbox. Presence
-          // (even empty) is what makes it authoritative downstream.
-          ...(turnSkills.box
-            ? {
-                runtimeSkillsOverride: turnSkills.box.skills,
-                ...(turnSkills.box.set
-                  ? { effectiveCapabilities: turnSkills.box.set }
-                  : {}),
-              }
+          // The pinned plugin versions that fork an incompatible resumed
+          // sandbox. The plan itself reaches the harness through `prepare`.
+          ...(turnSkills.capabilities
+            ? { effectiveCapabilities: turnSkills.capabilities }
             : {}),
-          // Its servers are connected now: a harness may offer their own
-          // skills, as MCPJam's agent does.
-          ...(turnSkills.live ? { liveTurn: true } : {}),
           ...(turnSkills.turnProvenance
             ? { turnProvenance: turnSkills.turnProvenance }
             : {}),
+          ...(eventAtTurn ? { eventAtTurn } : {}),
           ...(environmentSpec ? { setupEnvironment: environmentSpec } : {}),
           // A study whose Library could not be read ran with unknown skills.
           setupSkillProvenanceIncomplete:
-            turnMode === "recorded" && !turnSkills.box,
+            turnMode === "recorded" && turnSkills.skillsUnread === true,
           // Ad-hoc overrides are not represented by a saved client snapshot.
           setupConnectionPolicyIncomplete:
             !authoritativeConnectionPolicy &&
@@ -605,6 +632,9 @@ export async function handleManagedChatTurn(
             : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
+          ...(isDirectChat && body.multiModel
+            ? { multiModel: body.multiModel }
+            : {}),
           // Hosted sessions finally honor the CAS the client already sends.
           // Read from the SCHEMA-VALIDATED body, not the raw cast one.
           ...(hostedBody.expectedVersion !== undefined

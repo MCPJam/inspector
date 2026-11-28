@@ -125,6 +125,44 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(reportCaught.mock.calls[1][1].extra).not.toHaveProperty("requestUrl");
   });
 
+  // PLB-522: still reported (the page can be MCPJam's own edge), but as one
+  // issue per status and title rather than one per page of markup.
+  it("reports an HTML page answering the proxy without its markup", async () => {
+    const { wrapped, execute } = wrappedUpdateState(
+      vi.fn(),
+      "request_without_token",
+    );
+    vi.mocked(authFetch).mockResolvedValue(
+      new Response(
+        '<!DOCTYPE html>\n\n<html lang="en">\n<head>\n    <base href="/login/">\n    <title>Web Login</title>\n</head><body>Sign in</body></html>',
+        { status: 503 },
+      ),
+    );
+    const failure = await execute({
+      url: "https://mcp.example.test/mcp",
+      method: "POST",
+      headers: {},
+    }).catch((error: Error) => error);
+
+    wrapped({
+      error: `Failed to request MCP server: ${(failure as Error).message}`,
+    });
+
+    expect(reportCaught).toHaveBeenCalledTimes(1);
+    const [error, options] = reportCaught.mock.calls[0];
+    expect(error.message).not.toContain("<");
+    expect(options.extra).toMatchObject({
+      proxyStatus: 503,
+      step: "request_without_token",
+    });
+    const finding: string = options.extra.finding;
+    const groupedBy =
+      "Failed to request MCP server: Backend debug proxy error: 503 : Couldn't reach MCPJam's server because a web page (\"Web Login\") answered instead";
+    expect(finding.slice(0, groupedBy.length)).toBe(groupedBy);
+    expect(finding).not.toContain("<");
+    expect(finding.length).toBeLessThanOrEqual(160);
+  });
+
   it("omits tokens embedded in the request path from diagnostics", async () => {
     const { wrapped, execute } = wrappedUpdateState();
     vi.mocked(authFetch).mockResolvedValue(new Response("TLS failure", { status: 500 }));

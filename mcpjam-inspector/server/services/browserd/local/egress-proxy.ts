@@ -24,7 +24,10 @@ function pinnedAddressOptions(
 }
 
 export async function startLocalBrowserProxy(
-  policy: LocalBrowserSecurityPolicy,
+  policy: Pick<
+    LocalBrowserSecurityPolicy,
+    "allowsRequest" | "resolveDestination" | "isActive" | "onRevoked"
+  >,
 ) {
   const username = "browser";
   const password = randomBytes(32).toString("hex");
@@ -128,7 +131,7 @@ export async function startLocalBrowserProxy(
       return;
     }
     try {
-      const target = new URL(upgrade ? req.url ?? "" : `https://${req.url}`);
+      const target = new URL(upgrade ? (req.url ?? "") : `https://${req.url}`);
       if (
         !(upgrade ? ["http:", "ws:"] : ["https:"]).includes(target.protocol) ||
         target.username ||

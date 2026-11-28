@@ -23,6 +23,13 @@ describe("harnessRuntimeFingerprint", () => {
     permissionMode: "allow-all",
   };
 
+  it("forks when the server skill catalog in retained instructions changes", () => {
+    const first = { ...base, serverSkillCatalog: "**docs/lookup**" };
+    expect(harnessRuntimeFingerprint(first)).not.toBe(
+      harnessRuntimeFingerprint({ ...first, serverSkillCatalog: "**docs/search**" }),
+    );
+  });
+
   it("retains the warm session across per-turn approval and sandbox changes", () => {
     const codex = { ...base, harnessId: "codex" };
     const approved = { ...codex, permissionMode: "allow-reads", commandSandbox: "read-only" };
@@ -146,7 +153,7 @@ describe("harnessRuntimeFingerprint", () => {
     );
   });
 
-  it("forks only OpenCode lanes for the harness-opencode 1.0.160 bridge", () => {
+  it("forks only OpenCode lanes on a bridge older than the one OpenCode needs", () => {
     const lane = (harnessId: string) =>
       harnessRuntimeFingerprint({
         harnessId,
@@ -158,8 +165,12 @@ describe("harnessRuntimeFingerprint", () => {
     expect(lane("claude-code")).toBe("claude-code|anthropic/claude-haiku-4.5|418da67");
     expect(lane("codex")).toBe("codex|anthropic/claude-haiku-4.5|a62170c3");
     expect(lane("cursor")).toBe("cursor|anthropic/claude-haiku-4.5|a62170c3");
-    // An OpenCode lane saved against a 1.0.119 bridge does not.
+    // An OpenCode lane saved against a 1.0.119 bridge does not, nor one whose
+    // 1.0.160 bridge started reading other clients' skill folders too.
     expect(lane("opencode")).not.toBe("opencode|anthropic/claude-haiku-4.5|a62170c3");
+    expect(lane("opencode")).not.toBe(
+      "opencode|anthropic/claude-haiku-4.5|75a8204",
+    );
   });
 
   it("changes when the harness id changes — a Codex turn must NOT resume a Claude Code lane", () => {

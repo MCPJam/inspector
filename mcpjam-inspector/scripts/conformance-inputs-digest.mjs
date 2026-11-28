@@ -15,7 +15,7 @@
 // workflows. `conformance-inputs-digest.test.mjs` walks the scenarios' import
 // graph and fails if a file it reaches is on that list.
 //
-// Two kinds of change are normalized away, because the version PR makes both
+// Two kinds of change are normalized away, because the version commit makes both
 // on every release: a workspace package's own `version` and its siblings'
 // ranges on it, and the matching workspace entries of package-lock.json.
 // Third-party dependencies still count, through the lockfile's resolved tree.
@@ -201,7 +201,7 @@ export function computeConformanceInputsDigest({ cwd = REPO_ROOT, rev = "HEAD" }
 }
 
 /**
- * A node_modules cache key that a version PR leaves alone: the lockfile's
+ * A node_modules cache key that a version commit leaves alone: the lockfile's
  * third-party tree and the approval patch `npm ci` applies. The darwin-x64
  * conformance legs restore node_modules by it, because `npm ci` under
  * Rosetta took five to eight minutes.

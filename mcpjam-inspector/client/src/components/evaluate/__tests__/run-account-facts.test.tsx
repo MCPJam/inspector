@@ -51,6 +51,18 @@ const dummy: EvalRunAccount = {
   name: "Dummy",
 };
 
+const uploaded: EvalRunAccount = {
+  serverId: "srv-asana",
+  kind: "shared",
+  connectionId: "conn-uploaded",
+  name: "test-automation-1",
+  tokenStoredBy: "Ana Ruiz",
+  tokenStoredAt: 1_700_000_000_000,
+  tokenUploaded: true,
+  tokenExpiresAt: 1_700_003_600_000,
+  identity: { source: "token", subject: "svc-automation" },
+};
+
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
   return {
     _id: "run-1",
@@ -90,24 +102,18 @@ beforeEach(() => {
 });
 
 describe("the run header's account facts", () => {
-  it("says a scheduled run ran as the schedule's owner, with its accounts", () => {
+  it("names the accounts the run used, without the server or who started it", () => {
     renderPage(makeRun());
     const facts = screen.getByTestId("evaluate-run-account-facts");
     expect(within(facts).getByText("Ran as")).toBeInTheDocument();
-    expect(facts).toHaveTextContent("Ran asSophie Lin Schedule owner");
-    expect(facts).toHaveTextContent("AccountsAsana Dummy");
-  });
-
-  it("tags an API or CLI run with the key's owner, and a run from the app with nothing", () => {
-    const { unmount } = renderPage(makeRun({ source: "api" }));
-    expect(screen.getByTestId("evaluate-run-account-facts")).toHaveTextContent(
-      "Key owner",
+    expect(within(facts).getByTestId("run-account-name")).toHaveTextContent(
+      "Dummy",
     );
-    unmount();
-    renderPage(makeRun({ source: "ui" }));
-    const facts = screen.getByTestId("evaluate-run-account-facts");
-    expect(facts).not.toHaveTextContent("Key owner");
-    expect(facts).not.toHaveTextContent("Schedule owner");
+    // The server line after this fact names a single server.
+    expect(facts).not.toHaveTextContent("Asana");
+    expect(screen.queryByText(/Sophie Lin/)).toBeNull();
+    expect(screen.queryByText("Schedule owner")).toBeNull();
+    expect(facts).not.toHaveTextContent("Started by");
   });
 
   it("lists every server's accounts", () => {
@@ -120,14 +126,38 @@ describe("the run header's account facts", () => {
         ],
       }),
     );
-    expect(screen.getByTestId("evaluate-run-account-facts")).toHaveTextContent(
-      "AccountsAsana Dummy, Live · Linear Shared",
-    );
+    const facts = screen.getByTestId("evaluate-run-account-facts");
+    expect(
+      within(facts)
+        .getAllByTestId("run-account-name")
+        .map((name) => name.textContent),
+    ).toEqual(["DDummy", "LLive", "SShared"]);
+    // Several servers: each account's server shows on hover.
+    const [first, , third] = within(facts).getAllByTestId("run-account-name");
+    expect(first.getAttribute("title")).toBe("Asana");
+    expect(third.getAttribute("title")).toBe("Linear");
   });
 
   it("keeps an older run's header as it was", () => {
     renderPage(makeRun({ accountsAtRun: undefined, ranAsName: undefined }));
     expect(screen.queryByTestId("evaluate-run-account-facts")).toBeNull();
+  });
+
+  it("puts who uploaded each account's token, its expiry and identity on hover", () => {
+    renderPage(makeRun({ accountsAtRun: [uploaded, dummy] }));
+    const [first, second] = screen.getAllByTestId("run-account-name");
+    const title = first.getAttribute("title") ?? "";
+    expect(title).toMatch(
+      /^Uploaded .+ by Ana Ruiz · Expires .+ · Identity: svc-automation, from the token$/,
+    );
+    expect(title).not.toContain("@");
+    expect(second.getAttribute("title")).toBeNull();
+  });
+
+  it("leaves out Credentials for a run that recorded no token facts", () => {
+    renderPage(makeRun());
+    expect(screen.queryByText("Credentials")).toBeNull();
+    expect(screen.queryByTestId("evaluate-run-account-credentials")).toBeNull();
   });
 
   it("shows nothing while the rollout flag is off", () => {
@@ -174,33 +204,41 @@ describe("the Recent runs account columns", () => {
     );
   }
 
-  it("adds Ran as and Accounts when the suite's runs recorded them", () => {
+  it("adds Account when the suite's runs recorded them", () => {
     renderTable(makeRun(), true);
     const headers = screen
       .getAllByRole("columnheader")
       .map((cell) => cell.textContent);
     expect(headers).toEqual(
-      expect.arrayContaining(["Platform", "Ran as", "Accounts", "Commit"]),
+      expect.arrayContaining(["Platform", "Account", "Commit"]),
     );
-    expect(headers.indexOf("Ran as")).toBe(headers.indexOf("Platform") + 1);
-    expect(screen.getByTestId("run-history-ran-as")).toHaveTextContent(
-      "Sophie Lin Schedule owner",
+    expect(headers.indexOf("Account")).toBe(headers.indexOf("Platform") + 1);
+    expect(headers).not.toContain("By");
+    const account = screen.getByTestId("run-history-account");
+    expect(account).toHaveTextContent("Dummy");
+    expect(account).not.toHaveTextContent("Asana");
+    expect(account).not.toHaveTextContent("Sophie Lin");
+  });
+
+  it("puts each account's token facts in its tooltip", () => {
+    renderTable(makeRun({ accountsAtRun: [uploaded] }), true);
+    const name = within(screen.getByTestId("run-history-account")).getByTestId(
+      "run-account-name",
     );
-    expect(screen.getByTestId("run-history-accounts")).toHaveTextContent(
-      "Asana Dummy",
-    );
+    expect(name).toHaveTextContent("test-automation-1");
+    expect(name.getAttribute("title")).toMatch(/^Uploaded .+ by Ana Ruiz/);
   });
 
   it("fills an older run's cells with a dash", () => {
     renderTable(makeRun({ accountsAtRun: undefined, ranAsName: undefined }), true);
     const cells = screen.getAllByRole("cell").map((cell) => cell.textContent);
-    expect(cells.filter((text) => text === "—").length).toBeGreaterThanOrEqual(2);
-    expect(screen.queryByTestId("run-history-accounts")).toBeNull();
+    expect(cells).toContain("—");
+    expect(screen.queryByTestId("run-history-account")).toBeNull();
   });
 
   it("leaves the columns out otherwise", () => {
     renderTable(makeRun(), false);
-    expect(screen.queryByRole("columnheader", { name: "Ran as" })).toBeNull();
-    expect(screen.queryByTestId("run-history-ran-as")).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Account" })).toBeNull();
+    expect(screen.queryByTestId("run-history-account")).toBeNull();
   });
 });

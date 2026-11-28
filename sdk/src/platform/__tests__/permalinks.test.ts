@@ -455,6 +455,7 @@ describe("the route registry is the type list", () => {
       Exclude<PlatformResourceType, "eval_iteration">,
       string
     > = {
+      directory_submission: `/readiness?submission=id-1&project=${PROJECT}`,
       project: `/servers?project=${PROJECT}`,
       project_server: `/servers/id-1?project=${PROJECT}`,
       project_environment: `/environments/id-1?project=${PROJECT}`,

@@ -396,7 +396,7 @@ describe("buildHostSnapshotMetadata", () => {
     expect(meta.host_style).toBe("mcpjam");
   });
 
-  it("returns {} for null input (no executor host snapshot)", () => {
-    expect(buildHostSnapshotMetadata(null)).toEqual({});
+  it("records the effective default and engine version without a host snapshot", () => {
+    expect(buildHostSnapshotMetadata(null)).toEqual({runUnloadedToolCalls: true, engineVersion: expect.any(String)});
   });
 });

@@ -64,6 +64,8 @@ export type HostedServerValidateContext = {
   suppressListenChannel?: true;
   dropToolListChanged?: true;
   toolCallCancellation?: { legacy?: boolean; modern?: boolean };
+  /** Non-secret summary of the OAuth flow that preceded this connect. */
+  oauthFlowSummary?: import("@mcpjam/sdk/browser").OAuthFlowSummary;
 };
 
 export interface HostedServerValidateResponse {
@@ -164,6 +166,9 @@ export async function validateHostedServer(
           : {}),
         ...(hostedContext.toolCallCancellation
           ? { toolCallCancellation: hostedContext.toolCallCancellation }
+          : {}),
+        ...(hostedContext.oauthFlowSummary
+          ? { oauthFlowSummary: hostedContext.oauthFlowSummary }
           : {}),
       }
     : buildServerRequest(serverNameOrId);

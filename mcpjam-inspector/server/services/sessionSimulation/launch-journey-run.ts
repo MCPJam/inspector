@@ -624,7 +624,7 @@ async function createAndStartJourneyRun(
       ...(localEnabled ? { localHarnessIds } : {}),
       // Host-aware: each host connects ONLY its own pinned required servers
       // (optionalServerIds stay off, matching a real no-opt-in visitor).
-      managerFactory: async (host) => {
+      managerFactory: async (host, hooks) => {
         // Decision D2 — re-gate the target's pinned plugin servers against
         // the LIVE plugin, here at connect time, rather than trusting the
         // snapshot's `pluginServerIds`. That stored list records what was
@@ -717,6 +717,7 @@ async function createAndStartJourneyRun(
         // used by normal requests, and populates the SDK's tool cache before
         // `prepareChatV2` runs. The manager remains owned by this session and
         // is disposed only after the session finishes.
+        hooks?.onConnecting?.();
         try {
           await Promise.all(
             serverIds.map((serverId) => manager.listTools(serverId)),

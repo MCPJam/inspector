@@ -29,13 +29,13 @@ The OAuth Debugger includes:
 
 ### Resource indicator warnings
 
-When the server's Protected Resource Metadata (PRM) advertises a `resource` identifier that does not fully satisfy RFC 9728 — for example, a same-origin resource on a different path than the transport endpoint — the debugger logs a warning at the `received_resource_metadata` step and continues the flow. The warning includes the advertised value, the server URL, and whether strict MCP clients (such as Quick OAuth or the official MCP SDK) will refuse to connect.
+When the server's Protected Resource Metadata (PRM) advertises a `resource` identifier that does not fully satisfy RFC 9728 (for example, a same-origin resource on a different path than the transport endpoint), the debugger logs a warning at the `received_resource_metadata` step and continues the flow. The warning includes the advertised value, the server URL, and whether strict MCP clients (such as Quick OAuth or the official MCP SDK) will refuse to connect.
 
 The debugger intentionally proceeds rather than failing so you can observe real server behavior. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict RFC 9728 validation.
 
 ### Path-scoped authorization servers
 
-Some multi-tenant authorization servers (such as Scalekit) scope their OAuth endpoints under a path — for example `https://<env>.example.com/resources/res_x` — while their metadata advertises the origin root as the `issuer`. By default, Inspector enforces the RFC 8414 §3.3 requirement that the advertised `issuer` exactly matches the URL discovery started from, so those servers fail discovery with an error that names the mismatch.
+Some multi-tenant authorization servers (such as Scalekit) scope their OAuth endpoints under a path, for example `https://<env>.example.com/resources/res_x`, while their metadata advertises the origin root as the `issuer`. By default, Inspector enforces the RFC 8414 §3.3 requirement that the advertised `issuer` exactly matches the URL discovery started from, so those servers fail discovery with an error that names the mismatch.
 
 To connect to a path-scoped authorization server, enable the **Path-scoped authorization server** switch in **Advanced settings**:
 
@@ -59,18 +59,18 @@ The setting is stored per server and applies to both the OAuth Debugger and the 
 
 When the authorization server returns an `iss` parameter on the callback that does not match the issuer recorded from its metadata, Inspector's behavior depends on the protocol version selected for the flow:
 
-- **2026-07-28 (Latest)** — The flow is blocked before the authorization code is redeemed. The error names both the recorded issuer and the one returned on the callback so you can compare them directly.
-- **2025-11-25 and earlier** — The flow continues and a warning toast is shown naming both issuers. These protocol versions do not mention `iss` or RFC 9207 issuer validation, so blocking would enforce a rule the selected version does not contain.
+- **2026-07-28 (Latest)**: The flow is blocked before the authorization code is redeemed. The error names both the recorded issuer and the one returned on the callback so you can compare them directly.
+- **2025-11-25 and earlier**: The flow continues and a warning toast is shown naming both issuers. These protocol versions do not mention `iss` or RFC 9207 issuer validation, so blocking would enforce a rule the selected version does not contain.
 
 In both cases the mismatch is recorded on the OAuth trace at the `received_authorization_code` step, visible in the **Last OAuth Trace** panel.
 
 ## Inline OAuth tracing
 
-When you connect a server using OAuth 2.0, Inspector automatically records a trace of every step in the flow and surfaces it in the connection UI — no separate tool required.
+When you connect a server using OAuth 2.0, Inspector automatically records a trace of every step in the flow and surfaces it in the connection UI. No separate tool required.
 
 **On the connection card**, if OAuth fails, a banner identifies the exact step where the failure occurred (for example, "OAuth failed during Token Request").
 
-**In the server detail panel**, the **Last OAuth Trace** section is collapsed by default. Click the chevron next to **Last OAuth Trace** to expand it. Inside, each step and the **HTTP History** log are also collapsed by default — error steps open automatically so failures are immediately visible. The section shows:
+**In the server detail panel**, the **Last OAuth Trace** section is collapsed by default. Click the chevron next to **Last OAuth Trace** to expand it. Inside, each step and the **HTTP History** log are also collapsed by default. Error steps open automatically so failures are immediately visible. The section shows:
 
 - Each OAuth step (discovery, client registration, PKCE, authorization redirect, token exchange) with a status indicator and message
 - The error text for any failed step
@@ -98,7 +98,7 @@ The header **Add Server** button also opens a blank form so you can add a new ta
 
 ## OAuth trace in server overview
 
-When you connect a server using OAuth, Inspector records a structured trace of the entire flow. You can view this trace at any time — even after a failed connection — by opening the server's detail panel and scrolling to the **Last OAuth Trace** section.
+When you connect a server using OAuth, Inspector records a structured trace of the entire flow. You can view this trace at any time, even after a failed connection, by opening the server's detail panel and scrolling to the **Last OAuth Trace** section.
 
 The trace shows:
 
@@ -135,7 +135,7 @@ Bearer tokens are stored securely and are never written to your browser's local 
 
 ## Pre-registered clients
 
-When you select **Pre-registered** as the registration strategy, a **Client ID** is required before you can save the configuration. Because the pre-registered flow skips Dynamic Client Registration entirely, there is no way to obtain a client ID at runtime — the flow will fail without one.
+When you select **Pre-registered** as the registration strategy, a **Client ID** is required before you can save the configuration. Because the pre-registered flow skips Dynamic Client Registration entirely, there is no way to obtain a client ID at runtime. The flow will fail without one.
 
 If you try to save without a Client ID, the form blocks the save and shows an inline error. The **Advanced settings** section expands automatically so you can enter the Client ID without having to find and open it yourself. Switching the **Registration** dropdown away from **Pre-registered** (for example, to **Dynamic (DCR)**) clears the error.
 
@@ -143,9 +143,9 @@ If you try to save without a Client ID, the form blocks the save and shows an in
 
 When you configure a pre-registered OAuth client with a client secret, the secret is stored securely and never exposed in the UI after saving. The client secret field shows the following controls:
 
-- **Reveal** (hosted mode only) — Fetches and displays the stored secret in an editable field. You can copy it or type directly in the field to replace it. Click **Hide** to collapse the field without saving changes.
-- **Clear** — Marks the secret for removal. The secret is deleted from storage when you save. Click **Undo** to cancel before saving.
-- **Replace** — After clicking **Reveal**, type a new value into the revealed field to replace the stored secret on the next save.
+- **Reveal** (hosted mode only): Fetches and displays the stored secret in an editable field. You can copy it or type directly in the field to replace it. Click **Hide** to collapse the field without saving changes.
+- **Clear**: Marks the secret for removal. The secret is deleted from storage when you save. Click **Undo** to cancel before saving.
+- **Replace**: After clicking **Reveal**, type a new value into the revealed field to replace the stored secret on the next save.
 
 When a secret is saved but not yet revealed, the field shows a "A client secret is saved" message in place of an input box. No empty input is shown until you click **Reveal**.
 
@@ -163,11 +163,11 @@ When an OAuth error appears in the request log, a **Continue in OAuth Debugger**
 
 ## Reconnecting OAuth servers
 
-The enable/connect toggle on a server card or detail modal reuses existing credentials only — it will not launch a new OAuth consent screen. If the existing tokens are expired or missing and a fresh consent flow is required, the toggle reports a re-authentication error instead of redirecting you to the authorization server.
+The enable/connect toggle on a server card or detail modal reuses existing credentials only. It will not launch a new OAuth consent screen. If the existing tokens are expired or missing and a fresh consent flow is required, the toggle reports a re-authentication error instead of redirecting you to the authorization server.
 
 To start a full OAuth flow, use the explicit **Reconnect** button on the server card or detail modal. This is the only path that will open the OAuth consent screen when new credentials are needed.
 
-When a server has [multiple accounts](#multiple-oauth-accounts) connected, the **Reconnect** option in each account row's menu (in the server detail modal's Config tab) replaces only that row's credential. The other accounts are not affected. Using the top-level **Reconnect** button on the card replaces the default account's credential.
+When a server has [multiple accounts](/inspector/connecting-servers#multiple-oauth-accounts) connected, the **Reconnect** option in each account row's menu (in the server detail modal's Config tab) replaces only that row's credential. The other accounts are not affected. Using the top-level **Reconnect** button on the card replaces the default account's credential.
 
 ## Desktop app behavior
 

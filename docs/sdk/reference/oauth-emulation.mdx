@@ -55,7 +55,7 @@ const result = await runEmulatedOAuthPreflight({
 console.log(result.outcome);       // "completed"
 console.log(result.credentials);   // { accessToken, clientId, ... }
 console.log(result.sideEffects);   // { dcrRegistrations: 1, tokensIssued: 1 }
-console.log(result.comparison);    // "not_compared" — always, until step 6
+console.log(result.comparison);    // "not_compared", always, until step 6
 ```
 
 ---
@@ -72,7 +72,7 @@ console.log(result.comparison);    // "not_compared" — always, until step 6
 | `serverName` | `string` | No | `"Emulated OAuth Preflight"` | Display name used in log entries. |
 | `clientIdMetadataUrl` | `string` | No | MCPJam default | CIMD metadata document URL for CIMD attempts. |
 | `preregistered` | `{ clientId: string; clientSecret?: string }` | No | | Pre-registered credentials for `preregistered` strategy rungs. |
-| `staticCredential` | `{ headerName: string; value: string }` | No | | Static credential for `api-key` rungs. Absent means the rung is skipped and declared — the runner never invents a credential. |
+| `staticCredential` | `{ headerName: string; value: string }` | No | | Static credential for `api-key` rungs. Absent means the rung is skipped and declared; the runner never invents a credential. |
 | `customHeaders` | `Record<string, string>` | No | | Extra HTTP headers on every request. |
 | `customScopes` | `string` | No | | Space-separated scope string. |
 | `timeoutMs` | `number` | No | `30000` | Total deadline for each outbound request. |
@@ -80,7 +80,7 @@ console.log(result.comparison);    // "not_compared" — always, until step 6
 | `completeAuthorization` | `(input: { authorizationUrl: string; callbackUrl: string }) => Promise<{ code: string }>` | No | | Headless consent handler. Absent means the run stops at the redirect and reports `stopped_at_redirect`. |
 | `requestExecutor` | `OAuthRequestExecutor` | No | Hardened default | Override the outbound executor (tests, alternate transports). The default uses DNS pinning, total-deadline timeouts, body caps, redirect caps, and cross-origin credential stripping. |
 | `allowLoopbackMetadataFetch` | `boolean` | No | `false` | Allow fetching OAuth metadata from loopback addresses. |
-| `allowPrivateMetadataFetch` | `boolean` | No | `false` | Allow fetching OAuth metadata from any private address (loopback, RFC 1918, CGNAT, unique-local) and from hostnames that resolve to one. Set by local surfaces; supersedes `allowLoopbackMetadataFetch`. Link-local and cloud-metadata addresses stay refused. |
+| `allowPrivateMetadataFetch` | `boolean` | No | `false` | Allow fetching OAuth metadata from any private address (loopback, RFC 1918, CGNAT, unique-local) and from hostnames that resolve to one. Supersedes `allowLoopbackMetadataFetch`. Link-local and cloud-metadata addresses stay refused. |
 | `resourceIndicatorEnforcement` | `"warn" \| "reject" \| "reject-rfc9728"` | No | `"warn"` | How to handle unexpected resource indicators. Defaults to `"warn"` so the run exposes server behavior rather than hiding it. |
 
 ### `EmulatedOAuthPreflightOutcome`
@@ -103,7 +103,7 @@ console.log(result.comparison);    // "not_compared" — always, until step 6
 | `outcome` | `EmulatedOAuthPreflightOutcome` | Overall run outcome. |
 | `coverage` | `OAuthEmulationCoverage` | Per-field enforcement status, carried from the compiler. |
 | `coverageSummary` | `"complete" \| "partial"` | `"complete"` only when every field is `"modeled"`. |
-| `comparison` | `"not_compared"` | Always `"not_compared"` — golden-trace comparison is a later step. A run never implies parity on its own. |
+| `comparison` | `"not_compared"` | Always `"not_compared"`. A run never implies parity with a golden trace on its own. |
 | `attempts` | `EmulatedAuthAttemptResult[]` | Per-rung results, in ladder order. |
 | `authorizationUrl` | `string` | Present when `outcome === "stopped_at_redirect"`. |
 | `divergences` | `OAuthEmulationDivergence[]` | Compile-time divergences plus everything this run declared. |
@@ -131,7 +131,7 @@ The `authModel` field of an OAuth profile compiles into an ordered attempt ladde
 - **Consecutive `oauth2-*` entries collapse into one OAuth attempt** carrying their relative order as a registration preference. A client that lists `["oauth2-cimd", "oauth2-dcr"]` performs a single OAuth dance preferring CIMD, not two separate dances.
 - **`api-key` and `none` stay in position** as direct MCP probes, so a "static bearer first, OAuth on 401" client reproduces that sequence exactly.
 - A static credential falls through to OAuth **only on a 401**. Any other status stops the ladder.
-- An OAuth attempt falls through to the next strategy **only while nothing has been committed on the wire** — once a registration request has been sent or authorization has begun, failure stops the ladder.
+- An OAuth attempt falls through to the next strategy **only while nothing has been committed on the wire**; once a registration request has been sent or authorization has begun, failure stops the ladder.
 
 ```typescript
 // Profile: try static credential first, fall back to DCR on 401.
@@ -196,7 +196,7 @@ const plan = planCompletionSafeRedirects({
 
 ### `isInvalidRedirectUriRejection`
 
-Returns `true` only when a registration response is exactly HTTP 400 with `{ "error": "invalid_redirect_uri" }` in the body — the structured RFC 7591 error that authorizes a retry. Any other status or body shape returns `false`.
+Returns `true` only when a registration response is exactly HTTP 400 with `{ "error": "invalid_redirect_uri" }` in the body; the structured RFC 7591 error that authorizes a retry. Any other status or body shape returns `false`.
 
 ```typescript
 import { isInvalidRedirectUriRejection } from "@mcpjam/sdk";
@@ -212,13 +212,13 @@ isInvalidRedirectUriRejection({ status: 401, body: { error: "invalid_redirect_ur
 
 Credentials are returned once, in `result.credentials`, and are kept out of every other surface:
 
-- `result.attempts[*].httpHistory` is redacted — no tokens, codes, secrets, or PKCE values.
+- `result.attempts[*].httpHistory` is redacted; no tokens, codes, secrets, or PKCE values.
 - A caller-supplied `staticCredential` is scrubbed by header name and value before the generic redactor runs, because no generic redactor can know an unconventional header name like `X-Acme-Tenant-Token`.
-- `result.comparison` is always `"not_compared"` — a run never claims parity with a golden trace on its own.
+- `result.comparison` is always `"not_compared"`; a run never claims parity with a golden trace on its own.
 
 ---
 
 ## Related
 
-- [OAuth Conformance SDK](/sdk/reference/oauth-conformance) — conformance testing with `OAuthConformanceTest`
-- [CLI: OAuth Conformance](/cli/oauth-conformance) — CLI recipes and CI integration
+- [OAuth Conformance SDK](/sdk/reference/oauth-conformance): conformance testing with `OAuthConformanceTest`
+- [CLI: OAuth Conformance](/cli/oauth-conformance): CLI recipes and CI integration

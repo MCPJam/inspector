@@ -17,12 +17,14 @@
  * socket-diagnostics.ts): a fixed field set, no per-event rows, and a timer
  * that never holds the process open.
  */
+import fs from "node:fs";
 import v8 from "node:v8";
 import * as Sentry from "@sentry/node";
 import { getSystemLogger } from "./request-logger.js";
 import { logger } from "./logger.js";
 import { rpcLogBus } from "../services/rpc-log-bus.js";
 import { getTokenizerPeak } from "./tokenizer-helpers.js";
+import type { ProcessVitalsEvent } from "./log-events/process-vitals.js";
 
 const SAMPLE_INTERVAL_MS = 60_000;
 
@@ -33,6 +35,10 @@ const SAMPLE_INTERVAL_MS = 60_000;
  * exactly as interesting as a 64 MB climb when the question is "did this ramp?"
  */
 const HEAP_STEP_BYTES = 64 * 1024 * 1024;
+
+/** The fd twin of HEAP_STEP_BYTES: a socket or file leak holds fds, not heap,
+ *  so a flat-heap ramp would otherwise show only on the heartbeat. */
+const FD_STEP = 64;
 
 /** A quiet session still checks in this often, so silence stays distinguishable
  *  from a process that died or never started sampling. */
@@ -47,28 +53,13 @@ const HEAP_TREND_SAMPLES = 10;
 
 const vitalsLogger = getSystemLogger("process.vitals");
 
-export type ProcessVitals = {
-  uptimeSeconds: number;
-  heapUsedBytes: number;
-  heapTotalBytes: number;
-  heapLimitBytes: number;
-  oldSpaceUsedBytes: number;
-  oldSpaceSizeBytes: number;
-  externalBytes: number;
-  rssBytes: number;
-  peakHeapUsedBytes: number;
-  rpcLogBufferBytes: number;
-  rpcLogBufferEvents: number;
-  rpcLogBufferServers: number;
-  rpcLogTruncatedFrames: number;
-  peakRpcLogBufferBytes: number;
-  tokenizerPeakChars: number;
-  tokenizerOversizeSkips: number;
-};
+export type ProcessVitals = Omit<ProcessVitalsEvent, "reason">;
 
 let peakHeapUsedBytes = 0;
 let peakRpcLogBufferBytes = 0;
 let lastEmittedHeapBytes: number | null = null;
+let lastEmittedFdCount: ProcessVitals["openFdCount"] = null;
+let lastEmittedFdError: ProcessVitals["openFdError"] = null;
 let lastEmittedAtMs = 0;
 const heapTrendMb: number[] = [];
 let sampler: ReturnType<typeof setInterval> | null = null;
@@ -80,6 +71,36 @@ function oldSpace(): { used: number; size: number } {
     }
   }
   return { used: 0, size: 0 };
+}
+
+// A closed list because the Axiom row keeps only the errnos ProcessVitalsEvent
+// spells out; any other errno arrives as "unknown".
+const FD_ERRNOS = ["ENOENT", "EMFILE", "ENFILE", "EACCES", "EPERM"] as const;
+
+/**
+ * Open file descriptors of THIS process, by listing `/dev/fd` (devfs on macOS,
+ * a link to `/proc/self/fd` on Linux). When the listing fails the count is
+ * `null`, never zero, and the errno says why: ENOENT means there is no
+ * `/dev/fd` to list (Windows, or a container without it); EMFILE/ENFILE is
+ * the very exhaustion this gauge exists to catch — opendir needs an fd of its
+ * own, so the sample taken at the worst moment is the one that cannot list.
+ * That one extra fd is also in the count; the ramp is what matters, not the
+ * exact figure.
+ *
+ * A process can die of ENFILE, the SYSTEM file table, while holding a dozen
+ * fds of its own. This count says whether the server process is the one
+ * draining that table.
+ */
+function openFds(): Pick<ProcessVitals, "openFdCount" | "openFdError"> {
+  try {
+    return { openFdCount: fs.readdirSync("/dev/fd").length, openFdError: null };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    return {
+      openFdCount: null,
+      openFdError: FD_ERRNOS.find((errno) => errno === code) ?? "unknown",
+    };
+  }
 }
 
 export function collectProcessVitals(): ProcessVitals {
@@ -109,21 +130,31 @@ export function collectProcessVitals(): ProcessVitals {
     peakRpcLogBufferBytes,
     tokenizerPeakChars: tokenizer.chars,
     tokenizerOversizeSkips: tokenizer.oversizeSkips,
+    ...openFds(),
   };
 }
 
 function emitReason(
   vitals: ProcessVitals,
   nowMs: number,
-): "startup" | "heap_step" | "heartbeat" | null {
+): ProcessVitalsEvent["reason"] | null {
   if (lastEmittedHeapBytes === null) return "startup";
   if (
     Math.abs(vitals.heapUsedBytes - lastEmittedHeapBytes) >= HEAP_STEP_BYTES
   ) {
     return "heap_step";
   }
+  if (fdStepped(vitals)) return "fd_step";
   if (nowMs - lastEmittedAtMs >= HEARTBEAT_MS) return "heartbeat";
   return null;
+}
+
+/** A listing that starts or stops failing is a step too: EMFILE arriving is
+ *  the moment this gauge exists for, and it has no count to step from. */
+function fdStepped({ openFdCount, openFdError }: ProcessVitals): boolean {
+  if (openFdError !== lastEmittedFdError) return true;
+  // Same error, so both counts are numbers or both are null.
+  return Math.abs((openFdCount ?? 0) - (lastEmittedFdCount ?? 0)) >= FD_STEP;
 }
 
 /**
@@ -198,6 +229,8 @@ export function flushProcessVitals(nowMs: number = Date.now()): void {
     if (!reason) return;
 
     lastEmittedHeapBytes = vitals.heapUsedBytes;
+    lastEmittedFdCount = vitals.openFdCount;
+    lastEmittedFdError = vitals.openFdError;
     lastEmittedAtMs = nowMs;
     vitalsLogger.event("process.vitals", { reason, ...vitals });
   } catch (error) {

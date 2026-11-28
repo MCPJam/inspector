@@ -29,6 +29,11 @@ interface ServerInfoContentProps {
   server: ServerWithName;
   projectId?: string | null;
   hostedServerId?: string | null;
+  /**
+   * Capability names the server canvas evaluated from saved evidence. When
+   * given, they replace this view's own reading of `initializationInfo`.
+   */
+  evaluatedCapabilities?: readonly string[];
 }
 
 export function ServerInfoContent({
@@ -36,6 +41,7 @@ export function ServerInfoContent({
   server,
   projectId = null,
   hostedServerId = null,
+  evaluatedCapabilities,
 }: ServerInfoContentProps) {
   // Keyed by connection id ("" is the default connection, and the only key a
   // single-account server ever uses).
@@ -49,7 +55,7 @@ export function ServerInfoContent({
     Record<string, string>
   >({});
   const hostedRevealRequestIdRef = useRef(0);
-  const { connections } = useHostedOAuthConnections(
+  const { connections, shared, loaded } = useHostedOAuthConnections(
     projectId,
     hostedServerId,
     sections !== "info" && server.useOAuth === true,
@@ -109,7 +115,7 @@ export function ServerInfoContent({
   // are compatible at runtime.
   if (
     serverDeclaresSkillsExtension(
-      serverCapabilities as Parameters<typeof serverDeclaresSkillsExtension>[0]
+      serverCapabilities as Parameters<typeof serverDeclaresSkillsExtension>[0],
     )
   ) {
     capabilities.push("Skills");
@@ -153,14 +159,28 @@ export function ServerInfoContent({
     // One block per connected account. A multi-account server used to show a
     // single pair — the default connection's — however many accounts were
     // connected, because the reveal never named one.
+    // Shared and uploaded accounts are never revealed, so they offer no
+    // reveal for the backend to refuse.
+    const revealable = (connection: { hostedOnly?: boolean } | undefined) =>
+      loaded && !shared && connection?.hostedOnly !== true;
     const targets =
       connections.length > 1
         ? connections.map((connection, index) => ({
             key: connection.connectionId,
             title: connectionLabel(connection, index),
             needsReauth: connection.needsReauth === true,
+            revealable: revealable(connection),
           }))
-        : [{ key: "", title: undefined, needsReauth: false }];
+        : [
+            {
+              key: "",
+              title: undefined,
+              needsReauth: false,
+              revealable: revealable(
+                connections.find((connection) => connection.isDefault),
+              ),
+            },
+          ];
 
     return (
       <div className="space-y-3 text-xs pt-2">
@@ -185,6 +205,12 @@ export function ServerInfoContent({
               {target.needsReauth ? (
                 <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
                   This account needs reconnecting before it holds tokens.
+                </div>
+              ) : !target.revealable ? (
+                <div className="rounded-md bg-background/60 p-2 text-sm text-muted-foreground">
+                  {loaded
+                    ? "Tokens of shared and uploaded accounts can't be revealed."
+                    : "Reveal is available once this server's accounts have loaded."}
                 </div>
               ) : !tokens ? (
                 canRevealHostedOAuthTokens ? (
@@ -444,12 +470,14 @@ export function ServerInfoContent({
             </div>
           )}
 
-          {capabilities.length > 0 && (
+          {(evaluatedCapabilities ?? capabilities).length > 0 && (
             <div>
               <div className="text-sm font-medium text-muted-foreground mb-1">
                 Capabilities
               </div>
-              <div className="text-sm">{capabilities.join(", ")}</div>
+              <div className="text-sm">
+                {(evaluatedCapabilities ?? capabilities).join(", ")}
+              </div>
             </div>
           )}
 

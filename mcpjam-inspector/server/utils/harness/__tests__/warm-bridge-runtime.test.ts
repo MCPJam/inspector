@@ -8,6 +8,7 @@ import {
   withWarmBridgeRuntime,
   WARM_ATTACH_TIMEOUT_MS,
   WARM_RETENTION_TIMEOUT_MS,
+  type WarmAttachOutcome,
 } from "../warm-bridge-runtime.js";
 
 /** The box's idle window, as the backend sends it. */
@@ -69,7 +70,10 @@ function fixture() {
   return { session, detach, factory, start, options, run, spawn };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 
 describe("warm runtime lifecycle", () => {
   it.each([
@@ -236,6 +240,257 @@ describe("warm runtime lifecycle", () => {
     const detached = session.doDetach();
     await vi.advanceTimersByTimeAsync(WARM_RETENTION_TIMEOUT_MS);
     expect(await detached).toEqual(state);
+  });
+});
+
+describe("a warm runtime kept through its box's pause", () => {
+  /** The box's ceiling, as the backend sends it for a box that pauses. */
+  const CEILING = 1_800_000_000_000;
+  const commands = (f: ReturnType<typeof fixture>) =>
+    f.run.mock.calls.map(([{ command }]) => command);
+  /** Window, ceiling, and whether this turn started the process. */
+  const ending = (spawned: boolean) =>
+    new RegExp(`'${WINDOW_MS}' '${CEILING}' '${spawned}'$`);
+
+  it("re-attaches after a wake, and parks the process it did not start without extending it", async () => {
+    const f = fixture();
+    const session = await withWarmBridgeRuntime(
+      f.factory,
+      "configuration",
+      WINDOW_MS,
+      { retainUntil: CEILING },
+    ).doStart(f.options);
+    await session.doDetach();
+    expect(f.factory).toHaveBeenLastCalledWith(
+      WARM_ATTACH_TIMEOUT_MS,
+      "/home/user",
+    );
+    expect(f.start.mock.calls[0][0].resumeFrom).toBe(state);
+    const [probe, park] = commands(f);
+    expect(probe).toMatch(ending(false));
+    expect(park).toMatch(ending(false));
+  });
+
+  it("resumes from saved files when the probe refuses after a wake, and parks the new process to the ceiling", async () => {
+    const f = fixture();
+    // The probe's exit status covers identity, configuration and expiry alike.
+    f.run.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "" });
+    const session = await withWarmBridgeRuntime(
+      f.factory,
+      "configuration",
+      WINDOW_MS,
+      { retainUntil: CEILING },
+    ).doStart(f.options);
+    expect(f.start.mock.calls[0][0].resumeFrom?.data).toEqual({
+      threadId: "thread",
+    });
+    await session.doDetach();
+    expect(commands(f)[1]).toMatch(ending(true));
+  });
+
+  it("parks a first turn's process to the ceiling, and an approval's as one it did not start", async () => {
+    const first = fixture();
+    const fresh = await withWarmBridgeRuntime(
+      first.factory,
+      "configuration",
+      WINDOW_MS,
+      { retainUntil: CEILING },
+    ).doStart({ ...first.options, resumeFrom: undefined });
+    await fresh.doDetach();
+    expect(commands(first)).toEqual([expect.stringMatching(ending(true))]);
+
+    const approval = fixture();
+    const continued = await withWarmBridgeRuntime(
+      approval.factory,
+      "configuration",
+      WINDOW_MS,
+      { retainUntil: CEILING },
+    ).doStart({
+      ...approval.options,
+      resumeFrom: undefined,
+      continueFrom: { ...state, type: "continue-turn" as const },
+    });
+    await continued.doDetach();
+    expect(commands(approval)).toEqual([expect.stringMatching(ending(false))]);
+  });
+
+  it.each([
+    ["a re-attach after the wake", undefined, "attached", false],
+    [
+      "a probe that refuses after the wake",
+      { exitCode: 1, stdout: "", stderr: "" },
+      "probe_refused",
+      true,
+    ],
+  ] as const)(
+    "tells the turn's event about %s, keeping the probe and the park to the ceiling",
+    async (_label, probeReply, outcome, spawned) => {
+      const f = fixture();
+      if (probeReply) f.run.mockResolvedValueOnce(probeReply);
+      const onAttach = vi.fn();
+      const session = await withWarmBridgeRuntime(
+        f.factory,
+        "configuration",
+        WINDOW_MS,
+        { retainUntil: CEILING, onAttach },
+      ).doStart(f.options);
+      await session.doDetach();
+      expect(onAttach.mock.calls).toEqual([[outcome]]);
+      const [probe, park] = commands(f);
+      expect(probe).toMatch(ending(false));
+      expect(park).toMatch(ending(spawned));
+    },
+  );
+
+  it("sends today's commands without a ceiling", async () => {
+    const f = fixture();
+    const session = await withWarmBridgeRuntime(
+      f.factory,
+      "configuration",
+      WINDOW_MS,
+    ).doStart(f.options);
+    await session.doDetach();
+    for (const command of commands(f)) {
+      expect(command).toMatch(new RegExp(`'${WINDOW_MS}'$`));
+      expect(command).not.toContain(String(CEILING));
+    }
+  });
+});
+
+it.each([
+  { keep: "true", windowMs: 4 * 60 * 60_000 },
+  { keep: undefined, windowMs: WINDOW_MS },
+])(
+  "starts the bridge with the window its retention gives (switch $keep)",
+  async ({ keep, windowMs }) => {
+    vi.stubEnv("MCPJAM_HARNESS_KEEP_THROUGH_PAUSE", keep);
+    const { createCodexAppServer } =
+      await import("../codex-appserver/codex-appserver-harness.js");
+    const { withWarmBridgeBootstrap } = await import("../warm-bridge-files.js");
+    const { warmBridgeWindowMs, warmRetentionFor } =
+      await import("../warm-retention.js");
+    const f = fixture();
+    const ordinary = createCodexAppServer();
+    const recipe = await ordinary.getBootstrap?.();
+    if (!recipe) throw Error("Missing installed recipe");
+    const now = Date.now();
+    const retention = warmRetentionFor(
+      { idleMs: WINDOW_MS, retainUntil: now + 4 * 60 * 60_000 },
+      now,
+    );
+    if (!retention) throw Error("Missing warm retention");
+    const spawn = vi.fn(unused);
+    const dir = "/home/user/.ai-sdk-harness/" + recipe.bootstrapDir;
+    const command = "node '" + dir + "/bridge.mjs' --workdir '/home/user/work'";
+    const runtime = withWarmBridgeBootstrap(
+      {
+        ...ordinary,
+        doStart: async (options: HarnessV1StartOptions) => {
+          await options.sandboxSession.spawn({ command });
+          return f.session;
+        },
+      },
+      warmBridgeWindowMs(retention, now),
+    );
+    const sandboxSession = {
+      ...f.options.sandboxSession,
+      spawn,
+      run: async ({ command }: { command: string }) =>
+        command.includes("$HOME")
+          ? { exitCode: 0, stdout: "/home/user", stderr: "" }
+          : { exitCode: 0, stdout: "ready", stderr: "" },
+    };
+    await expect(
+      runtime.doStart({ ...f.options, sandboxSession }),
+    ).rejects.toThrow("Unexpected test operation");
+    expect(spawn).toHaveBeenCalledWith({
+      command: command.replace("/bridge.mjs'", "/warm-bridge.mjs'"),
+      env: { MCPJAM_WARM_WINDOW_MS: String(windowMs) },
+    });
+  },
+);
+
+describe("warm attach outcome, for the turn's event", () => {
+  const start = (
+    f: ReturnType<typeof fixture>,
+    onAttach: (outcome: WarmAttachOutcome) => void,
+    options: HarnessV1StartOptions = f.options,
+  ) =>
+    withWarmBridgeRuntime(f.factory, "configuration", WINDOW_MS, { onAttach }).doStart(options);
+
+  it("reports a re-attach", async () => {
+    const f = fixture();
+    const onAttach = vi.fn();
+    await start(f, onAttach);
+    expect(onAttach.mock.calls).toEqual([["attached"]]);
+  });
+
+  it.each([
+    ["refuses the bridge", { exitCode: 1, stdout: "", stderr: "" }],
+    ["answers what is not its reply", { exitCode: 0, stdout: "ready", stderr: "" }],
+  ])("reports a probe that %s, and resumes from disk", async (_label, reply) => {
+    const f = fixture();
+    f.run.mockResolvedValueOnce(reply);
+    const onAttach = vi.fn();
+    await start(f, onAttach);
+    expect(onAttach.mock.calls).toEqual([["probe_refused"]]);
+    expect(f.start.mock.calls[0][0].resumeFrom?.data).toEqual({ threadId: "thread" });
+  });
+
+  it("reports which step failed, never the error, when the attach throws", async () => {
+    const f = fixture();
+    f.start.mockRejectedValueOnce(
+      new Error("sandbox sbx_9f2c41d7 at https://49983-sbx.e2b.app/ refused Bearer sk-ant-abc"),
+    );
+    const onAttach = vi.fn();
+    await start(f, onAttach);
+    expect(onAttach.mock.calls).toEqual([["attach_failed"]]);
+  });
+
+  it("reports a probe that could not run as a failed attach", async () => {
+    const f = fixture();
+    f.run.mockRejectedValueOnce(new Error("sandbox not found"));
+    const onAttach = vi.fn();
+    await start(f, onAttach);
+    expect(onAttach.mock.calls).toEqual([["attach_failed"]]);
+  });
+
+  it("reports the deadline, even when the abandoned probe answers after it", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    // The probe answers only once the deadline aborts it, and refuses.
+    f.run.mockImplementationOnce(
+      ({ abortSignal }: { command: string; abortSignal?: AbortSignal }) =>
+        new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) =>
+          abortSignal?.addEventListener("abort", () =>
+            resolve({ exitCode: 1, stdout: "", stderr: "" }),
+          ),
+        ),
+    );
+    const onAttach = vi.fn();
+    const pending = start(f, onAttach);
+    await vi.advanceTimersByTimeAsync(WARM_ATTACH_TIMEOUT_MS);
+    await pending;
+    expect(onAttach.mock.calls).toEqual([["attach_timeout"]]);
+  });
+
+  it("reports nothing for an approval continuation or a cancelled attempt", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const onAttach = vi.fn();
+    await start(f, onAttach, {
+      ...f.options,
+      resumeFrom: undefined,
+      continueFrom: { ...state, type: "continue-turn" as const },
+    });
+    const abort = new AbortController();
+    f.run.mockImplementationOnce(() => new Promise(() => undefined));
+    const cancelled = start(f, onAttach, { ...f.options, abortSignal: abort.signal });
+    const rejected = expect(cancelled).rejects.toThrow();
+    abort.abort();
+    await vi.advanceTimersByTimeAsync(WARM_ATTACH_TIMEOUT_MS);
+    await rejected;
+    expect(onAttach).not.toHaveBeenCalled();
   });
 });
 

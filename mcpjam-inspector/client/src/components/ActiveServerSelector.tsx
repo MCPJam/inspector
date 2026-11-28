@@ -236,7 +236,7 @@ export function ActiveServerSelector({
   }
 
   return (
-    <div className={cn("relative h-full w-full min-w-0", className)}>
+    <div className={cn("relative h-full w-full min-w-0 overflow-hidden", className)}>
       <div
         ref={scrollRef}
         className={cn(

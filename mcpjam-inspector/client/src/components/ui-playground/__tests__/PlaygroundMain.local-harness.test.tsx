@@ -447,9 +447,8 @@ vi.mock("@/components/chat-v2/thread", () => ({
         <div data-testid="thread">
           <span data-testid="message-count">{messages.length}</span>
           {isLoading && <span data-testid="thread-loading">Loading...</span>}
-          {/* Stands in for the per-message edit affordance — mirrors the
-              "Edit first message" button in ChatTabV2's test suite. Only
-              rendered when the affordance isn't suppressed, same as the real
+          {/* Stands in for the per-message edit affordance. Only rendered
+              when the affordance isn't suppressed, same as the real
               Thread/MessageView action row. */}
           {onEditUserMessage && (
             <button
@@ -489,7 +488,6 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     // so tests can reach into props the rendered markup below never surfaces
     // — e.g. `onModelSelectorOpenChange`, which drives the layout lock that
     // keeps the single-pane Thread mounted across a compare-mode flip.
-    // Mirrors ChatTabV2.trace-views.test.tsx's `mockChatInput` pattern.
     mockChatInputProps(props);
     const {
       value,

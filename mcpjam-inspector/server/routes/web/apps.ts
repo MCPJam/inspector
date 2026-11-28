@@ -254,6 +254,7 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         sourceReceipt: await sandboxSourceReceipt(c, { serverId: body.serverId, resourceUri: body.template || body.resourceUri, toolCallId: body.toolId }, result.html, result.csp, body.projectId),
       };
     },
+    { observeFeatures: true },
   ),
 );
 

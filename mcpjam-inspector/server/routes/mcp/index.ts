@@ -18,6 +18,7 @@ import elicitation from "./elicitation";
 import mrtr from "./mrtr";
 import models from "./models";
 import byokModels from "./byok-models";
+import modelRateOverrides from "./model-rate-overrides";
 import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
 import tunnelsRoute from "./tunnels";
@@ -29,6 +30,7 @@ import serverSkills from "./server-skills";
 import conformance from "./conformance";
 import xaa from "./xaa";
 import command from "./command";
+import launcher from "./launcher";
 import subscribe from "./subscribe";
 import subscriptions from "./subscriptions";
 import widgetRender from "./widget-render";
@@ -38,8 +40,13 @@ import audioTranscriptions from "./audio-transcriptions";
 import plugins from "./plugins";
 import { buildHealthMeta } from "../../utils/health-payload.js";
 import { onboardingTurnTraceMiddleware } from "../../services/plugin-host/onboarding-trace.js";
+import { localObservationFlushMiddleware } from "../../services/server-canvas/observation-recorders.js";
+import { localServerFeatureRoutes } from "../shared/server-feature-observations.js";
 
 const mcp = new Hono();
+
+// Observed server features flush with a local request's own bearer.
+mcp.use("*", localObservationFlushMiddleware);
 
 // Health check
 mcp.get("/health", (c) => {
@@ -80,6 +87,9 @@ mcp.route("/connect", connect);
 // Inspector command bus endpoints
 mcp.route("/command", command);
 mcp.route("/subscribe", subscribe);
+
+// Dev commands attaching their server to an open tab (launchInspector, Vite)
+mcp.route("/launcher", launcher);
 
 // Subscription bridge - observe the local manager's `subscriptions/listen`
 // stream lifecycle (2026-07-28 §13.2) and state desired interests
@@ -125,6 +135,9 @@ mcp.route("/models", models);
 // BYOK model discovery through the provider adapters (local mode only)
 mcp.route("/byok-models", byokModels);
 
+// Rates for personal-key models, stored on this machine (local mode only)
+mcp.route("/model-rate-overrides", modelRateOverrides);
+
 // Tokenizer endpoints - count tokens for MCP tools
 mcp.route("/tokenizer", tokenizer);
 
@@ -151,6 +164,9 @@ mcp.route("/server-skills", serverSkills);
 
 // Conformance endpoints - Protocol, Apps, OAuth checks
 mcp.route("/conformance", conformance);
+
+// Server canvas: MCP Apps bridge observations from the browser
+mcp.route("/server-features", localServerFeatureRoutes);
 
 // Headless widget render - one-shot MCP App tool-result render (screenshot +
 // verdict) via the eval browser harness. Local-mode only (mounted under

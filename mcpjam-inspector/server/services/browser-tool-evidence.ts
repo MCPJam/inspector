@@ -16,7 +16,7 @@ const record = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-function screenshotOf(value: unknown): string | undefined {
+export function screenshotOf(value: unknown): string | undefined {
   const obj = record(value);
   if (!obj) return undefined;
   if (typeof obj.screenshot === "string") return obj.screenshot;
@@ -28,7 +28,7 @@ function screenshotOf(value: unknown): string | undefined {
   }
   return undefined;
 }
-function capture(
+export function capture(
   raw: string,
 ):
   | { base64: string; mediaType: "image/jpeg" | "image/png"; bytes: number }

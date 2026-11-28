@@ -11,6 +11,7 @@ import {
 } from "../../services/environments/plugin-attribution.js";
 import { assertHostPointerAgreement } from "./chat-session-host-target.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { type EarlyStart, takeEarly } from "../../utils/early-start.js";
 import type { ResolvedEnvironmentRuntime } from "../../services/environments/runtime.js";
 import type { ChatSessionHostTarget } from "./chat-session-host-target.js";
 
@@ -31,6 +32,11 @@ export interface ResolvedTarget {
   host?: ChatSessionHostTarget;
   unappliedCapabilities?: string[];
   unavailableServerIds?: string[];
+  /**
+   * The project's organization, as the backend's capabilities read returned
+   * it for this caller (whose token is scoped to that organization).
+   */
+  organizationId?: string;
 }
 
 /** v1 reports client built-ins that this surface does not execute. */
@@ -48,14 +54,36 @@ export function unappliedBuiltInToolIds(
     : [];
 }
 
+type ChatCapabilities = {
+  chatEnvironmentVersion?: number;
+  organizationId?: string | null;
+} | null;
 const capabilitiesRef = makeFunctionReference<
   "query",
   { projectId: string },
-  { chatEnvironmentVersion?: number } | null
+  ChatCapabilities
 >("projects:getProjectCapabilities");
+const environmentCapabilitiesRef = makeFunctionReference<
+  "query",
+  { projectId: string },
+  { visibleSkillScope?: boolean }
+>("projectEnvironments:getCapabilities");
+
+/** The project's chat capabilities, the first thing the environment step reads. */
+export function readChatCapabilities(
+  client: ConvexHttpClient,
+  projectId: string,
+): Promise<ChatCapabilities> {
+  return client.query(capabilitiesRef, { projectId });
+}
 
 type Target = { environmentId?: string; serverIds?: string[]; hostId?: string };
-type Context = { authHeader: string; signal?: AbortSignal };
+type Context = {
+  authHeader: string;
+  signal?: AbortSignal;
+  /** {@link readChatCapabilities}, when the caller started it earlier. */
+  capabilities?: EarlyStart<ChatCapabilities>;
+};
 /** Require the shared resolver before choosing any runtime or billing policy. */
 export async function resolveChatSessionEnvironment(
   client: ConvexHttpClient,
@@ -63,7 +91,9 @@ export async function resolveChatSessionEnvironment(
   input: Target,
   context: Context,
 ): Promise<ResolvedTarget> {
-  const capabilities = await client.query(capabilitiesRef, { projectId });
+  const capabilities = context.capabilities
+    ? await takeEarly(context.capabilities)
+    : await readChatCapabilities(client, projectId);
   if (capabilities === null)
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Project not found.");
   if (capabilities?.chatEnvironmentVersion !== 1)
@@ -72,6 +102,12 @@ export async function resolveChatSessionEnvironment(
       ErrorCode.FEATURE_NOT_SUPPORTED,
       "Chat requires a backend with saved setup support. Upgrade the backend before sending messages.",
     );
+  // Older backends reject unknown query arguments and redact the validation
+  // detail in production. Check support before sending the optional scope.
+  const visibleSkillScope =
+    !input.environmentId &&
+    (await client.query(environmentCapabilitiesRef, { projectId }))
+      ?.visibleSkillScope === true;
   const args: Parameters<typeof resolveChatTurn>[0] = {
     target: input.environmentId
       ? { kind: "environment", environmentId: input.environmentId }
@@ -82,7 +118,7 @@ export async function resolveChatSessionEnvironment(
     client,
     bearer: context.authHeader,
     signal: context.signal,
-    ...(input.environmentId ? {} : { skillScope: "visible" as const }),
+    ...(visibleSkillScope ? { skillScope: "visible" } : {}),
     selection: input.environmentId
       ? { kind: "environment-default" }
       : input.serverIds !== undefined
@@ -163,6 +199,9 @@ export async function resolveChatSessionEnvironment(
     clientTurn: !input.environmentId,
     ...(unavailableServerIds.length ? { unavailableServerIds } : {}),
     ...(unappliedCapabilities.length ? { unappliedCapabilities } : {}),
+    ...(capabilities.organizationId
+      ? { organizationId: capabilities.organizationId }
+      : {}),
     // Bare server lists retain the emulated API rail and the caller's model policy.
     ...(input.environmentId || input.hostId
       ? {

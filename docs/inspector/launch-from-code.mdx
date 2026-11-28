@@ -37,6 +37,11 @@ npx @mcpjam/inspector@latest \
 | `--bearer <token>`     | Bearer token for Authorization header | `--bearer sk-xxx`                 |
 | `--oauth`              | Trigger OAuth flow on connect         | `--oauth`                         |
 | `--header <key=value>` | Custom header (repeatable)            | `-H "X-Custom=value"`             |
+| `--port <port>`        | Port to listen on (default 6274)      | `--port 6280`                     |
+| `--no-open`            | Do not open a browser                 | `--no-open`                       |
+| `--json`               | Print one JSON line on stdout when ready, no banner | `--json`            |
+
+Errors and warnings go to stderr. With `--json`, stdout carries exactly one line once the inspector is ready, `{"event":"ready","url":"…","port":6274}`, and a startup failure writes `{"event":"error","message":"…"}` to stderr. Tools written in any language can embed the inspector this way without reading its logs.
 
 ### Example: OAuth Server
 
@@ -73,6 +78,28 @@ console.log(`Inspector running at ${inspector.url}`);
 await inspector.stop();
 ```
 
+Pass `silent: true` to keep the inspector's startup banner and logs out of your terminal. The browser still opens on its own, and `inspector.url` is a working link if you need to open it yourself. Treat that link like a password: it carries the session token.
+
+### Where the server goes
+
+The `server` you pass goes to your open, signed-in MCPJam tab. The tab saves it to the project it shows, connects it and selects it. If your open tabs show different projects, MCPJam asks which project to use. If no tab is signed in, nothing is saved until you sign in. A stdio server asks for your approval the first time this device runs its command.
+
+When your dev command calls `stop()` or exits, MCPJam removes the server it added. If the project already had that server saved, MCPJam only disconnects it.
+
+### Share one MCPJam between dev commands
+
+Pass `reuse: true` to use the MCPJam already running on the port instead of starting another. Each dev command adds its own server, and an MCPJam a dev command started stays up until the last dev command using it quits. An MCPJam you started yourself is never stopped by a dev command.
+
+```typescript
+const inspector = await launchInspector({
+  server: { name: "billing", url: "http://localhost:3000/mcp" },
+  reuse: true,
+});
+// inspector.started is false when an MCPJam was already running.
+```
+
+Without `reuse`, a launch always starts its own MCPJam; if the port is taken, it uses the next free one.
+
 ### LaunchOptions
 
 | Option            | Type                     | Default | Description                                                                               |
@@ -81,7 +108,15 @@ await inspector.stop();
 | `server.url`      | `string`                 | -       | HTTP URL of the MCP server                                                                |
 | `server.headers`  | `Record<string, string>` | -       | Custom headers to send with requests                                                      |
 | `server.useOAuth` | `boolean`                | `false` | Trigger OAuth flow on connect                                                             |
+| `server.command`  | `string`                 | -       | Command for a stdio server, used instead of `server.url`                                  |
+| `server.args`     | `string[]`               | -       | Arguments for the stdio command                                                           |
+| `server.env`      | `Record<string, string>` | -       | Environment variables for the stdio command                                               |
+| `port`            | `number`                 | `6274`  | Preferred port. If it is taken, the next free port (within 20) is used                    |
+| `strictPort`      | `boolean`                | `false` | Fail instead of moving to another port                                                    |
+| `open`            | `boolean`                | `true`  | Open the browser when this launch starts MCPJam. Never in CI or without a terminal        |
+| `reuse`           | `boolean`                | `false` | Use an MCPJam already running on the port and share the one this launch starts            |
 | `defaultTab`      | `string`                 | -       | Initial tab: `"servers"`, `"tools"`, `"resources"`, `"prompts"`, `"playground"` |
+| `silent`          | `boolean`                | `false` | Keep the inspector's output out of your terminal. Startup errors include its stderr       |
 
 ### InspectorInstance
 
@@ -89,9 +124,11 @@ The returned instance provides:
 
 | Property  | Type                  | Description                         |
 | --------- | --------------------- | ----------------------------------- |
-| `url`     | `string`              | Full URL where inspector is running |
-| `process` | `ChildProcess`        | Underlying Node.js child process    |
-| `stop()`  | `() => Promise<void>` | Gracefully stop the inspector       |
+| `url`     | `string`              | Full URL where inspector is running, including its session token |
+| `port`    | `number`              | The port the inspector listens on   |
+| `process` | `ChildProcess`        | Underlying Node.js child process. With `reuse: true`, absent when an MCPJam was already running |
+| `started` | `boolean`             | With `reuse: true` only: false when an MCPJam was already running |
+| `stop()`  | `() => Promise<void>` | Remove the server this launch added, then stop the inspector (with `reuse: true`, only once no other dev command uses it) |
 
 ### Example: Auto-launch with your MCP server
 
@@ -149,7 +186,7 @@ export default defineConfig({
 });
 ```
 
-When you run `npm run dev`, the inspector automatically launches and connects to your server.
+When you run `npm run dev`, the inspector launches and your server appears in your open MCPJam tab. The plugin reuses a running MCPJam by default, so two projects' dev servers share one MCPJam, and restarting Vite after a config change keeps the same server entry.
 
 ### Plugin Options
 
@@ -158,6 +195,11 @@ When you run `npm run dev`, the inspector automatically launches and connects to
 | `server`     | `object`  | -                | Server configuration (same as programmatic API) |
 | `defaultTab` | `string`  | `"playground"`   | Initial tab to navigate to                      |
 | `autoLaunch` | `boolean` | `true`           | Launch inspector when Vite starts               |
+| `silent`     | `boolean` | `false`          | Keep the inspector's output out of your terminal |
+| `port`       | `number`  | `6274`           | Preferred port                                  |
+| `strictPort` | `boolean` | `false`          | Fail instead of moving to another port          |
+| `open`       | `boolean` | `true`           | Open the browser when the plugin starts MCPJam  |
+| `reuse`      | `boolean` | `true`           | Share one MCPJam between dev commands           |
 
 ## Feedback Wanted
 

@@ -1338,6 +1338,117 @@ describe("OAuthConformanceTest", () => {
     },
   );
 
+  it.each([
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+    "2026-07-28",
+  ] as const)(
+    "grades a server that requires sign-in when the caller passes its saved token as a custom header, on %s",
+    async (protocolVersion) => {
+      const serverUrl = "https://secured.example.com/mcp";
+      const serverRequests: Array<{ authorization: string | null; trace: string | null }> = [];
+
+      // The local Inspector hands the suite a connection's headers, which
+      // carry its saved sign-in. The server accepts that token and challenges
+      // a request without one, as every server requiring sign-in does.
+      const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+        const url = String(input);
+        if (url !== serverUrl) {
+          return new Response(null, { status: 404 });
+        }
+        const headers = new Headers(init?.headers);
+        const authorization = headers.get("Authorization");
+        serverRequests.push({ authorization, trace: headers.get("X-Trace") });
+        if (authorization === "Bearer saved-token") {
+          return createMcpInitializeResponse(protocolVersion);
+        }
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "WWW-Authenticate":
+              'Bearer resource_metadata="https://secured.example.com/.well-known/oauth-protected-resource/mcp"',
+          },
+        });
+      }) as unknown as typeof fetch;
+
+      const test = new OAuthConformanceTest({
+        serverUrl,
+        protocolVersion,
+        registrationStrategy: "dcr",
+        customHeaders: {
+          authorization: "Bearer saved-token",
+          "X-Trace": "kept",
+        },
+        fetchFn,
+      });
+
+      const result = await test.run();
+
+      expect(result.outcome).not.toBe("not-applicable");
+      expect(
+        result.steps.some((step) => step.skipReason === "not-applicable"),
+      ).toBe(false);
+      expect(serverRequests.length).toBeGreaterThan(0);
+      expect(
+        serverRequests.some(
+          (request) => request.authorization === "Bearer saved-token",
+        ),
+      ).toBe(false);
+      // Only the credential is dropped; the caller's other headers still go.
+      expect(serverRequests.every((request) => request.trace === "kept")).toBe(
+        true,
+      );
+    },
+  );
+
+  it.each(["2025-06-18", "2025-11-25", "2026-07-28"] as const)(
+    "keeps grading a server whose pre-flight got 401 when the flow's probe gets 200, on %s",
+    async (protocolVersion) => {
+      const serverUrl = "https://secured.example.com/mcp";
+      const requestedUrls: string[] = [];
+      let tokenlessRequests = 0;
+
+      // The pre-flight is challenged, so sign-in is required; the flow's own
+      // probe then gets a 200. One 200 cannot undo the 401.
+      const fetchFn: typeof fetch = jest.fn(async (input) => {
+        const url = String(input);
+        requestedUrls.push(url);
+        if (url !== serverUrl) {
+          return new Response(null, { status: 404 });
+        }
+        tokenlessRequests += 1;
+        if (tokenlessRequests === 1) {
+          return new Response(null, {
+            status: 401,
+            headers: { "WWW-Authenticate": "Bearer" },
+          });
+        }
+        return createMcpInitializeResponse(protocolVersion);
+      }) as unknown as typeof fetch;
+
+      const test = new OAuthConformanceTest({
+        serverUrl,
+        protocolVersion,
+        registrationStrategy: "dcr",
+        fetchFn,
+      });
+
+      const result = await test.run();
+
+      expect(result.outcome).not.toBe("not-applicable");
+      expect(
+        result.steps.some((step) => step.skipReason === "not-applicable"),
+      ).toBe(false);
+      expect(result.steps.map((step) => step.step)).toContain(
+        "received_401_unauthorized",
+      );
+      expect(
+        requestedUrls.some((url) => url.includes("oauth-protected-resource")),
+      ).toBe(true);
+    },
+  );
+
   it("fails the 401 step on a 403 Bearer challenge but still runs the flow and the extra checks", async () => {
     const serverUrl = "https://mcp.example.com/mcp";
     const resourceMetadataUrl =

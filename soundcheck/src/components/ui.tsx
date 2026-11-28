@@ -68,30 +68,24 @@ export function Tile({
   );
 }
 
-/**
- * Page-level section with a numbered label, title, and description.
- * Purely structural — no editorial typography.
- */
+/** Page-level section: a quiet title, optional one-line description. */
 export function Section({
-  numeral,
   title,
   description,
-  children
+  children,
+  id
 }: {
-  numeral: string;
   title: string;
   description?: string;
   children: ReactNode;
+  id?: string;
 }) {
   return (
-    <section className="mb-12">
+    <section id={id} className="mt-16 scroll-mt-8">
       <header className="mb-5">
-        <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-          Section {numeral}
-        </div>
-        <h2 className="mt-1.5 text-xl font-semibold text-foreground">{title}</h2>
+        <h2 className="text-sm font-medium text-foreground">{title}</h2>
         {description ? (
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             {description}
           </p>
         ) : null}
@@ -201,60 +195,6 @@ export function HeroStat({
         ) : null}
       </div>
     </div>
-  );
-}
-
-/**
- * Page-level verdict strip — "Go / Hold / Caution / In flight" in one glance.
- */
-export function Verdict({
-  tone,
-  headline,
-  detail
-}: {
-  tone: StatusTone;
-  headline: string;
-  detail: string;
-}) {
-  const label =
-    tone === "success"
-      ? "Go"
-      : tone === "failure"
-        ? "Hold"
-        : tone === "warning"
-          ? "Caution"
-          : tone === "running"
-            ? "In flight"
-            : "Check";
-  return (
-    <Card className={cn("py-5", ACCENT_BORDER[tone])}>
-      <CardContent className="px-5 md:px-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-4">
-            <StatusDot tone={tone} />
-            <div>
-              <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                Release verdict
-              </div>
-              <div className="mt-0.5 flex items-baseline gap-3">
-                <span
-                  className={cn(
-                    "text-2xl md:text-3xl font-semibold tracking-tight",
-                    HERO_TONE[tone]
-                  )}
-                >
-                  {label}.
-                </span>
-                <span className="text-sm text-foreground">{headline}</span>
-              </div>
-            </div>
-          </div>
-          <p className="max-w-md text-xs leading-relaxed text-muted-foreground md:text-right">
-            {detail}
-          </p>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 

@@ -127,6 +127,26 @@ describe("bootBrowserd", () => {
     await p;
     expect(fake.state.envs.MCPJAM_BROWSERD_WINDOW_SIZE).toBeUndefined();
     expect(fake.state.envs.MCPJAM_BROWSERD_HEADLESS).toBeUndefined();
+    expect(fake.state.envs.MCPJAM_BROWSERD_NETWORK).toBeUndefined();
+    expect(fake.state.envs.MCPJAM_BROWSERD_FRESH_PROFILE).toBeUndefined();
+  });
+
+  it("asks for an empty profile when the boot needs a fresh one", async () => {
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, { ...OPTS, freshProfile: true });
+    await tick();
+    fake.emit(READY());
+    await p;
+    expect(fake.state.envs.MCPJAM_BROWSERD_FRESH_PROFILE).toBe("1");
+  });
+
+  it("asks for the public-only network when the session needs it", async () => {
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, { ...OPTS, networkPolicy: "public" });
+    await tick();
+    fake.emit(READY());
+    await p;
+    expect(fake.state.envs.MCPJAM_BROWSERD_NETWORK).toBe("public");
   });
 
   it("reassembles a ready line split across chunks and ignores noise before it", async () => {
@@ -226,7 +246,6 @@ describe("bootBrowserd", () => {
   });
 });
 
-
 /**
  * V-4a. The ready line is where the inspector first learns which wire it is
  * talking to. An older baked daemon prints the pre-V-4a line, and refusing
@@ -265,7 +284,6 @@ describe("the ready line's wire version", () => {
     await expect(p).rejects.toThrow();
   });
 });
-
 
 describe("the X geometry", () => {
   it("is the one the desktop template brings the display up at", () => {
@@ -328,7 +346,6 @@ describe("the X geometry", () => {
     expect(start).toContain("Xvfb :0");
   });
 });
-
 
 /**
  * V-6. Raising the display's sharpness is a MEASUREMENT, not a promise: the

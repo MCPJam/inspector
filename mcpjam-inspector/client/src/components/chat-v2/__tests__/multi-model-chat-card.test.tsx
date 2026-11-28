@@ -5,6 +5,11 @@ import type { UIMessage } from "ai";
 import { MultiModelChatCard } from "../multi-model-chat-card";
 import type { MultiModelCardSummary } from "../model-compare-card-header";
 
+const traceCost = vi.hoisted(() => ({ on: false }));
+vi.mock("@/hooks/useTraceCostEnabled", () => ({
+  useTraceCostEnabled: () => traceCost.on,
+}));
+
 vi.mock("use-stick-to-bottom", () => {
   const StickToBottomComponent = ({
     children,
@@ -215,6 +220,7 @@ describe("MultiModelChatCard", () => {
   });
   beforeEach(() => {
     vi.clearAllMocks();
+    traceCost.on = false;
     mockUseChatSession.messages = [];
     mockUseChatSession.setMessages = vi.fn();
     mockUseChatSession.sendMessage = vi.fn();
@@ -346,6 +352,38 @@ describe("MultiModelChatCard", () => {
     });
   });
 
+  it("does not stop the next turn when only the session's stop function changes", async () => {
+    const card = (stopRequestId: number) => (
+      <MultiModelChatCard
+        model={model}
+        comparisonSummaries={[]}
+        selectedServers={[]}
+        selectedServerInstructions={{}}
+        broadcastRequest={null}
+        stopRequestId={stopRequestId}
+        placeholder="Message"
+        reasoningDisplayMode="inline"
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+        onSummaryChange={vi.fn()}
+      />
+    );
+    const stopForPress = mockUseChatSession.stop;
+    const { rerender } = render(card(0));
+    rerender(card(1));
+    await waitFor(() => {
+      expect(stopForPress).toHaveBeenCalledTimes(1);
+    });
+
+    // The chat session hands back a new `stop` whenever its status or
+    // messages change, such as when the next turn starts after a Stop.
+    const stopForNextTurn = vi.fn();
+    mockUseChatSession.stop = stopForNextTurn;
+    rerender(card(1));
+
+    expect(stopForNextTurn).not.toHaveBeenCalled();
+    expect(stopForPress).toHaveBeenCalledTimes(1);
+  });
+
   it("card root has no forced min-height so it can shrink inside a short grid row", () => {
     render(
       <MultiModelChatCard
@@ -405,4 +443,53 @@ describe("MultiModelChatCard", () => {
     expect(props.displayMode).toBeUndefined();
     expect(props.onDisplayModeChange).toBeUndefined();
   });
+
+  it.each([true, false])(
+    "puts the latest turn's cost on its summary only while trace-cost is %s",
+    (on) => {
+      traceCost.on = on;
+      mockUseChatSession.messages = seedMessages;
+      const llm = (promptIndex: number, amountUsd: number) => ({
+        id: `p${promptIndex}-llm`,
+        name: "LLM",
+        category: "llm" as const,
+        startMs: 0,
+        endMs: 10,
+        promptIndex,
+        cost: {
+          calculationVersion: 1,
+          currency: "USD" as const,
+          completeness: "complete" as const,
+          amountUsd,
+          source: "provider_reported" as const,
+        },
+      });
+      Object.assign(mockUseChatSession, {
+        liveTraceEnvelope: {
+          traceVersion: 1,
+          messages: [],
+          spans: [llm(0, 0.5), llm(1, 0.002)],
+          turns: [0, 1].map((promptIndex) => ({
+            turnId: `turn-${promptIndex}`,
+            promptIndex,
+            durationMs: 10,
+          })),
+        },
+      });
+      const onSummaryChange = vi.fn();
+
+      renderCard({ onSummaryChange });
+
+      const summary = onSummaryChange.mock.calls.at(-1)?.[0];
+      if (on) {
+        expect(summary.cost).toMatchObject({
+          knownSubtotalUsd: 0.002,
+          completeness: "complete",
+          totalCalls: 1,
+        });
+      } else {
+        expect(summary).not.toHaveProperty("cost");
+      }
+    },
+  );
 });

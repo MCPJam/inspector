@@ -28,6 +28,9 @@ function createTestApp(): Hono {
   app.get("/api/mcp/servers/rpc/stream", (c) =>
     c.json({ message: "sse route" }),
   );
+  app.get("/api/mcp/subscribe", (c) => c.json({ message: "command bus" }));
+  app.get("/api/mcp/subscriptions/stream", (c) => c.json({ message: "sse" }));
+  app.post("/api/mcp/subscriptions/state", (c) => c.json({ message: "state" }));
 
   // Unprotected routes
   app.get("/health", (c) => c.json({ status: "ok" }));
@@ -53,6 +56,15 @@ function createTestApp(): Hono {
   app.post("/api/apps/files/upload-file", (c) =>
     c.json({ fileId: "file_abc" }),
   );
+
+  // Web account routes: hosted ones verify their own bearer.
+  app.post("/api/web-clients/accounts/acc_1/sign-in", (c) =>
+    c.json({ ok: true }),
+  );
+  app.post("/api/web-clients/reconnect/req_1/handback", (c) =>
+    c.json({ ok: true }),
+  );
+  app.post("/api/web-clients/local-connectors", (c) => c.json({ ok: true }));
 
   // Non-API routes (HTML pages, etc.)
   app.get("/", (c) => c.html("<html>Home</html>"));
@@ -101,12 +113,27 @@ describe("sessionAuthMiddleware", () => {
       expect(data.message).toBe("protected route");
     });
 
-    it("allows request with valid token in query parameter", async () => {
-      const res = await app.request(`/api/mcp/test?_token=${validToken}`);
+    it("allows an EventSource route with a valid token in the query parameter", async () => {
+      for (const path of [
+        "/api/mcp/servers/rpc/stream",
+        "/api/mcp/subscribe",
+        "/api/mcp/subscriptions/stream",
+      ]) {
+        const res = await app.request(`${path}?_token=${validToken}`);
+        expect(res.status).toBe(200);
+      }
+    });
 
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data.message).toBe("protected route");
+    it("refuses a query-parameter token anywhere else", async () => {
+      const get = await app.request(`/api/mcp/test?_token=${validToken}`);
+      expect(get.status).toBe(401);
+      expect((await get.json()).message).toBe("Session token required.");
+      // A sibling of an EventSource route is not one.
+      const post = await app.request(
+        `/api/mcp/subscriptions/state?_token=${validToken}`,
+        { method: "POST" },
+      );
+      expect(post.status).toBe(401);
     });
 
     it("prefers header over query parameter when both present", async () => {
@@ -122,7 +149,9 @@ describe("sessionAuthMiddleware", () => {
     });
 
     it("falls back to query parameter when header is missing", async () => {
-      const res = await app.request(`/api/mcp/test?_token=${validToken}`);
+      const res = await app.request(
+        `/api/mcp/servers/rpc/stream?_token=${validToken}`,
+      );
 
       expect(res.status).toBe(200);
     });
@@ -228,6 +257,28 @@ describe("sessionAuthMiddleware", () => {
   });
 
   describe("unprotected prefixes", () => {
+    it("lets hosted web account routes check their own bearer", async () => {
+      const res = await app.request("/api/web-clients/accounts/acc_1/sign-in", {
+        method: "POST",
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("lets the handback route check its own bearer", async () => {
+      const res = await app.request(
+        "/api/web-clients/reconnect/req_1/handback",
+        { method: "POST" },
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("keeps the local Inspector's connector routes behind the session token", async () => {
+      const res = await app.request("/api/web-clients/local-connectors", {
+        method: "POST",
+      });
+      expect(res.status).toBe(401);
+    });
+
     it("allows /assets/ without token", async () => {
       const res = await app.request("/assets/main.js");
 
@@ -406,6 +457,15 @@ describe("scrubTokenFromUrl", () => {
       "<-- GET /bench/results/SENTINEL_hex?x=1",
       "<-- GET /bench/results/[redacted]?x=1",
     ],
+    [
+      "<-- POST /api/web-clients/local-connectors/SENTINEL_conn/turn",
+      "<-- POST /api/web-clients/local-connectors/[redacted]/turn",
+    ],
+    [
+      "--> DELETE /api/web-clients/local-connectors/SENTINEL_conn 204 1ms",
+      "--> DELETE /api/web-clients/local-connectors/[redacted] 204 1ms",
+    ],
+    ["<-- POST /mcp/SENTINEL_conn", "<-- POST /mcp/[redacted]"],
     [
       "<-- GET /files/a.png?X-Amz-Signature=SENTINEL_sig&X-Amz-Credential=SENTINEL_cred",
       "<-- GET /files/a.png?X-Amz-Signature=[redacted]&X-Amz-Credential=[redacted]",

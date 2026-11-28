@@ -69,6 +69,15 @@ describe("WidgetReplay", () => {
     expect(screen.getByTestId("mcp-apps-renderer")).toBeInTheDocument();
   });
 
+  it("shows a note instead of loading an App its account could not confirm", () => {
+    mockDetectUIType.mockReturnValue("mcp-apps");
+    render(<WidgetReplay {...baseProps} resourceRefused />);
+    expect(screen.queryByTestId("mcp-apps-renderer")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/could not confirm the account it was made with/),
+    ).toBeInTheDocument();
+  });
+
   it("routes MCP-Apps-only widgets through MCPAppsRenderer", () => {
     mockDetectUIType.mockReturnValue("mcp-apps");
     render(<WidgetReplay {...baseProps} />);

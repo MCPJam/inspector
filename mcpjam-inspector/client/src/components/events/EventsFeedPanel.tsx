@@ -1,12 +1,12 @@
-import { Badge } from "@mcpjam/design-system/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@mcpjam/design-system/collapsible";
 import { cn } from "@mcpjam/design-system/cn";
-import { AlertTriangle, Inbox } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import type {
   EventsFeedEntryView,
   EventsRejectionView,
 } from "@/shared/events-api";
-import type { EventsFeedGap, EventsFeedStatus } from "./use-events-feed";
-import { formatTime, safeJson } from "./event-utils";
+import type { EventsFeedStatus } from "./use-events-feed";
+import { describeTermination, formatTime, safeJson } from "./event-utils";
 
 const STATUS_LABELS: Record<EventsFeedStatus, string> = {
   idle: "Idle",
@@ -68,60 +68,31 @@ function Flag({
   );
 }
 
-function FeedEntryRow({
+export function EventOccurrenceDetails({
   entry,
   subscriptionLabel,
 }: {
   entry: EventsFeedEntryView;
   subscriptionLabel?: string;
 }) {
-  const isEvent = entry.kind === "event";
   return (
-    <li
-      className="space-y-1.5 border-b border-border py-2 last:border-b-0"
-      data-testid="feed-entry"
-    >
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-        <span className="font-mono text-muted-foreground">#{entry.seq}</span>
-        <Badge
-          variant={isEvent ? "secondary" : "outline"}
-          className="font-mono text-[10px]"
-        >
-          {entry.kind}
-        </Badge>
-        {entry.name ? (
-          <span className="font-mono font-semibold text-foreground">
-            {entry.name}
-          </span>
-        ) : null}
-        <span className="text-muted-foreground">via {entry.origin}</span>
+    <Collapsible asChild defaultOpen>
+    <li className="border-b border-border last:border-b-0" data-testid="feed-entry">
+      <CollapsibleTrigger className="group flex w-full items-center gap-2 py-3 text-left text-xs">
+        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
+        <span className="min-w-0 flex-1 break-all font-mono font-medium">{entry.name ?? entry.kind}</span>
         {entry.namespace !== "live" ? (
-          <span
-            className="rounded-sm border border-info/40 bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground"
-            data-testid="namespace-badge"
-          >
-            {entry.namespace}
-          </span>
+          <span className="text-[10px] text-muted-foreground" data-testid="namespace-badge">Test</span>
         ) : null}
-        {entry.idConflict ? (
-          <Flag title="The server sent this event under a different subscription ID. The event was still recorded.">
-            Subscription mismatch
-          </Flag>
-        ) : null}
-        {entry.webhookIdMismatch ? (
-          <Flag title="This delivery names a different event than the one it carries. The event was still recorded.">
-            Delivery mismatch
-          </Flag>
-        ) : null}
-        {entry.quarantined || entry.kind === "quarantined" ? (
-          <Flag title="The payload did not match the event's payload schema; nothing was run.">
-            Quarantined
-          </Flag>
-        ) : null}
-        <span className="ml-auto text-[10px] text-muted-foreground">
-          {formatTime(entry.receivedAt)}
-        </span>
-      </div>
+        {entry.idConflict ? <Flag title="The server sent a different subscription ID. The event was still recorded.">Subscription mismatch</Flag> : null}
+        {entry.quarantined || entry.kind === "quarantined" ? <Flag title="The payload did not match the event schema; nothing was run.">Quarantined</Flag> : null}
+        <span className="shrink-0 text-[10px] text-muted-foreground">{formatTime(entry.receivedAt)}</span>
+      </CollapsibleTrigger>
+      {entry.kind === "terminated" ? <TerminationLine error={entry.error} /> : entry.error ? (
+        <p className="pb-2 text-[11px] text-destructive">{entry.error.code}: {entry.error.message}</p>
+      ) : null}
+      <CollapsibleContent className="space-y-3 pb-3 pl-5">
+        <EventDataView data={entry.data} />
       <dl className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground">
         {entry.eventId ? (
           <div>
@@ -159,75 +130,22 @@ function FeedEntryRow({
           </div>
         ) : null}
       </dl>
-      {entry.error ? (
-        <p className="text-[11px] text-destructive">
-          {entry.error.code}: {entry.error.message}
-        </p>
-      ) : null}
-      {entry.data !== undefined ? (
-        <details open={isEvent}>
-          <summary className="cursor-pointer text-[10px] text-muted-foreground">
-            Data (untrusted)
-          </summary>
-          <div className="mt-1">
-            <EventDataView data={entry.data} />
-          </div>
-        </details>
-      ) : null}
+      </CollapsibleContent>
     </li>
+    </Collapsible>
   );
 }
 
-export function EventsFeedPanel({
-  entries,
-  gaps,
-  status,
-  error,
-  labelFor,
-}: {
-  /** Oldest first; rendered newest first. */
-  entries: EventsFeedEntryView[];
-  gaps: EventsFeedGap[];
-  status: EventsFeedStatus;
-  error: string | null;
-  labelFor: (entry: EventsFeedEntryView) => string | undefined;
-}) {
-  const newestFirst = [...entries].reverse();
+function TerminationLine({ error }: { error: EventsFeedEntryView["error"] }) {
+  const reason = describeTermination(error);
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <FeedStatusBadge status={status} />
-        {error ? (
-          <span className="text-[11px] text-destructive">{error}</span>
-        ) : null}
-      </div>
-      {gaps.map((gap) => (
-        <p
-          key={`${gap.fromSeq}-${gap.toSeq}`}
-          className="flex items-center gap-1.5 rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground"
-        >
-          <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-          Entries #{gap.fromSeq} to #{gap.toSeq} are no longer in the inbox's
-          history.
-        </p>
-      ))}
-      {newestFirst.length === 0 ? (
-        <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
-          <Inbox className="h-4 w-4" />
-          No deliveries yet. Events appear here as they arrive.
-        </div>
-      ) : (
-        <ul>
-          {newestFirst.map((entry) => (
-            <FeedEntryRow
-              key={entry.seq}
-              entry={entry}
-              subscriptionLabel={labelFor(entry)}
-            />
-          ))}
-        </ul>
-      )}
-    </div>
+    <p className="text-[11px] text-foreground" data-testid="termination-reason">
+      <span className="font-medium">{reason.label}</span>
+      {reason.hint ? ` · ${reason.hint}` : ""}
+      {error ? (
+        <span className="font-mono text-muted-foreground"> ({error.code})</span>
+      ) : null}
+    </p>
   );
 }
 

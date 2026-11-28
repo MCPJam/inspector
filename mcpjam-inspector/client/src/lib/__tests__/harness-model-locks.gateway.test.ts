@@ -49,9 +49,9 @@ function verdicts(rows: ModelDefinition[], harnessId: string) {
 }
 
 const MAP_REASON = (label: string) =>
-  `Map this gateway model to a model in Organization models to use it with ${label}.`;
+  `Map this provider model to a model in Organization models to use it with ${label}.`;
 const API_REASON = (api: string, label: string) =>
-  `This gateway doesn't serve ${api}, which ${label} needs. Turn on ${api} for it in Organization models, or choose another connection.`;
+  `This provider doesn't serve ${api}, which ${label} needs. Turn on ${api} for it in Organization models, or choose another connection.`;
 
 describe("a gateway that serves Anthropic Messages", () => {
   const rows = gatewayRows(["chatCompletions", "anthropicMessages"]);

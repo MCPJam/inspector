@@ -1,207 +1,41 @@
 import { readUiResources } from "./resource-reads.js";
 import { withAbortSignalFetch } from "../abort-signal.js";
+import { http1Fetch } from "../http1-fetch.js";
 import { captureConformanceRun } from "../telemetry.js";
-import {
-  AUTHORIZATION_REQUIRED_MESSAGE,
-  isAuthorizationRefusal,
-} from "../conformance-authorization.js";
-import {
-  credentialsFromServerConfig,
-  loginRequiredDetails,
-} from "../conformance-login.js";
-import {
-  blockedByDetails,
-  blockedByMessage,
-} from "../conformance-blocked.js";
+import { isAuthorizationRefusal } from "../conformance-authorization.js";
+import { credentialsFromServerConfig } from "../conformance-login.js";
 import {
   buildOutcomeSummary,
   decideConformanceOutcome,
   isUnrunCheck,
 } from "../conformance-outcome.js";
-import { Buffer } from "node:buffer";
-import {
-  MCP_UI_RESOURCE_MIME_TYPE,
-  type ListToolsResult,
-  type MCPReadResourceResult,
-  type MCPResource,
-} from "../mcp-client-manager/index.js";
-import { deepJsonSafe } from "../json-safe.js";
+import type { MCPResource } from "../mcp-client-manager/index.js";
 import { withEphemeralClient } from "../operations.js";
 import {
   MCP_APPS_CHECK_IDS,
   MCP_APPS_CHECK_CATEGORIES,
   type MCPAppsCheckId,
   type MCPAppsCheckResult,
-  type MCPAppsSkipReason,
   type MCPAppsConformanceConfig,
   type MCPAppsConformanceResult,
-  type MCPAppsReadinessWarning,
   type MCPAppsResourceReadOutcome,
   type NormalizedMCPAppsConformanceConfig,
 } from "./types.js";
 import { normalizeMCPAppsConformanceConfig } from "./validation.js";
+import {
+  blockedSkip,
+  errorMessage,
+  failedResult,
+  loginSkip,
+  skippedResult,
+} from "./check-results.js";
+import {
+  gradeMCPApps,
+  planMCPAppsResourceReads,
+  type MCPListedTool,
+} from "./grading.js";
 
-// Exported so `tests/conformance-catalog.test.ts` can assert the browser-safe
-// catalog still matches these canonical strings.
-export const APPS_CHECK_METADATA: Record<
-  MCPAppsCheckId,
-  Pick<MCPAppsCheckResult, "id" | "category" | "title" | "description">
-> = {
-  "ui-tools-present": {
-    id: "ui-tools-present",
-    category: "tools",
-    title: "UI Tools Present",
-    description:
-      "At least one tool advertises MCP Apps UI metadata through _meta.ui.resourceUri or the deprecated ui/resourceUri field.",
-  },
-  "ui-tool-metadata-valid": {
-    id: "ui-tool-metadata-valid",
-    category: "tools",
-    title: "UI Tool Metadata Valid",
-    description:
-      "Tools with UI metadata use a ui:// resource URI and valid visibility values.",
-  },
-  "ui-tool-input-schema-valid": {
-    id: "ui-tool-input-schema-valid",
-    category: "tools",
-    title: "UI Tool Input Schema Valid",
-    description:
-      "UI tools provide a non-null JSON Schema object as their inputSchema.",
-  },
-  "ui-listed-resources-valid": {
-    id: "ui-listed-resources-valid",
-    category: "resources",
-    title: "Listed UI Resources Valid",
-    description:
-      "UI resources returned by resources/list use ui:// URIs and the MCP Apps HTML MIME type.",
-  },
-  "ui-resources-readable": {
-    id: "ui-resources-readable",
-    category: "resources",
-    title: "UI Resources Readable",
-    description:
-      "Every UI resource referenced by a tool or listed by the server can be fetched with resources/read.",
-  },
-  "ui-resource-contents-valid": {
-    id: "ui-resource-contents-valid",
-    category: "resources",
-    title: "UI Resource Contents Valid",
-    description:
-      "UI resource contents use the MCP Apps HTML MIME type and provide exactly one HTML payload via text or blob.",
-  },
-  "ui-resource-meta-valid": {
-    id: "ui-resource-meta-valid",
-    category: "resources",
-    title: "UI Resource Metadata Valid",
-    description:
-      "UI resource metadata uses valid csp, permissions, domain, and prefersBorder shapes.",
-  },
-};
-
-type UIToolReference = {
-  name: string;
-  resourceUri: string;
-  visibility?: unknown;
-  usesLegacyField: boolean;
-  hasNestedField: boolean;
-  hasLegacyField: boolean;
-};
-
-type MCPListedTool = NonNullable<ListToolsResult["tools"]>[number];
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function passedResult(
-  id: MCPAppsCheckId,
-  durationMs: number,
-  details?: Record<string, unknown>,
-  warnings?: string[],
-): MCPAppsCheckResult {
-  return {
-    ...APPS_CHECK_METADATA[id],
-    status: "passed",
-    durationMs,
-    ...(details ? { details } : {}),
-    ...(warnings && warnings.length > 0 ? { warnings } : {}),
-  };
-}
-
-function failedResult(
-  id: MCPAppsCheckId,
-  durationMs: number,
-  message: string,
-  details?: Record<string, unknown>,
-  rawError?: unknown,
-  warnings?: string[],
-): MCPAppsCheckResult {
-  return {
-    ...APPS_CHECK_METADATA[id],
-    status: "failed",
-    durationMs,
-    error: {
-      message,
-      // Raw thrown values are often class instances (e.g. MCPAuthError), and
-      // the persistence layer rejects those wholesale — one live instance in
-      // `errorDetails` used to destroy the entire finished report at the
-      // Convex write. Reports carry plain JSON data only.
-      ...(rawError === undefined ? {} : { details: deepJsonSafe(rawError) }),
-    },
-    ...(details ? { details } : {}),
-    ...(warnings && warnings.length > 0 ? { warnings } : {}),
-  };
-}
-
-function skippedResult(
-  id: MCPAppsCheckId,
-  skipReason: MCPAppsSkipReason,
-  message: string,
-  details?: Record<string, unknown>,
-): MCPAppsCheckResult {
-  return {
-    ...APPS_CHECK_METADATA[id],
-    status: "skipped",
-    skipReason,
-    durationMs: 0,
-    error: { message },
-    ...(details ? { details } : {}),
-  };
-}
-
-/** A check that never ran because `blockerId` broke first. */
-function blockedSkip(
-  id: MCPAppsCheckId,
-  blockerId: MCPAppsCheckId,
-): MCPAppsCheckResult {
-  return skippedResult(
-    id,
-    "could-not-run",
-    blockedByMessage(APPS_CHECK_METADATA[blockerId].title),
-    blockedByDetails(blockerId),
-  );
-}
-
-/** A check a 401 stopped: the caller's login to fix, at no cost. */
-function loginSkip(
-  id: MCPAppsCheckId,
-  config: NormalizedMCPAppsConformanceConfig,
-  error: unknown,
-): MCPAppsCheckResult {
-  return skippedResult(
-    id,
-    "could-not-run",
-    AUTHORIZATION_REQUIRED_MESSAGE,
-    loginRequiredDetails(
-      error,
-      credentialsFromServerConfig(config.serverConfig),
-    ),
-  );
-}
+export { APPS_CHECK_METADATA } from "./check-results.js";
 
 function buildCheckSelection(
   config: NormalizedMCPAppsConformanceConfig,
@@ -229,175 +63,6 @@ function summarizeChecks(checks: MCPAppsCheckResult[]) {
 
 const buildSummary = buildOutcomeSummary;
 
-function extractUiToolReference(tool: MCPListedTool): UIToolReference | undefined {
-  const toolMeta = isPlainObject(tool._meta) ? tool._meta : undefined;
-  const nested = isPlainObject(toolMeta?.ui) ? toolMeta.ui : undefined;
-  const nestedResourceUri =
-    typeof nested?.resourceUri === "string" ? nested.resourceUri : undefined;
-  const legacyResourceUri =
-    typeof toolMeta?.["ui/resourceUri"] === "string"
-      ? (toolMeta["ui/resourceUri"] as string)
-      : undefined;
-
-  if (!nestedResourceUri && !legacyResourceUri) {
-    return undefined;
-  }
-
-  return {
-    name: tool.name,
-    resourceUri: nestedResourceUri ?? legacyResourceUri!,
-    visibility: nested?.visibility,
-    usesLegacyField: !nestedResourceUri && !!legacyResourceUri,
-    hasNestedField: !!nestedResourceUri,
-    hasLegacyField: !!legacyResourceUri,
-  };
-}
-
-function getListedUiResources(resources: MCPResource[]): MCPResource[] {
-  return resources.filter((resource) => {
-    const uri = typeof resource.uri === "string" ? resource.uri : "";
-    return (
-      uri.startsWith("ui://") || resource.mimeType === MCP_UI_RESOURCE_MIME_TYPE
-    );
-  });
-}
-
-function decodeHtmlPayload(content: Record<string, unknown>): {
-  hasText: boolean;
-  hasBlob: boolean;
-  html: string;
-} {
-  const text = typeof content.text === "string" ? content.text : undefined;
-  const blob = typeof content.blob === "string" ? content.blob : undefined;
-
-  if (text !== undefined) {
-    return {
-      hasText: true,
-      hasBlob: false,
-      html: text,
-    };
-  }
-
-  if (blob !== undefined) {
-    return {
-      hasText: false,
-      hasBlob: true,
-      html: Buffer.from(blob, "base64").toString("utf8"),
-    };
-  }
-
-  return {
-    hasText: false,
-    hasBlob: false,
-    html: "",
-  };
-}
-
-function looksLikeHtmlDocument(html: string): boolean {
-  const normalized = html.trim().toLowerCase();
-  return (
-    normalized.startsWith("<!doctype html") ||
-    normalized.includes("<html")
-  );
-}
-
-function validateUiMeta(
-  meta: unknown,
-  uri: string,
-  contentIndex: number,
-): string[] {
-  if (meta === undefined) {
-    return [];
-  }
-
-  if (!isPlainObject(meta)) {
-    return [`${uri} contents[${contentIndex}] _meta must be an object`];
-  }
-
-  const ui = meta.ui;
-  if (ui === undefined) {
-    return [];
-  }
-
-  if (!isPlainObject(ui)) {
-    return [`${uri} contents[${contentIndex}] _meta.ui must be an object`];
-  }
-
-  const violations: string[] = [];
-  const csp = ui.csp;
-  if (csp !== undefined) {
-    if (!isPlainObject(csp)) {
-      violations.push(`${uri} contents[${contentIndex}] _meta.ui.csp must be an object`);
-    } else {
-      for (const key of [
-        "connectDomains",
-        "resourceDomains",
-        "frameDomains",
-        "baseUriDomains",
-      ] as const) {
-        const value = csp[key];
-        if (
-          value !== undefined &&
-          (!Array.isArray(value) ||
-            value.some((entry) => typeof entry !== "string" || entry.trim().length === 0))
-        ) {
-          violations.push(
-            `${uri} contents[${contentIndex}] _meta.ui.csp.${key} must be an array of non-empty strings`,
-          );
-        }
-      }
-    }
-  }
-
-  const permissions = ui.permissions;
-  if (permissions !== undefined) {
-    if (!isPlainObject(permissions)) {
-      violations.push(
-        `${uri} contents[${contentIndex}] _meta.ui.permissions must be an object`,
-      );
-    } else {
-      const allowedPermissions = new Set([
-        "camera",
-        "microphone",
-        "geolocation",
-        "clipboardWrite",
-      ]);
-      for (const [key, value] of Object.entries(permissions)) {
-        if (!allowedPermissions.has(key)) {
-          violations.push(
-            `${uri} contents[${contentIndex}] _meta.ui.permissions.${key} is not a recognized permission`,
-          );
-          continue;
-        }
-        if (!isPlainObject(value)) {
-          violations.push(
-            `${uri} contents[${contentIndex}] _meta.ui.permissions.${key} must be an object`,
-          );
-        }
-      }
-    }
-  }
-
-  if (ui.domain !== undefined) {
-    if (typeof ui.domain !== "string" || ui.domain.trim().length === 0) {
-      violations.push(
-        `${uri} contents[${contentIndex}] _meta.ui.domain must be a non-empty string`,
-      );
-    }
-  }
-
-  if (
-    ui.prefersBorder !== undefined &&
-    typeof ui.prefersBorder !== "boolean"
-  ) {
-    violations.push(
-      `${uri} contents[${contentIndex}] _meta.ui.prefersBorder must be a boolean`,
-    );
-  }
-
-  return violations;
-}
-
 function buildConnectionFailureResult(
   config: NormalizedMCPAppsConformanceConfig,
   error: unknown,
@@ -413,7 +78,13 @@ function buildConnectionFailureResult(
 
   for (const checkId of selectedCheckIds) {
     if (authorizationRefused) {
-      checks.push(loginSkip(checkId, config, error));
+      checks.push(
+        loginSkip(
+          checkId,
+          credentialsFromServerConfig(config.serverConfig),
+          error,
+        ),
+      );
     } else if (checkId === failureCheckId) {
       checks.push(
         failedResult(
@@ -477,14 +148,15 @@ export class MCPAppsConformanceTest {
   async run(): Promise<MCPAppsConformanceResult> {
     const signal = this.config.signal;
     signal?.throwIfAborted();
-    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
+    if (!this.suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "apps", mode: "single" });
     const serverConfig = this.config.serverConfig;
     const runConfig =
       signal && "url" in serverConfig
         ? {
             ...serverConfig,
             baseFetch: withAbortSignalFetch(
-              serverConfig.baseFetch ?? fetch,
+              serverConfig.baseFetch ?? http1Fetch,
               signal
             ),
           }
@@ -497,9 +169,6 @@ export class MCPAppsConformanceTest {
         runConfig,
         async (manager, serverId) => {
           signal?.throwIfAborted();
-          const checks: MCPAppsCheckResult[] = [];
-          // Advice reported beside the verdict rather than as check warnings.
-          const readiness: MCPAppsReadinessWarning[] = [];
           let tools: MCPListedTool[] = [];
           let resources: MCPResource[] = [];
           let toolsError: unknown;
@@ -527,552 +196,35 @@ export class MCPAppsConformanceTest {
           }
 
           signal?.throwIfAborted();
-          const uiTools = tools
-            .map((tool) => extractUiToolReference(tool))
-            .filter((tool): tool is UIToolReference => tool !== undefined);
-          const listedUiResources = getListedUiResources(resources);
-          const listedUiResourceUris = new Set(
-            listedUiResources
-              .map((resource) => resource.uri)
-              .filter((uri): uri is string => typeof uri === "string"),
-          );
-          const resourceUrisToRead = Array.from(
-            new Set([
-              ...uiTools.map((tool) => tool.resourceUri),
-              ...listedUiResourceUris,
-            ]),
-          );
+          const plan = planMCPAppsResourceReads(tools, resources);
 
           let readOutcomes: MCPAppsResourceReadOutcome[] = [];
           if (
             (selectedCheckIds.has("ui-resources-readable") ||
               selectedCheckIds.has("ui-resource-contents-valid") ||
               selectedCheckIds.has("ui-resource-meta-valid")) &&
-            resourceUrisToRead.length > 0
+            plan.uris.length > 0
           ) {
             readOutcomes = await readUiResources(
               manager,
               serverId,
-              resourceUrisToRead,
-              uiTools,
-              listedUiResourceUris,
+              plan.uris,
+              plan.uiTools,
+              plan.listedUiResourceUris,
               signal
             );
           }
 
           signal?.throwIfAborted();
-          if (selectedCheckIds.has("ui-tools-present")) {
-            const stepStartedAt = Date.now();
-            if (toolsError) {
-              checks.push(
-                isAuthorizationRefusal(toolsError)
-                  ? loginSkip("ui-tools-present", this.config, toolsError)
-                  : failedResult(
-                      "ui-tools-present",
-                      Date.now() - stepStartedAt,
-                      `tools/list failed: ${errorMessage(toolsError)}`,
-                      undefined,
-                      toolsError,
-                    ),
-              );
-            } else if (
-              uiTools.length === 0 &&
-              listedUiResources.length === 0 &&
-              !resourcesError &&
-              !tools.some((tool) => {
-                const meta = isPlainObject(tool._meta) ? tool._meta : {};
-                return "ui" in meta || "ui/resourceUri" in meta;
-              })
-            ) {
-              checks.push(
-                skippedResult(
-                  "ui-tools-present",
-                  "not-applicable",
-                  "Not applicable"
-                )
-              );
-            } else if (uiTools.length === 0) {
-              checks.push(
-                failedResult(
-                  "ui-tools-present",
-                  Date.now() - stepStartedAt,
-                  "No tools advertise MCP Apps UI resources",
-                  {
-                    toolCount: tools.length,
-                    listedUiResourceCount: listedUiResources.length,
-                  },
-                ),
-              );
-            } else {
-              checks.push(
-                passedResult("ui-tools-present", Date.now() - stepStartedAt, {
-                  toolCount: tools.length,
-                  uiToolCount: uiTools.length,
-                  uiToolNames: uiTools.map((tool) => tool.name),
-                  resourceUris: uiTools.map((tool) => tool.resourceUri),
-                }),
-              );
-            }
-          }
-
-          if (selectedCheckIds.has("ui-tool-metadata-valid")) {
-            const stepStartedAt = Date.now();
-            if (toolsError) {
-              checks.push(
-                isAuthorizationRefusal(toolsError)
-                  ? loginSkip("ui-tool-metadata-valid", this.config, toolsError)
-                  : selectedCheckIds.has("ui-tools-present")
-                    ? blockedSkip("ui-tool-metadata-valid", "ui-tools-present")
-                    : skippedResult(
-                        "ui-tool-metadata-valid",
-                        "could-not-run",
-                        "Skipping check because tools/list did not complete",
-                      ),
-              );
-            } else if (uiTools.length === 0) {
-              checks.push(
-                skippedResult(
-                  "ui-tool-metadata-valid",
-                  "not-applicable",
-                  "Skipping check because no MCP Apps tools were discovered",
-                ),
-              );
-            } else {
-              const violations: string[] = [];
-              const legacyFieldTools: string[] = [];
-
-              for (const tool of uiTools) {
-                const sourceTool = tools.find((entry) => entry.name === tool.name);
-                const toolMeta = isPlainObject(sourceTool?._meta)
-                  ? sourceTool._meta
-                  : undefined;
-                const nested = isPlainObject(toolMeta?.ui) ? toolMeta.ui : undefined;
-                const nestedResourceUri =
-                  typeof nested?.resourceUri === "string"
-                    ? nested.resourceUri
-                    : undefined;
-                const legacyResourceUri =
-                  typeof toolMeta?.["ui/resourceUri"] === "string"
-                    ? (toolMeta["ui/resourceUri"] as string)
-                    : undefined;
-
-                if (
-                  nestedResourceUri &&
-                  legacyResourceUri &&
-                  nestedResourceUri !== legacyResourceUri
-                ) {
-                  violations.push(
-                    `Tool ${tool.name} defines conflicting ui.resourceUri and ui/resourceUri values`,
-                  );
-                }
-
-                if (!tool.resourceUri.startsWith("ui://")) {
-                  violations.push(
-                    `Tool ${tool.name} references "${tool.resourceUri}", which must use the ui:// scheme`,
-                  );
-                }
-
-                if (nested?.visibility !== undefined) {
-                  if (!Array.isArray(nested.visibility)) {
-                    violations.push(
-                      `Tool ${tool.name} _meta.ui.visibility must be an array`,
-                    );
-                  } else if (nested.visibility.length === 0) {
-                    violations.push(
-                      `Tool ${tool.name} _meta.ui.visibility must not be empty`,
-                    );
-                  } else {
-                    const invalidValues = nested.visibility.filter(
-                      (value) => value !== "model" && value !== "app",
-                    );
-                    if (invalidValues.length > 0) {
-                      violations.push(
-                        `Tool ${tool.name} uses unsupported visibility values: ${invalidValues.join(", ")}`,
-                      );
-                    }
-                  }
-                }
-
-                if (tool.usesLegacyField) {
-                  legacyFieldTools.push(tool.name);
-                }
-              }
-
-              // apps.mdx: the flat field "is deprecated" and "will be removed
-              // before GA". No SHOULD or MAY, so it is a deprecation notice.
-              if (legacyFieldTools.length > 0) {
-                readiness.push({
-                  id: "apps-readiness-deprecated-resource-uri",
-                  checkId: "ui-tool-metadata-valid",
-                  title: "Deprecated ui/resourceUri Field",
-                  severity: "warning",
-                  specStrength: "Deprecation Notice",
-                  message: `${legacyFieldTools.join(", ")} still use _meta["ui/resourceUri"], which will be removed before GA; use _meta.ui.resourceUri instead.`,
-                  details: { tools: legacyFieldTools },
-                  informational: true,
-                });
-              }
-
-              // Tool-name conventions are core MCP rules, so they are advised
-              // on every tool by the protocol suite, not here.
-
-              if (violations.length > 0) {
-                checks.push(
-                  failedResult(
-                    "ui-tool-metadata-valid",
-                    Date.now() - stepStartedAt,
-                    `${violations.length} tool metadata violation(s) found`,
-                    {
-                      violations,
-                      uiToolNames: uiTools.map((tool) => tool.name),
-                    },
-                  ),
-                );
-              } else {
-                checks.push(
-                  passedResult(
-                    "ui-tool-metadata-valid",
-                    Date.now() - stepStartedAt,
-                    {
-                      uiToolCount: uiTools.length,
-                      uiToolNames: uiTools.map((tool) => tool.name),
-                    },
-                  ),
-                );
-              }
-            }
-          }
-
-          if (selectedCheckIds.has("ui-tool-input-schema-valid")) {
-            const stepStartedAt = Date.now();
-            if (toolsError) {
-              checks.push(
-                isAuthorizationRefusal(toolsError)
-                  ? loginSkip("ui-tool-input-schema-valid", this.config, toolsError)
-                  : selectedCheckIds.has("ui-tools-present")
-                    ? blockedSkip("ui-tool-input-schema-valid", "ui-tools-present")
-                    : skippedResult(
-                        "ui-tool-input-schema-valid",
-                        "could-not-run",
-                        "Skipping check because tools/list did not complete",
-                      ),
-              );
-            } else if (uiTools.length === 0) {
-              checks.push(
-                skippedResult(
-                  "ui-tool-input-schema-valid",
-                  "not-applicable",
-                  "Skipping check because no MCP Apps tools were discovered",
-                ),
-              );
-            } else {
-              const violations: string[] = [];
-
-              for (const tool of uiTools) {
-                const sourceTool = tools.find((entry) => entry.name === tool.name);
-                const schema = sourceTool?.inputSchema;
-
-                if (schema === undefined || schema === null) {
-                  violations.push(
-                    `Tool ${tool.name} is missing inputSchema (MUST be a JSON Schema object)`,
-                  );
-                } else if (!isPlainObject(schema)) {
-                  violations.push(
-                    `Tool ${tool.name} inputSchema MUST be a JSON Schema object, got ${Array.isArray(schema) ? "array" : typeof schema}`,
-                  );
-                }
-              }
-
-              if (violations.length > 0) {
-                checks.push(
-                  failedResult(
-                    "ui-tool-input-schema-valid",
-                    Date.now() - stepStartedAt,
-                    `${violations.length} inputSchema violation(s) found`,
-                    {
-                      violations,
-                      uiToolNames: uiTools.map((tool) => tool.name),
-                    },
-                  ),
-                );
-              } else {
-                checks.push(
-                  passedResult(
-                    "ui-tool-input-schema-valid",
-                    Date.now() - stepStartedAt,
-                    {
-                      uiToolCount: uiTools.length,
-                      uiToolNames: uiTools.map((tool) => tool.name),
-                    },
-                  ),
-                );
-              }
-            }
-          }
-
-          if (selectedCheckIds.has("ui-listed-resources-valid")) {
-            const stepStartedAt = Date.now();
-            if (resourcesError) {
-              checks.push(
-                failedResult(
-                  "ui-listed-resources-valid",
-                  Date.now() - stepStartedAt,
-                  `resources/list failed: ${errorMessage(resourcesError)}`,
-                  undefined,
-                  resourcesError,
-                ),
-              );
-            } else if (listedUiResources.length === 0) {
-              checks.push(
-                skippedResult(
-                  "ui-listed-resources-valid",
-                  "not-applicable",
-                  "Skipping check because resources/list did not expose any UI resources",
-                ),
-              );
-            } else {
-              const violations: string[] = [];
-
-              for (const resource of listedUiResources) {
-                if (!resource.uri.startsWith("ui://")) {
-                  violations.push(
-                    `Listed resource ${resource.name} uses "${resource.uri}" but UI resources must use the ui:// scheme`,
-                  );
-                }
-                if (resource.mimeType !== MCP_UI_RESOURCE_MIME_TYPE) {
-                  violations.push(
-                    `Listed UI resource ${resource.uri} uses mimeType "${resource.mimeType ?? "<missing>"}" instead of "${MCP_UI_RESOURCE_MIME_TYPE}"`,
-                  );
-                }
-              }
-
-              if (violations.length > 0) {
-                checks.push(
-                  failedResult(
-                    "ui-listed-resources-valid",
-                    Date.now() - stepStartedAt,
-                    `${violations.length} listed UI resource violation(s) found`,
-                    {
-                      violations,
-                      listedUiResourceUris: listedUiResources.map(
-                        (resource) => resource.uri,
-                      ),
-                    },
-                  ),
-                );
-              } else {
-                checks.push(
-                  passedResult(
-                    "ui-listed-resources-valid",
-                    Date.now() - stepStartedAt,
-                    {
-                      listedUiResourceCount: listedUiResources.length,
-                      listedUiResourceUris: listedUiResources.map(
-                        (resource) => resource.uri,
-                      ),
-                    },
-                  ),
-                );
-              }
-            }
-          }
-
-          if (selectedCheckIds.has("ui-resources-readable")) {
-            const stepStartedAt = Date.now();
-            if (resourceUrisToRead.length === 0) {
-              checks.push(
-                skippedResult(
-                  "ui-resources-readable",
-                  "not-applicable",
-                  "Skipping check because no UI resources were discovered",
-                ),
-              );
-            } else {
-              const failures = readOutcomes.filter((outcome) => outcome.error);
-              if (failures.length > 0) {
-                checks.push(
-                  failedResult(
-                    "ui-resources-readable",
-                    Date.now() - stepStartedAt,
-                    `${failures.length} UI resource read(s) failed`,
-                    {
-                      failures: failures.map((outcome) => ({
-                        uri: outcome.uri,
-                        referencedByTools: outcome.referencedByTools,
-                        listed: outcome.listed,
-                        error: errorMessage(outcome.error),
-                      })),
-                    },
-                  ),
-                );
-              } else {
-                checks.push(
-                  passedResult("ui-resources-readable", Date.now() - stepStartedAt, {
-                    checkedUiResourceCount: readOutcomes.length,
-                    resourceUris: readOutcomes.map((outcome) => outcome.uri),
-                  }),
-                );
-              }
-            }
-          }
-
-          if (selectedCheckIds.has("ui-resource-contents-valid")) {
-            const stepStartedAt = Date.now();
-            const successfulReads = readOutcomes.filter(
-              (outcome): outcome is MCPAppsResourceReadOutcome & {
-                result: MCPReadResourceResult;
-              } => outcome.result !== undefined,
-            );
-
-            if (successfulReads.length === 0) {
-              checks.push(
-                skippedResult(
-                  "ui-resource-contents-valid",
-                  "not-applicable",
-                  "Skipping check because no UI resources were read successfully",
-                ),
-              );
-            } else {
-              const violations: string[] = [];
-
-              for (const outcome of successfulReads) {
-                const contents = Array.isArray(outcome.result.contents)
-                  ? outcome.result.contents
-                  : [];
-
-                if (contents.length !== 1) {
-                  violations.push(
-                    `${outcome.uri} must return exactly one content entry from resources/read (got ${contents.length})`,
-                  );
-                  continue;
-                }
-
-                contents.forEach((content, index) => {
-                  if (!isPlainObject(content)) {
-                    violations.push(
-                      `${outcome.uri} contents[${index}] must be an object`,
-                    );
-                    return;
-                  }
-
-                  if (content.uri !== outcome.uri) {
-                    violations.push(
-                      `${outcome.uri} contents[${index}] returned uri "${String(content.uri)}" instead of "${outcome.uri}"`,
-                    );
-                  }
-
-                  if (content.mimeType !== MCP_UI_RESOURCE_MIME_TYPE) {
-                    violations.push(
-                      `${outcome.uri} contents[${index}] returned mimeType "${String(content.mimeType ?? "<missing>")}" instead of "${MCP_UI_RESOURCE_MIME_TYPE}"`,
-                    );
-                  }
-
-                  const hasText =
-                    "text" in content && typeof content.text === "string";
-                  const hasBlob =
-                    "blob" in content && typeof content.blob === "string";
-                  if (hasText === hasBlob) {
-                    violations.push(
-                      `${outcome.uri} contents[${index}] must provide exactly one of text or blob`,
-                    );
-                    return;
-                  }
-
-                  try {
-                    const payload = decodeHtmlPayload(content);
-                    if (payload.html.trim().length === 0) {
-                      violations.push(
-                        `${outcome.uri} contents[${index}] HTML payload must not be empty`,
-                      );
-                    } else if (!looksLikeHtmlDocument(payload.html)) {
-                      violations.push(
-                        `${outcome.uri} contents[${index}] must contain an HTML document`,
-                      );
-                    }
-                  } catch (error) {
-                    violations.push(
-                      `${outcome.uri} contents[${index}] blob could not be decoded as UTF-8 HTML: ${errorMessage(error)}`,
-                    );
-                  }
-                });
-              }
-
-              if (violations.length > 0) {
-                checks.push(
-                  failedResult(
-                    "ui-resource-contents-valid",
-                    Date.now() - stepStartedAt,
-                    `${violations.length} UI resource content violation(s) found`,
-                    { violations },
-                  ),
-                );
-              } else {
-                checks.push(
-                  passedResult(
-                    "ui-resource-contents-valid",
-                    Date.now() - stepStartedAt,
-                    {
-                      checkedUiResourceCount: successfulReads.length,
-                      resourceUris: successfulReads.map((outcome) => outcome.uri),
-                    },
-                  ),
-                );
-              }
-            }
-          }
-
-          if (selectedCheckIds.has("ui-resource-meta-valid")) {
-            const stepStartedAt = Date.now();
-            const successfulReads = readOutcomes.filter(
-              (outcome): outcome is MCPAppsResourceReadOutcome & {
-                result: MCPReadResourceResult;
-              } => outcome.result !== undefined,
-            );
-
-            if (successfulReads.length === 0) {
-              checks.push(
-                skippedResult(
-                  "ui-resource-meta-valid",
-                  "not-applicable",
-                  "Skipping check because no UI resources were read successfully",
-                ),
-              );
-            } else {
-              const violations: string[] = [];
-
-              for (const outcome of successfulReads) {
-                const contents = Array.isArray(outcome.result.contents)
-                  ? outcome.result.contents
-                  : [];
-                contents.forEach((content, index) => {
-                  if (!isPlainObject(content)) {
-                    return;
-                  }
-                  violations.push(
-                    ...validateUiMeta(content._meta, outcome.uri, index),
-                  );
-                });
-              }
-
-              if (violations.length > 0) {
-                checks.push(
-                  failedResult(
-                    "ui-resource-meta-valid",
-                    Date.now() - stepStartedAt,
-                    `${violations.length} UI resource metadata violation(s) found`,
-                    { violations },
-                  ),
-                );
-              } else {
-                checks.push(
-                  passedResult("ui-resource-meta-valid", Date.now() - stepStartedAt, {
-                    checkedUiResourceCount: successfulReads.length,
-                    resourceUris: successfulReads.map((outcome) => outcome.uri),
-                  }),
-                );
-              }
-            }
-          }
+          const { checks, readiness, passedAdvice, discovery } = gradeMCPApps({
+            tools,
+            toolsError,
+            resources,
+            resourcesError,
+            readOutcomes,
+            checkIds: this.config.checkIds,
+            credentials: credentialsFromServerConfig(this.config.serverConfig),
+          });
 
           // A check that COULD NOT RUN is neither a violation nor a pass: the
           // obligation went untested, so the run is `incomplete`.
@@ -1097,16 +249,11 @@ export class MCPAppsConformanceTest {
               : {}),
             checks,
             ...(readiness.length > 0 ? { readiness } : {}),
+            ...(passedAdvice.length > 0 ? { passedAdvice } : {}),
             summary: buildSummary(checks),
             durationMs: Date.now() - startedAt,
             categorySummary: summarizeChecks(checks),
-            discovery: {
-              toolCount: tools.length,
-              uiToolCount: uiTools.length,
-              listedResourceCount: resources.length,
-              listedUiResourceCount: listedUiResources.length,
-              checkedUiResourceCount: resourceUrisToRead.length,
-            },
+            discovery,
           };
         },
         {

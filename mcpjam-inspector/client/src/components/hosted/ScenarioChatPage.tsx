@@ -8,7 +8,7 @@ import { Loader2, Link2Off, ShieldX } from "lucide-react";
 import { DetailBackLink } from "@/components/shared/detail-page-header";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
-import { ChatTabV2 } from "@/components/ChatTabV2";
+import { ScenarioPlaygroundChat } from "@/components/hosted/ScenarioPlaygroundChat";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useTaskOwnerId } from "@/hooks/use-task-owner-id";
 import { useApiContext } from "@/hooks/hosted/use-hosted-api-context";
@@ -1470,7 +1470,7 @@ export function ScenarioChatPage({
           </div>
         ) : null}
         <ScenarioUnreachableServersBanner serverNames={unreachableServerNames} />
-        <ChatTabV2
+        <ScenarioPlaygroundChat
           connectedOrConnectingServerConfigs={scenarioServerConfigs}
           selectedServerNames={sessionServersActive.map(
             (server) => server.serverName,
@@ -1485,8 +1485,8 @@ export function ScenarioChatPage({
             scenarioSurface: session.surface ?? "share_link",
             projectId: session.payload.projectId,
             // `hostedContext.selectedServerIds` wins over the status-filtered
-            // names inside ChatTabV2, so a server proven unreachable has to be
-            // dropped HERE or the turn still ships it. Sending it anyway costs
+            // names inside the Playground chat, so a server proven unreachable
+            // has to be dropped HERE or the turn still ships it. Sending it costs
             // the whole turn: one server that fails `listTools` rejects the
             // Promise.all behind the tool set. The tester already has the
             // banner saying why it's missing.

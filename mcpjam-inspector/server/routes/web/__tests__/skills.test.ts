@@ -29,6 +29,10 @@ vi.mock("../../../utils/computers/cloud-skills", () => {
     listCloudSkillVersions: vi.fn(),
     getCloudSkillVersion: vi.fn(),
     restoreCloudSkillVersion: vi.fn(),
+    listCloudSkillFiles: vi.fn(),
+    attachCloudSkillFiles: vi.fn(),
+    removeCloudSkillFile: vi.fn(),
+    readCloudSkillFile: vi.fn(),
   };
 });
 
@@ -36,12 +40,18 @@ import skillsRouter from "../skills";
 import {
   CloudSkillsError,
   listCloudSkills,
+  getCloudSkill,
   createCloudSkill,
+  updateCloudSkill,
   deleteCloudSkill,
   promoteCloudSkill,
   listCloudSkillVersions,
   getCloudSkillVersion,
   restoreCloudSkillVersion,
+  listCloudSkillFiles,
+  attachCloudSkillFiles,
+  removeCloudSkillFile,
+  readCloudSkillFile,
 } from "../../../utils/computers/cloud-skills";
 
 function createApp() {
@@ -64,6 +74,7 @@ function post(
 
 // Shaped like a Convex id: the routes refuse anything else before Convex.
 const PROJECT_ID = "kd7a1b2c3d4e5f6g7h8i9j0k1l2m3n4p";
+const SKILL_ID = "jh7a1b2c3d4e5f6g7h8i9j0k1l2m3n4p";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -80,7 +91,7 @@ describe("POST /api/web/skills/list", () => {
   it("returns the project's skills", async () => {
     vi.mocked(listCloudSkills).mockResolvedValue([
       {
-        skillId: "s1",
+        skillId: SKILL_ID,
         projectId: PROJECT_ID,
         name: "pdf",
         description: "d",
@@ -163,6 +174,21 @@ describe("POST /api/web/skills/create with raw skillMd", () => {
     createdAt: 1,
     updatedAt: 1,
   };
+
+  it.each(["js", "javascript", "json"])(
+    "rejects a file that selects the %s frontmatter engine",
+    async (language) => {
+      const res = await post("/api/web/skills/create", {
+        projectId: PROJECT_ID,
+        name: "sample",
+        description: "example",
+        content: "instructions",
+        skillMd: `---${language}\n{"name":"sample","description":"example"}\n---\ninstructions`,
+      });
+      expect(res.status).toBe(400);
+      expect(createCloudSkill).not.toHaveBeenCalled();
+    },
+  );
 
   it("parses skillMd server-side and forwards extraFrontmatter to createCloudSkill", async () => {
     vi.mocked(createCloudSkill).mockResolvedValue(created);
@@ -260,14 +286,14 @@ describe("POST /api/web/skills/delete + /promote", () => {
     );
     const res = await post("/api/web/skills/delete", {
       projectId: PROJECT_ID,
-      skillId: "missing",
+      skillId: SKILL_ID,
     });
     expect(res.status).toBe(404);
   });
 
   it("promote returns the shared skill", async () => {
     vi.mocked(promoteCloudSkill).mockResolvedValue({
-      skillId: "s1",
+      skillId: SKILL_ID,
       projectId: PROJECT_ID,
       name: "pdf",
       description: "d",
@@ -280,11 +306,49 @@ describe("POST /api/web/skills/delete + /promote", () => {
     });
     const res = await post("/api/web/skills/promote", {
       projectId: PROJECT_ID,
-      skillId: "s1",
+      skillId: SKILL_ID,
     });
     expect(res.status).toBe(200);
     expect((await res.json()).skill.sharing).toBe("project");
   });
+});
+
+describe("a malformed skillId", () => {
+  // Convex rejects a non-id `skillId` before its handler runs, and production
+  // redacts that rejection to "Server Error". The route has to answer first.
+  const routes = [
+    ["get", {}, getCloudSkill],
+    ["versions/list", {}, listCloudSkillVersions],
+    ["versions/get", { versionId: "v1" }, getCloudSkillVersion],
+    ["versions/restore", { versionId: "v1" }, restoreCloudSkillVersion],
+    ["update", { description: "d" }, updateCloudSkill],
+    ["delete", {}, deleteCloudSkill],
+    ["promote", {}, promoteCloudSkill],
+    ["files/list", {}, listCloudSkillFiles],
+    [
+      "files/attach",
+      { files: [{ path: "a.md", storageId: "st1", contentHash: "c1" }] },
+      attachCloudSkillFiles,
+    ],
+    ["files/remove", { path: "a.md" }, removeCloudSkillFile],
+    ["files/read", { path: "a.md" }, readCloudSkillFile],
+  ] as const;
+
+  it.each(routes)(
+    "%s answers 404 without calling Convex",
+    async (route, extra, service) => {
+      for (const skillId of ["s1", `${SKILL_ID},${SKILL_ID}`]) {
+        const res = await post(`/api/web/skills/${route}`, {
+          projectId: PROJECT_ID,
+          skillId,
+          ...extra,
+        });
+        expect(res.status).toBe(404);
+        expect((await res.json()).message).toBe("Skill not found");
+      }
+      expect(vi.mocked(service)).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("POST /api/web/skills/versions/*", () => {
@@ -305,13 +369,13 @@ describe("POST /api/web/skills/versions/*", () => {
     vi.mocked(listCloudSkillVersions).mockResolvedValue([VERSION]);
     const res = await post("/api/web/skills/versions/list", {
       projectId: PROJECT_ID,
-      skillId: "s1",
+      skillId: SKILL_ID,
     });
     expect(res.status).toBe(200);
     expect((await res.json()).versions[0].versionNumber).toBe(1);
     expect(vi.mocked(listCloudSkillVersions)).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: PROJECT_ID }),
-      "s1",
+      SKILL_ID,
     );
   });
 
@@ -323,7 +387,7 @@ describe("POST /api/web/skills/versions/*", () => {
     });
     const res = await post("/api/web/skills/versions/get", {
       projectId: PROJECT_ID,
-      skillId: "s1",
+      skillId: SKILL_ID,
       versionId: "v1",
     });
     expect(res.status).toBe(200);
@@ -332,13 +396,13 @@ describe("POST /api/web/skills/versions/*", () => {
     expect(body.version.files).toHaveLength(1);
     expect(vi.mocked(getCloudSkillVersion)).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: PROJECT_ID }),
-      { skillId: "s1", versionId: "v1" },
+      { skillId: SKILL_ID, versionId: "v1" },
     );
   });
 
   it("restores a revision", async () => {
     vi.mocked(restoreCloudSkillVersion).mockResolvedValue({
-      skillId: "s1",
+      skillId: SKILL_ID,
       projectId: PROJECT_ID,
       name: "pdf",
       description: "d",
@@ -351,7 +415,7 @@ describe("POST /api/web/skills/versions/*", () => {
     });
     const res = await post("/api/web/skills/versions/restore", {
       projectId: PROJECT_ID,
-      skillId: "s1",
+      skillId: SKILL_ID,
       versionId: "v1",
     });
     expect(res.status).toBe(200);
@@ -369,7 +433,7 @@ describe("POST /api/web/skills/versions/*", () => {
       for (const versionId of [undefined, null, ""]) {
         const res = await post(`/api/web/skills/versions/${route}`, {
           projectId: PROJECT_ID,
-          skillId: "s1",
+          skillId: SKILL_ID,
           ...(versionId === undefined ? {} : { versionId }),
         });
         expect(res.status).toBe(400);
@@ -395,7 +459,7 @@ describe("POST /api/web/skills/versions/*", () => {
     );
     const res = await post("/api/web/skills/versions/list", {
       projectId: PROJECT_ID,
-      skillId: "gone",
+      skillId: SKILL_ID,
     });
     expect(res.status).toBe(404);
   });

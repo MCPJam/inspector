@@ -3,21 +3,54 @@ import {
   ANALYTICS_EVENTS,
   type ServerAnalyticsEventName,
 } from "./analytics-events";
-import { telemetryActorId } from "@mcpjam/sdk/internal/telemetry";
+import {
+  MCP_CLIENT_FAMILIES,
+  telemetryActorId,
+} from "@mcpjam/sdk/internal/telemetry";
+import { V1_ERROR_CODES } from "@mcpjam/sdk/public-api";
+import {
+  HARNESS_TURN_BOOTSTRAPS,
+  HARNESS_TURN_DURATIONS,
+  HARNESS_TURN_FALLBACK_REASONS,
+  HARNESS_TURN_KINDS,
+  HARNESS_TURN_STARTS,
+} from "./harness-turn-event";
+import { isLogConvexIdShape } from "./strict-log";
+
+/** Methods a v1 usage event records (`HEAD` is served by the `GET` route). */
+const OPERATION_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] as const;
 
 const enums: Record<string, readonly string[]> = {
   origin: ["playground", "evals", "api", "scenario"],
   source_type: ["playground", "eval", "api", "direct", "scenario", "swarm"],
-  surface: ["api", "eval", "playground", "scenario"],
+  surface: [
+    "api",
+    "eval",
+    "playground",
+    "scenario",
+    "web",
+    "local",
+    "mcp",
+    "cli",
+    "sdk",
+  ],
   outcome: [
     "ok",
+    "client_error",
+    "server_error",
     "partial",
     "failed",
     "rate_limited",
     "timeout",
     "completed",
     "cancelled",
+    "aborted",
   ],
+  // harness_turn_completed
+  kind: HARNESS_TURN_KINDS,
+  start: HARNESS_TURN_STARTS,
+  fallback_reason: HARNESS_TURN_FALLBACK_REASONS,
+  bootstrap: HARNESS_TURN_BOOTSTRAPS,
   runtime: ["agent", "harness"],
   readiness_kind: ["claude", "chatgpt"],
   submission_mode: ["submit", "prepare", "existing"],
@@ -47,9 +80,26 @@ const enums: Record<string, readonly string[]> = {
   ],
   engine: ["emulated", "harness:claude-code", "harness:codex", "harness:opencode"],
   environment_skill_delivery: ["harness", "harness_unsupported", "emulated"],
+  // api_v1_request_completed
+  method: OPERATION_METHODS,
+  error_code: V1_ERROR_CODES,
+  // Every `authMethod` in server/types/hono.ts, plus "none". Keep in step.
+  auth_method: [
+    "workos_api_key",
+    "workos_agent",
+    "slack_service",
+    "discord_service",
+    "teams_service",
+    "guest",
+    "authkit_jwt",
+    "unverified_passthrough",
+    "none",
+  ],
+  mcp_client: MCP_CLIENT_FAMILIES,
 };
 const numbers = new Set([
   "duration_ms",
+  "http_status",
   "tool_call_count",
   "created_count",
   "itemCount",
@@ -74,6 +124,13 @@ const numbers = new Set([
   "not_delivered_count",
   "failed_count",
 ]);
+/** harness_turn_completed's timings: whole milliseconds, never a fraction. */
+const wholeMilliseconds = new Set<string>(HARNESS_TURN_DURATIONS);
+/**
+ * The organization a server-side check verified (a `LogConvexId` from the
+ * request context), kept only in a Convex ID's shape.
+ */
+const ids = new Set(["organization_id", "project_id"]);
 const booleans = new Set([
   "include_llm_observations",
   "success",
@@ -82,12 +139,15 @@ const booleans = new Set([
   "hasNextCursor",
   "environment_overridden",
   "$process_person_profile",
+  "streamed",
+  "is_guest",
 ]);
 
 export type ServerAnalyticsFieldRule =
   | { values: readonly string[] }
   | { kind: "boolean" }
-  | { kind: "number"; max: number };
+  | { kind: "number"; max: number; integer?: true }
+  | { kind: "convexId" };
 
 /** The rule a property must meet to be forwarded, if it has one. */
 export function serverAnalyticsFieldRule(
@@ -97,6 +157,9 @@ export function serverAnalyticsFieldRule(
   if (Object.hasOwn(enums, key)) return { values: enums[key] };
   if (booleans.has(key)) return { kind: "boolean" };
   if (numbers.has(key)) return { kind: "number", max: 86400000 };
+  if (wholeMilliseconds.has(key))
+    return { kind: "number", max: 86400000, integer: true };
+  if (ids.has(key)) return { kind: "convexId" };
   return undefined;
 }
 
@@ -122,14 +185,18 @@ export function rebuildServerAnalytics(
         properties[key] = value;
     } else if (rule.kind === "boolean") {
       if (typeof value === "boolean") properties[key] = value;
+    } else if (rule.kind === "convexId") {
+      if (isLogConvexIdShape(value)) properties[key] = value;
     } else if (
       typeof value === "number" &&
       Number.isFinite(value) &&
       value >= 0 &&
-      value <= rule.max
+      value <= rule.max &&
+      (!rule.integer || Number.isInteger(value))
     )
       properties[key] = value;
   }
+  if (isV1Operation(input.operation)) properties.operation = input.operation;
   const harness = input.harness_id;
   const packVersion = input.pack_version;
   if (
@@ -146,6 +213,27 @@ export function rebuildServerAnalytics(
     if (known) properties.pack_version = packVersion;
   }
   return { event: event as ServerAnalyticsEventName, distinctId, properties };
+}
+
+const V1_OPERATION_METHODS = new Set<string>(OPERATION_METHODS);
+/** `:param`, a lowercase word route segment (`eval-runs`, `v1`), or `*`. */
+const V1_ROUTE_SEGMENT = /^(?::[A-Za-z][A-Za-z0-9_]*|[a-z]+(?:-[a-z]+)*|v\d+|\*)$/;
+
+/**
+ * `operation` is "METHOD /api/v1/route/:pattern". Hono hands the middleware
+ * the matched pattern, never the request path, and this shape check keeps a
+ * path value from riding along if that ever changes: a segment holding an id,
+ * a number, an uppercase letter or punctuation fails it.
+ */
+function isV1Operation(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const [method, route, extra] = value.split(" ");
+  if (extra !== undefined || !V1_OPERATION_METHODS.has(method)) return false;
+  if (!route?.startsWith("/api/v1/")) return false;
+  return route
+    .slice("/api/v1/".length)
+    .split("/")
+    .every((segment) => V1_ROUTE_SEGMENT.test(segment));
 }
 
 /** Anonymous flag subjects are the UUIDv7 values minted by posthog-js. */
@@ -165,9 +253,6 @@ export function rolloutPersonProperties(input: Record<string, string>, trustedEm
       : {}),
     ...(input.deployment === "hosted" || input.deployment === "self_hosted"
       ? { deployment: input.deployment }
-      : {}),
-    ...(input.local_browser_security_version === "1"
-      ? { local_browser_security_version: "1" }
       : {}),
   };
 }

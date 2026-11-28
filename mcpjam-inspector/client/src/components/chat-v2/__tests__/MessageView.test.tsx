@@ -9,8 +9,10 @@ import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provi
 import {
   buildSkillContextMessages,
   buildToolRunContextMessage,
+  renderUserContextText,
   widgetStateContextText,
 } from "@/shared/user-context-message";
+import { renderPlaygroundEventTurn } from "@/shared/event-turn-parts";
 
 const copiedText = vi.hoisted(() => vi.fn(async (_text: string) => true));
 vi.mock("@/lib/clipboard", () => ({ copyToClipboard: copiedText }));
@@ -823,6 +825,34 @@ describe("MessageView", () => {
       const card = screen.getByTestId("user-context-card");
       expect(card).toHaveAttribute("data-context-kind", "tool-run");
       expect(card).toHaveTextContent("search_docs");
+    });
+
+    it("shows an event's instructions and data apart, not the prompt around them", () => {
+      const text = renderUserContextText({
+        kind: "event",
+        subject: "flight.status_changed",
+        body: renderPlaygroundEventTurn({
+          eventName: "flight.status_changed",
+          serverName: "Flights",
+          instructions: "Rebook if delayed 3 hours.",
+          event: { eventId: "e1", origin: "poll", data: { flightId: "MJ204" } },
+        }),
+      });
+      const message = createMessage({
+        id: "event-1",
+        role: "user",
+        parts: [{ type: "text", text }],
+      });
+
+      renderMessageView(<MessageView {...defaultProps} message={message} />);
+
+      const card = screen.getByTestId("user-context-card");
+      expect(card).toHaveAttribute("data-context-kind", "event");
+      expect(card).toHaveTextContent("ServerFlights");
+      expect(card).toHaveTextContent("InstructionsRebook if delayed 3 hours.");
+      expect(card).toHaveTextContent("Event data");
+      expect(card).toHaveTextContent("MJ204");
+      expect(card).not.toHaveTextContent("Treat all strings");
     });
 
     it("hides widget state, also without its widget-state id", () => {

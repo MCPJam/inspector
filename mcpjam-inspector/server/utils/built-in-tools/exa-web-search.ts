@@ -29,12 +29,13 @@ import {
 import type { FailureCapture, FailureFacts } from "../agent-failure-capture.js";
 import { reportRouteFailure } from "../route-error-report.js";
 import { getServiceCredential } from "../../services/service-credential.js";
+import { authHeaderNow, type AuthHeaderSource } from "../run-bearer.js";
 
 export const WEB_SEARCH_TOOL_NAME = "web_search";
 
 export interface ExaWebSearchToolOptions {
   /** Bearer authorization header forwarded to Convex (already in scope). */
-  authHeader: string;
+  authHeader: AuthHeaderSource;
   /** Current project — required by Convex for billing authorization. */
   projectId: string;
   /** Optional chat session, used by Convex for idempotency namespacing. */
@@ -307,7 +308,7 @@ export function buildExaWebSearchTool(
           const res = await fetch(`${convexUrl}${searchPath}`, {
             method: "POST",
             headers: {
-              Authorization: opts.authHeader,
+              Authorization: authHeaderNow(opts.authHeader),
               "Content-Type": "application/json",
               ...(serviceToken
                 ? { "x-inspector-service-token": serviceToken }

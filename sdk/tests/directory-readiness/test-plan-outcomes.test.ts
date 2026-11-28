@@ -363,6 +363,22 @@ describe("summarizeDirectoryToolTests", () => {
     expect(results.list_projects?.status).toBe("untested");
   });
 
+  it("blocks a case whose fixture's creator passed without returning the value it uses", () => {
+    const plan = completePlan();
+    const uncaptured = summarize(plan, [record(plan, "create_project#valid")]);
+    expect(uncaptured.rename_project?.cases[0]).toMatchObject({
+      status: "blocked",
+      reason:
+        "Case create_project#valid returned no id for scratchProject. Correct the fixture's capture path, then run again.",
+    });
+    const captured = record(plan, "create_project#valid", {
+      captured: { scratchProject: { id: "proj_scratch" } },
+    });
+    expect(summarize(plan, [captured]).rename_project?.cases[0]?.status).toBe(
+      "untested"
+    );
+  });
+
   it("keeps an ambiguous write ambiguous after the plan is edited", () => {
     const plan = completePlan();
     const ambiguous = record(plan, "rename_project#valid", {
@@ -403,6 +419,50 @@ describe("summarizeDirectoryToolTests", () => {
     expect(summarize(edited, calls).search_web?.status).toBe(
       "valid-input-succeeded"
     );
+  });
+
+  it("keeps results made with no account apart from a reviewer account's", () => {
+    const plan = completePlan();
+    // Made with no account: the server needed no sign-in.
+    const calls = [
+      record(plan, "search_web#valid", { account: undefined }),
+      record(plan, "list_projects#valid"),
+    ];
+    const signedIn = summarize(plan, calls);
+    expect(signedIn.search_web).toMatchObject({
+      status: "stale",
+      reason:
+        "search_web#valid: It ran with no account, and tests now run as the reviewer account. Run it again.",
+    });
+    expect(signedIn.list_projects?.status).toBe("valid-input-succeeded");
+
+    const noSignIn = summarize(plan, calls, { account: null });
+    expect(noSignIn.search_web?.status).toBe("valid-input-succeeded");
+    expect(noSignIn.list_projects).toMatchObject({
+      status: "stale",
+      reason:
+        "list_projects#valid: It ran as a reviewer account, and the submission now says the server needs no sign-in. Run it again.",
+    });
+
+    // Left out, no account is compared.
+    const either = summarize(plan, calls, { account: undefined });
+    expect(either.search_web?.status).toBe("valid-input-succeeded");
+    expect(either.list_projects?.status).toBe("valid-input-succeeded");
+  });
+
+  it("grades the calls as they were made when no listing is at hand", () => {
+    const plan = completePlan();
+    // Made against a listing these tools do not match, as a stored catalog's would not.
+    const calls = [
+      record(plan, "search_web#valid", { inputDigest: "from-a-live-listing" }),
+      record(plan, "list_projects#valid", { account: "someone-else" }),
+    ];
+    expect(summarize(plan, calls).search_web?.status).toBe("stale");
+    const results = summarizeDirectoryToolTests({ plan, calls, account: ACCOUNT });
+    const byTool = Object.fromEntries(results.map((result) => [result.tool, result]));
+    expect(byTool.search_web?.status).toBe("valid-input-succeeded");
+    // The account is still compared: it is not part of the listing.
+    expect(byTool.list_projects?.status).toBe("stale");
   });
 
   it("blocks a case whose fixture is missing or whose arguments are not drafted", () => {

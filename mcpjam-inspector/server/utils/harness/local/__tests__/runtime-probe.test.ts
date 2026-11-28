@@ -75,6 +75,32 @@ async function copilotPack(name: string, opts: { sdk?: boolean } = {}): Promise<
   return root;
 }
 
+async function opencodePack(name: string, opts: { sdk?: boolean; ripgrep?: boolean } = {}): Promise<string> {
+  const root = await packWithNode(name, "opencode");
+  const build = join(root, "node_modules", `opencode-${TARGET.replace(/^win32-/, "windows-")}`);
+  await mkdir(join(build, "bin"), { recursive: true });
+  await writeFile(join(build, "package.json"), JSON.stringify({ name: "opencode-build", version: "1.18.34" }));
+  await exe(join(build, "bin", "opencode"), "#!/bin/sh\necho 1.18.34\n");
+  if (opts.sdk !== false) {
+    const sdk = join(root, "node_modules", "@opencode-ai", "sdk");
+    await mkdir(sdk, { recursive: true });
+    await writeFile(
+      join(sdk, "package.json"),
+      JSON.stringify({ name: "@opencode-ai/sdk", version: "1.18.34", type: "module", exports: { "./v2": "./v2.mjs" } }),
+    );
+    await writeFile(join(sdk, "v2.mjs"), "export function createOpencodeServer() {}\n");
+  }
+  const ripgrep = join(root, "node_modules", "@vscode", "ripgrep");
+  await mkdir(ripgrep, { recursive: true });
+  await writeFile(
+    join(ripgrep, "package.json"),
+    JSON.stringify({ name: "@vscode/ripgrep", version: "1.18.0", type: "module", exports: { ".": "./index.mjs" } }),
+  );
+  await writeFile(join(ripgrep, "index.mjs"), `export const rgPath = ${JSON.stringify(join(ripgrep, "rg"))};\n`);
+  if (opts.ripgrep !== false) await exe(join(ripgrep, "rg"), "#!/bin/sh\n");
+  return root;
+}
+
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-probe-test-")));
 });
@@ -82,7 +108,7 @@ afterAll(async () => {
   await removeTestTree(base);
 });
 
-const probe = (harnessId: "claude-code" | "codex" | "copilot-cli", packRoot: string) =>
+const probe = (harnessId: "claude-code" | "codex" | "copilot-cli" | "opencode", packRoot: string) =>
   probeRuntimeCandidate({ harnessId, packRoot, platform: process.platform as "linux", target: TARGET, layerRuntimeRoot: join(base, "runtime") });
 
 describe.skipIf(!POSIX)("the candidate startup probe", () => {
@@ -127,6 +153,20 @@ describe.skipIf(!POSIX)("the candidate startup probe", () => {
       message: expect.stringMatching(/did not report @openai\/codex 0\.42\.0/),
     });
     expect(await probe("codex", await codexPack("no-codex-js", { codexJs: false }))).toMatchObject({ ok: false });
+  });
+
+  it("passes an OpenCode pack whose SDK and ripgrep the layer resolves and whose CLI reports its build", async () => {
+    expect(await probe("opencode", await opencodePack("good-opencode"))).toEqual({
+      ok: true,
+      node: process.version,
+      vendorVersion: "1.18.34",
+    });
+  });
+
+  it("fails an OpenCode pack whose SDK the layer cannot reach, or whose ripgrep is missing", async () => {
+    for (const pack of [await opencodePack("no-opencode-sdk", { sdk: false }), await opencodePack("no-ripgrep", { ripgrep: false })]) {
+      expect(await probe("opencode", pack)).toMatchObject({ ok: false, message: expect.stringMatching(/did not start on the candidate pack/) });
+    }
   });
 
   it("fails a pack whose Node cannot run at all", async () => {

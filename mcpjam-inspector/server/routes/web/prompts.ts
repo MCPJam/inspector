@@ -18,12 +18,14 @@ prompts.post("/list", async (c) =>
   withEphemeralConnection(c, promptsListSchema, (manager, body) =>
     // Hosted direct-ops read the server's live surface — never a cached body.
     listPrompts(manager, { ...body, cacheMode: "bypass" }),
+    { observeFeatures: true },
   ),
 );
 
 prompts.post("/list-multi", async (c) =>
   withEphemeralConnection(c, promptsListMultiSchema, (manager, body) =>
     listPromptsMulti(manager, body),
+    { observeFeatures: true },
   ),
 );
 

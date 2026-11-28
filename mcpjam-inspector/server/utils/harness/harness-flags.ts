@@ -18,20 +18,63 @@ export function harnessBrokerDeliveryEnabled(): boolean {
   return process.env.MCPJAM_HARNESS_BROKER_DELIVERY !== "false";
 }
 
-/** Hosted reuse defaults on; operators can disable it or restrict organizations. */
-export function hostedWarmAgentEnabled(organizationId: string | undefined): boolean {
-  const enabled = process.env.MCPJAM_HOSTED_WARM_AGENT?.trim().toLowerCase();
-  if (!organizationId || enabled === "0" || enabled === "false") return false;
-  const organizations = (process.env.MCPJAM_HOSTED_WARM_AGENT_ORG_IDS ?? "")
+/** A comma-separated organization list; empty or unset allows every one. */
+function listsOrganization(list: string | undefined, organizationId: string): boolean {
+  const organizations = (list ?? "")
     .split(",")
     .map((id) => id.trim())
     .filter(Boolean);
   return organizations.length === 0 || organizations.includes(organizationId);
 }
 
+/** Hosted reuse defaults on; operators can disable it or restrict organizations. */
+export function hostedWarmAgentEnabled(organizationId: string | undefined): boolean {
+  const enabled = process.env.MCPJAM_HOSTED_WARM_AGENT?.trim().toLowerCase();
+  if (!organizationId || enabled === "0" || enabled === "false") return false;
+  return listsOrganization(process.env.MCPJAM_HOSTED_WARM_AGENT_ORG_IDS, organizationId);
+}
+
+/** Whether box preparation is on at all; off unless operators turn it on. */
+export function harnessPrepareBoxSwitchedOn(): boolean {
+  const enabled = process.env.MCPJAM_HARNESS_PREPARE_BOX?.trim().toLowerCase();
+  return enabled === "1" || enabled === "true";
+}
+
+/**
+ * Preparing a new hosted chat's computer while its first message is typed,
+ * for this organization. Operators can restrict organizations; the backend's
+ * per-organization flag still decides for each one.
+ */
+export function harnessPrepareBoxEnabled(organizationId: string | undefined): boolean {
+  if (!organizationId || !harnessPrepareBoxSwitchedOn()) return false;
+  return listsOrganization(process.env.MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS, organizationId);
+}
+
+/**
+ * Session API turns reuse a hosted agent under the Playground's conditions
+ * (`warm-approval-binding.ts`). Off by default; read per call.
+ */
+export function harnessApiWarmEnabled(): boolean {
+  return process.env.MCPJAM_HARNESS_API_WARM === "true";
+}
+
 /** Hosted native MCP forwarding; read per call so operators can turn it off. */
 export function nativeForwardingEnabled(): boolean {
   return process.env.HARNESS_NATIVE_FORWARDING === "true";
+}
+
+/** Keep a local Codex runtime between chat turns (`local/kept-runtime.ts`).
+ *  Off by default; read per call. */
+export function localKeepAgentEnabled(): boolean {
+  return process.env.MCPJAM_LOCAL_KEEP_AGENT === "true";
+}
+
+/**
+ * Keep a warm hosted agent running through its box's pause, up to the box's
+ * ceiling. Off by default; read per call so operators can turn it off.
+ */
+export function harnessKeepAgentThroughPause(): boolean {
+  return process.env.MCPJAM_HARNESS_KEEP_THROUGH_PAUSE === "true";
 }
 
 /**
@@ -44,4 +87,15 @@ export function nativeForwardingEnabled(): boolean {
  */
 export function harnessQuietClaudeStartup(): boolean {
   return process.env.MCPJAM_HARNESS_QUIET_CLAUDE_STARTUP === "true";
+}
+
+/**
+ * A broker-prepared attach reads the box and its egress policy together
+ * instead of one after the other. Both checks still pass before anything runs
+ * in the box. Off unless `MCPJAM_HARNESS_PARALLEL_ATTACH=1`; read per call.
+ */
+export function attachInParallel(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env.MCPJAM_HARNESS_PARALLEL_ATTACH === "1";
 }

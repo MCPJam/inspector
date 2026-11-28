@@ -175,6 +175,7 @@ export function submitAuthorizationCode(
   code: string,
   state?: string,
   owner?: string,
+  iss?: string,
 ): boolean {
   const session = getSession(sessionId, owner);
   // No way to ask the SDK controller "are you waiting?" directly, so we rely
@@ -182,7 +183,7 @@ export function submitAuthorizationCode(
   // as a miss. A result before the code means the authorization wait ran out.
   if (!session || session.result) return false;
   session.lastActivityAt = Date.now();
-  session.controller.deliverCode({ code, state });
+  session.controller.deliverCode({ code, state, ...(iss ? { iss } : {}) });
   return true;
 }
 

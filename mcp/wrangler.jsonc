@@ -100,7 +100,10 @@
         "MCPJAM_GUEST_MINT_URL": "https://staging.mcpjam.com/api/web/guest-token",
         // Signed-in only, like production. Staging is the first to flip to
         // "mixed" when guests ship. See `dev` above.
-        "MCPJAM_GUEST_ACCESS": "off"
+        "MCPJAM_GUEST_ACCESS": "off",
+        // Public, ingest-only PostHog project key (the one the app ships).
+        // Unset in dev and preview, which turns worker usage events off.
+        "POSTHOG_PROJECT_KEY": "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9"
       },
       // Durable Object teardown. The worker is stateless now (see
       // src/server.ts), so the `McpJamMcpServer` class and its MCP_OBJECT
@@ -148,7 +151,9 @@
         "MCPJAM_GUEST_JWKS_URL": "https://app.mcpjam.com/api/web/guest-jwks",
         "MCPJAM_GUEST_MINT_URL": "https://app.mcpjam.com/api/web/guest-token",
         // Signed-in only. See `dev` above.
-        "MCPJAM_GUEST_ACCESS": "off"
+        "MCPJAM_GUEST_ACCESS": "off",
+        // See `staging` above.
+        "POSTHOG_PROJECT_KEY": "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9"
       },
       // Same DO teardown as staging, and for the same reason: `production`
       // HAS been deployed (repeatedly, most recently 2026-08-06) with the

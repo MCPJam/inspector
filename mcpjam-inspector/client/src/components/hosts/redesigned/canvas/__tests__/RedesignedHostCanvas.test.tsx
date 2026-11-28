@@ -15,6 +15,25 @@ import {
 } from "../RedesignedHostCanvas";
 import { buildRedesignedHostCanvas } from "../canvasBuilder";
 
+// The section's own states are HostHarnessChoice.test.tsx's; here, only what
+// the canvas hands it.
+vi.mock("../HostHarnessChoice", () => ({
+  HostHarnessChoice: (props: {
+    hostId: string;
+    isDirty: boolean;
+    readOnly: boolean;
+    modelLabel: string | null;
+  }) => (
+    <div
+      data-testid="harness-section"
+      data-host-id={props.hostId}
+      data-dirty={String(props.isDirty)}
+      data-read-only={String(props.readOnly)}
+      data-model={props.modelLabel ?? ""}
+    />
+  ),
+}));
+
 function renderCanvas(opts: {
   draft?: ReturnType<typeof emptyHostConfigInputV2>;
   hostName?: string;
@@ -377,6 +396,64 @@ describe("read-only mode", () => {
 
     expect(onClearSelection).toHaveBeenCalledTimes(1);
     expect(onRequestEdit).not.toHaveBeenCalled();
+  });
+});
+
+describe("the Harness section", () => {
+  function renderWithHarness(opts: { hostId?: string; readOnly?: boolean }) {
+    const viewModel = buildRedesignedHostCanvas(
+      {
+        hostName: "ChatGPT",
+        draft: emptyHostConfigInputV2(),
+        savedSnapshotId: "snap",
+        isDirty: true,
+        ...(opts.hostId ? { hostId: opts.hostId } : {}),
+        projectServers: [],
+      },
+      [],
+    );
+    return render(
+      <ReactFlowProvider>
+        <div style={{ width: 900, height: 700 }}>
+          <RedesignedHostCanvas
+            viewModel={viewModel}
+            selectedNodeId={null}
+            onSelectNode={() => {}}
+            onClearSelection={() => {}}
+            onAddServer={() => {}}
+            readOnly={opts.readOnly}
+          />
+        </div>
+      </ReactFlowProvider>,
+    );
+  }
+
+  it("sits between the identity strip and Client capabilities of a saved client", () => {
+    const { getByTestId, getByText } = renderWithHarness({ hostId: "host_1" });
+    const section = getByTestId("harness-section");
+
+    expect(section.dataset).toMatchObject({
+      hostId: "host_1",
+      dirty: "true",
+      readOnly: "false",
+    });
+    expect(
+      section.compareDocumentPosition(getByText("Client capabilities")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("is told when the canvas is read-only", () => {
+    const { getByTestId } = renderWithHarness({
+      hostId: "host_1",
+      readOnly: true,
+    });
+    expect(getByTestId("harness-section").dataset.readOnly).toBe("true");
+  });
+
+  it("is absent from a canvas that names no saved client", () => {
+    const { queryByTestId } = renderWithHarness({});
+    expect(queryByTestId("harness-section")).toBeNull();
   });
 });
 

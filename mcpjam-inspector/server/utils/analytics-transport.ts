@@ -13,6 +13,10 @@ export function analyticsTransport(
   token: string,
   disabled: () => boolean,
 ): NonNullable<PostHogOptions["fetch"]> {
+  // posthog-node picks the flags response version (`v=2` before 5.73.0, `v=4`
+  // since) and is not bundled, so installs resolve different versions. The
+  // body is rebuilt below the same way for every version.
+  const flagsUrl = `${host}/flags/?v=`;
   return async (url, options) => {
     const dropped = () => new Response("{}", { status: 200 });
     if (options.method !== "POST" || typeof options.body !== "string")
@@ -28,7 +32,10 @@ export function analyticsTransport(
       const batch = rebuildBatch(body.batch);
       if (!batch.length) return dropped();
       body = { api_key: token, batch };
-    } else if (url === `${host}/flags/?v=2`) {
+    } else if (
+      url.startsWith(flagsUrl) &&
+      /^\d+$/.test(url.slice(flagsUrl.length))
+    ) {
       const distinctId = rolloutActorId(body.distinct_id);
       if (!distinctId) return dropped();
       body = {

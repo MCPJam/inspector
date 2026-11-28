@@ -18,15 +18,18 @@
  *
  * To move the pin: install the new build from `cursor.com/install` on a scratch
  * box, take the `<build>` string and the two `agent-cli-package.tar.gz`
- * checksums (linux x64 and arm64), update {@link CURSOR_CLI_CHECKSUMS} and
- * `HARNESS_PINNED_VERSIONS.cursor` together, regenerate the bake lock, and
+ * checksums (linux x64 and arm64), update {@link CURSOR_CLI_CHECKSUMS},
+ * `CURSOR_CLI_BUILD` (`cursor-cli-build.ts`) and
+ * `HARNESS_PINNED_VERSIONS.cursor` together (the local pack's recipe
+ * checksums too; `cursor-runtime.test.ts` fails if they differ), regenerate
+ * the bake lock, and
  * rebuild the computer template from that commit.
  */
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
-import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
+import { CURSOR_CLI_BUILD } from "./cursor-cli-build.js";
 
 /** The pinned Cursor CLI build (what `agent --version` prints). */
-export const CURSOR_CLI_VERSION: string = HARNESS_PINNED_VERSIONS.cursor;
+export const CURSOR_CLI_VERSION: string = CURSOR_CLI_BUILD;
 
 /**
  * SHA-256 of `https://downloads.cursor.com/lab/<build>/linux/<arch>/

@@ -242,6 +242,7 @@ const HOSTED_HARNESS_ARGS = {
   "copilot-cli": {
     modelId: "openai/gpt-5.5",
     auth: { COPILOT_MODEL_PROXY_PLACEHOLDER: "bake", OPENAI_BASE_URL: "http://bake.invalid/v1" },
+    mcpJson: { mcpServers: {} },
   },
   cursor: {
     auth: { CURSOR_API_KEY: "bake" },

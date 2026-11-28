@@ -53,6 +53,10 @@ export type HostConfigStyle = string;
  * host styles via the client's `lib/host-styles` registry without an SDK or
  * backend deploy). Don't "tighten" this to `'mcpjam' | 'claude' | 'chatgpt'`;
  * it would break BYO hosts.
+ *
+ * The MCP Apps rendering style. A client's protocol behavior and capabilities
+ * live in `mcpProfile`; read them through their feature's resolver, not by
+ * comparing styles.
  */
 export type HostStyleId = HostConfigStyle;
 
@@ -79,6 +83,8 @@ export const HARNESS_IDS = [
   "cursor",
   "copilot-cli",
   "opencode",
+  "claude-web",
+  "chatgpt-web",
 ] as const;
 
 /**
@@ -89,6 +95,9 @@ export const HARNESS_IDS = [
  * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP;
  * `"opencode"` runs OpenCode through the published AI SDK adapter, with MCPJam
  * host-executed tools and a platform-brokered Anthropic lease.
+ * `"claude-web"` and `"chatgpt-web"` drive the vendor's own website in a
+ * browser on a project's web account; the vendor's MCP client reaches the
+ * servers through MCPJam's forwarding endpoint.
  * Extensible to additional runtimes (e.g. `"pi"`) later without a schema
  * migration.
  */
@@ -1085,7 +1094,24 @@ export type McpToolResultBlobVisibility = {
   otherBinary?: boolean;
 };
 
+/**
+ * Which of a tool result's two representations the emulated client shows its
+ * model. The MCP spec leaves this to each client, so each catalog row records
+ * what the real client was measured to do.
+ *
+ * - `fallback`: the content blocks; structuredContent only when content has no
+ *   blocks (Claude Desktop).
+ * - `preferred`: structuredContent when present, otherwise the content blocks
+ *   (Claude Code, Codex CLI).
+ * - `both`: the content blocks, then structuredContent (ChatGPT's docs).
+ *
+ * Any value also keeps result and block `_meta` out of the model's input.
+ * Unset keeps the projection every host had before the setting existed.
+ */
+export type ModelVisibleStructuredContent = "fallback" | "preferred" | "both";
+
 export type ModelVisibleMcpToolResults = {
+  structuredContent?: ModelVisibleStructuredContent;
   directContent?: {
     text?: boolean;
     image?: boolean;
@@ -1154,6 +1180,7 @@ export type HostConfigInputV2 = {
   // `false` → show every tool (faithful to hosts that don't implement
   // SEP-1865). `undefined` → "use the spec default" (filter).
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   // Personal computer opt-in (resource only; capabilities ride
   // `builtInToolIds`). Optional + absent ⇒ no computer, hashing
   // byte-identically to pre-feature rows (the `progressiveToolDiscovery`
@@ -1262,6 +1289,7 @@ export type CanonicalHostConfigV2 = {
   // Mirrors HostConfigInputV2.respectToolVisibility. Same undefined-vs-set
   // policy.
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   // Mirrors HostConfigInputV2.computer with input `null` collapsed to
   // undefined, so the canonical JSON for "no computer" is byte-identical to
   // pre-feature rows.

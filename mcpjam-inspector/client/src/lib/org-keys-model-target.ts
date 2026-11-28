@@ -119,12 +119,12 @@ export function orgSavableModels(
  */
 export function evalModelRows(
   models: ModelDefinition[],
-  harness: HarnessModelTarget | null | undefined,
+  harnessTargets: ReadonlyArray<HarnessModelTarget | null | undefined>,
   requireOrgKeys: boolean,
 ): ModelDefinition[] {
   return applyHarnessModelLocks(
     orgSavableModels(models, requireOrgKeys),
-    [harness],
+    harnessTargets,
     "eval",
     { requireOrgKeys },
   );

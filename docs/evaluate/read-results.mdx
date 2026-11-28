@@ -1,0 +1,239 @@
+---
+title: "Read results"
+description: "Read a run page from the header down to one iteration's scorecard and trace, compare it with earlier runs, and read its cost."
+icon: "chart-column"
+---
+
+A run page reads top to bottom: how each client and model did, what broke, which cases failed where, and what one iteration did. Open a run from the **Runs** table on **Overview** or from a suite's run history. Every status, label and column value is in the [runs and results reference](/evaluate/reference/runs-and-results).
+
+{/* Screenshot: run page for Run #12 of Weather suite, finished, showing the header, two pairing rows, the Findings block and the top of the results matrix */}
+
+## Get a run's results
+
+<Tabs>
+  <Tab title="Inspector">
+    Open the run from the **Runs** table on **Overview** or from the suite's run history. The sections below follow the run page from the header down.
+  </Tab>
+  <Tab title="CLI">
+    ```bash
+    # Start a run and keep its ID (or copy it from the View: link)
+    RUN_ID=$(mcpjam cloud eval run --suite "My eval suite" --project "My project" --wait --format json | jq -r '.runs[0].id')
+
+    # Verdict, decision summary, and all six chain stages for each failing iteration
+    mcpjam cloud eval status --run "$RUN_ID" --project "My project" --stages
+
+    # Every iteration: pass or fail, tool calls, tokens and latency
+    mcpjam cloud eval iterations --run "$RUN_ID" --project "My project" --limit 200
+
+    # One iteration's full message history and spans; take its ID from the list above
+    mcpjam cloud eval trace --run "$RUN_ID" --project "My project" --iteration "$ITERATION_ID"
+    ```
+
+    <Note>
+      `cloud eval status` lists failure diagnostics 20 at a time. When `decisionSummary.diagnostics.complete` is `false`, pass `decisionSummary.diagnostics.nextCursor` to `--diagnostics-cursor` for the next page. See [`cloud eval status`](/cli/reference#cloud-eval-status).
+    </Note>
+  </Tab>
+  <Tab title="SDK">
+    `suite.run()` returns the aggregate; each `EvalTest` keeps its own iterations, and each iteration keeps its `PromptResult`s.
+
+    ```ts evals/notes-results.test.ts
+    import { afterAll, beforeAll, test } from "vitest";
+    import { EvalSuite, EvalTest, HostRunner, MCPClientManager, judge } from "@mcpjam/sdk";
+
+    const manager = new MCPClientManager({
+      notes: { command: "node", args: ["./notes-server.js"] },
+    });
+    let agent: HostRunner;
+
+    beforeAll(async () => {
+      await manager.connectToServer("notes");
+      agent = new HostRunner({
+        tools: await manager.getTools(),
+        model: "anthropic/claude-sonnet-5",
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        mcpClientManager: manager,
+      });
+    });
+
+    afterAll(async () => {
+      await manager.disconnectAllServers();
+    });
+
+    test("read notes suite results", async () => {
+      const suite = new EvalSuite({ name: "Notes server" });
+      suite.add(new EvalTest({
+        id: "c_reads_a_note",
+        name: "tells the user what note 7 says",
+        execute: async (a) => {
+          await a.run("What does note 7 say?");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [
+            judge({
+              id: "answers-with-the-note",
+              model: "anthropic/claude-sonnet-5",
+              apiKey: process.env.ANTHROPIC_API_KEY!,
+              rubric: ["The reply tells the user what note 7 says, using the note's actual text."],
+              role: "required",
+            }),
+          ],
+        },
+      }));
+
+      const result = await suite.run(agent, { iterations: 3 });
+
+      // The whole run
+      const { successes, iterations, accuracy, latency, tokenUsage } = result.aggregate;
+      console.log(`${successes}/${iterations} passed (${(accuracy * 100).toFixed(1)}%)`);
+      console.log(`p95 ${latency.e2e.p95} ms, ${tokenUsage.total} tokens`);
+
+      // Each case, then what each failed iteration called and answered
+      for (const evalTest of suite.getAll()) {
+        console.log(`${evalTest.getName()}: ${(evalTest.accuracy() * 100).toFixed(1)}%`);
+        for (const iteration of evalTest.getFailedIterations()) {
+          console.log("  error:", iteration.error);
+          for (const prompt of iteration.prompts ?? []) {
+            console.log("  called:", prompt.toolsCalled(), "answered:", prompt.text);
+          }
+        }
+        if (evalTest.getFailedIterations().length > 0) {
+          console.log(evalTest.getFailureReport());
+        }
+      }
+
+      // Whether the results reached MCPJam, and the run they created
+      const receipt = suite.getReportingReceipt();
+      console.log(receipt.state, receipt.report?.runId);
+    }, 600_000);
+    ```
+
+    With `MCPJAM_API_KEY` set, the suite uploads when it finishes and prints `[mcpjam/sdk] View run:` with a link to the same run page. See [`EvalTest` results](/sdk/reference/eval-test#getresults), [`PromptResult`](/sdk/reference/prompt-result) and [Saving eval results](/sdk/reference/eval-reporting).
+  </Tab>
+</Tabs>
+
+## The header
+
+The title reads "Run #N of" and the suite name, for example "Run #12 of Weather suite". The line under it counts what the run measured, for example "3 cases · 12 iterations · 2 client-model combos", followed by the server group the run connected. While a client and model pair has no pass or fail verdict, a pill beside the title names its [status](/evaluate/reference/runs-and-results#run-status).
+
+| Control | What it does |
+|---|---|
+| **Compare runs** | Opens a table of every run in the suite. Needs at least two runs. See [Compare runs](#compare-runs). |
+| **Run again** | Opens the Set up run sheet. See [Run a suite](/evaluate/run-a-suite). |
+| **Cancel run** | Replaces **Run again** while the run is pending, running or grading, and stops every pair of the launch. |
+| **Prompt to improve** | In the "Run actions" menu (⋯). Copies a prompt for your coding agent covering up to three failing cases: where each broke, the tools expected and called, and a suggested change. |
+| **Open failing trace** | In the "Run actions" menu. Opens the leading failing iteration in the case editor, under a "Viewing run · Iteration #N" banner. |
+
+Each client and model pair then gets a row with its pass rate, **Passed** and **Failed** counts (plus **Pending** and **Cancelled** when there are any), **P50**, **P95**, **Tokens** and **Calls**. After the run finishes, arrows show how each number moved since the pair's previous run.
+
+## Findings
+
+The **Findings** block explains the failures. Each finding has two columns, "What broke" and "How to fix", and names the part to change, such as a tool description or input schema.
+
+- **See details** opens "Finding details" with the evidence and the affected iterations; click an iteration to open it.
+- **Copy fix prompt** copies the finding as a prompt for a coding agent.
+- The arrows page through findings; **See all** opens "All findings".
+- When a run launched several pairs together, the "Findings for" selector beside the heading picks the pair.
+
+{/* Screenshot: Findings block with one finding open, showing What broke and How to fix, the See details link, the Copy fix prompt button and the See all pager */}
+
+When no findings were built, the block falls back to the run's own results under "What broke" (or "What passed") and "Next step". "There isn’t enough recorded evidence to explain this run." means the iterations recorded too little to analyze; their results are still in the matrix.
+
+### Changes since the previous run
+
+Once a pair's run has finished, a line under the findings compares it with the previous completed run, for example "vs run #11: 1 regressed · 2 fixed · 4 passing". "reconfigured" means the case or its evaluation settings changed, so the two results aren't compared; "no case changed state" means every case kept its result. See [comparison labels](/evaluate/reference/runs-and-results#comparison-labels) for the rest.
+
+<Frame caption="Four comparison labels come from crossing the previous result with this one.">
+  <img className="block dark:hidden" src="/images/evaluate/comparison-labels-light.svg" alt="A 2 by 2 grid of the previous result against this run's result, giving Unchanged, Regressed, Fixed and Still failing, with New, Reconfigured and removed beside it" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/comparison-labels-dark.svg" alt="A 2 by 2 grid of the previous result against this run's result, giving Unchanged, Regressed, Fixed and Still failing, with New, Reconfigured and removed beside it" width="760" />
+</Frame>
+
+## The results matrix
+
+The matrix has one row per case and one column per client and model. Each column header shows "x/y iters passed", the p95 latency and the cost.
+
+- **Results and Metrics views**
+  - **Results** shows each cell's verdict (Pass, Fail, Running or Cancelled) and passed count.
+  - **Metrics** shows P50, P95, average tokens and average tool calls instead.
+- **Filters**
+  - "Find a test case…" filters by name.
+  - The **Status** filter keeps Failures, Passed, Pending or Cancelled.
+- **Drilling in**
+  - Click a case name to edit the case.
+  - Click a cell to list its iterations, then click one to open its report.
+
+{/* Screenshot: results matrix with the Results view on, the Status filter set to Failures, and one cell's sheet open listing three iterations */}
+
+### Cost
+
+A dash (—) means no cost was observed, never that the iteration was free: the model ran on your own provider key, which MCPJam doesn't bill, or the run reported no token usage. " · partial" means only some of the column's iterations were priced; hover it for the count. See [cost](/evaluate/reference/runs-and-results#cost) for runner-reported cost.
+
+## An iteration's report
+
+The report opens on its scorecard. Evaluators are grouped by the stage of the [user value chain](/sdk/concepts/user-value-chain) they check: Connection, Discovery, Selection, Tool call, Response and User value. Each row shows **Expected**, the configured criterion, and **Actual**, what the iteration recorded: a current AI explanation when one exists, otherwise the recorded reason and evidence. "Narrative predates the latest grade." marks an explanation written before the last grade.
+
+| Row state | Meaning |
+|---|---|
+| Passed | The evaluator passed. |
+| Failed | A required evaluator failed, so the iteration fails. |
+| Missed · advisory | An advisory evaluator failed. It is shown but does not fail the iteration. |
+| Uncertain | A rubric check's answer was too close to even odds to call. |
+| Could not be evaluated | The evaluator errored. |
+| Skipped / Not applicable | The evaluator did not apply to this iteration. |
+| Not measured | Nothing recorded a result. It is not a pass. |
+
+When the iteration has a verified chain, a rail on the left lists the six stages, 01 to 06, and the scorecard opens on the stage where the chain broke. Without one, for example while the run is still going, the stages stack in order. **Configure test case evaluators**, under the scorecard, opens the case's evaluators in the case editor.
+
+{/* Screenshot: iteration report on the Scorecard tab with the stage rail open on Tool call and two evaluator rows showing Expected and Actual */}
+
+### The trace and other tabs
+
+The report's other tabs show the same iteration as evidence.
+
+| Tab | What it shows |
+|---|---|
+| Steps | The case's steps beside their results, for cases authored as steps. |
+| Chat | The conversation as the user would see it. |
+| Tool Calls | Each tool call with its arguments and result. |
+| Trace | The timeline of turns, model calls and tool calls. |
+| Replay | Rendered MCP App views, when the run recorded them. |
+| Raw | The recorded data as JSON. |
+
+## Compare runs
+
+**Compare runs** lists every run of the suite, grouped by client and model, with deltas against each pair's previous run. Rows show the [result](/evaluate/reference/runs-and-results#result-column), pass rate, [platform](/evaluate/reference/runs-and-results#platform), date, latency and tokens; click a run number to open it. The header gives the pass threshold and how many pairs meet it, for example "Pass threshold 70% · 2 of 3 settled lanes meet it on #12". **Back to run** returns to the run page.
+
+{/* Screenshot: Compare runs page with two client and model groups, the Pass threshold line, and deltas in the Pass column */}
+
+<Tabs>
+  <Tab title="Inspector">
+    Open a run and click **Compare runs**. The "vs run #N" line on the run page already compares against the previous completed run.
+  </Tab>
+  <Tab title="CLI">
+    ```bash
+    # One run's status, decision summary and failing iterations' chains
+    mcpjam cloud eval status --run "$RUN_ID" --stages
+
+    # Compare with the nearest earlier completed run in the same suite
+    mcpjam cloud eval compare --run "$RUN_ID" --project "My project"
+    ```
+  </Tab>
+</Tabs>
+
+Across suites, use **Overview**, where the Evaluate tab opens. **Suite Health** charts each run's pass rate for one suite and client against the suite's threshold; click a bar to open the run. The **Runs** table lists every run ([columns](/evaluate/reference/runs-and-results#runs-table-columns)), filtered by **Platform**.
+
+{/* Screenshot: Overview with the Suite Health chart above the Runs table, the Platform filter menu open */}
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Configure grading" icon="sliders-horizontal" href="/evaluate/configure-grading">
+    Change what decides a run.
+  </Card>
+  <Card title="Runs and results reference" icon="list" href="/evaluate/reference/runs-and-results">
+    Every status and field.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/evaluate/troubleshooting">
+    Fix runs that won't start or finish.
+  </Card>
+</CardGroup>

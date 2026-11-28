@@ -20,6 +20,7 @@ export type ExecutionConfig = {
   progressiveToolDiscovery?: boolean;
   /** See HostConfigInputV2.respectToolVisibility. */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /** Host-level policy for MCP tool-result content/resource model visibility. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Host-level human-facing MCP tool-result image rendering mode. */

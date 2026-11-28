@@ -115,6 +115,11 @@ export default defineConfig(({ command, mode }) => {
           target: serverOrigin,
           changeOrigin: true,
         },
+        // The startup recovery card asks the local server whether it is up.
+        "^/health$": {
+          target: serverOrigin,
+          changeOrigin: true,
+        },
         // Keep AuthKit on the embedded server's session proxy, matching web dev.
         // It stores refresh tokens in local HttpOnly cookies and restores them
         // for subsequent refresh requests from AuthKit.

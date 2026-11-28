@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HostCanvasSelector } from "@/components/hosts/redesigned/HostCanvasSelector";
 import { track } from "@/lib/analytics";
+import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
@@ -130,6 +131,41 @@ describe("HostCanvasSelector", () => {
     expect(addBtn).toHaveTextContent("Add client");
   });
 
+  it("tracks the overlay as opened once the client controls render", () => {
+    mockUseHostList.mockReturnValue({ hosts: [], isLoading: true });
+    const { rerender } = render(
+      <HostCanvasSelector projectId="proj-1" activeHostId="host-a" />,
+    );
+    expect(track).not.toHaveBeenCalledWith(
+      "connect_host_overlay_opened",
+      expect.anything(),
+    );
+
+    mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
+    rerender(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+    rerender(<HostCanvasSelector projectId="proj-1" activeHostId="host-b" />);
+
+    const openedCalls = vi
+      .mocked(track)
+      .mock.calls.filter(([event]) => event === "connect_host_overlay_opened");
+    expect(openedCalls).toEqual([
+      [
+        "connect_host_overlay_opened",
+        { location: "host_canvas", host_count: 2 },
+      ],
+    ]);
+  });
+
+  it("does not track the overlay as opened without an active client", () => {
+    mockUseHostList.mockReturnValue({ hosts: oneHost, isLoading: false });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="missing" />);
+
+    expect(track).not.toHaveBeenCalledWith(
+      "connect_host_overlay_opened",
+      expect.anything(),
+    );
+  });
+
   it("opens the create dialog and tracks when Add client is clicked", async () => {
     const user = userEvent.setup();
     render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
@@ -190,6 +226,25 @@ describe("HostCanvasSelector", () => {
       name: /Acme Internal Bot/,
     });
     expect(row.querySelector("img")).toHaveAttribute("src", "/mcp.svg");
+  });
+
+  it("draws a renamed client's logo from its saved style", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({
+      hosts: [{ ...oneHost[0], name: "Codex QA", hostStyle: "codex" }],
+      isLoading: false,
+    });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+
+    expect(
+      screen.getByTestId("host-canvas-current").querySelector("img"),
+    ).toHaveAttribute("src", getHostLogoSrc("codex"));
+    await user.click(screen.getByTestId("host-canvas-current"));
+    const row = await screen.findByRole("menuitemradio", { name: /Codex QA/ });
+    expect(row.querySelector("img")).toHaveAttribute(
+      "src",
+      getHostLogoSrc("codex"),
+    );
   });
 
   it("marks the active client with a single primary-colored dot", async () => {

@@ -451,7 +451,7 @@ export function buildSuiteStageFacts(
     const unavailable = {
       state: "unavailable" as const,
       message:
-        "This client no longer exists — pick another under Where it runs",
+        "This client no longer exists. Pick another under Clients and models.",
       link: hostLink,
     };
     return { connection: unavailable, discovery: unavailable };

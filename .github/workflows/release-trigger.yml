@@ -1,22 +1,19 @@
 name: Release trigger
 
-# Starts Release once a merged version PR's versions reach a green `main`.
+# The fallback that starts Release when Start release's own dispatch did not
+# ship the versions on `main`.
 #
-# Merging the version PR (prepare-release.yml) commits versions npm does not
-# have yet. Release ships a commit only once Tests, Build and Test and Deploy
-# Staging have all passed on it. The first two pass in the merge queue before
-# the commit lands; Deploy Staging runs after, on the push to `main`, and each
-# push cancels the previous commit's staging run, so the version commit itself
-# is often NOT the one released. Every later commit carries the same versions,
-# though, so this runs each time Deploy Staging finishes on `main` (always the
-# last of the three) and dispatches Release at the first commit that is still
-# the tip, green on all three, and carrying unpublished versions. A version
-# commit whose staging run gets cancelled only moves the release to the next
-# green commit.
+# Start release (prepare-release.yml) pushes a version commit and dispatches
+# Release on it straight away. That run stands down if `main` moves before it
+# starts, because Release ships only the tip. This picks the release up again:
+# each push to `main` deploys staging, and when that deploy finishes this
+# dispatches Release at the first commit that is still the tip, passed
+# staging, and carries unpublished versions.
 #
-# A version PR that ticked skip_verify is released without waiting for any of
-# that: the merge's own push runs this too, and releases the version commit
-# straight away.
+# The release's choices come from the version commit's trailers
+# (.github/scripts/release-commit.mjs), and only from a commit that reached
+# `main` without a pull request: the release App is the only actor that can
+# push one, and main-push-guard.yml checks each.
 #
 # Nearly every run here ends in a skip. That is expected: the run that sees
 # everything line up is the one that does something. The reasoning lives in
@@ -27,23 +24,12 @@ on:
     workflows: [Deploy Staging]
     types: [completed]
     branches: [main]
-  # For skip_verify. A version PR always changes some workspace's
-  # package.json, so this fires on its merge and on little else.
-  push:
-    branches: [main]
-    paths:
-      - "*/package.json"
 
 permissions:
-  # Dispatching release.yml. A workflow_dispatch made with GITHUB_TOKEN does
-  # start a run, unlike a push or a PR made with it.
   actions: write
   contents: read
-  # Reading the merged version PR's deploy checkboxes.
   pull-requests: read
 
-# One decision at a time, so two workflows finishing together on one commit
-# cannot both dispatch.
 concurrency:
   group: release-trigger
   cancel-in-progress: false
@@ -52,21 +38,20 @@ jobs:
   decide:
     # This job holds a write token and runs scripts from the commit it checks
     # out, and workflow_run also fires for runs on fork PRs. Only a push to
-    # this repo's `main` is trusted code, so both workflow_run conditions are
-    # load-bearing. The push trigger is `main`-only by its branch filter.
+    # this repo's `main` is trusted code, so both conditions are load-bearing.
     if: >-
-      github.event_name == 'push' || (
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_repository.full_name == github.repository
-      )
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout the commit to decide on
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+          # Enough history to reach the version commit behind the tip.
+          fetch-depth: 200
 
       - name: Decide, and dispatch Release
         uses: actions/github-script@v9
@@ -74,10 +59,10 @@ jobs:
           script: |
             const { readFileSync } = require("node:fs");
             const workspace = process.env.GITHUB_WORKSPACE;
-            const { decideRelease, REQUIRED_CHECKS, releaseLabel, releaseRunName } =
+            const { decideRelease, releaseLabel, releaseRunName } =
               await import(`${workspace}/.github/scripts/release-trigger.mjs`);
-            const { parseReleaseOptions, VERSION_PR_BRANCH } =
-              await import(`${workspace}/.github/scripts/release-pr.mjs`);
+            const { parseReleaseCommit } =
+              await import(`${workspace}/.github/scripts/release-commit.mjs`);
             const { unpublishedVersions } =
               await import(`${workspace}/.github/scripts/unpublished-versions.mjs`);
 
@@ -94,69 +79,40 @@ jobs:
               : [];
             const label = unpublished.length > 0 ? releaseLabel(unpublished) : "";
 
-            // The release's choices ride in the merged version PR's checkboxes.
-            // Only a PR that is in this commit AND names these versions counts:
-            // every older version PR is in it too, and a hand-made bump must not
-            // inherit the last release's deploys or skip_verify. Without one,
-            // nothing deploys and the checks are waited for: an unasked
-            // production deploy is the worse mistake.
+            // The release's choices ride in the version commit's trailers. Only
+            // a commit that names these versions AND reached `main` without a
+            // pull request counts: the release App is the only actor that can
+            // push one. Without it, nothing deploys and the checks are waited
+            // for: an unasked production deploy is the worse mistake.
             let options = { deploy_backend_prod: false, deploy_webapp: false, skip_verify: false };
-            let optionsNote = `No merged version PR names ${label}; releasing without deploys.`;
-            // The release's Slack post names who started it. Dispatched with
-            // GITHUB_TOKEN it would read as a bot, so pass whoever merged the PR.
+            let optionsNote = `No version commit names ${label}; releasing without deploys.`;
             let requestedBy = "";
             if (label) {
-              const { data: prs } = await github.rest.pulls.list({
-                owner, repo, state: "closed", base: "main",
-                head: `${owner}:${VERSION_PR_BRANCH}`,
-                sort: "updated", direction: "desc", per_page: 10,
+              const { execFileSync } = require("node:child_process");
+              const log = execFileSync("git", ["log", "--format=%H%x00%B%x1e", headSha], {
+                cwd: workspace, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
               });
-              const versionPr = prs
-                .filter((pr) => pr.merged_at && pr.title.includes(`(${label})`))
-                .sort((a, b) => b.merged_at.localeCompare(a.merged_at))[0];
-              if (versionPr) {
-                const { data: cmp } = await github.rest.repos.compareCommits({
-                  owner, repo, base: versionPr.merge_commit_sha, head: headSha,
+              for (const record of log.split("\x1e")) {
+                const [sha, message] = record.trim().split("\0");
+                const parsed = sha && parseReleaseCommit(message);
+                if (!parsed || parsed.label !== label) continue;
+                const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                  owner, repo, commit_sha: sha,
                 });
-                if (cmp.status === "ahead" || cmp.status === "identical") {
-                  options = parseReleaseOptions(versionPr.body);
-                  optionsNote = `Options from #${versionPr.number}: ${JSON.stringify(options)}`;
-                  try {
-                    const { data: full } = await github.rest.pulls.get({ owner, repo, pull_number: versionPr.number });
-                    requestedBy = full.merged_by?.login ?? "";
-                  } catch (err) {
-                    // Only the Slack post's "started by" depends on this; the release must not.
-                    core.warning(`Could not read who merged #${versionPr.number}: ${err.message}`);
-                  }
+                if (prs.length > 0) {
+                  optionsNote = `${sha} names ${label} but came through a pull request; releasing without deploys.`;
                 } else {
-                  optionsNote = `Version PR #${versionPr.number} is not in ${headSha}; releasing without deploys.`;
+                  options = parsed.options;
+                  requestedBy = parsed.requestedBy;
+                  optionsNote = `Options from version commit ${sha}: ${JSON.stringify(options)}`;
                 }
+                break;
               }
             }
 
-            // Unfiltered, then matched here: GitHub's run search index can lag
-            // minutes behind, and a filtered query that misses the run that
-            // just finished would skip the one decision that should dispatch.
-            // Same reasoning as release.yml's CI gate.
-            const greenChecks = [];
-            if (label && !options.skip_verify) {
-              for (const workflow_id of REQUIRED_CHECKS) {
-                // Paged with an early exit, as in release.yml's CI gate. The
-                // queue ran Tests and Build and Test before this commit landed,
-                // so PR runs started since can push that run off page one.
-                let pages = 0;
-                for await (const { data: runs } of github.paginate.iterator(
-                  github.rest.actions.listWorkflowRuns,
-                  { owner, repo, workflow_id, per_page: 100 },
-                )) {
-                  if (runs.some((r) => r.head_sha === headSha && r.conclusion === "success")) {
-                    greenChecks.push(workflow_id);
-                    break;
-                  }
-                  if (++pages >= 5) break;
-                }
-              }
-            }
+            // The job's `if` only lets through a successful Deploy Staging run,
+            // so this event IS the staging result.
+            const stagingGreen = true;
 
             const { data: releases } = await github.rest.actions.listWorkflowRuns({
               owner, repo, workflow_id: "release.yml", per_page: 20,
@@ -170,7 +126,7 @@ jobs:
             const decision = decideRelease({
               headSha,
               mainSha: main.commit.sha,
-              greenChecks,
+              stagingGreen,
               unpublished,
               releaseRuns,
               skipVerify: options.skip_verify,

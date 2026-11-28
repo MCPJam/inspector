@@ -163,13 +163,8 @@ export function computeMeasuredIterationResult(
  * ── What survives, and why it is not the same thing ─────────────────────────
  *
  * The matcher below is UNTOUCHED and still runs for a row with NO stored
- * result. Two real populations need it:
- *
- *   - LEGACY ROWS that never persisted one. Falling back to "not passed" would
- *     silently re-grade years of history as failures.
- *   - LIVE GRADING (`eval-live-grading.ts`), which hands this function
- *     synthetic per-turn projections that were never persisted at all. It is a
- *     PREVIEW of a verdict, not a re-derivation of a decided one.
+ * result: LEGACY ROWS that never persisted one. Falling back to "not passed"
+ * would silently re-grade years of history as failures.
  *
  * So the matcher does not retire as an evaluator; what retires is the
  * UNVERIFIED CLIENT RE-DERIVATION of an iteration that has already been graded.

@@ -20,7 +20,10 @@ import {
   readJsonBody,
 } from "./auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { requireProjectIdArg } from "../v1/convex-id-param.js";
+import {
+  requireConvexIdShape,
+  requireProjectIdArg,
+} from "../v1/convex-id-param.js";
 import {
   CloudSkillsError,
   listCloudSkills,
@@ -98,6 +101,16 @@ async function ctxFrom(
   };
 }
 
+// `skillId` reaches Convex as a `v.id("projectSkills")` argument, so it needs
+// the same shape gate as `projectId`: otherwise a malformed id comes back as a
+// redacted "Server Error" and this route answers 500 instead of 404.
+function skillIdArg(skillId: string): string {
+  return requireConvexIdShape(skillId, "skillId", {
+    scope: "web.skills",
+    notFoundMessage: "Skill not found",
+  });
+}
+
 const projectOnly = z.object({ projectId: z.string().min(1) });
 const skillIdSchema = projectOnly.extend({ skillId: z.string().min(1) });
 const sharingSchema = z.enum(["user", "project"]).optional();
@@ -143,7 +156,10 @@ skills.post("/get", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
     const skill = await run(async () =>
-      getCloudSkill(await ctxFrom(c, body.projectId), body.skillId),
+      getCloudSkill(
+        await ctxFrom(c, body.projectId),
+        skillIdArg(body.skillId),
+      ),
     );
     return { skill };
   }),
@@ -178,7 +194,10 @@ skills.post("/versions/list", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
     const versions = await run(async () =>
-      listCloudSkillVersions(await ctxFrom(c, body.projectId), body.skillId),
+      listCloudSkillVersions(
+        await ctxFrom(c, body.projectId),
+        skillIdArg(body.skillId),
+      ),
     );
     return { versions };
   }),
@@ -192,7 +211,7 @@ skills.post("/versions/get", async (c) =>
     );
     const version = await run(async () =>
       getCloudSkillVersion(await ctxFrom(c, body.projectId), {
-        skillId: body.skillId,
+        skillId: skillIdArg(body.skillId),
         versionId: body.versionId,
       }),
     );
@@ -208,7 +227,7 @@ skills.post("/versions/restore", async (c) =>
     );
     const skill = await run(async () =>
       restoreCloudSkillVersion(await ctxFrom(c, body.projectId), {
-        skillId: body.skillId,
+        skillId: skillIdArg(body.skillId),
         versionId: body.versionId,
       }),
     );
@@ -306,7 +325,7 @@ skills.post("/update", async (c) =>
     );
     const skill = await run(async () =>
       updateCloudSkill(await ctxFrom(c, body.projectId), {
-        skillId: body.skillId,
+        skillId: skillIdArg(body.skillId),
         ...(body.description !== undefined
           ? { description: body.description }
           : {}),
@@ -321,7 +340,10 @@ skills.post("/delete", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
     await run(async () =>
-      deleteCloudSkill(await ctxFrom(c, body.projectId), body.skillId),
+      deleteCloudSkill(
+        await ctxFrom(c, body.projectId),
+        skillIdArg(body.skillId),
+      ),
     );
     return { success: true };
   }),
@@ -331,7 +353,10 @@ skills.post("/promote", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
     const skill = await run(async () =>
-      promoteCloudSkill(await ctxFrom(c, body.projectId), body.skillId),
+      promoteCloudSkill(
+        await ctxFrom(c, body.projectId),
+        skillIdArg(body.skillId),
+      ),
     );
     return { success: true, skill };
   }),
@@ -343,7 +368,10 @@ skills.post("/files/list", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(skillIdSchema, await readJsonBody(c));
     const files = await run(async () =>
-      listCloudSkillFiles(await ctxFrom(c, body.projectId), body.skillId),
+      listCloudSkillFiles(
+        await ctxFrom(c, body.projectId),
+        skillIdArg(body.skillId),
+      ),
     );
     return { files };
   }),
@@ -370,7 +398,7 @@ skills.post("/files/attach", async (c) =>
     const { files } = await run(async () =>
       attachCloudSkillFiles(
         await ctxFrom(c, body.projectId),
-        body.skillId,
+        skillIdArg(body.skillId),
         body.files,
       ),
     );
@@ -387,7 +415,7 @@ skills.post("/files/remove", async (c) =>
     const { removed } = await run(async () =>
       removeCloudSkillFile(
         await ctxFrom(c, body.projectId),
-        body.skillId,
+        skillIdArg(body.skillId),
         body.path,
       ),
     );
@@ -406,7 +434,7 @@ skills.post("/files/read", async (c) =>
     const file = await run(async () =>
       readCloudSkillFile(
         await ctxFrom(c, body.projectId),
-        body.skillId,
+        skillIdArg(body.skillId),
         body.path,
       ),
     );

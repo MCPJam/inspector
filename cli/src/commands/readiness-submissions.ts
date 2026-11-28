@@ -4,8 +4,9 @@
  * grade that rehearsal on the platform.
  *
  * Each command is a bound platform operation, so it answers as the REST API
- * and the MCP tools do. `run --wait` is the addition: it polls the run and
- * exits with the readiness codes, 0 ready, 1 not ready and 3 incomplete.
+ * and the MCP tools do. `run --wait` and `results` add the verdict: the run
+ * judged under the submission's gate, which `gate` chooses, as the readiness
+ * exit codes 0 ready, 1 not ready and 3 incomplete.
  */
 import type { Command } from "commander";
 import {
@@ -20,11 +21,19 @@ import {
   listDirectorySubmissionsOperation,
   startDirectorySubmissionRunOperation,
   updateDirectorySubmissionOperation,
+  type GetDirectorySubmissionResultsResult,
   type PlatformApiClient,
   type PlatformReadinessRun,
   type UpdateDirectorySubmissionInput,
 } from "@mcpjam/sdk/platform";
 import { directoryReadinessExitCode, reportReadinessVerdict } from "../lib/directory-readiness-exit-code.js";
+import {
+  judgeResults,
+  parseGateChange,
+  reportGate,
+  saveGate,
+  withVerdictExit,
+} from "../lib/directory-submission-gate.js";
 import { CliError, setProcessExitCode, usageError, writeResult } from "../lib/output.js";
 import {
   addPlatformOptions,
@@ -38,6 +47,9 @@ import {
 import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
 import { collectRepeated } from "./readiness-lazy-auth.js";
+import { registerSubmissionHandoffCommands } from "./readiness-submission-handoff.js";
+import { registerSubmissionEvalCommands } from "./readiness-submission-evals.js";
+import { registerTestPlanCommands } from "./readiness-test-plans.js";
 
 type Options = PlatformOptions & {
   project?: string;
@@ -54,11 +66,23 @@ type SetOptions = Options & {
   answer: string[];
   unset: string[];
   confirm: string[];
+  plugin?: string;
+  pluginVersion?: string;
+  clearPlugin?: boolean;
+  attempt?: number;
+  clearAttempt?: boolean;
   expectedRevision?: number;
   retryOnConflict?: boolean;
 };
 
-type RunOptions = Options & { wait?: boolean; aiObservations?: boolean };
+type RunOptions = Options & {
+  wait?: boolean;
+  aiObservations?: boolean;
+  pluginVersion?: string;
+  testPlanRevision?: number;
+};
+
+type GateOptions = Options & { failOn: string[]; warnOnly: string[]; clear?: boolean };
 
 /** The worker's 15-minute run deadline, plus time spent queued. */
 const RUN_WAIT_MS = 20 * 60_000;
@@ -74,12 +98,40 @@ const PROJECT_SCOPED = { ambientProject: true } as const;
 /** `--project`, and the `<submission>` argument Commander guarantees. */
 const scoped = (options: Options, submission = "") => ({ project: options.project, submission });
 
+/** Hosted readiness prints no Cloud audience line, as bindOperation keeps it. */
+const extrasOf = (command: Command, name: string) => ({
+  announce: false,
+  quiet: getGlobalOptions(command).quiet,
+  command: `readiness submission ${name}`,
+});
+
 function jsonOrText(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
     return text;
   }
+}
+
+/** `--plugin`, `--plugin-version` and `--attempt`, or their `--clear-*`, as the operation takes them. */
+function subjectOf(
+  options: SetOptions,
+): Pick<UpdateDirectorySubmissionInput, "plugin" | "attempt"> {
+  const { plugin: pluginId, pluginVersion: pluginVersionId, attempt } = options;
+  const named = pluginId !== undefined || pluginVersionId !== undefined;
+  if (options.clearPlugin && named) {
+    throw usageError(
+      "Pass --clear-plugin, or --plugin and --plugin-version, not both.",
+    );
+  }
+  if (options.clearAttempt && attempt !== undefined) {
+    throw usageError("Pass --attempt or --clear-attempt, not both.");
+  }
+  const plugin = named ? { pluginId, pluginVersionId } : undefined;
+  return {
+    plugin: options.clearPlugin ? null : plugin,
+    attempt: options.clearAttempt ? null : attempt,
+  };
 }
 
 /**
@@ -99,14 +151,21 @@ function parseSetInput(options: SetOptions, submission: string): UpdateDirectory
     add(pair.slice(0, split).trim(), jsonOrText(pair.slice(split + 1)));
   }
   for (const key of options.unset) add(key.trim(), null);
-  if (answers.size === 0 && options.confirm.length === 0 && options.title === undefined) {
-    throw usageError("Nothing to save. Pass --answer, --unset, --confirm or --title.");
+  const subject = subjectOf(options);
+  const unchanged = [options.title, subject.plugin, subject.attempt].every(
+    (value) => value === undefined,
+  );
+  if (answers.size === 0 && options.confirm.length === 0 && unchanged) {
+    throw usageError(
+      "Nothing to save. Pass --answer, --unset, --confirm, --title, --plugin-version or --attempt.",
+    );
   }
   const parsed = updateDirectorySubmissionOperation.inputSchema.safeParse({
     ...scoped(options, submission),
     ...(answers.size > 0 ? { answers: Object.fromEntries(answers) } : {}),
     ...(options.confirm.length > 0 ? { confirm: options.confirm } : {}),
     title: options.title,
+    ...subject,
     expectedRevision: options.expectedRevision,
     idempotencyKey: options.idempotencyKey,
   });
@@ -214,22 +273,39 @@ async function runSubmission(submission: string, command: Command): Promise<void
   const options = platformOptionsOf<RunOptions>(command);
   const globals = getGlobalOptions(command);
   const { project, projectScope } = resolveCloudProjectArgs(options);
-  const extras = { announce: false, quiet: globals.quiet, command: "readiness submission run", projectScope };
+  const extras = { ...extrasOf(command, "run"), projectScope };
   const input = {
     ...scoped({ ...options, project }, submission),
     includeLlmObservations: options.aiObservations ? true : undefined,
     idempotencyKey: options.idempotencyKey,
+    pluginVersionId: options.pluginVersion,
+    testPlanRevision: options.testPlanRevision,
   };
   const start = startDirectorySubmissionRunOperation;
   const started = await runPlatformOperation(options, globals.timeout, (context) => start.execute(input, context), extras);
   if (!options.wait) return writeResult(started, globals.format);
   const ids = { projectId: started.project.id, runId: started.run.runId };
   const run = await waitForRun(options, globals.timeout, ids, extras);
-  writeResult({ ...started, run }, globals.format);
-  // A run that did not complete graded nothing: incomplete, never not ready.
-  const status = run.status === "completed" ? (run.overallStatus ?? undefined) : undefined;
-  reportReadinessVerdict({ status, summary: status ? undefined : `the run ${run.status}` }, command);
-  setProcessExitCode(directoryReadinessExitCode({ status }));
+  if (run.status !== "completed") {
+    writeResult({ ...started, run }, globals.format);
+    // A run that did not complete graded nothing: incomplete, never not ready.
+    reportReadinessVerdict({ summary: `the run ${run.status}` }, command);
+    return setProcessExitCode(directoryReadinessExitCode({}));
+  }
+  // Judged from its results under the submission's gate, not the run's rollup.
+  const scope = { project: ids.projectId, submission, run: ids.runId };
+  const read = getDirectorySubmissionResultsOperation;
+  let results: GetDirectorySubmissionResultsResult;
+  try {
+    results = await runPlatformOperation(options, globals.timeout, (context) => read.execute(scope, context), extras);
+  } catch (error) {
+    if (!(error instanceof CliError)) throw error;
+    const later = `mcpjam readiness submission results ${submission} --run ${ids.runId}`;
+    const message = `${error.message} The run finished. Read its results with \`${later}\`.`;
+    throw new CliError(error.code, message, error.exitCode, error.details);
+  }
+  writeResult({ ...started, run, verdict: results.verdict }, globals.format);
+  judgeResults(results, command);
 }
 
 /** Register `readiness flows` and `readiness submission` on the readiness group. */
@@ -306,6 +382,13 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
     .option("--unset <key>", "Remove a field's answer. Repeatable.", collectRepeated, [])
     .option("--confirm <key>", "Confirm a declaration as the portal words it now. Repeatable.", collectRepeated, [])
     .option("--title <title>", "Rename the submission")
+    .option("--plugin <id>", "A ChatGPT plugin submission's stored plugin")
+    .option("--plugin-version <id>", "The plugin version to submit. It names its plugin, so --plugin can be left out")
+    .option("--clear-plugin", "Remove the submission's plugin and version")
+    .option("--attempt <n>", "Which submission this is: 1, then one more per resubmission", (value: string) =>
+      parsePositiveInteger(value, "--attempt")
+    )
+    .option("--clear-attempt", "Remove the submission's attempt number")
     .option(
       "--expected-revision <n>",
       "The revision you read. Without it, the current revision is read first.",
@@ -342,29 +425,73 @@ export function registerDirectorySubmissionCommands(readiness: Command): void {
     verb("run", "Grade a submission's server and answers on the platform")
       .option("--wait", "Wait for the run to end, then exit 0 ready, 1 not ready or 3 incomplete")
       .option("--ai-observations", "Add optional model observations, included with MCPJam")
+      .option("--plugin-version <id>", "The stored plugin version to grade. Required for a ChatGPT plugin submission")
+      .option(
+        "--test-plan-revision <n>",
+        "Also make the calls of the saved test plan at this revision, from `plan show`. It must be the current one.",
+        (value: string) => parsePositiveInteger(value, "--test-plan-revision")
+      )
       .option("--idempotency-key <key>", "Replay guard: a retry returns the run already started")
   );
-  run.action(async (id: string, _options: RunOptions, command: Command) => {
-    try {
-      await runSubmission(id, command);
-    } catch (error) {
-      const waiting = platformOptionsOf<RunOptions>(command).wait;
-      if (!waiting || !(error instanceof CliError) || error.exitCode === 2) throw error;
-      // Under --wait the exit code is the verdict, and no run gave one.
-      throw new CliError(error.code, error.message, 3, error.details);
-    }
+  run.action((id: string, _options: RunOptions, command: Command) =>
+    // Under --wait the exit code is the verdict.
+    platformOptionsOf<RunOptions>(command).wait
+      ? withVerdictExit(() => runSubmission(id, command))
+      : runSubmission(id, command)
+  );
+
+  const results = addPlatformOptions(
+    verb("results", "Read a submission's results by the portal's steps, and exit with its verdict")
+      .option("--run <id>", "A completed run's id. Defaults to the latest.")
+      .option("--json", "Print JSON (same as --format json)")
+      .hook("preAction", (command) => {
+        if (command.opts().json) command.setOptionValue("format", "json");
+      })
+  );
+  results.action((id: string, _options: Options, command: Command) =>
+    withVerdictExit(async () => {
+      const options = platformOptionsOf<Options>(command);
+      const { project, projectScope } = resolveCloudProjectArgs(options);
+      const input = { ...scoped({ ...options, project }, id), run: options.run };
+      const read = getDirectorySubmissionResultsOperation;
+      const { timeout, format } = getGlobalOptions(command);
+      const execute = (context: ClientContext) => read.execute(input, context);
+      const result = await runPlatformOperation(options, timeout, execute, {
+        ...extrasOf(command, "results"),
+        projectScope,
+      });
+      writeResult(result, format);
+      judgeResults(result, command);
+    })
+  );
+
+  const gate = addPlatformOptions(
+    verb("gate", "Choose which checks fail the submission's runs. Check ids are in its results.")
+      .option(
+        "--fail-on <id>",
+        "Fail a run when this check fails, even one the directory does not require. Repeatable.",
+        collectRepeated,
+        []
+      )
+      .option("--warn-only <id>", "Show this check's result without failing the run. Repeatable.", collectRepeated, [])
+      .option("--clear", "Start from the directory's blocking checks, dropping earlier choices")
+  );
+  gate.action(async (id: string, _options: GateOptions, command: Command) => {
+    const options = platformOptionsOf<GateOptions>(command);
+    const { project, projectScope } = resolveCloudProjectArgs(options);
+    const change = parseGateChange(options, id);
+    const { timeout, format } = getGlobalOptions(command);
+    const save = (context: ClientContext) => saveGate(scoped({ ...options, project }, id), change, context);
+    const saved = await runPlatformOperation(options, timeout, save, {
+      ...extrasOf(command, "gate"),
+      projectScope,
+    });
+    writeResult(saved, format);
+    reportGate(saved.submission.checkGate, command);
   });
 
-  const results = verb("results", "Read a submission's results, grouped by the portal's steps")
-    .option("--run <id>", "A completed run's id. Defaults to the latest.")
-    .option("--json", "Print JSON (same as --format json)")
-    .hook("preAction", (command) => {
-      if (command.opts().json) command.setOptionValue("format", "json");
-    });
-  bindOperation(
-    results,
-    getDirectorySubmissionResultsOperation,
-    (options: Options, id = "") => ({ ...scoped(options, id), run: options.run }),
-    PROJECT_SCOPED
-  );
+  registerSubmissionHandoffCommands(submission);
+
+  registerTestPlanCommands(submission);
+  registerSubmissionEvalCommands(submission);
 }

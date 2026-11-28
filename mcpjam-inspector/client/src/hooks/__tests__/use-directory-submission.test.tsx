@@ -25,9 +25,14 @@ const runner = vi.hoisted(() => ({
   state: { status: "idle" },
   run: vi.fn(),
   watch: vi.fn(),
+  /** How the hook starts a run, as the run poller would call it. */
+  start: undefined as ((key: string) => Promise<unknown>) | undefined,
 }));
 vi.mock("@/hooks/use-directory-readiness-run", () => ({
-  useDirectoryReadinessRun: () => runner,
+  useDirectoryReadinessRun: (options: { start: typeof runner.start }) => {
+    runner.start = options.start;
+    return runner;
+  },
 }));
 
 function viewAt(revision: number, name: string): SubmissionView {
@@ -143,6 +148,41 @@ describe("useDirectorySubmission", () => {
     });
     expect(result.current.view?.revision).toBe(4);
     expect(result.current.savedAt).not.toBeNull();
+  });
+
+  it("confirms the answer shown, a portal default included", async () => {
+    api.getDirectorySubmission.mockResolvedValue({
+      ...viewAt(3, "Sample"),
+      answers: [
+        { key: "useCases.access", value: "read-only", origin: "default" },
+      ],
+    });
+    const { result } = await openSubmission();
+    act(() => result.current.confirm("useCases.access"));
+    expect(result.current.answers).toContainEqual({
+      key: "useCases.access",
+      value: "read-only",
+      origin: "confirmed",
+    });
+    await settle(800);
+    expect(api.updateDirectorySubmission).toHaveBeenCalledWith(SCOPE, {
+      expectedRevision: 3,
+      answers: { "useCases.access": "read-only" },
+      confirm: ["useCases.access"],
+    });
+  });
+
+  it("saves a change made after a confirmation as a plain answer", async () => {
+    const { result } = await openSubmission();
+    act(() => {
+      result.current.confirm("listing.name");
+      result.current.setAnswer("listing.name", "Edited");
+    });
+    await settle(800);
+    expect(api.updateDirectorySubmission).toHaveBeenCalledWith(SCOPE, {
+      expectedRevision: 3,
+      answers: { "listing.name": "Edited" },
+    });
   });
 
   it("validates the answers as the person types", async () => {
@@ -398,5 +438,21 @@ describe("useDirectorySubmission", () => {
     expect(
       api.updateDirectorySubmission.mock.invocationCallOrder[0],
     ).toBeLessThan(runner.run.mock.invocationCallOrder[0]);
+  });
+
+  it("starts a run with the test plan revision it was started with, and no other", async () => {
+    const start = () => runner.start?.("key_1");
+    runner.run.mockImplementationOnce(start).mockImplementationOnce(start);
+    const { result } = await openSubmission();
+    await act(async () => {
+      await result.current.startRun(3);
+    });
+    await act(async () => {
+      await result.current.startRun();
+    });
+    expect(api.startDirectorySubmissionRun.mock.calls).toEqual([
+      [SCOPE, "key_1", undefined, 3],
+      [SCOPE, "key_1", undefined, undefined],
+    ]);
   });
 });

@@ -37,12 +37,16 @@
  *    back `-32020 HeaderMismatch`, and the hosted path had no parity with
  *    local MRTR. The seam honors the host's `toolParamHeaderMirroring` knob,
  *    so a session deliberately simulating a non-conforming client stays
- *    non-conforming here too.
+ *    non-conforming here too. When the server still answers `-32020` (the
+ *    cached marks were stale), `mrtrToolParamHeadersAfterMismatch` lists the
+ *    tools again and the leg is resent once, as on the local path.
  */
 import type { ModelMessage, ToolResultPart } from "ai";
 import type { UIMessageChunk } from "ai";
 import {
   mcpCallToolResultToModelOutputWithLinkedResources,
+  projectToolResultByRule,
+  structuredContentRuleOf,
   type MCPClientManager,
   type McpLinkedResourceReader,
   type InputResponses,
@@ -241,14 +245,23 @@ export async function buildMrtrToolResultMessage(
       readOptions?.abortSignal ? { signal: readOptions.abortSignal } : undefined,
     );
   let output: ToolResultPart["output"];
-  try {
-    const mapped = (await mcpCallToolResultToModelOutputWithLinkedResources(
-      result as any,
-      { modelVisibleMcpToolResults, readResource },
-    )) as ToolResultPart["output"] | undefined;
-    output = mapped ?? ({ type: "json", value: result as unknown } as any);
-  } catch {
-    output = { type: "json", value: result as unknown } as any;
+  const rule = structuredContentRuleOf(modelVisibleMcpToolResults);
+  if (rule) {
+    // The host's client rule, as the live tool path applies it.
+    output = (await projectToolResultByRule(result, rule, {
+      modelVisibleMcpToolResults,
+      readResource,
+    })) as ToolResultPart["output"];
+  } else {
+    try {
+      const mapped = (await mcpCallToolResultToModelOutputWithLinkedResources(
+        result as any,
+        { modelVisibleMcpToolResults, readResource },
+      )) as ToolResultPart["output"] | undefined;
+      output = mapped ?? ({ type: "json", value: result as unknown } as any);
+    } catch {
+      output = { type: "json", value: result as unknown } as any;
+    }
   }
   const providerOptions = mergeMcpToolOriginMetadata(undefined, serverId);
   return {
@@ -343,23 +356,41 @@ export async function resolveMrtrChatResume(
       // Built from the LEG's arguments — a server cross-checks each request's
       // headers against that request's body. Best-effort by construction: an
       // unresolvable schema yields no headers and the leg proceeds as before.
+      const args = (state.originalParams as { arguments?: unknown } | undefined)
+        ?.arguments;
       const paramHeaders =
         state.method === "tools/call" && toolName !== undefined
-          ? await deps.manager.mrtrToolParamHeaders(
-              serverId,
-              toolName,
-              (state.originalParams as { arguments?: unknown } | undefined)
-                ?.arguments,
-            )
+          ? await deps.manager.mrtrToolParamHeaders(serverId, toolName, args)
           : {};
-      const leg = await resumeInputRequiredOperation(
-        client,
-        state,
-        responses,
-        Object.keys(paramHeaders).length > 0
-          ? { requestOptions: { headers: paramHeaders } }
-          : undefined,
-      );
+      const resumeWith = (headers: Record<string, string>) =>
+        resumeInputRequiredOperation(
+          client,
+          state,
+          responses,
+          Object.keys(headers).length > 0
+            ? { requestOptions: { headers } }
+            : undefined,
+        );
+      let leg: Awaited<ReturnType<typeof resumeWith>>;
+      try {
+        leg = await resumeWith(paramHeaders);
+      } catch (error) {
+        // A `-32020` means the headers did not match the tool's current
+        // marks. The spec has the client list the tools again and resend with
+        // the right headers; the manager makes the same call here as on the
+        // local MRTR path, and `undefined` means a resend cannot help.
+        const retryHeaders =
+          state.method === "tools/call" && toolName !== undefined
+            ? await deps.manager.mrtrToolParamHeadersAfterMismatch(
+                serverId,
+                toolName,
+                args,
+                { error, headers: paramHeaders },
+              )
+            : undefined;
+        if (retryHeaders === undefined) throw error;
+        leg = await resumeWith(retryHeaders);
+      }
       if (leg.status === "complete") completedResult = leg.result;
       return leg;
     });

@@ -956,6 +956,27 @@ describe("useChatSession hosted mode", () => {
     });
   });
 
+  it.each(["chatgpt-web", "claude-web"] as const)(
+    "keeps an empty system prompt for %s and preserves explicit edits",
+    (harnessId) => {
+      const { result, rerender, unmount } = renderHook(
+        ({ hostLoaded }) => useChatSession({
+          selectedServers: [],
+          harnessModelTarget: hostLoaded ? { harnessId } : null,
+        }),
+        { initialProps: { hostLoaded: false } },
+      );
+      expect(result.current.systemPrompt.length).toBeGreaterThan(0);
+      rerender({ hostLoaded: true });
+      expect(result.current.systemPrompt).toBe("");
+      act(() => result.current.setSystemPrompt("My instructions"));
+      expect(result.current.systemPrompt).toBe("My instructions");
+      act(() => result.current.setSystemPrompt(""));
+      expect(result.current.systemPrompt).toBe("");
+      unmount();
+    },
+  );
+
   it("offers a Codex client only Codex models and never falls back to a Claude one", async () => {
     // The user's saved lead is a Claude model, which Codex cannot run.
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
@@ -986,6 +1007,43 @@ describe("useChatSession hosted mode", () => {
     expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
     // Unresolved: the shown fallback is never mirrored over the saved lead.
     expect(result.current.isSelectedModelResolved).toBe(false);
+    unmount();
+  });
+
+  it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"])(
+    "asks to prepare a new %s chat's computer",
+    (harnessId) => {
+      const { result, unmount } = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            hostId: "host-1",
+            selectedServerIds: ["server-id-1"],
+          },
+          harnessModelTarget: { harnessId },
+        }),
+      );
+      expect(result.current.harnessBoxPreparation).toMatchObject({
+        chatSessionId: expect.any(String),
+        body: { projectId: "project-1", hostId: "host-1" },
+      });
+      unmount();
+    },
+  );
+
+  it("asks nothing for a chat on MCPJam's own agent", () => {
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          hostId: "host-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+    expect(result.current.harnessBoxPreparation).toBeNull();
     unmount();
   });
 
@@ -1466,6 +1524,76 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: initialChatSessionId,
       selectedServerIds: ["server-id-2"],
     });
+  });
+
+  it("writes prompt turns only after a send is admitted", async () => {
+    let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
+    const ensureServerIds = vi.fn(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolvePreflight = resolve;
+        }),
+    );
+    const skillTurn = {
+      id: "skill-context-1",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "skill body" }],
+    };
+    let admitted = true;
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-a"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+          ensureServerIds,
+        },
+      }),
+    );
+
+    mockState.setMessages.mockClear();
+    mockState.authFetch.mockClear();
+    let sendPromise: Promise<boolean> | undefined;
+    act(() => {
+      sendPromise = result.current.sendMessage({
+        text: "hi",
+        prependMessages: [skillTurn],
+        isCurrent: () => admitted,
+      });
+    });
+    expect(ensureServerIds).toHaveBeenCalledTimes(1);
+    expect(mockState.setMessages).not.toHaveBeenCalled();
+
+    admitted = false;
+    resolvePreflight([{ serverId: "id-a" }]);
+    const refused = await act(async () => await sendPromise);
+    expect(refused).toBe(false);
+    expect(mockState.setMessages).not.toHaveBeenCalled();
+    expect(mockState.authFetch).not.toHaveBeenCalled();
+
+    admitted = true;
+    let resolveAgain!: (value: Array<{ serverId: string }>) => void;
+    ensureServerIds.mockImplementationOnce(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolveAgain = resolve;
+        }),
+    );
+    act(() => {
+      sendPromise = result.current.sendMessage({
+        text: "hi",
+        prependMessages: [skillTurn],
+        isCurrent: () => admitted,
+      });
+    });
+    resolveAgain([{ serverId: "id-a" }]);
+    const sent = await act(async () => await sendPromise);
+    expect(sent).toBe(true);
+    const written = mockState.setMessages.mock.calls.map(([update]) =>
+      typeof update === "function" ? update([]) : update,
+    );
+    expect(written).toContainEqual([skillTurn]);
   });
 
   it("fails closed when the server selection changes mid-preflight", async () => {

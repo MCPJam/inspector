@@ -21,6 +21,7 @@ import {
 } from "@mcpjam/sdk";
 import { createConvexClient } from "./evals/route-helpers.js";
 import { reconcileHeadlessOAuthScope } from "./conformance-oauth-headless-scope.js";
+import { mockTransportOf } from "../utils/mock-servers.js";
 import { logger } from "../utils/logger.js";
 import { redactHostedTransportFailures } from "../utils/hosted-transport-failure-redaction.js";
 import { HOSTED_TRANSPORT_FAILURE_DETAIL } from "../utils/hosted-doctor-redaction.js";
@@ -439,6 +440,8 @@ export async function persistedConformanceTargetRefusal(
 ): Promise<string | null> {
   const url = (server as { url?: string | URL }).url;
   if (url === undefined) return null;
+  // A mock's placeholder address is served in process; no request leaves the box.
+  if (mockTransportOf(server)) return null;
   try {
     await assertAllowedHostedTargetUrl(String(url), "Server URL");
     return null;

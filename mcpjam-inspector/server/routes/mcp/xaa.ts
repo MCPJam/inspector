@@ -13,6 +13,7 @@ import {
   type NegativeTestMode,
 } from "../../../shared/xaa.js";
 import {
+  getDefaultUserAgent,
   getXAAIdpJwks,
   handleXaaAuthenticate,
   handleXaaJsonTokenExchange,
@@ -1706,7 +1707,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         // internal address can never be fetched.
         redirect: options.httpsOnlyProxy ? "manual" : "follow",
         signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
-        headers: { "User-Agent": "MCP-Inspector/1.0" },
+        headers: { "User-Agent": getDefaultUserAgent() },
       });
 
       const redirected =
@@ -2038,7 +2039,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "MCP-Inspector/1.0",
+            "User-Agent": getDefaultUserAgent(),
             ...(extraHeaders || {}),
             ...jwtBearerRequest.headers,
           },

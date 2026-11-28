@@ -5,14 +5,20 @@ const MOBILE_BREAKPOINT = 768;
 
 export function useJsonRpcPanelVisibility({
   useDesktopPreference = false,
-}: { useDesktopPreference?: boolean } = {}) {
+  storageKey = STORAGE_KEY,
+  defaultVisible = true,
+}: {
+  useDesktopPreference?: boolean;
+  storageKey?: string;
+  defaultVisible?: boolean;
+} = {}) {
   const [isVisible, setIsVisible] = useState(() => {
-    if (typeof window === "undefined") return true;
+    if (typeof window === "undefined") return defaultVisible;
     // Default to closed on narrow viewports (phones)
     if (!useDesktopPreference && window.innerWidth < MOBILE_BREAKPOINT)
       return false;
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored === null ? true : stored === "true";
+    const stored = localStorage.getItem(storageKey);
+    return stored === null ? defaultVisible : stored === "true";
   });
 
   useEffect(() => {
@@ -21,9 +27,9 @@ export function useJsonRpcPanelVisibility({
       typeof window !== "undefined" &&
       window.innerWidth >= MOBILE_BREAKPOINT
     ) {
-      localStorage.setItem(STORAGE_KEY, String(isVisible));
+      localStorage.setItem(storageKey, String(isVisible));
     }
-  }, [isVisible]);
+  }, [isVisible, storageKey]);
 
   const toggle = useCallback(() => {
     setIsVisible((prev) => !prev);

@@ -40,13 +40,31 @@ import {
   isBridgeSpawn,
   reapHarnessBridgesCommand,
 } from "./bridge-reaper.js";
+import {
+  assertBoxMemoryForHarness,
+  stderrWithStopReason,
+} from "./box-memory.js";
 import { harnessPnpmGuardCommand } from "./harness-bake.js";
 import { closeModelProxyConnections } from "./model-proxy-connections.js";
+import { readAheadRuntime } from "./runtime-read-ahead.js";
+import {
+  bridgeReapSchedule,
+  readAheadToAwait,
+  sandboxHomeLookup,
+} from "./startup-overlap.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
+  /** Resolved adapter identity for cold-start read-ahead. */
+  harnessId?: string;
   /** Internal acknowledgement for this turn's box, never taken from request data. */
   connectionPreparedByBroker?: () => boolean;
+  /**
+   * True when no turn has used this box yet: no bridge can be running there,
+   * so with `MCPJAM_HARNESS_SKIP_FIRST_REAP` the first bridge spawn skips the
+   * reap.
+   */
+  unusedBox?: () => boolean;
   /**
    * Fired the first time `sessionEnv` is actually merged into a command's
    * environment — i.e. when the box really receives the values, not when the
@@ -81,6 +99,8 @@ export interface E2BHarnessSandboxProviderOptions {
   bridgePort?: number;
   /** Request timeout for read-only sandbox discovery. */
   connectTimeoutMs?: number;
+  /** Attach without the pnpm guard: a box preparation runs it under its fence. */
+  skipPnpmGuard?: boolean;
   /** Per-command exec timeout for `run`. E2B commands default to ~60s — too
    *  short for the harness bootstrap (`pnpm install`) on a larger dep tree.
    *  `spawn` does not use it: a bridge runs with no timeout at all. */
@@ -342,6 +362,10 @@ export function createE2BHarnessSandboxProvider(
 
     // Mutated in place by setPorts so `session.ports` (same ref) stays live.
     const ports: number[] = [bridgePort];
+    const runInBox = (
+      command: string,
+      options: { timeoutMs: number; signal?: AbortSignal },
+    ) => sandbox.commands.run(command, options);
 
     // The harness bootstrap shells `pnpm install` BEFORE any session hook runs.
     // pnpm is baked into the computer template (mcpjam-backend
@@ -358,13 +382,34 @@ export function createE2BHarnessSandboxProvider(
     // spends a minute of retries before failing — which is why the failure is
     // spelled out below rather than surfacing as E2B's bare "exit status 1".
     try {
-      // Both checks must finish before exposing the session. Socket cleanup
-      // targets only the model proxy and is independent of the package guard.
+      // On its own, before the guard: a box too small for the harness fails
+      // here at once, not after the guard's install (up to its timeout).
+      // Only a harness with a floor sends a command.
+      if (!resuming) {
+        await assertBoxMemoryForHarness(
+          runInBox,
+          opts.harnessId,
+          connectSignal,
+        );
+      }
+      // Preparation must finish before exposing the session. The read-only
+      // hint and proxy socket cleanup are independent of the package guard.
       const preparation = await Promise.allSettled([
-        sandbox.commands.run(harnessPnpmGuardCommand(), {
-          timeoutMs: commandTimeoutMs,
-          ...(connectSignal ? { signal: connectSignal } : {}),
-        }),
+        ...readAheadToAwait(
+          readAheadRuntime(
+            runInBox,
+            { harnessId: opts.harnessId, resuming },
+            connectSignal,
+          ),
+        ),
+        ...(opts.skipPnpmGuard
+          ? []
+          : [
+              sandbox.commands.run(harnessPnpmGuardCommand(), {
+                timeoutMs: commandTimeoutMs,
+                ...(connectSignal ? { signal: connectSignal } : {}),
+              }),
+            ]),
         ...(resuming
           ? [closeModelProxyConnections(sandbox, opts.proxyUrl?.(), connectSignal)]
           : []),
@@ -415,6 +460,10 @@ export function createE2BHarnessSandboxProvider(
         );
       }
     };
+    const bridgeReaps = bridgeReapSchedule({
+      reap: reapBridges,
+      ...(opts.unusedBox ? { unusedBox: opts.unusedBox } : {}),
+    });
 
     const session: HarnessV1NetworkSandboxSession = {
       id: sandbox.sandboxId,
@@ -477,6 +526,14 @@ export function createE2BHarnessSandboxProvider(
 
       // ── exec ──────────────────────────────────────────────────────────
       run: async ({ command, workingDirectory, env, abortSignal }) => {
+        // The framework asks for the box's home several times per session.
+        const home = sandboxHomeLookup({
+          sandboxId: opts.sandboxId,
+          command,
+          setsHome: env?.HOME !== undefined || sessionEnv?.HOME !== undefined,
+        });
+        if (home?.known !== undefined)
+          return { exitCode: 0, stdout: home.known, stderr: "" };
         try {
           const res = await sandbox.commands.run(command, {
             cwd: workingDirectory ?? cwd,
@@ -488,6 +545,7 @@ export function createE2BHarnessSandboxProvider(
           // actually handed to the box. A transport rejection before
           // acceptance must not mark delivery.
           markSessionEnvUsed();
+          home?.keep(res.exitCode, res.stdout);
           return {
             exitCode: res.exitCode,
             stdout: res.stdout,
@@ -502,7 +560,15 @@ export function createE2BHarnessSandboxProvider(
             return {
               exitCode: err.exitCode,
               stdout: err.stdout,
-              stderr: err.stderr,
+              stderr: await stderrWithStopReason(
+                {
+                  exitCode: err.exitCode,
+                  error: err.error,
+                  stderr: err.stderr,
+                },
+                runInBox,
+                abortSignal,
+              ),
             };
           }
           throw err;
@@ -518,7 +584,7 @@ export function createE2BHarnessSandboxProvider(
         const stateDir = isBridgeSpawn(env)
           ? bridgeStateDirOf(command)
           : undefined;
-        if (stateDir) await reapBridges(stateDir, abortSignal);
+        if (stateDir) await bridgeReaps.beforeSpawn(stateDir, abortSignal);
         let outCtl!: ReadableStreamDefaultController<Uint8Array>;
         let errCtl!: ReadableStreamDefaultController<Uint8Array>;
         let streamsClosed = false;

@@ -16,7 +16,7 @@
 
 </div>
 
-**MCPJam** is the open-source **testing & evaluations platform for MCP server developers** who ship. Interactively test tools, prompts, resources, and authorization across 16 client configurations and 170+ models. Run evals on test cases, get insights on what's breaking, and gate regressions to secure every deployment.
+**MCPJam** is the open-source **testing & evaluations platform for MCP server developers** who ship. Interactively test tools, prompts, resources, and authorization across 18 client configurations and 170+ models. Run evals on test cases, get insights on what's breaking, and gate regressions to secure every deployment.
 
 # 🚀 Quick start
 
@@ -35,7 +35,7 @@ npx @mcpjam/inspector@latest
 Clients like ChatGPT, Claude, and Cursor all read your server differently. MCPJam catches those differences, shows where your server breaks, and tells you how to fix it:
 
 - **Inspect & debug**: Explore your server's tools, resources, and prompts in one place. Test prompts from real LLMs, with full visibility & traces on every JSON-RPC message and OAuth exchange.
-- **Cross-client evals**: Score agent behavior across 16 client configurations — ChatGPT, Claude, Cursor, Copilot, and more — to understand how your MCP integrations perform across all users. Track accuracy, latency, and tool-call performance over time.
+- **Cross-client evals**: Score agent behavior across 18 client configurations — ChatGPT, Claude, Cursor, Copilot, and more — to understand how your MCP integrations perform across all users. Track accuracy, latency, and tool-call performance over time.
 - **Security & reliability**: Automate conformance & behavior checks in CI/CD to catch regressions before they reach production.
 
 <img alt="MCPJam Playground trace view: every tool call, agent step, and JSON-RPC message in one timeline" src="./docs/images/readme-playground.png">

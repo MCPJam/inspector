@@ -53,7 +53,11 @@ export declare function packSigningPublicKeys(): string[];
 export declare const PACK_SIGNER_WORKFLOW: string;
 export declare const EQUIVALENCE_SIGNER_WORKFLOW: string;
 export declare function attestationVerifyArgs(path: string, options: { repo: string; workflow: string }): string[];
-export declare function verifyAttestation(path: string, options: { repo: string; workflow: string }): Promise<string | null>;
+export declare function verifyAttestation(
+  path: string,
+  options: { repo: string; workflow: string },
+  retry?: { attempts?: number; backoffMs?: number },
+): Promise<string | null>;
 
 export declare function missingEvidence(input: {
   harnessId: string;

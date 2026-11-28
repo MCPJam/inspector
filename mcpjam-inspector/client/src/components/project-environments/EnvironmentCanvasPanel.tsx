@@ -133,7 +133,7 @@ export function EnvironmentCanvasPanel({
         hostConfig: host.config ?? null,
         previewServers: preview.servers,
         projectServers: servers,
-      }), browsersEnabled, browserProfileName },
+      }), browsersEnabled, browserProfileName, hostId },
       []
     );
   }, [preview, host, hosts, hostId, servers, browsersEnabled, browserProfileName]);

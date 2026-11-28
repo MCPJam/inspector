@@ -15,7 +15,7 @@ export async function readPluginFormResourcePreview(
   if (options.target.type !== "resource_link")
     throw new PluginInvocationError("FORM_PREVIEW_UNAVAILABLE");
   const { source, signal, runtime, authorize } =
-    createPluginFormService(options);
+    await createPluginFormService(options);
   try {
     return await readAuthorizedPluginFormResource({
       serverId: source.owner.serverId,

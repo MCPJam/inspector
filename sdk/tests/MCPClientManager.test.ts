@@ -4,6 +4,11 @@ import {
   LogLevelMetaClient,
   TraceContextMetaClient,
 } from "../src/mcp-client-manager";
+import {
+  ProtocolError,
+  SdkError,
+  SdkErrorCode,
+} from "@modelcontextprotocol/client";
 import { realpathSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -317,6 +322,8 @@ describe("MCPClientManager", () => {
         const result = await manager.executeTool("cwd-server", "cwd", {});
         expect(extractSingleText(result)).toBe(resolvedCwd);
       } finally {
+        // Windows refuses to remove a directory that a live process runs in.
+        await manager.disconnectServer("cwd-server");
         rmSync(cwd, { recursive: true, force: true });
       }
     }, 15000);
@@ -480,6 +487,31 @@ describe("MCPClientManager", () => {
       }
     }, 15000);
 
+    it("keeps a config's credential headers out of the HTTP exchange log", async () => {
+      const isolated = await startMockHttpServer();
+      const exchanges: unknown[] = [];
+      const logManager = new MCPClientManager();
+
+      try {
+        await logManager.connectToServer("http-server-log", {
+          url: isolated.url,
+          requestInit: {
+            headers: { "X-Tenant-Key": "tok_EFTW41_SECRET_tenant" },
+          },
+          credentialHeaderNames: ["X-Tenant-Key"],
+          httpLogger: (exchange) => exchanges.push(exchange),
+          preferSSE: true,
+        });
+
+        expect(exchanges.length).toBeGreaterThan(0);
+        expect(JSON.stringify(exchanges)).toContain('"x-tenant-key":"<redacted>"');
+        expect(JSON.stringify(exchanges)).not.toContain("tok_EFTW41_SECRET");
+      } finally {
+        await logManager.disconnectAllServers();
+        await isolated.stop();
+      }
+    }, 15000);
+
     it("skips non-replayable HTTP configs with custom request state", () => {
       const replayManager = new MCPClientManager();
       seedRegisteredServer(replayManager, "custom-http", {
@@ -490,6 +522,24 @@ describe("MCPClientManager", () => {
             "X-Custom": "1",
           },
         },
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([]);
+    });
+
+    it("never writes a credential the MCPJam backend delivered into a replay config", () => {
+      const replayManager = new MCPClientManager();
+      seedRegisteredServer(replayManager, "delivered-http", {
+        url: "https://example.com/mcp",
+        credentialSource: "mcpjam-backend",
+        requestInit: {
+          headers: { Authorization: "Bearer tok_EFTW41_SECRET_replay" },
+        },
+      });
+      seedRegisteredServer(replayManager, "refreshed-http", {
+        url: "https://example.com/mcp",
+        credentialSource: "mcpjam-backend",
+        accessToken: "tok_EFTW41_SECRET_refreshed",
       });
 
       expect(replayManager.getServerReplayConfigs()).toEqual([]);
@@ -826,6 +876,197 @@ describe("MCPClientManager", () => {
       await expect(manager.pingServer("retry-ping")).resolves.toBeUndefined();
 
       expect(fakeClient.ping).toHaveBeenCalledTimes(2);
+    });
+
+    it("drops the connection when a ping gets no answer in time", async () => {
+      // 2025 revisions, basic/utilities/ping.mdx: "Timeouts SHOULD be treated
+      // as connection failures".
+      const timeout = Object.assign(new Error("Request timed out"), {
+        code: "REQUEST_TIMEOUT",
+      });
+      const fakeClient = {
+        ping: jest.fn().mockRejectedValue(timeout),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+
+      seedRegisteredServer(manager, "ping-timeout", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "ping-timeout", { client: fakeClient });
+      expect(manager.getConnectionStatus("ping-timeout")).toBe("connected");
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockRejectedValue(timeout);
+
+      await expect(manager.pingServer("ping-timeout")).rejects.toBe(timeout);
+
+      expect(fakeClient.close).toHaveBeenCalledTimes(1);
+      expect(manager.getConnectionStatus("ping-timeout")).toBe("disconnected");
+      connectSpy.mockRestore();
+    });
+
+    it("does not send the retry ping on the connection that timed out", async () => {
+      const timeout = Object.assign(new Error("Request timed out"), {
+        code: "REQUEST_TIMEOUT",
+      });
+      const staleClient = {
+        ping: jest.fn().mockRejectedValue(timeout),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      const freshClient = {
+        ping: jest.fn().mockResolvedValue(undefined),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+
+      seedRegisteredServer(manager, "ping-timeout-retry", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "ping-timeout-retry", { client: staleClient });
+      const connectSpy = jest
+        .spyOn(manager as any, "connectToServerOnce")
+        .mockImplementation(async (serverId: string) => {
+          seedLiveState(manager, serverId, { client: freshClient });
+          return freshClient as any;
+        });
+
+      await expect(
+        manager.pingServer("ping-timeout-retry")
+      ).resolves.toBeUndefined();
+
+      expect(staleClient.ping).toHaveBeenCalledTimes(1);
+      expect(staleClient.close).toHaveBeenCalledTimes(1);
+      expect(connectSpy).toHaveBeenCalledTimes(1);
+      expect(freshClient.ping).toHaveBeenCalledTimes(1);
+      expect(freshClient.close).not.toHaveBeenCalled();
+      connectSpy.mockRestore();
+    });
+
+    it("leaves a newer connection open when an old ping times out", async () => {
+      const timeout = Object.assign(new Error("Request timed out"), {
+        code: "REQUEST_TIMEOUT",
+      });
+      const newerClient = {
+        ping: jest.fn().mockResolvedValue(undefined),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      const oldClient = {
+        ping: jest.fn().mockImplementation(async () => {
+          // Another call replaced the connection while this ping was waiting.
+          seedLiveState(manager, "ping-timeout-stale", { client: newerClient });
+          throw timeout;
+        }),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+
+      seedRegisteredServer(manager, "ping-timeout-stale", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "ping-timeout-stale", { client: oldClient });
+
+      // The retry ping goes to the newer connection and is answered.
+      await expect(
+        manager.pingServer("ping-timeout-stale")
+      ).resolves.toBeUndefined();
+
+      expect(oldClient.ping).toHaveBeenCalledTimes(1);
+      expect(newerClient.close).not.toHaveBeenCalled();
+      expect(manager.getConnectionStatus("ping-timeout-stale")).toBe(
+        "connected"
+      );
+    });
+
+    it("keeps the connection when a ping fails for another reason", async () => {
+      const refused = Object.assign(new Error("Method not found"), {
+        code: -32601,
+      });
+      const fakeClient = { ping: jest.fn().mockRejectedValue(refused) };
+
+      seedRegisteredServer(manager, "ping-refused", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "ping-refused", { client: fakeClient });
+
+      await expect(manager.pingServer("ping-refused")).rejects.toBe(refused);
+
+      expect(manager.getConnectionStatus("ping-refused")).toBe("connected");
+    });
+
+    it("keeps the connection when the server answers a ping with -32001", async () => {
+      // -32001 from the server is its own JSON-RPC error, not our timeout:
+      // the server did answer.
+      const serverError = Object.assign(new Error("Request timed out"), {
+        code: -32001,
+      });
+      const fakeClient = {
+        ping: jest.fn().mockRejectedValue(serverError),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+
+      seedRegisteredServer(manager, "ping-32001", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "ping-32001", { client: fakeClient });
+
+      await expect(manager.pingServer("ping-32001")).rejects.toBe(serverError);
+
+      expect(fakeClient.close).not.toHaveBeenCalled();
+      expect(manager.getConnectionStatus("ping-32001")).toBe("connected");
+    });
+
+    it("keeps the connection when the caller's own signal ends the ping", async () => {
+      // The caller's deadline fires while the ping waits. It rejects with a
+      // `TimeoutError`, and only `signal.aborted` tells it from our timeout.
+      const signal = AbortSignal.timeout(20);
+      const fakeClient = {
+        ping: jest.fn().mockImplementation(
+          () =>
+            new Promise((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason));
+            })
+        ),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+
+      seedRegisteredServer(manager, "ping-caller-abort", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "ping-caller-abort", { client: fakeClient });
+
+      await expect(
+        manager.pingServer("ping-caller-abort", { signal })
+      ).rejects.toBeDefined();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(fakeClient.ping).toHaveBeenCalledTimes(1);
+      expect(signal.reason.name).toBe("TimeoutError");
+      expect(fakeClient.close).not.toHaveBeenCalled();
+      expect(manager.getConnectionStatus("ping-caller-abort")).toBe(
+        "connected"
+      );
+    });
+
+    it("keeps the connection when the modern server/discover probe times out", async () => {
+      const timeout = Object.assign(new Error("Request timed out"), {
+        code: "REQUEST_TIMEOUT",
+      });
+      const fakeClient = {
+        getProtocolEra: jest.fn().mockReturnValue("modern"),
+        discover: jest.fn().mockRejectedValue(timeout),
+        ping: jest.fn(),
+      };
+
+      seedRegisteredServer(manager, "modern-ping-timeout", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "modern-ping-timeout", { client: fakeClient });
+
+      await expect(manager.pingServer("modern-ping-timeout")).rejects.toBe(
+        timeout
+      );
+
+      expect(manager.getConnectionStatus("modern-ping-timeout")).toBe(
+        "connected"
+      );
     });
 
     it("probes with server/discover instead of ping on a modern-era connection", async () => {
@@ -1405,4 +1646,117 @@ describe("MCPClientManager", () => {
     });
   });
 
+  describe("best-effort schema lookups", () => {
+    // Before a modern tools/call the manager reads the tool's schema with a
+    // tools/list. A miss degrades into the call. A lookup that timed out,
+    // was cancelled or lost its connection must stop the call instead.
+    let manager: MCPClientManager;
+
+    beforeEach(() => {
+      manager = new MCPClientManager();
+    });
+
+    afterEach(async () => {
+      await manager.disconnectAllServers();
+    });
+
+    function seedModernServer(
+      lookupError: Error,
+      config: Record<string, unknown>
+    ) {
+      const client = {
+        getProtocolEra: jest.fn().mockReturnValue("modern"),
+        listTools: jest.fn().mockRejectedValue(lookupError),
+        callTool: jest.fn().mockResolvedValue({ content: [] }),
+        requestWithSchema: jest.fn().mockResolvedValue({ content: [] }),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      seedRegisteredServer(manager, "lookup", {
+        url: new URL("https://example.test/mcp"),
+        ...config,
+      });
+      seedLiveState(manager, "lookup", { client });
+      return client;
+    }
+
+    describe.each([
+      ["plain", { mirrorToolParamHeaders: false }, "callTool"],
+      ["MRTR", {}, "requestWithSchema"],
+    ] as const)("%s tools/call", (path, config, send) => {
+      function executeTool() {
+        if (path === "MRTR") {
+          manager.setMrtrInputCollector("lookup", async () => {
+            throw new Error("the tool does not ask for input");
+          });
+        }
+        return manager.executeTool("lookup", "echo", {});
+      }
+
+      // What the upstream client raises itself: string codes, never a number.
+      it.each([SdkErrorCode.RequestTimeout, SdkErrorCode.ConnectionClosed])(
+        "does not send the call after the client's %s",
+        async (code) => {
+          const error = new SdkError(code, "The request ended on this side");
+          const client = seedModernServer(error, config);
+
+          await expect(executeTool()).rejects.toBe(error);
+          expect(client[send]).not.toHaveBeenCalled();
+        }
+      );
+
+      // A numeric code is a JSON-RPC error answer: the server did answer.
+      it.each([-32001, -32000])(
+        "still sends the call when the server answers %i",
+        async (code) => {
+          const client = seedModernServer(
+            new ProtocolError(code, "Server error"),
+            config
+          );
+
+          await expect(executeTool()).resolves.toMatchObject({ content: [] });
+          expect(client[send]).toHaveBeenCalledTimes(1);
+        }
+      );
+    });
+
+    // The hosted path builds a leg's headers with these, then sends the leg.
+    describe("hosted leg headers", () => {
+      const refused = {
+        error: new ProtocolError(-32020, "Header mismatch"),
+        headers: {},
+      };
+      const headersAfterMismatch = () =>
+        manager.mrtrToolParamHeadersAfterMismatch(
+          "lookup",
+          "echo",
+          {},
+          refused
+        );
+
+      it.each([SdkErrorCode.RequestTimeout, SdkErrorCode.ConnectionClosed])(
+        "are not built after the client's %s",
+        async (code) => {
+          const error = new SdkError(code, "The request ended on this side");
+          seedModernServer(error, {});
+
+          await expect(
+            manager.mrtrToolParamHeaders("lookup", "echo", {})
+          ).rejects.toBe(error);
+          await expect(headersAfterMismatch()).rejects.toBe(error);
+        }
+      );
+
+      it.each([-32001, -32000])(
+        "come back empty when the server answers %i",
+        async (code) => {
+          seedModernServer(new ProtocolError(code, "Server error"), {});
+
+          await expect(
+            manager.mrtrToolParamHeaders("lookup", "echo", {})
+          ).resolves.toEqual({});
+          await expect(headersAfterMismatch()).resolves.toBeUndefined();
+        }
+      );
+    });
+  });
 });

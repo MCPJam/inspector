@@ -91,7 +91,7 @@ async function fixture(
         },
       },
     },
-  });
+  }, "subject");
   cleanup.push(source.release);
   queries.query
     .mockReset()
@@ -182,7 +182,7 @@ describe("source-owned App previews", () => {
       { uri: "ui://preview" },
       expect.anything(),
     );
-    const child = getPluginFormApp({ ...f.options, token: opened.instanceToken });
+    const child = await getPluginFormApp({ ...f.options, token: opened.instanceToken });
     expect(child.target).toEqual({ type: "mcp_app_tool", name: "preview" });
     expect(child.service.source.owner.serverId).toBe("server");
   });
@@ -206,9 +206,9 @@ describe("source-owned App previews", () => {
     const f = await fixture();
     const a = await openPluginFormAppPreview(f.options);
     f.source.release();
-    expect(() =>
+    await expect(
       getPluginFormApp({ ...f.options, token: a.instanceToken }),
-    ).toThrow("FORM_PREVIEW_UNAVAILABLE");
+    ).rejects.toThrow("FORM_PREVIEW_UNAVAILABLE");
   });
   it("rejects a changed pending window before any resource read", async () => {
     const f = await fixture();

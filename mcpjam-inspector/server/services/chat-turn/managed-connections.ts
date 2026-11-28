@@ -596,6 +596,8 @@ export async function prepareManagedConnections(args: {
       pluginComputerRuntime: !!hostRuntimeConfig?.computer,
       multiConnection: true,
       tolerateServerRefusals: isolatedServerIds,
+      // A member's chat is their own use of the server.
+      observeFeatures: true,
       ...(modelFormDispatch
         ? { extensionRequestHandlers: modelFormDispatch.handlers }
         : {}),

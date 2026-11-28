@@ -11,10 +11,12 @@ import {
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabledState } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
 import { clientDisplayName } from "@/lib/client-display-name";
 import type { ComparePane } from "@/lib/compare-panes";
 import type { EnvironmentErrorPayload } from "@/lib/environment-error";
 import { environmentLabel } from "@/lib/environment-label";
+import { pickableHosts } from "@/lib/web-accounts/clients";
 
 /** What an environment pane knows about the environment it runs. */
 export interface ComparePaneEnvironment {
@@ -53,6 +55,7 @@ export function useCompareEnvironmentPanes({
 } {
   const flag = useProjectEnvironmentsEnabledState();
   const member = useIsMemberActor();
+  const webClientsEnabled = useWebClientsEnabled();
   // Off as soon as either answer is no; unknown while either still loads.
   const visible =
     flag === false || member === false
@@ -117,7 +120,7 @@ export function useCompareEnvironmentPanes({
 
   const targets = useMemo(
     () => ({
-      clients: hosts.map((host) => ({
+      clients: pickableHosts(hosts, webClientsEnabled).map((host) => ({
         target: { kind: "host" as const, hostId: host.hostId },
         label: clientDisplayName(host),
       })),
@@ -129,7 +132,7 @@ export function useCompareEnvironmentPanes({
         label: environmentLabel(row),
       })),
     }),
-    [hosts, listed, visible],
+    [hosts, listed, visible, webClientsEnabled],
   );
 
   return { environments: listed ?? [], byPane, targets };

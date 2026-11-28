@@ -1,3 +1,5 @@
+import { buildLiveEffectiveCapabilities } from "../../environments/effective-capabilities";
+import { resolveTurnSkills } from "../../environments/turn-skills";
 import { jsonSchema } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -204,7 +206,16 @@ describe("hosted eval turn engine options", () => {
       environmentId: "env-1",
       evalIterationId: "iteration-1",
       requireToolApproval: true,
-      pinnedHarnessSkills: [],
+      // The run's frozen-and-empty plan: a harness clears its box for it.
+      skillPlan: resolveTurnSkills({
+        source: {
+          kind: "pins",
+          pins: [],
+          set: buildLiveEffectiveCapabilities({}),
+          harnessSkills: [],
+        },
+        runtime: { kind: "harness", harnessId: "claude-code" },
+      }),
       respectToolVisibility: false,
     } satisfies Partial<DriveHostedEvalTurnParams>;
     const options = await engineOptions({
@@ -216,6 +227,8 @@ describe("hosted eval turn engine options", () => {
     expect(options).toEqual({
       ...COMMON,
       ...harnessFields,
+      // An eval runs a harness as approval off, as it does MCPJam's engine.
+      requireToolApproval: false,
       endpointPath: "/stream",
       extraBodyFields: { maxOutputTokens: HOSTED_STEP_MAX_OUTPUT_TOKENS },
       harness: "claude-code",

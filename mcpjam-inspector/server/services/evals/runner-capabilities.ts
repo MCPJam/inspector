@@ -39,6 +39,7 @@
 import { browserSecretPlaceholdersEnabled } from "../../config.js";
 import { SWARM_SPONSORSHIP_CAPABILITY } from "../../../shared/swarm-sponsorship.js";
 import { hasServiceCredential } from "../service-credential.js";
+import { isComputersDataPlaneConfigured } from "../../utils/computers/control-plane-client.js";
 
 const HARNESS_EXECUTION = "harness-execution";
 
@@ -50,6 +51,13 @@ const HARNESS_EXECUTION = "harness-execution";
  */
 const BROWSER_MATERIALIZED_SECRETS = "browser-materialized-secrets";
 
+/**
+ * This runner can boot eval boxes, so it runs a suite's setup and cleanup
+ * scripts and Required code evaluators (EFTW-90). Declared only when it can;
+ * the backend refuses a run that needs them from a runner that doesn't say so.
+ */
+const SANDBOX_PHASES = "sandbox-phases";
+
 /** A function so the flag is read at call time, not frozen at module load. */
 export function runnerCapabilities(
   env: NodeJS.ProcessEnv = process.env,
@@ -59,6 +67,7 @@ export function runnerCapabilities(
     ...(browserSecretPlaceholdersEnabled(env)
       ? [BROWSER_MATERIALIZED_SECRETS]
       : []),
+    ...(isComputersDataPlaneConfigured() ? [SANDBOX_PHASES] : []),
   ];
 }
 

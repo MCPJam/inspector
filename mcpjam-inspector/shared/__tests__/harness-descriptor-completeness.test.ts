@@ -17,6 +17,7 @@ const DESCRIPTOR_KEYS = [
   "orgKeys",
   "protocol",
   "reasoningEfforts",
+  "runtimeName",
   "runtimeVersion",
   "unavailableOn",
 ];
@@ -27,6 +28,22 @@ const LOOP_CONTROLS = [
   "requireToolApproval",
   "temperature",
 ];
+
+it("names each runtime as the harness choice shows it", () => {
+  expect(
+    Object.fromEntries(
+      HARNESS_IDS.map((id) => [id, HARNESS_DESCRIPTORS[id].runtimeName]),
+    ),
+  ).toEqual({
+    "claude-code": "Claude Agent SDK",
+    codex: "Codex App Server",
+    cursor: "Cursor CLI",
+    "copilot-cli": "GitHub Copilot CLI",
+    opencode: "OpenCode",
+    "claude-web": "claude.ai",
+    "chatgpt-web": "chatgpt.com",
+  });
+});
 
 it("describes every SDK harness and nothing else", () => {
   expect(Object.keys(HARNESS_DESCRIPTORS).sort()).toEqual(
@@ -44,6 +61,7 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
 
   it("uses only the known values", () => {
     expect(descriptor.displayName.trim()).not.toBe("");
+    expect(descriptor.runtimeName.trim()).not.toBe("");
     expect(descriptor.runtimeVersion.trim()).not.toBe("");
     expect(["harness", "mcpjam"]).toContain(descriptor.mcpClient);
     expect(["broker", "external-account"]).toContain(descriptor.modelAccess);
@@ -63,22 +81,36 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
     if (descriptor.modelAccess === "broker") {
       expect(descriptor.credential).toBeNull();
       expect(descriptor.protocol).not.toBeNull();
+    } else if (descriptor.credential && "kind" in descriptor.credential) {
+      // A web account: the project's signed-in browser profile, no key.
+      expect(descriptor.credential.kind).toBe("web-account");
+      expect(descriptor.credential.sites.length).toBeGreaterThan(0);
+      expect(descriptor.orgKeys).toBe(false);
+      expect(descriptor.protocol).toBeNull();
+      expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
+      // Pinned by the backend's mirror, word for word.
+      expect(harnessSurfaceRefusal(id, "user-testing")).toBe(
+        `${descriptor.displayName} runs on a project web account, so studies cannot use it. Choose a different client for this study.`,
+      );
     } else {
       expect(descriptor.credential?.env.trim()).toBeTruthy();
       expect(descriptor.orgKeys).toBe(false);
       expect(descriptor.protocol).toBeNull();
-      expect(harnessSurfaceRefusal(id, "local")).toBeDefined();
       expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
-      // Its boxes get the organization's key only in evals, swarms and the
-      // Playground; the org-key checks enforce that with the same copy.
-      const name = descriptor.displayName;
-      expect(harnessSurfaceRefusal(id, "user-testing")).toBe(orgKeySurfaceRefusal(name, "study"));
-      expect(harnessSurfaceRefusal(id, "api")).toBe(orgKeySurfaceRefusal(name, "elsewhere"));
-      expect(harnessSurfaceRefusal(id, "events")).toBe(orgKeySurfaceRefusal(name, "elsewhere"));
+      // Its key never reaches a box a guest or participant controls; the
+      // Playground, evals, swarms and the API check it before a box. The
+      // study refusal uses the same copy as the org-key checks.
+      expect(harnessSurfaceRefusal(id, "user-testing")).toBe(
+        orgKeySurfaceRefusal(descriptor.displayName),
+      );
+      expect(harnessSurfaceRefusal(id, "api")).toBeUndefined();
+      expect(harnessSurfaceRefusal(id, "events")).toBeUndefined();
     }
   });
 
   it("only admits an organization key when that path is qualified", () => {
-    expect(descriptor.orgKeys).toBe(id !== "cursor");
+    expect(descriptor.orgKeys).toBe(
+      id !== "cursor" && id !== "claude-web" && id !== "chatgpt-web",
+    );
   });
 });

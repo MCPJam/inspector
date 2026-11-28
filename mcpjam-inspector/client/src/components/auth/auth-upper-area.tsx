@@ -8,6 +8,7 @@ import {
   ActiveServerSelectorProps,
 } from "@/components/ActiveServerSelector";
 import { AgentSidePanelTrigger } from "@/components/mcpjam-agent/AgentSidePanelTrigger";
+import { OnboardAgentButton } from "@/components/onboard-agent/OnboardAgentButton";
 import { ProjectClientBootstrap } from "@/components/hosts/ProjectClientBootstrap";
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
@@ -41,11 +42,13 @@ export function AuthUpperArea({
         <div className="flex-1 min-w-0 h-full pr-2" />
       )}
       <div className="ml-auto flex items-center gap-2 shrink-0">
+        {user && <OnboardAgentButton />}
         <AgentSidePanelTrigger />
+        <GitHubStarButton location="header" prompt />
         {!user && !isLoading && (
           <>
             <Button
-              variant="outline"
+              variant="chrome"
               size="sm"
               onClick={() => {
                 track("login_button_clicked", { location: "header" });
@@ -73,7 +76,6 @@ export function AuthUpperArea({
             </Button>
           </>
         )}
-        <GitHubStarButton />
       </div>
     </div>
   );

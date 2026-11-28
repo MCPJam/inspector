@@ -1,12 +1,12 @@
 ---
 title: "MCP Events"
-description: "List, poll, watch, subscribe to and conformance-check MCP Events (triggers) from the CLI: push, poll and webhook delivery, judged by the draft or the ChatGPT profile"
+description: "List, poll, watch, subscribe to and conformance-check MCP Events from the CLI: push, poll and webhook delivery, judged by the Events Beta, the legacy draft or the ChatGPT profile"
 icon: "bell"
 ---
 
-The `events` commands exercise a server's MCP Events (triggers) from the terminal: see what it declares, poll it, hold a stream open, or register a webhook, and print what arrives.
+The `events` commands exercise a server's MCP Events from the terminal: see what it declares, poll it, hold a stream open, or register a webhook, and print what arrives.
 
-They follow the working-group draft pinned at [`28ec35e`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md). The lifecycle rules come from the same SDK coordinator the Inspector's Events tab uses, so a `watch` subscribes, refreshes, polls and unsubscribes exactly as the app does.
+They follow the [Events Beta extension at `c77b843`](https://github.com/modelcontextprotocol/ext-events/blob/c77b84395eff0ae32f53b0516c2214fe276ed050/specification/beta/events/events.mdx) (`io.modelcontextprotocol/events`, SEP-3415), and still support the earlier working-group draft at [`28ec35e`](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/28ec35e905daa241f019981e2836b4a02f1c0368/docs/design-sketch-proposal.md) and ChatGPT's profile. For how the extension works and a step-by-step guide to testing it in the Inspector, see [MCP Events](/inspector/events).
 
 <Note>
   Every events command connects directly to the server you name, like `tools call`, and takes the same connection flags (`--url`, `--header`, `--access-token`, `--credentials-file`, `--command`, …).
@@ -16,12 +16,13 @@ They follow the working-group draft pinned at [`28ec35e`](https://github.com/mod
 
 `--profile` selects the rulebook a run is judged by:
 
-| Profile | Id | Delivery modes | Default `ttlMs` on subscribe |
+| Profile | Id | Capability | Delivery modes |
 |---|---|---|---|
-| `draft` (default) | `draft@28ec35e` | push, poll, webhook | one hour (MCPJam policy) |
-| `chatgpt` | `chatgpt@2026-11-05` | webhook only | omitted (ChatGPT's value is unobserved) |
+| `beta` | `beta@c77b843` | `capabilities.extensions["io.modelcontextprotocol/events"]` in `server/discover`, MCP `2026-07-28` | push, poll, webhook |
+| `draft` | `draft@28ec35e` | top-level `capabilities.events` | push, poll, webhook |
+| `chatgpt` | `chatgpt@2026-11-05` | top-level `capabilities.events` | webhook only |
 
-The profile decides which delivery modes `watch` may use, the default `ttlMs` a subscription requests, and how `events conformance` grades each check. It changes nothing else about what the server is sent.
+Without `--profile`, the CLI uses the Events version the server negotiated: `beta` when it declares `io.modelcontextprotocol/events` on `2026-07-28`, otherwise the legacy draft. The profile decides which delivery modes `watch` may use, the default `ttlMs` a subscription requests, and how `events conformance` grades each check. Passing `--profile` also fixes the wire format: under `beta`, results must carry `resultType: "complete"`, errors use `-32023` to `-32027`, and Streamable HTTP requests carry the `Mcp-Name` and `Mcp-Param-*` headers the extension requires.
 
 ## What does the server declare?
 
@@ -31,18 +32,19 @@ mcpjam events list --url https://your-server.com/mcp
 
 ```json
 {
-  "support": { "handshakeObserved": true, "declared": true, "listChanged": true, "capability": { "listChanged": true }, "source": "server/discover" },
-  "rawCapabilities": { "tools": {}, "events": { "listChanged": true } },
-  "profile": "draft@28ec35e",
+  "support": { "handshakeObserved": true, "declared": true, "beta": true, "listChanged": true, "capability": { "listChanged": true }, "source": "server/discover" },
+  "rawCapabilities": { "tools": {}, "extensions": { "io.modelcontextprotocol/events": { "listChanged": true } } },
+  "protocolVersion": "2026-07-28",
+  "profile": "beta@c77b843",
   "events": [
     { "name": "comment.created", "delivery": ["webhook", "poll", "push"], "inputSchema": { "type": "object" } }
   ]
 }
 ```
 
-`support` and `rawCapabilities` are read from the raw handshake: the official client drops capability keys it does not know, so its parsed capabilities never show `events`. `events` holds every page of `events/list`.
+`support` and `rawCapabilities` are read from the raw handshake: the official client drops capability keys it does not know, so its parsed capabilities never show Events. `support.beta` is `true` when the server declared the Beta extension. `events` holds every page of `events/list`.
 
-Against a server that did not declare `capabilities.events`, every events command except `conformance` exits `2` with `EVENTS_NOT_DECLARED` and sends no `events/*` request. Pass `--force` to send the request anyway, for example to probe how an undeclared server answers. (`conformance` reports the missing declaration as a failed check instead.)
+Against a server that declared neither the Beta extension nor `capabilities.events`, every events command except `conformance` exits `2` with `EVENTS_NOT_DECLARED` and sends no `events/*` request. Pass `--force` to send the request anyway, for example to probe how an undeclared server answers. (`conformance` reports the missing declaration as a failed check instead.)
 
 ## Poll once
 
@@ -91,7 +93,7 @@ Without `--mode` the CLI uses `webhook` when any receiver flag (`--public-url`, 
 
 ### Webhook mode
 
-The draft requires `https` callback URLs, so the receiver needs a public `https` origin in front of it, usually a tunnel:
+The specification requires `https` callback URLs, so the receiver needs a public `https` origin in front of it, usually a tunnel:
 
 ```bash
 mcpjam events watch comment.created \
@@ -159,7 +161,7 @@ mcpjam events conformance \
 The result JSON goes to stdout, and a table goes to stderr:
 
 ```
-MCP Events conformance — profile draft@28ec35e, protocol 2026-07-28
+MCP Events conformance — profile beta@c77b843, protocol 2026-07-28
   PASS  MUST    events-capability-declared               Server declares top-level capabilities.events
   PASS  MUST    events-subscribe-rejects-http-callback   Non-https callback URLs are rejected
   SKIP  MUST    events-delivery-signature                Deliveries are signed per Standard Webhooks — could-not-run: provide triggerEvent to cause a delivery
@@ -171,7 +173,7 @@ The exit code is `0` when the run passed, `1` when it failed, and `3` when it wa
 
 | Flag | Description |
 |---|---|
-| `--profile <profile>` | `draft` (default) or `chatgpt`. The `chatgpt` profile adds the readiness checks (webhook delivery listed, a Streamable HTTP connection, and a protocol version ChatGPT accepts) and makes the 256 KiB body limit a MUST. |
+| `--profile <profile>` | `beta`, `draft` or `chatgpt`. The default is the Events version the server negotiated. The `chatgpt` profile adds the readiness checks (webhook delivery listed, a Streamable HTTP connection, and a protocol version ChatGPT accepts) and makes the 256 KiB body limit a MUST. |
 | `--event-args <name>=<json>` | Subscription arguments for one event type. Repeat it for several types. The runner never invents arguments, so a type whose schema requires fields you did not supply is reported `could-not-run`. |
 | `--tls-cert <path>` / `--tls-key <path>` | Serve the webhook receiver over https with this certificate. The server under test must trust it. |
 | `--public-url <origin>` | An https origin (a tunnel) that forwards to the receiver. Paths are not rewritten. |
@@ -186,14 +188,14 @@ With no receiver flags, the capability, list, poll and subscribe-refusal checks 
 
 ## Errors
 
-The draft's error codes map to stable CLI codes (exit `1`):
+Events error codes map to stable CLI codes (exit `1`). The Beta extension and the legacy draft number them differently; the CLI code is the same either way:
 
-| Server code | CLI code |
-|---|---|
-| `-32011` NotFound | `EVENTS_NOT_FOUND` |
-| `-32012` Forbidden | `EVENTS_FORBIDDEN` |
-| `-32013` ResourceExhausted | `EVENTS_RESOURCE_EXHAUSTED` |
-| `-32014` Unsupported | `EVENTS_UNSUPPORTED` |
-| `-32015` CallbackEndpointError | `EVENTS_CALLBACK_ENDPOINT_ERROR` |
+| Error | Beta code | Draft code | CLI code |
+|---|---|---|---|
+| NotFound | `-32023` | `-32011` | `EVENTS_NOT_FOUND` |
+| Forbidden | `-32024` | `-32012` | `EVENTS_FORBIDDEN` |
+| ResourceExhausted | `-32025` | `-32013` | `EVENTS_RESOURCE_EXHAUSTED` |
+| Unsupported | `-32026` | `-32014` | `EVENTS_UNSUPPORTED` |
+| CallbackEndpointError | `-32027` | `-32015` | `EVENTS_CALLBACK_ENDPOINT_ERROR` |
 
 Anything that looks like a webhook secret is removed from error messages before they are printed, even when the server quotes one back.

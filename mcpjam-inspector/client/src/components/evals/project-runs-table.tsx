@@ -173,7 +173,10 @@ const ALL_SUITES = "__all__";
  * `status` stays `"completed"`, so a reader that consults only `status`
  * reports a decided run as having no result.
  */
-export function runEffectiveOutcome(row: ProjectRunRow): string {
+/** Anything with a run's result and status: a table row or a run itself. */
+export type RunOutcomeFields = { result?: string | null; status: string };
+
+export function runEffectiveOutcome(row: RunOutcomeFields): string {
   return row.result && row.result !== "pending" ? row.result : row.status;
 }
 

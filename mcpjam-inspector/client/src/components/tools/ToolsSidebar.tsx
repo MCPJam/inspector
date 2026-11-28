@@ -4,6 +4,7 @@ import { type RefObject, useState, useEffect } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { SearchInput } from "../ui/search-input";
+import { InspectorPaneHeader } from "../ui/inspector-pane-header";
 import { Input } from "@mcpjam/design-system/input";
 import { ToolItem, type ToolQualityInfo } from "./ToolItem";
 import { SavedRequestItem } from "./SavedRequestItem";
@@ -169,43 +170,20 @@ export function ToolsSidebar({
 
   return (
     <div className="h-full flex flex-col border-r border-border bg-background">
-      {/* Header with tabs and actions - App Builder style */}
-      <div className="border-b border-border flex-shrink-0">
-        <div className="px-2 py-2 flex items-center gap-2">
-          {/* Tabs */}
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => onChangeTab("tools")}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeTab === "tools"
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Tools
-              <span className="ml-1 text-[10px] font-mono opacity-70">
-                {toolNames.length}
-              </span>
-            </button>
-            <button
-              onClick={() => onChangeTab("saved")}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeTab === "saved"
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Saved
-              {savedRequests.length > 0 && (
-                <span className="ml-1 text-[10px] font-mono opacity-70">
-                  {savedRequests.length}
-                </span>
-              )}
-            </button>
-          </div>
-
-          {/* Secondary actions */}
-          <div className="flex items-center gap-0.5 text-muted-foreground/80">
+      <InspectorPaneHeader
+        ariaLabel="Tools views"
+        tabs={[
+          { id: "tools", label: "Tools", count: toolNames.length },
+          {
+            id: "saved",
+            label: "Saved",
+            count: savedRequests.length > 0 ? savedRequests.length : undefined,
+          },
+        ]}
+        activeTab={activeTab}
+        onTabChange={onChangeTab}
+        secondaryActions={
+          <>
             <Button
               onClick={handleSave}
               disabled={!canSave}
@@ -239,14 +217,14 @@ export function ToolsSidebar({
                 <PanelLeftClose className="h-3.5 w-3.5" />
               </Button>
             )}
-          </div>
-
-          {/* Run button */}
+          </>
+        }
+        primaryAction={
           <Button
             onClick={handleExecute}
             disabled={loading || !canExecute}
             size="sm"
-            className="h-8 px-3 text-xs ml-auto"
+            className="h-8 px-3 text-xs"
             title={executeDisabled ? executeDisabledReason : undefined}
           >
             {loading ? (
@@ -258,8 +236,8 @@ export function ToolsSidebar({
               {loading ? (waitingOnElicitation ? "Waiting" : "Running") : "Run"}
             </span>
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       {/* Content area */}
       {selectedToolName && formFields && onFieldChange ? (

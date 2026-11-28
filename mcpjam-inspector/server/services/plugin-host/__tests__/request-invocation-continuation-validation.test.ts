@@ -45,12 +45,14 @@ afterEach(() => {
   for (const invoker of invokers.splice(0)) invoker.close();
 });
 
-function fixture(output: unknown) {
+function fixture(output: unknown, origin: "app" | "quick-action" = "app") {
   const manager = new MCPClientManager({}, { lazyConnect: true });
   const invoker = new RequestOwnedToolInvoker(owner, () => {});
   invokers.push(invoker);
   const execute = vi.fn(async () => suspension());
-  const resume = vi.fn(async () => output);
+  const resume = vi.fn<
+    NonNullable<Parameters<typeof invokePluginRequest>[1]["runtime"]["resumeMrtr"]>
+  >(async () => output);
   const validate = vi.fn(pluginToolCallValidation(
     tool, {}, () => new PluginInvocationError("INSTANCE_DENIED"), "app",
   ));
@@ -67,14 +69,14 @@ function fixture(output: unknown) {
           manager: () => manager, release: async () => {},
           executeOwned: execute, resumeMrtr: resume,
         },
-        origin: "app", invocationId: "operation",
+        origin, invocationId: "operation",
         params: { name: "inspect", arguments: {} },
         resume: submission,
         resolve: async (name) => resolvePluginCatalogTool(catalog, name),
         assertLive: () => {}, assertOrigin: () => {},
         validate: () => validate,
         invoke: (ports, params) => invoker.invoke(
-          ports, "app", "operation", params, c.req.raw.signal,
+          ports, origin, "operation", params, c.req.raw.signal,
         ),
       });
     } catch (error) {
@@ -92,6 +94,49 @@ function fixture(output: unknown) {
     },
   };
 }
+
+it.each(["quick-action", "app"] as const)(
+  "retains the stored %s form source when a fresh request resumes the chooser",
+  async (origin) => {
+    const pending = new PluginInvocationSuspension({
+      status: "input_required", continuationId: "continuation", round: 1,
+      inputRequests: [{
+        key: "form", mode: "form", message: "Choose a CAD part",
+        pluginFormSourceToken: "stored-chooser-source",
+        requestedSchema: {
+          type: "object", required: ["part"],
+          properties: {
+            part: {
+              type: "string",
+              oneOf: [{ const: "part_keycap_openai", title: "OpenAI keycap (1U)" }],
+            },
+          },
+        },
+      }],
+    });
+    const f = fixture(valid, origin);
+    f.execute.mockResolvedValueOnce(pending);
+    f.resume.mockImplementationOnce(async (_auth, _id, _params, _submission, _signal, shown) => {
+      // A fresh runtime has no process-local source; restoration needs the
+      // original receipt's source token and schema, not the submitted answer.
+      if (shown !== pending)
+        throw new PluginInvocationError("FORM_SOURCE_UNAVAILABLE");
+      return valid;
+    });
+    expect(await (await f.call()).json()).toMatchObject(pending.pending);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await f.call(1);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ status: "completed", result: valid });
+    }
+    expect(f.execute).toHaveBeenCalledOnce();
+    expect(f.resume).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(), "operation", { name: "inspect", arguments: {} },
+      { continuationId: "continuation", round: 1, responsesBlobId: "answer-1" },
+      expect.any(AbortSignal), pending,
+    );
+  },
+);
 
 it.each(["valid", "invalid"])(
   "validates a terminal %s App continuation once without repeating its effect",

@@ -3,7 +3,8 @@
  * portal's label, placeholder, counter, helper and error line, then MCPJam's
  * results for the checks that read it.
  */
-import { useState } from "react";
+import { PreviewServerIcon } from "./PreviewServerIcon";
+import { useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import type {
   DirectoryAnswerValue,
@@ -41,6 +42,11 @@ export interface PortalFieldProps {
   findings?: readonly PlacedFinding[];
   /** The submission's server, which a `server` field selects. */
   serverUrl?: string;
+  serverName?: string;
+  /** The portal's words for the field where a widget draws it, in place of its label. */
+  label?: string;
+  /** MCPJam's mark of where the answer came from, under the portal's helper. */
+  mark?: ReactNode;
   onChange: (value: DirectoryAnswerValue) => void;
 }
 
@@ -62,7 +68,7 @@ const rowsOf = (value: DirectoryAnswerValue | undefined) =>
   );
 
 /** The portal's red asterisk; assistive tech hears the word. */
-const REQUIRED = (
+export const REQUIRED = (
   <>
     <span aria-hidden="true" className={PORTAL_ERROR}>
       {" *"}
@@ -173,6 +179,11 @@ function Pairs({ field, id, value, describedBy, onChange }: ControlProps) {
     while (next.length > 0 && blank(next[next.length - 1])) next.pop();
     onChange(next);
   };
+  // A portal's fixed rows all show. A list that grows shows its rows and one
+  // empty row for the next: typing there adds a row after it, so focus stays.
+  const shown = spec.grow
+    ? Math.min(spec.maxRows, rows.length + 1)
+    : spec.maxRows;
   return (
     <div
       role="group"
@@ -185,7 +196,7 @@ function Pairs({ field, id, value, describedBy, onChange }: ControlProps) {
           {column}
         </span>
       ))}
-      {Array.from({ length: spec.maxRows }, (_, index) =>
+      {Array.from({ length: shown }, (_, index) =>
         spec.keys.map((column, side) => (
           <Input
             key={`${index}-${column}`}
@@ -202,7 +213,16 @@ function Pairs({ field, id, value, describedBy, onChange }: ControlProps) {
 }
 
 function Control(props: ControlProps) {
-  const { field, id, value, invalid, describedBy, serverUrl, onChange } = props;
+  const {
+    field,
+    id,
+    value,
+    invalid,
+    describedBy,
+    serverUrl,
+    serverName,
+    onChange,
+  } = props;
   const text = typeof value === "string" ? value : "";
   const options = field.options ?? [];
   switch (field.control) {
@@ -301,10 +321,20 @@ function Control(props: ControlProps) {
       );
     case "server":
       return (
-        <div className="flex items-center gap-4 rounded-xl bg-card px-4 py-3 text-sm">
+        <div
+          role="group"
+          aria-labelledby={`${id}-label`}
+          className="flex items-center gap-4 rounded-xl bg-card px-4 py-3 text-sm"
+        >
+          <PreviewServerIcon className="size-8 rounded-md" />
           <span className="min-w-0 flex-1 truncate">
-            {serverUrl ??
-              "This server has no URL. Claude lists remote servers only."}
+            {serverName ? (
+              <span className="block font-medium">{serverName}</span>
+            ) : null}
+            <span className={cn(serverName && "text-muted-foreground")}>
+              {serverUrl ??
+                "This server has no URL. Claude lists remote servers only."}
+            </span>
           </span>
           {!serverUrl ? null : value === serverUrl ? (
             <span className="rounded-full bg-success/15 px-2.5 py-0.5 text-xs">
@@ -337,9 +367,12 @@ function Control(props: ControlProps) {
   }
 }
 
+/** The id of a field's control, for a widget that moves focus to it. */
+export const portalFieldId = (key: string) => `portal-${key}`;
+
 export function PortalField(props: PortalFieldProps) {
-  const { field, value, issue, findings = [] } = props;
-  const id = `portal-${field.key}`;
+  const { field, value, issue, findings = [], label, mark } = props;
+  const id = portalFieldId(field.key);
   const errorId = `${id}-error`;
   const length = typeof value === "string" ? value.length : 0;
   const over = field.maxLength !== undefined && length > field.maxLength;
@@ -351,10 +384,13 @@ export function PortalField(props: PortalFieldProps) {
         <label
           id={`${id}-label`}
           htmlFor={LABELLED.includes(field.control) ? id : undefined}
-          className="block text-sm font-medium"
+          className={cn(
+            "block text-sm",
+            label ? "text-muted-foreground" : "font-medium",
+          )}
         >
-          {field.label}
-          {required ? REQUIRED : null}
+          {label ?? field.label}
+          {required && !label ? REQUIRED : null}
         </label>
       )}
       <Control
@@ -381,6 +417,7 @@ export function PortalField(props: PortalFieldProps) {
       {field.helper ? (
         <p className="text-sm text-muted-foreground">{field.helper}</p>
       ) : null}
+      {mark}
       <McpjamChecks findings={findings} />
     </div>
   );

@@ -251,6 +251,12 @@ export const PLUGIN_ERROR_DESCRIPTIONS: Readonly<Record<string, string>> = {
     "MCPJam couldn't start watching this file for changes within 12 seconds, so it stopped waiting. The file can still be read; changes made elsewhere won't refresh the viewer until it subscribes again or the file is reopened.",
   // Model App / continuations
   MODEL_APP_UNAVAILABLE: "This App from the chat is no longer available.",
+  MODEL_FORM_UNAVAILABLE:
+    "This form is no longer available, so your answer wasn't sent. Ask the model to run the tool again.",
+  FORM_NOT_SAVED:
+    "MCPJam couldn't save this form, so it wasn't shown and the tool call ended. Ask the model to run the tool again.",
+  FORM_STORE_UNAVAILABLE:
+    "MCPJam couldn't load this form's saved state, so nothing was sent. Try again in a moment.",
   CONTINUATION_EXPIRED:
     "This form expired before it was answered, so the tool call did not finish. Run it again.",
   CONTINUATION_FAILED:

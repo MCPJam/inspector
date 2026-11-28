@@ -15,7 +15,7 @@
  * `useSavedRequests` is keyed by one `serverKey` and doesn't generalize.
  * The Saved tab renders an empty state pointing this out.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { PlaygroundAuthChallengeCards } from "@/components/auth-challenge/PlaygroundAuthChallengeCards";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -70,6 +70,7 @@ interface InnerProps {
    */
   browserTools?: BrowserToolsState;
   previewedHarnessId?: string | null;
+  serverConnectionControl?: ReactNode;
 }
 
 interface Selection {
@@ -84,6 +85,7 @@ export function MultiServerToolsPaneInner({
   builtinToolsRunLocally = false,
   browserTools,
   previewedHarnessId,
+  serverConnectionControl,
 }: InnerProps) {
   const state = usePlaygroundStateContext();
   const recoveredCall = useUIPlaygroundStore(
@@ -97,12 +99,10 @@ export function MultiServerToolsPaneInner({
       ),
     [activeServerNames, appState.servers],
   );
-  const { flat, collidingNames, loadingByServer, refetch } = useAggregatedTools(
-    activeServerNames,
-    {
+  const { flat, collidingNames, loadingByServer, errorByServer, refetch } =
+    useAggregatedTools(activeServerNames, {
       unavailableServerNames: reconnectingServerNames,
-    },
-  );
+    });
 
   const [selected, setSelected] = useState<Selection | null>(null);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
@@ -297,12 +297,11 @@ export function MultiServerToolsPaneInner({
     if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
     const target = e.target as HTMLElement | null;
     if (!target) return;
-    // Don't hijack Enter while the user is typing in the search box, a
-    // parameter input, or any other editable surface — Enter there means
-    // "submit this field" or "newline", not "execute the tool".
+    // Focused controls keep their native Enter action even with a tool selected.
     if (
-      target.tagName === "TEXTAREA" ||
-      target.tagName === "INPUT" ||
+      target.closest(
+        "button, a[href], input, select, textarea, [role='menuitem']",
+      ) ||
       target.isContentEditable
     ) {
       return;
@@ -357,6 +356,10 @@ export function MultiServerToolsPaneInner({
             previewedHarnessId={previewedHarnessId}
             entries={filteredEntries}
             totalCount={flat.length}
+            serverConnectionControl={serverConnectionControl}
+            failedServerNames={activeServerNames.filter(
+              (name) => errorByServer[name] && !loadingByServer[name],
+            )}
             loading={isLoadingAny || reconnectingServerNames.length > 0}
             reconnecting={reconnectingServerNames.length > 0}
             searchQuery={searchQuery}
@@ -458,6 +461,8 @@ interface FlatToolListProps {
   previewedHarnessId?: string | null;
   entries: ReturnType<typeof useAggregatedTools>["flat"];
   totalCount: number;
+  serverConnectionControl?: ReactNode;
+  failedServerNames: string[];
   loading: boolean;
   reconnecting: boolean;
   searchQuery: string;
@@ -480,6 +485,8 @@ function FlatToolList({
   previewedHarnessId,
   entries,
   totalCount,
+  serverConnectionControl,
+  failedServerNames,
   loading,
   reconnecting,
   searchQuery,
@@ -499,7 +506,10 @@ function FlatToolList({
   // state must account for both, or it reports the wrong reason for a list
   // that is not actually empty.
   const hasAppTools = appGroups.some((group) => group.tools.length > 0);
-  const hasBuiltin =
+  const hasServerStatus =
+    Boolean(serverConnectionControl) || failedServerNames.length > 0;
+  const hasOtherContent =
+    hasServerStatus ||
     hasAppTools ||
     builtinTools.length > 0 ||
     (browserTools?.tools.length ?? 0) > 0 ||
@@ -523,14 +533,14 @@ function FlatToolList({
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
-        {loading && entries.length === 0 && !hasBuiltin ? (
+        {loading && entries.length === 0 && !hasOtherContent ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <RefreshCw className="h-5 w-5 text-muted-foreground animate-spin mb-2" />
             <p className="text-xs text-muted-foreground">
               {reconnecting ? "Reconnecting..." : "Loading tools..."}
             </p>
           </div>
-        ) : entries.length === 0 && !hasBuiltin ? (
+        ) : entries.length === 0 && !hasOtherContent ? (
           <div className="text-center py-8 px-4">
             <p className="text-xs text-muted-foreground">
               {totalCount === 0
@@ -559,7 +569,7 @@ function FlatToolList({
               onSelect={onSelectApp}
               previewedHarnessId={previewedHarnessId}
             />
-            {entries.length > 0 ? (
+            {entries.length > 0 || hasServerStatus ? (
               <ToolSourceHeader
                 title="Servers"
                 chip={serversChip}
@@ -569,6 +579,12 @@ function FlatToolList({
                     : "MCP servers attached to this chat."
                 }
               >
+                {serverConnectionControl}
+                {failedServerNames.length > 0 ? (
+                  <p role="status" className="px-3 pb-2 text-xs text-destructive">
+                    {`Couldn't load tools from ${failedServerNames.join(", ")}. Use Refresh tools to try again.`}
+                  </p>
+                ) : null}
                 <div className="space-y-0.5">
                   {entries.map((entry) => {
                     const isSelected =

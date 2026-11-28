@@ -13,10 +13,9 @@
  *     than per iteration.
  * An eval run stopped here reports its skills-delivered event as `failed`.
  *
- * An EMPTY pin set is a real answer and stays empty: `pinnedHarnessSkills` is
- * `[]` (the harness selects its pinned source by presence, and `undefined`
- * would leave the box's skills as they are), and `pinnedSkillSource`
- * holds no pins, which plans every iteration with no skills.
+ * An EMPTY pin set is a real answer and stays empty: `pinnedSkillSource`
+ * holds no pins, which plans every iteration with no skills, and a harness
+ * box clears for it (an absent source would leave the box's skills as they are).
  */
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import type { RunPluginServer } from "../plugins/run-plugin-servers.js";
@@ -41,7 +40,6 @@ import {
 
 export type BuiltPinnedSkillSource = {
   pinnedSkillSource: PinnedSkillSource;
-  pinnedHarnessSkills: PinnedSkillArtifact[];
 };
 
 export async function buildPinnedSkillSource(args: {
@@ -73,25 +71,25 @@ export async function buildPinnedSkillSource(args: {
 }): Promise<BuiltPinnedSkillSource> {
   try {
     assertPinnedSkillFilesReachable(args.pins);
-    const pinnedHarnessSkills = args.harnessSkills
+    const downloaded = args.harnessSkills
       ? [...args.harnessSkills]
       : await runPinnedSkillsToHarnessArtifacts(args.pins);
+    const set = buildRunCapabilitySet({
+      pins: args.pins,
+      // Pinned files are read from the bytes downloaded above, not from the
+      // prepared links, which a long run can outlast.
+      downloadedPins: downloaded,
+      pluginVersions: args.pluginVersions,
+      pluginServers: args.pluginServers,
+      effectiveServerIds: args.effectiveServerIds,
+      ...(args.serverNames ? { serverNames: args.serverNames } : {}),
+    });
     return {
-      pinnedHarnessSkills,
       pinnedSkillSource: {
         kind: "pins",
         pins: args.pins,
-        set: buildRunCapabilitySet({
-          pins: args.pins,
-          // Pinned files are read from the bytes downloaded above, not from the
-          // prepared links, which a long run can outlast.
-          downloadedPins: pinnedHarnessSkills,
-          pluginVersions: args.pluginVersions,
-          pluginServers: args.pluginServers,
-          effectiveServerIds: args.effectiveServerIds,
-          ...(args.serverNames ? { serverNames: args.serverNames } : {}),
-        }),
-        harnessSkills: pinnedHarnessSkills,
+        set,
+        harnessSkills: withServerCaptures(args.pins, downloaded, set),
       },
     };
   } catch (error) {
@@ -100,6 +98,50 @@ export async function buildPinnedSkillSource(args: {
     }
     throw error;
   }
+}
+
+/**
+ * The harness copies, each one captured from a server stamped with its
+ * capture as the run's set holds it: under the set's ref, so a harness's
+ * skill tools address it as MCPJam's agent does in the same run.
+ */
+function withServerCaptures(
+  pins: readonly RunPinnedSkill[],
+  copies: PinnedSkillArtifact[],
+  set: PinnedSkillSource["set"],
+): PinnedSkillArtifact[] {
+  return copies.map((copy, index) => {
+    const pin = pins[index];
+    const skill = set.serverSkills.find(
+      (entry) =>
+        entry.skillId === pin?.serverSkillId &&
+        entry.versionId === pin?.serverSkillVersionId,
+    );
+    if (!skill) return copy;
+    return {
+      ...copy,
+      server: {
+        serverSkillId: skill.skillId,
+        versionId: skill.versionId,
+        serverId: skill.serverId,
+        serverLabel: skill.serverLabel,
+        ref: skill.ref,
+        skillUri: skill.skillUri,
+        versionNumber: skill.versionNumber,
+        capturedAt: skill.capturedAt,
+        ...(skill.contentSha256 !== undefined
+          ? { contentSha256: skill.contentSha256 }
+          : {}),
+        ...(skill.files.length > 0
+          ? {
+              fileSizes: Object.fromEntries(
+                skill.files.map((file) => [file.path, file.size]),
+              ),
+            }
+          : {}),
+      },
+    };
+  });
 }
 
 /**

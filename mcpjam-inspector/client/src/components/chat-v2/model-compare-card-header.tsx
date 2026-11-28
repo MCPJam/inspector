@@ -1,6 +1,8 @@
 import { type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
+import type { ModelCostRollup } from "@mcpjam/sdk/browser";
 import type { ModelDefinition } from "@/shared/types";
+import { CompareCostRow } from "@/components/chat-v2/compare-cost-row";
 import {
   ChatTraceViewModeHeaderBar,
   TraceViewModeTabs,
@@ -27,6 +29,17 @@ export interface MultiModelCardSummary {
   interactionCount?: number;
   status: MultiModelCardStatus;
   hasMessages: boolean;
+  /**
+   * The id of the parent's broadcast the latest turn answered. Absent after a
+   * follow-up sent to this card alone, which is a different workload: cards
+   * rank on cost only when every one answered the same broadcast.
+   */
+  broadcastId?: number;
+  /**
+   * The latest turn's cost. Absent while `trace-cost` is off and when no call
+   * on the turn carries cost evidence.
+   */
+  cost?: ModelCostRollup;
 }
 
 function formatCardDuration(durationMs: number | null): string {
@@ -460,6 +473,8 @@ export function ModelCompareCardHeader({
                 </span>
               </div>
             </div>
+
+            <CompareCostRow summary={summary} allSummaries={allSummaries} />
 
             {!compactCompareHeader ? (
               <div className="flex items-center gap-2">

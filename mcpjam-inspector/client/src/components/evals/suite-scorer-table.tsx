@@ -33,7 +33,6 @@ import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
 import { cn } from "@/lib/utils";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
-import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import {
@@ -44,6 +43,17 @@ import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/jud
 import { ValidatorsSection } from "./validators-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
+import { SuiteEvaluatorLibrary } from "./evaluator-library/suite-evaluator-library";
+import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
+import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
+import { CustomJudgesSection } from "./evaluator-library/custom-judges-section";
+import { DecisionQuestionsSection } from "./evaluator-library/decision-questions-section";
+import { customJudgeLimits } from "./evaluator-library/custom-judges-model";
+import {
+  libraryModelRows,
+  librarySuiteEdits,
+} from "./evaluator-library/library-suite-edits";
+import { RubricChecksJudgeCard } from "./rubric-checks-judge-card";
 import type { GroundednessRunEvidence } from "./suite-judge-card";
 import { JudgeModelControl } from "./judges-section";
 import {
@@ -55,7 +65,7 @@ import {
   type ScorerUiRole,
 } from "./suite-scorer-table-model";
 import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
-import { BUILT_IN_BADGE } from "./runner-checks";
+import { ScorerRowBadge } from "./scorer-row-badge";
 import { groupGradersByStage, judgeMode } from "./suite-grading-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
@@ -108,6 +118,7 @@ export function SuiteScorerTable({
   stageFacts,
   capabilities,
   passOrFailHint,
+  judgeRubric,
   headerContent,
   headerDescription,
   headerActions,
@@ -164,6 +175,7 @@ export function SuiteScorerTable({
   // Only a deployment that grades rubric checks stores the slot, so the row
   // and its card appear only when the capability says so.
   const rubricChecks = hasRubricChecksCapability(capabilities);
+  const evaluatorLibraryEnabled = useEvaluatorLibraryEnabled();
   // The deployment's effective goal-judge policy. A suite that stores no
   // `enabled` inherits it, and rubric checks ride that judge's job, so every
   // "is the goal judge off" question on this page has to read it too.
@@ -249,6 +261,14 @@ export function SuiteScorerTable({
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
   };
+  const judgeLimit = customJudgeLimits(capabilities).maxJudges;
+  const library = librarySuiteEdits(
+    scope,
+    judgeConfig,
+    onJudgeConfigChange,
+    judgeLimit,
+  );
+  const stackedStages = evaluatorLibraryEnabled && scope.kind === "suite";
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
       scope.onPredicatesChange((previous) => [...previous, predicate]);
@@ -407,6 +427,15 @@ export function SuiteScorerTable({
             ))}
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {headerActions}
+            {library && scope.kind === "suite" ? (
+              <SuiteEvaluatorLibrary
+                predicates={scope.predicates}
+                authorableKinds={authorableKinds}
+                judgeConfig={judgeConfig}
+                capabilities={capabilities}
+                onAdd={library.add}
+              />
+            ) : null}
             <SuiteScorerLibraryMenu
               primary
               authorableKinds={authorableKinds}
@@ -432,10 +461,19 @@ export function SuiteScorerTable({
         ) : null}
 
         <div>
-          <div className="grid grid-cols-1 gap-x-6 border-b border-border pb-2 text-sm text-muted-foreground sm:grid-cols-[minmax(10rem,1fr)_2fr]">
+          <div
+            className={cn(
+              "border-b border-border pb-2 text-sm text-muted-foreground",
+              stackedStages
+                ? "flex flex-wrap items-center justify-between gap-3"
+                : "grid grid-cols-1 gap-x-6 sm:grid-cols-[minmax(10rem,1fr)_2fr]",
+            )}
+          >
             <span>Stage of user value chain</span>
             <div className="flex min-w-0 items-center justify-between gap-3">
-              <span className="hidden sm:block">Evaluators</span>
+              {stackedStages ? null : (
+                <span className="hidden sm:block">Evaluators</span>
+              )}
               {showEditEvaluators ? (
                 <Button
                   type="button"
@@ -454,7 +492,11 @@ export function SuiteScorerTable({
             <section
               key={group.stage}
               data-stage-group={group.stage}
-              className="grid grid-cols-1 gap-x-6 gap-y-3 border-b border-border py-5 sm:grid-cols-[minmax(10rem,1fr)_2fr]"
+              className={cn(
+                "grid grid-cols-1 gap-y-3 border-b border-border py-5",
+                !stackedStages &&
+                  "gap-x-6 sm:grid-cols-[minmax(10rem,1fr)_2fr]",
+              )}
             >
               <div>
                 <h4 className="font-medium">{group.label}</h4>
@@ -468,8 +510,26 @@ export function SuiteScorerTable({
                     No evaluator
                   </p>
                 ) : (
-                  <ul className="space-y-3">
-                    {group.rows.map((row) => (
+                  <EvaluatorStageRows
+                    rows={group.rows}
+                    stageLabel={group.label}
+                    predicateOf={(row) =>
+                      row.predicateIndex !== undefined
+                        ? rules[row.predicateIndex]?.predicate
+                        : undefined
+                    }
+                    modelRows={
+                      group.stage === "userValue"
+                        ? libraryModelRows(
+                            judgeConfig,
+                            library ? onJudgeConfigChange : undefined,
+                          )
+                        : undefined
+                    }
+                    onRemoveEvaluator={library?.remove}
+                    onUpdateEvaluator={library?.update}
+                    updateRefusal={library?.updateRefusal}
+                    renderRow={(row) => (
                       <ScorerRow
                         key={row.id}
                         row={row}
@@ -517,9 +577,38 @@ export function SuiteScorerTable({
                             : undefined
                         }
                       />
-                    ))}
-                  </ul>
+                    )}
+                  />
                 )}
+                {library &&
+                group.stage === "userValue" &&
+                onJudgeConfigChange &&
+                rubricChecks ? (
+                  <DecisionQuestionsSection
+                    capabilities={capabilities}
+                    judgeConfig={judgeConfig}
+                    onChange={onJudgeConfigChange}
+                  />
+                ) : null}
+                {library && group.stage === "userValue" ? (
+                  <CustomJudgesSection
+                    judgeConfig={judgeConfig}
+                    onJudgeConfigChange={onJudgeConfigChange}
+                    capabilities={capabilities}
+                  />
+                ) : null}
+                {evaluatorLibraryEnabled &&
+                rubricChecks &&
+                scope.kind === "suite" &&
+                onJudgeConfigChange &&
+                group.stage === "userValue" ? (
+                  <RubricChecksJudgeCard
+                    judgeConfig={judgeConfig}
+                    judgesCapabilities={capabilities?.judges}
+                    criteria={judgeRubric?.criteria ?? []}
+                    goalJudgeOff={judgeMode(judgeConfig, goalPolicy) === "off"}
+                  />
+                ) : null}
                 {scope.kind === "suite" &&
                 onMatchOptionsChange &&
                 group.stage === "selection" ? (
@@ -557,8 +646,7 @@ export function SuiteScorerTable({
       {hasJudgeEditor && onJudgeConfigChange ? (
         // Its own section, not a disclosure under User value. Only the model
         // is shown for now: the judge's other settings (gate, grading
-        // instructions, rubric checks, groundedness) keep their stored values
-        // and are not rendered here until they are simpler to explain. The
+        // instructions, groundedness) keep their stored values. The
         // Goal completion row above stays the judge's on/off.
         <section
           className="border-b border-border py-8"
@@ -737,13 +825,7 @@ function ScorerRow({
                 </span>
               ) : null}
             </div>
-            {row.kind === "observed" ? (
-              // A runner check decides nothing, so it wears no role: it is on
-              // for every iteration and reports the stage analysis.
-              <Badge variant="outline">{BUILT_IN_BADGE}</Badge>
-            ) : row.kind === "match" ? (
-              <Badge variant="outline">Required</Badge>
-            ) : null}
+            <ScorerRowBadge kind={row.kind} />
           </div>
           {sourceLine ? (
             <span className="block text-xs text-muted-foreground">

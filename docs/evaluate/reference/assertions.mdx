@@ -1,0 +1,332 @@
+---
+title: "Assertions"
+description: "Every assertion you can add to a case, what makes it pass, where it is graded, and its name in a suite file."
+icon: "list-checks"
+---
+
+An assertion is a deterministic rule over one iteration's transcript: the same transcript always gets the same result. In the case editor, add one with **Add assertion or action**. The picker groups assertions by the stage of the user value chain they report at, and the tables below follow that grouping.
+
+The Scope column follows the hint under each picker entry:
+
+| Scope | Graded |
+| --- | --- |
+| After this action | Over the transcript up to the action it follows. As a suite default assertion, over the finished transcript. |
+| After the run | Once, over the finished transcript. The case editor lists these under "After run checks". |
+| Live view | Against the rendered view at that point in the run. The picker shows "Check the live view at this point". It cannot be re-graded from a stored trace. |
+
+The Suite file column is the assertion's name in a suite file: `type:` on an assertion, `kind:` for a live-view check.
+
+{/* Screenshot: The "Add actions or assertions" drawer open on a case, showing the Actions section and the Assertions · Selection section */}
+
+## Discovery
+
+| Assertion | Passes when | Scope | Suite file |
+| --- | --- | --- | --- |
+| Tool descriptions meet the minimum length | Every tool's description is at least the minimum length (20 characters unless set). | After the run | `toolDescriptionsPresent` |
+| Every tool declares annotations | Every tool declares annotations, including any hints you list as required. | After the run | `toolAnnotationsPresent` |
+| Tool names are unique within each server | No server exposes two tools with the same name. | After the run | `toolNamesUnique` |
+| No tool description marks itself deprecated | No tool's own description says it is deprecated. Advisory only. | After the run | `noDeprecatedToolExposed` |
+| Input schemas have an object root and documented parameters | Every input schema has an object root and documents its parameters. | After the run | `toolInputSchemasWellFormed` |
+| Every tool declares an output schema | Every tool declares an output schema. | After the run | `toolOutputSchemasPresent` |
+
+## Selection
+
+| Assertion | Passes when | Scope | Suite file |
+| --- | --- | --- | --- |
+| No tools should be called | The model called no tool. Marks the case negative. | After the run | — |
+| Tools must be called in this exact order | The model called the expected tools in strict order with no extra calls. | After the run | — |
+| Tool was called with… | The named tool was called with arguments that match, under the assertion's argument matching mode. | After this action | `toolCalledWith` |
+| Tool was called at least once | The named tool was called at least once. Arguments are not checked. | After this action | `toolCalledAtLeastOnce` |
+| Tool was never called | The named tool was not called. | After this action | `toolNeverCalled` |
+| Only these tools may be called | No tool outside the list was called. It does not require the listed tools to be called. An empty list means no tool at all. | After this action | `onlyToolsCalled` |
+| First tool called was… | The first tool call was the named tool. | After this action | `firstToolWas` |
+| Fewer than N tool calls | Strictly fewer than N calls were made (to one tool, if named). | After this action | `toolCallCountUnder` |
+| Tool called before another tool | Every call to the second tool came after a call to the first. Passes if the second tool never ran. | After this action | `toolCalledBefore` |
+| No tool marked deprecated was called | No called tool's own description marks it deprecated. Advisory only. | After the run | `noDeprecatedToolCalled` |
+| No tool marked destructive was called | No called tool declares `destructiveHint: true`. Errors, rather than passes, when no tool declares annotations. | After the run | `noDestructiveToolCalled` |
+
+## Tool call
+
+| Assertion | Passes when | Scope | Suite file |
+| --- | --- | --- | --- |
+| Arguments match the tool's schema | Every call's arguments validate against the tool's declared input schema. | After the run | `argumentsMatchToolSchema` |
+| No identical call repeated back-to-back | No call repeats the call immediately before it with equal arguments. Advisory only. | After this action | `noRepeatedIdenticalCall` |
+| Tool input matches regex | Between the minimum (default 1) and maximum number of calls to the tool have input matching every pattern. All patterns must match within one call. | After this action | `toolInputMatches` |
+
+## Response
+
+| Assertion | Passes when | Scope | Suite file |
+| --- | --- | --- | --- |
+| No tool errors | No tool call returned an MCP error or a transport failure. After a step it reads **No tool errors so far**. | After this action | `noToolErrors` |
+| Tool call under N ms | Every call (to one tool, if named) finished in strictly under N ms. | After the run | `toolLatencyUnder` |
+| Tool result contains… | A tool result contains the text. Case-insensitive unless set. | After the run | `toolResultContains` |
+| Tool output matches regex | Between the minimum (default 1) and maximum number of tool results match every pattern. | After the run | `toolResultMatches` |
+| Tool result matches schema… | Every tool result validates against the JSON Schema you provide. | After the run | `toolResultMatchesSchema` |
+| Tool result under N bytes | Every tool result is strictly under N bytes, as the server returned it. | After the run | `toolResultSizeUnder` |
+| Tool errors name an input | Every tool error message names one of the tool's inputs or a value the call sent. Advisory only. | After the run | `toolErrorNamesInput` |
+| Full pages include a next-page link | A page whose length equals its requested limit carries continuation metadata. Advisory only. | After the run | `fullPageHasContinuation` |
+
+## User value
+
+| Assertion | Passes when | Scope | Suite file |
+| --- | --- | --- | --- |
+| Response contains… | The final assistant message contains the text. Case-insensitive unless set. | After this action | `responseContains` |
+| Response close to… | The final assistant message is within the maximum edit distance of a reference text. | After this action | `responseCloseTo` |
+| Response matches regex… | The final assistant message matches the regular expression. | After this action | `responseMatches` |
+| Final message non-empty | The model produced a final assistant message that is not blank. | After this action | `finalAssistantMessageNonEmpty` |
+| Final message does not end with a question | The last line of the final message does not end with `?`. Advisory only. | After this action | `noEndingQuestion` |
+| Text visible | The text is visible in the rendered view. | Live view | `kind: textVisible` |
+| Element visible | The element is visible in the rendered view. | Live view | `kind: elementVisible` |
+| Element hidden | The element is hidden in the rendered view. | Live view | `kind: elementHidden` |
+| Input value equals | The input's value equals the text you set. | Live view | `kind: inputValue` |
+| View called a tool | The rendered view called the named tool. | Live view | `kind: widgetToolCalled` |
+
+## Budgets
+
+| Assertion | Passes when | Scope | Suite file |
+| --- | --- | --- | --- |
+| Token budget under N | Input plus output tokens for the whole iteration total strictly less than N. | After the run | `tokenBudgetUnder` |
+| Fewer than N user turns | The iteration used strictly fewer than N user turns. | After the run | `turnCountUnder` |
+
+<Note>
+  Token budget under N is not a spend control: token counts are not comparable across models, and a fixed ceiling goes stale when a prompt or model changes. Each run shows its cost ([Read results](/evaluate/read-results)). To fail CI when a suite costs more than its baseline, use `--max-cost-increase-percent` with `mcpjam cloud eval compare` ([CI](/cli/ci)).
+</Note>
+
+## Examples
+
+Two cases against a notes server with `search_notes`, `read_note` and `delete_note` tools. The first checks that the model searched with some string query, hit no tool errors and mentioned the launch in its reply. The second is a negative check: asked only to summarize, the model must never delete.
+
+<Tabs>
+  <Tab title="Inspector">
+    In the first case, under **User prompt** "Find my notes about the launch plan.", click **Add assertion or action** and add:
+
+    1. **Tool was called with…**: pick `search_notes` and set the arguments to `{ "query": "string" }`. Under **Partial** matching, `"string"` matches any string.
+    2. **No tool errors**. Under a prompt it reads **No tool errors so far**.
+    3. **Response contains…** with the text `launch`.
+
+    In the second case, under **User prompt** "Summarize note 7.", add **Tool was never called** for `delete_note`.
+  </Tab>
+  <Tab title="CLI">
+    The same two cases as a suite file:
+
+    ```yaml .mcpjam/evals/notes.yaml
+    schemaVersion: "2"
+    mode: agentWorkflow
+    reportingMode: standard
+    suite:
+      id: s_notes_assertions
+      name: Notes assertions
+    target:
+      servers:
+        - name: notes
+    defaults:
+      judge:
+        enabled: false
+      model: anthropic/claude-haiku-4.5
+      iterations: 1
+      passThreshold: 1
+      validity: {}
+    cases:
+      - id: c_searches_launch_notes
+        title: searches notes and answers about the launch
+        steps:
+          - id: s1
+            kind: prompt
+            prompt: Find my notes about the launch plan.
+          - id: a1
+            kind: assert
+            assertion:
+              type: toolCalledWith
+              toolName: search_notes
+              args:
+                args:
+                  query: "string"   # any string
+                argumentMatching: partial
+          - id: a2
+            kind: assert
+            assertion:
+              type: noToolErrors
+          - id: a3
+            kind: assert
+            assertion:
+              type: responseContains
+              needle: launch
+      - id: c_never_deletes_on_summary
+        title: never deletes when only asked to summarize
+        steps:
+          - id: s1
+            kind: prompt
+            prompt: Summarize note 7.
+          - id: a1
+            kind: assert
+            assertion:
+              type: toolNeverCalled
+              toolName: delete_note
+    ```
+
+    Check the file offline, then run it on your machine with your own provider key. `mcpjam test` needs `notes` bound in a `.mcp.json`, as in [Local evals](/cli/local-evals#2-configure-the-server).
+
+    ```bash
+    mcpjam cloud eval validate --file .mcpjam/evals/notes.yaml
+    export ANTHROPIC_API_KEY=sk-ant-...
+    mcpjam test .mcpjam/evals/notes.yaml
+    ```
+  </Tab>
+  <Tab title="SDK">
+    `EvalTest` takes the suite-file assertion names as `predicates` ([EvalTest](/sdk/reference/eval-test#predicates)). The test function returns a boolean, here from the [validators](/sdk/reference/validators). `matchToolCallWithPartialArgs` compares literal values only, so the `"string"` placeholder goes through `evaluateToolCalls` with `argumentMatching: "partial"`, and a third case shows a literal match.
+
+    ```ts evals/notes.test.ts
+    import { describe, it, expect, beforeAll, afterAll } from "vitest";
+    import {
+      MCPClientManager,
+      HostRunner,
+      EvalTest,
+      evaluateToolCalls,
+      matchToolCallWithPartialArgs,
+    } from "@mcpjam/sdk";
+
+    let manager: MCPClientManager;
+    let agent: HostRunner;
+
+    beforeAll(async () => {
+      manager = new MCPClientManager({
+        notes: { command: "node", args: ["./notes-server.js"] },
+      });
+      await manager.connectToServer("notes");
+      agent = new HostRunner({
+        tools: await manager.getTools(),
+        model: "anthropic/claude-haiku-4.5",
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        mcpClientManager: manager,
+      });
+    }, 60_000);
+
+    afterAll(async () => {
+      await manager.disconnectServer("notes");
+    });
+
+    describe("notes assertions", () => {
+      it("searches notes and answers about the launch", async () => {
+        const test = new EvalTest({
+          id: "c_searches_launch_notes",
+          name: "searches notes and answers about the launch",
+          predicates: [
+            { type: "noToolErrors" },
+            { type: "responseContains", needle: "launch" },
+          ],
+          test: async (runner) => {
+            const result = await runner.run("Find my notes about the launch plan.");
+            // Tool was called with… search_notes, any string query
+            return evaluateToolCalls(
+              [{ toolName: "search_notes", arguments: { query: "string" } }],
+              result.getToolCalls(),
+              { argumentMatching: "partial" },
+            ).passed;
+          },
+        });
+        await test.run(agent, { iterations: 3 });
+        expect(test.accuracy()).toBe(1);
+      });
+
+      it("reads note 7 by its literal id", async () => {
+        const test = new EvalTest({
+          id: "c_reads_note_7",
+          name: "reads note 7 by its literal id",
+          test: async (runner) => {
+            const result = await runner.run("What does note 7 say?");
+            // Extra arguments are allowed; id must equal 7
+            return matchToolCallWithPartialArgs("read_note", { id: 7 }, result.getToolCalls());
+          },
+        });
+        await test.run(agent, { iterations: 3 });
+        expect(test.accuracy()).toBe(1);
+      });
+
+      it("never deletes when only asked to summarize", async () => {
+        const test = new EvalTest({
+          id: "c_never_deletes_on_summary",
+          name: "never deletes when only asked to summarize",
+          test: async (runner) => {
+            const result = await runner.run("Summarize note 7.");
+            // Tool was never called
+            return !result.hasToolCall("delete_note");
+          },
+        });
+        await test.run(agent, { iterations: 3 });
+        expect(test.accuracy()).toBe(1);
+      });
+    });
+    ```
+
+    For a case where no tool may run at all (**No tools should be called**), return `matchNoToolCalls(result.toolsCalled())`. The run needs an MCPJam login or `MCPJAM_API_KEY`; see [eval identity](/cli/local-evals#eval-identity-and-local-data).
+  </Tab>
+</Tabs>
+
+## Argument matching
+
+**Tool was called with…** compares arguments in one of three modes. The suite's default for route matching is set under **Edit tool-call matching** in suite settings.
+
+| Mode | Matches when |
+| --- | --- |
+| **Partial** (default) | Every argument you set matches. The call may carry extra arguments. |
+| **Exact** | The arguments equal what you set, with no extra keys. |
+| **Ignore** | The tool was called. Arguments are not compared. |
+
+In partial mode, these strings match any value of that type instead of the literal string: `"any"`, `"string"`, `"number"`, `"boolean"`, `"object"`, `"array"`, `"null"`. Exact mode treats them as literals.
+
+```yaml
+- id: a1
+  kind: assert
+  assertion:
+    type: toolCalledWith
+    toolName: search_notes
+    args:
+      args:
+        query: "string"   # any string
+        limit: 5          # exactly 5
+      argumentMatching: partial
+```
+
+## Route checks
+
+The case editor's route question, **Which tool should handle it?**, is an assertion on the whole run. Its two strictness levels sit under **Matching options**.
+
+| Choice | Passes when |
+| --- | --- |
+| Reach the tool | The named tools were called, in any order. Extra calls are allowed. |
+| Exact route | The named tools were called in strict order, with no extra calls; arguments are compared as pinned. Added from the picker as **Tools must be called in this exact order**. |
+| **No tool should be called** | No tool was called. Added from the picker as **No tools should be called**. **Use tools instead** reverses it. |
+| Any route | The case names no route and is graded by its other evaluators. |
+
+## Suite defaults and case assertions
+
+A suite can carry default assertions that apply to every case, and assertions you add to a case in the app extend them. The three modes below are set over the API, in the case's `checks` field as `{ mode, list }`, or in the SDK as the case evaluator override ([Running evals](/sdk/concepts/running-evals)). The app has no control for them.
+
+| Mode | The case is graded by |
+| --- | --- |
+| `inherit` | The suite's default assertions only. |
+| `extend` | The suite's defaults, then the case's own list. |
+| `replace` | The case's own list only. An empty list turns the suite's defaults off for that case. |
+
+On a case set to `replace`, the scorecard reads "Suite evaluators replaced for this case — N are not applied".
+
+## Required and Advisory
+
+| Role | A failure | Suite file |
+| --- | --- | --- |
+| **Required** (default) | Fails the iteration. | `role: required` |
+| **Advisory** | Is shown on the result and never fails the iteration. | `role: advisory` |
+
+The six assertions marked "Advisory only" above are heuristics and cannot be Required: the picker labels them **Advisory only**, and a save that marks one Required is refused. The route check is always Required. When available, an assertion's editor shows a Required / Advisory control.
+
+<CardGroup cols={3}>
+  <Card title="Write a case" icon="pencil" href="/evaluate/write-a-case">
+    Add prompts, a route and assertions to a case.
+  </Card>
+  <Card title="Configure grading" icon="sliders-horizontal" href="/evaluate/configure-grading">
+    Set suite defaults, judges and pass criteria.
+  </Card>
+  <Card title="Suite settings" icon="settings-2" href="/evaluate/reference/suite-settings">
+    Every settings row, its API field and default.
+  </Card>
+</CardGroup>

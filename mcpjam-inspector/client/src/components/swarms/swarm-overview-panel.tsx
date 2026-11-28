@@ -1,10 +1,5 @@
 /**
- * Swarms Overview — the default landing view.
- *
- * A newest-first list of Swarm Runs — each row is a co-launched wave of
- * journey-runs (New swarm fires many at once; a solo "Run again" is a wave of
- * one). Clicking a row opens `/swarms/:swarmId` for the dedicated run detail
- * (findings live on that screen's Insights tab).
+ * Shared Swarm wave grouping, presentation, and rubric findings.
  *
  * Two honesty rules run through the whole panel:
  *
@@ -15,34 +10,16 @@
  *     `goalScoreSummary`, a zero graded count — each renders as "—" or as
  *     nothing at all, never as 0%.
  *
- * Undefined-safety is load-bearing rather than polish: this is the DEFAULT tab
- * and its query is string-keyed, so it renders against `undefined` whenever the
- * backend hasn't deployed `getSwarmOverview` yet (and in every SwarmsTab test
- * that mocks convex/react to `undefined`). The ErrorBoundary below catches a
- * THROWING query; it cannot catch `undefined.runs`, so the shells are explicit.
  */
-import { foldSwarmRunVerdicts } from "@mcpjam/sdk/contract";
-import { runVerdictBadge } from "./swarm-verdict-presentation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery, usePaginatedQuery } from "convex/react";
+import { useEffect, useMemo, useState } from "react";
+import { usePaginatedQuery } from "convex/react";
 import { Loader2 } from "lucide-react";
-import { ScrollArea } from "@mcpjam/design-system/scroll-area";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-} from "@mcpjam/design-system/select";
-import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { cn } from "@/lib/utils";
-import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
 import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
-import { formatJourneyRelativeTime } from "@/components/swarms/journey-run-format";
 import {
   DEFAULT_PAGE_SIZE,
   SWARM_QUERIES,
   type JourneySessionRow,
-  type SwarmOverview,
   type SwarmOverviewFinding,
   type SwarmOverviewRun,
   type SwarmOverviewTarget,
@@ -51,8 +28,6 @@ import {
   formatCriterion,
   isKnownPredicateKind,
 } from "@/shared/predicate-kinds";
-import { shouldQueryProjectId } from "@/hooks/useProjects";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { targetKeySuffix } from "@/lib/eval-target-key";
 
 /**
@@ -103,20 +78,6 @@ export function findingSessionLabel(finding: SwarmOverviewFinding): string {
   return `${finding.failCount} of ${finding.sessionsGraded} session${
     finding.sessionsGraded === 1 ? "" : "s"
   }`;
-}
-
-/** Aggregate pass rate across a wave. `null` when nothing in it was graded. */
-export function waveScoreRate(runs: readonly SwarmOverviewRun[]): number | null {
-  let graded = 0;
-  let passed = 0;
-  for (const run of runs) {
-    const summary = run.goalScoreSummary;
-    if (!summary || summary.gradedCount <= 0) continue;
-    graded += summary.gradedCount;
-    passed += summary.passedCount;
-  }
-  if (graded <= 0) return null;
-  return passed / graded;
 }
 
 /**
@@ -312,26 +273,6 @@ export function groupRunsIntoSwarmWaves(
   return waves.sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** Short id for display — same length convention as evals `formatRunId`. */
-export function formatSwarmId(swarmId: string): string {
-  return swarmId.substring(0, 8);
-}
-
-/**
- * The name its author gave the swarm, else the ID-first title matching evals
- * (`Run n57bwtsk`): `Swarm` + short route id. Scope (goals / personas) lives in
- * the subtitle, not the title.
- */
-export function swarmWaveTitle(wave: SwarmWave): string {
-  // Read off the anchor, never searched for. The backend resolves the name per
-  // WAVE, but legacy rows fall back to each journey's authoring swarm, so a
-  // wave that reused journeys can hold two names. Taking the first NAMED run
-  // would title such a wave after the reused journey's original swarm, which
-  // is the mislabel this helper exists to avoid.
-  const authored = wave.anchor.swarmName?.trim();
-  return authored || `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`;
-}
-
 /**
  * Progress of a wave that is STILL GOING, or `null` once every member reached a
  * terminal.
@@ -392,37 +333,22 @@ export function waveTargets(
 }
 
 /** Collapse unique names into a compact column label. */
-function formatNameList(
-  names: readonly string[],
-  pluralNoun: string
-): string {
-  if (names.length === 0) return "—";
-  if (names.length === 1) return names[0]!;
-  if (names.length === 2) return `${names[0]} +1`;
-  return `${names.length} ${pluralNoun}`;
-}
-
 /** Unique host display names across a wave (first-seen order). */
 export function waveClientNames(
   targets: readonly SwarmOverviewTarget[]
 ): string[] {
-  return [...new Set(targets.map((t) => t.hostName.trim()).filter(Boolean))];
-}
-
-/** Client column text fallback / tooltip (environments get their own column). */
-export function formatWaveClientLabel(
-  targets: readonly SwarmOverviewTarget[]
-): string {
-  return formatNameList(waveClientNames(targets), "clients");
+  return [...new Set(targets.map((target) => target.hostName.trim()).filter(Boolean))];
 }
 
 const MAX_CLIENT_LOGOS = 3;
 
 /** Compact host-logo strip for the Client column (HostCompatStrip-style). */
-function WaveClientLogoStrip({
+export function WaveClientLogoStrip({
   targets,
+  hostStyleByName,
 }: {
   targets: readonly SwarmOverviewTarget[];
+  hostStyleByName: ReadonlyMap<string, string | null | undefined>;
 }) {
   const names = waveClientNames(targets);
   if (names.length === 0) {
@@ -442,7 +368,11 @@ function WaveClientLogoStrip({
       aria-label={title}
     >
       {visible.map((name) => (
-        <JourneyHostLogoMark key={name} label={name} />
+        <JourneyHostLogoMark
+          key={name}
+          label={name}
+          hostStyle={hostStyleByName.get(name)}
+        />
       ))}
       {overflow > 0 ? (
         <span className="pl-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
@@ -464,53 +394,6 @@ export function waveEnvironmentNames(
         .filter((name): name is string => Boolean(name))
     ),
   ];
-}
-
-/** Environment column: pinned env names only (flag-gated in the list). */
-export function formatWaveEnvironmentLabel(
-  targets: readonly SwarmOverviewTarget[]
-): string {
-  return formatNameList(waveEnvironmentNames(targets), "envs");
-}
-
-export type SwarmRunsSort = "newest" | "lowest-score";
-
-/** Filter + sort waves for the Overview list toolbar. */
-export function filterAndSortSwarmWaves(
-  waves: readonly SwarmWave[],
-  opts: {
-    clientFilter: string | null;
-    envFilter: string | null;
-    sort: SwarmRunsSort;
-  }
-): SwarmWave[] {
-  let next = waves.slice();
-  if (opts.clientFilter) {
-    const needle = opts.clientFilter;
-    next = next.filter((wave) =>
-      waveClientNames(waveTargets(wave.runs)).includes(needle)
-    );
-  }
-  if (opts.envFilter) {
-    const needle = opts.envFilter;
-    next = next.filter((wave) =>
-      waveEnvironmentNames(waveTargets(wave.runs)).includes(needle)
-    );
-  }
-  if (opts.sort === "lowest-score") {
-    next = [...next].sort((a, b) => {
-      const aRate = waveScoreRate(a.runs);
-      const bRate = waveScoreRate(b.runs);
-      // Ungraded waves sink below graded ones; then by ascending score.
-      if (aRate == null && bRate == null) return b.createdAt - a.createdAt;
-      if (aRate == null) return 1;
-      if (bRate == null) return -1;
-      if (aRate !== bRate) return aRate - bRate;
-      return b.createdAt - a.createdAt;
-    });
-  }
-  // "newest" keeps input order (waves are already newest-first).
-  return next;
 }
 
 /** Strip provider prefix (`openai/gpt-4o` → `gpt-4o`). */
@@ -546,440 +429,6 @@ export function formatWaveModelLabel(
   if (models.length === 1) return models[0]!;
   if (models.length === 2) return `${models[0]} +1`;
   return `${models.length} models`;
-}
-
-export interface SwarmOverviewPanelProps {
-  /** `null` while signed out — both queries skip rather than firing unscoped. */
-  projectId: string | null;
-  /**
-   * Whether the project has any personas — drives which empty state shows.
-   * `undefined` while the persona list is still loading: without that third
-   * state the panel flashes the create-your-first-persona hero at every
-   * existing user on every mount.
-   */
-  hasPersonas: boolean | undefined;
-  onNewSwarm: () => void;
-  /** Navigate to `/swarms/:swarmId` for this wave. */
-  onOpenSwarm: (swarmId: string) => void;
-}
-
-export function SwarmOverviewPanel(props: SwarmOverviewPanelProps) {
-  return (
-    <div
-      className="flex h-full min-h-0 flex-col"
-      data-testid="swarms-overview-panel"
-    >
-      {/* An undeployed backend query THROWS from useQuery. The fallback is the
-          empty state rather than `null`, because a blank default tab is what a
-          user would be staring at pre-backend-deploy. */}
-      <ErrorBoundary
-        fallback={
-          props.hasPersonas === false ? (
-            <SwarmsEmptyHero onNewSwarm={props.onNewSwarm} />
-          ) : (
-            <NoRunsEmptyState />
-          )
-        }
-      >
-        <SwarmOverviewPanelBody {...props} />
-      </ErrorBoundary>
-    </div>
-  );
-}
-
-function SwarmOverviewPanelBody({
-  projectId,
-  hasPersonas,
-  onNewSwarm,
-  onOpenSwarm,
-}: SwarmOverviewPanelProps) {
-  const environmentsEnabled = useProjectEnvironmentsEnabled();
-  // `shouldQueryProjectId`, not a bare truthiness check: a local/placeholder or
-  // UUID project id mid-transition would 500 the Convex arg validator, and the
-  // panel would surface that as an ErrorBoundary fallback rather than staying
-  // unloaded. Same guard the sibling project-scoped swarm reads use.
-  const queryable = shouldQueryProjectId(projectId);
-  const overview = useQuery(
-    SWARM_QUERIES.getSwarmOverview as any,
-    (queryable ? { projectId } : "skip") as any
-  ) as SwarmOverview | undefined;
-
-  const waves = useMemo(
-    () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
-    [overview]
-  );
-
-  // Confirmed-empty personas ⇒ the create-swarm hero. Checked before the
-  // overview shell: an account with nothing in it should never see a spinner
-  // for data that will come back empty.
-  if (hasPersonas === false) {
-    return <SwarmsEmptyHero onNewSwarm={onNewSwarm} />;
-  }
-
-  if (hasPersonas === undefined || overview === undefined) {
-    return <LoadingShell />;
-  }
-
-  return (
-    <ScrollArea className="min-h-0 flex-1">
-      <div className="flex flex-col gap-2 px-6 py-3">
-        {waves.length === 0 ? (
-          <NoRunsEmptyState />
-        ) : (
-          <SwarmRunsList
-            waves={waves}
-            onOpenSwarm={onOpenSwarm}
-            environmentsEnabled={environmentsEnabled}
-          />
-        )}
-      </div>
-    </ScrollArea>
-  );
-}
-
-// ── swarm runs list ─────────────────────────────────────────────────────────
-
-/** Shared with row buttons so Env / Client / Model line up. */
-const SWARM_RUN_ROW_PAD = "flex w-full items-center gap-3 px-4";
-
-/**
- * One treatment for every column header, whether it filters or is inert, so
- * Env / Client / Model / Score read as a single row of column labels rather
- * than a mix of labels and form fields.
- */
-export const SWARM_COLUMN_HEADER =
-  "flex w-full min-w-0 items-center justify-end gap-1 text-sm font-medium text-muted-foreground";
-
-/**
- * Ghost select — a column label that happens to open a menu. The `dark:`
- * resets are not redundant with `bg-transparent`: tailwind-merge only drops
- * base classes carrying the same modifiers, so `SelectTrigger`'s
- * `dark:bg-input/30` / `dark:hover:bg-input/50` survive an unprefixed override
- * and painted a form-field block behind the filtering headers — and only those
- * — in dark mode.
- */
-const SWARM_INLINE_SELECT_TRIGGER = cn(
-  SWARM_COLUMN_HEADER,
-  "h-auto min-h-0 max-w-full border-0 bg-transparent p-0 shadow-none",
-  "dark:bg-transparent dark:hover:bg-transparent",
-  "hover:text-foreground focus:ring-0 focus-visible:ring-0 data-[state=open]:text-foreground",
-  "[&_svg]:size-3.5 [&_svg]:opacity-50"
-);
-
-function SwarmInlineSelect({
-  value,
-  onValueChange,
-  ariaLabel,
-  testId,
-  children,
-  triggerLabel,
-}: {
-  value: string;
-  onValueChange: (value: string) => void;
-  ariaLabel: string;
-  testId: string;
-  children: ReactNode;
-  /** Shown in the trigger (column noun or selected value). */
-  triggerLabel: string;
-}) {
-  return (
-    <Select value={value} onValueChange={onValueChange}>
-      <SelectTrigger
-        data-testid={testId}
-        aria-label={ariaLabel}
-        className={SWARM_INLINE_SELECT_TRIGGER}
-      >
-        <span className="truncate">{triggerLabel}</span>
-      </SelectTrigger>
-      <SelectContent>{children}</SelectContent>
-    </Select>
-  );
-}
-
-/**
- * Inert column header. Keeps the chevron's slot as empty space so a column
- * with no filter still lines its label up with the ones that have one.
- */
-function SwarmColumnLabel({
-  children,
-  testId,
-}: {
-  children: ReactNode;
-  testId: string;
-}) {
-  return (
-    <span className={SWARM_COLUMN_HEADER} data-testid={testId}>
-      <span className="truncate">{children}</span>
-      <span className="size-3.5 shrink-0" aria-hidden />
-    </span>
-  );
-}
-
-function SwarmRunsList({
-  waves,
-  onOpenSwarm,
-  environmentsEnabled,
-}: {
-  waves: SwarmWave[];
-  onOpenSwarm: (swarmId: string) => void;
-  environmentsEnabled: boolean;
-}) {
-  const [clientFilter, setClientFilter] = useState<string | null>(null);
-  const [envFilter, setEnvFilter] = useState<string | null>(null);
-
-  const clientOptions = useMemo(() => {
-    const names = new Set<string>();
-    for (const wave of waves) {
-      for (const name of waveClientNames(waveTargets(wave.runs))) {
-        names.add(name);
-      }
-    }
-    return [...names].sort((a, b) => a.localeCompare(b));
-  }, [waves]);
-
-  const envOptions = useMemo(() => {
-    if (!environmentsEnabled) return [] as string[];
-    const names = new Set<string>();
-    for (const wave of waves) {
-      for (const name of waveEnvironmentNames(waveTargets(wave.runs))) {
-        names.add(name);
-      }
-    }
-    return [...names].sort((a, b) => a.localeCompare(b));
-  }, [waves, environmentsEnabled]);
-
-  // Drop a selection that disappeared from the loaded window.
-  useEffect(() => {
-    if (clientFilter && !clientOptions.includes(clientFilter)) {
-      setClientFilter(null);
-    }
-  }, [clientFilter, clientOptions]);
-  useEffect(() => {
-    if (envFilter && !envOptions.includes(envFilter)) {
-      setEnvFilter(null);
-    }
-  }, [envFilter, envOptions]);
-
-  const visibleWaves = useMemo(
-    () =>
-      filterAndSortSwarmWaves(waves, {
-        clientFilter,
-        envFilter: environmentsEnabled ? envFilter : null,
-        sort: "newest",
-      }),
-    [waves, clientFilter, envFilter, environmentsEnabled]
-  );
-
-  const showEnvFilter = environmentsEnabled && envOptions.length > 0;
-  const showClientFilter = clientOptions.length > 0;
-
-  return (
-    <section data-testid="swarm-overview-runs">
-      {/* One inline header: Env / Client filters + Model in column slots. */}
-      <header
-        className="mb-2 rounded-lg border border-transparent"
-        data-testid="swarm-overview-filters"
-      >
-        <div className={SWARM_RUN_ROW_PAD}>
-          <span className="size-2 shrink-0" aria-hidden />
-          <div className="min-w-0 flex-1" aria-hidden />
-
-          {environmentsEnabled ? (
-            showEnvFilter ? (
-              <div className="flex w-24 shrink-0 justify-end">
-                <SwarmInlineSelect
-                  value={envFilter ?? "all"}
-                  onValueChange={(value) =>
-                    setEnvFilter(value === "all" ? null : value)
-                  }
-                  ariaLabel="Filter by environment"
-                  testId="swarm-overview-env-filter"
-                  triggerLabel={envFilter ?? "Env"}
-                >
-                  <SelectItem value="all">All envs</SelectItem>
-                  {envOptions.map((name) => (
-                    <SelectItem key={name} value={name}>
-                      {name}
-                    </SelectItem>
-                  ))}
-                </SwarmInlineSelect>
-              </div>
-            ) : (
-              <div className="flex w-24 shrink-0 justify-end">
-                <SwarmColumnLabel testId="swarm-overview-env-label">
-                  Env
-                </SwarmColumnLabel>
-              </div>
-            )
-          ) : null}
-
-          {showClientFilter ? (
-            <div className="flex w-28 shrink-0 justify-end">
-              <SwarmInlineSelect
-                value={clientFilter ?? "all"}
-                onValueChange={(value) =>
-                  setClientFilter(value === "all" ? null : value)
-                }
-                ariaLabel="Filter by client"
-                testId="swarm-overview-client-filter"
-                triggerLabel={clientFilter ?? "Client"}
-              >
-                <SelectItem value="all">All clients</SelectItem>
-                {clientOptions.map((name) => (
-                  <SelectItem key={name} value={name}>
-                    {name}
-                  </SelectItem>
-                ))}
-              </SwarmInlineSelect>
-            </div>
-          ) : (
-            <div className="flex w-28 shrink-0 justify-end">
-              <SwarmColumnLabel testId="swarm-overview-client-label">
-                Client
-              </SwarmColumnLabel>
-            </div>
-          )}
-
-          <div className="flex w-24 shrink-0 justify-end">
-            <SwarmColumnLabel testId="swarm-overview-model-label">
-              Model
-            </SwarmColumnLabel>
-          </div>
-        </div>
-      </header>
-
-      {visibleWaves.length === 0 ? (
-        <p
-          className="px-4 py-8 text-center text-sm text-muted-foreground"
-          data-testid="swarm-overview-filter-empty"
-        >
-          No swarm runs match these filters.
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {visibleWaves.map((wave) => (
-            <SwarmWaveRow
-              key={wave.waveId}
-              wave={wave}
-              onOpen={() => onOpenSwarm(swarmWaveRouteId(wave))}
-              environmentsEnabled={environmentsEnabled}
-            />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function SwarmWaveRow({
-  wave,
-  onOpen,
-  environmentsEnabled,
-}: {
-  wave: SwarmWave;
-  onOpen: () => void;
-  environmentsEnabled: boolean;
-}) {
-  const title = swarmWaveTitle(wave);
-  const sessions = waveSessionTotals(wave.runs);
-  const findingCount = wave.runs.reduce((n, run) => n + run.findings.length, 0);
-  const personaCount = new Set(wave.runs.map((r) => r.personaName)).size;
-  const targets = waveTargets(wave.runs);
-  const runState = waveRunState(wave.runs);
-  const decision = runVerdictBadge(
-    foldSwarmRunVerdicts(
-      wave.runs.map((r) => r.report?.verdict ?? "notEstablished"),
-    ),
-  );
-  const environmentLabel = formatWaveEnvironmentLabel(targets);
-  const clientLabel = formatWaveClientLabel(targets);
-  const modelLabel = formatWaveModelLabel(targets);
-
-  return (
-    <li
-      className="rounded-lg border border-border/60 bg-background"
-      data-testid="swarm-overview-run"
-      data-wave-id={wave.waveId}
-      data-swarm-id={swarmWaveRouteId(wave)}
-      data-journey-count={wave.runs.length}
-    >
-      <button
-        type="button"
-        className={cn(SWARM_RUN_ROW_PAD, "py-3 text-left hover:bg-muted/40")}
-        onClick={onOpen}
-        data-testid="swarm-overview-run-open"
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-baseline gap-2">
-            <span
-              className="truncate text-sm font-bold tracking-tight text-foreground"
-              title={title}
-            >
-              {title}
-            </span>
-            {/* One badge, and only when it has something to say. A clean
-                finish is the expected outcome and gets no pill at all, so the
-                row stays quiet until it cannot: "Completed with issues" is
-                then the only thing on a terminal row, which is what makes it
-                legible. `running` is the exception that keeps its pill — with
-                the coloured dot gone it is the row's only remaining answer to
-                "is this still going?", the question a returning viewer arrives
-                with, and the one BB-74 added it for. */}
-            {runState === "complete" ? null : (
-              <span
-                className={cn(
-                  "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                  swarmWaveRunStateChipClass(runState)
-                )}
-                data-testid="swarm-overview-run-state"
-                data-run-state={runState}
-              >
-                {swarmWaveRunStateLabel(runState)}
-              </span>
-            )}
-            <span className="shrink-0 text-xs text-muted-foreground">
-              {formatJourneyRelativeTime(wave.createdAt)}
-            </span>
-          </div>
-          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-            {sessions.succeeded}/{sessions.total} executions completed · Run
-            decision: {decision.label}
-            {wave.runs.length === 1
-              ? ` · ${wave.runs[0]!.journeyName} · ${wave.runs[0]!.personaName}`
-              : ` · ${wave.runs.length} goals · ${personaCount} persona${
-                  personaCount === 1 ? "" : "s"
-                }`}
-            {findingCount > 0
-              ? ` · ${findingCount} finding${findingCount === 1 ? "" : "s"}`
-              : ""}
-          </p>
-        </div>
-        {environmentsEnabled ? (
-          <span
-            className="w-24 shrink-0 truncate text-right text-xs text-muted-foreground"
-            data-testid="swarm-overview-run-env"
-            title={environmentLabel}
-          >
-            {environmentLabel}
-          </span>
-        ) : null}
-        <span
-          className="flex w-28 shrink-0 justify-end"
-          data-testid="swarm-overview-run-client"
-          title={clientLabel}
-        >
-          <WaveClientLogoStrip targets={targets} />
-        </span>
-        <span
-          className="w-24 shrink-0 truncate text-right font-mono text-xs text-muted-foreground"
-          data-testid="swarm-overview-run-model"
-          title={modelLabel}
-        >
-          {modelLabel}
-        </span>
-      </button>
-    </li>
-  );
 }
 
 /**
@@ -1214,43 +663,6 @@ function FindingSessions({
           ))}
         </ul>
       )}
-    </div>
-  );
-}
-
-// ── shells + empty states ───────────────────────────────────────────────────
-
-function LoadingShell() {
-  return (
-    <div
-      className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"
-      data-testid="swarm-overview-loading"
-    >
-      <Loader2 className="size-4 animate-spin" />
-      Loading overview…
-    </div>
-  );
-}
-
-/**
- * Personas exist but nothing has been run yet. Distinct from the
- * create-persona hero: the next action is launching a journey, which lives on
- * the Personas tab, so the copy points there rather than at a button this
- * panel doesn't own.
- */
-function NoRunsEmptyState() {
-  return (
-    <div
-      className="flex min-h-0 flex-1 items-center justify-center px-6 py-10"
-      data-testid="swarm-overview-no-runs"
-    >
-      <div className="max-w-sm text-center">
-        <h3 className="text-sm font-semibold text-foreground">No runs yet</h3>
-        <p className="mt-1.5 text-pretty text-xs text-muted-foreground">
-          Open Personas and run one of your goals. Once a run finishes, its
-          outcomes and any failing checks show up here.
-        </p>
-      </div>
     </div>
   );
 }

@@ -20,6 +20,8 @@ const SKIP_DELETE_TEST_CASE_CONFIRMATION_KEY = "skipDeleteTestCaseConfirmation";
 interface ConfirmationDialogsProps {
   // Suite deletion
   suiteToDelete: EvalSuite | null;
+  /** The delete was asked from settings with unsaved edits, which go with it. */
+  suiteToDeleteHasUnsavedEdits?: boolean;
   setSuiteToDelete: (suite: EvalSuite | null) => void;
   deletingSuiteId: string | null;
   onConfirmDeleteSuite: () => void;
@@ -39,6 +41,7 @@ interface ConfirmationDialogsProps {
 
 export function ConfirmationDialogs({
   suiteToDelete,
+  suiteToDeleteHasUnsavedEdits = false,
   setSuiteToDelete,
   deletingSuiteId,
   onConfirmDeleteSuite,
@@ -121,6 +124,13 @@ export function ConfirmationDialogs({
                   <br />
                   <br />
                   {ciDeleteNotice}
+                </>
+              ) : null}
+              {suiteToDeleteHasUnsavedEdits ? (
+                <>
+                  <br />
+                  <br />
+                  Your unsaved settings changes will be lost.
                 </>
               ) : null}
             </DialogDescription>

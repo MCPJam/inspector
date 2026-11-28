@@ -40,6 +40,7 @@ describe("ManagerCallerContext — empty context behaves as a plain-JWT caller",
     expect(headers).toEqual({
       "Content-Type": "application/json",
       Authorization: "Bearer jwt-token",
+      "x-mcpjam-delivery-contract": "1",
     });
     expect(headers).not.toHaveProperty("x-mcpjam-acting-as");
     expect(headers).not.toHaveProperty("x-mcpjam-acting-in-org");

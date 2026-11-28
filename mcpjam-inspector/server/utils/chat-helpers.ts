@@ -173,8 +173,6 @@ export const createLlmModel = (
   }
 };
 
-const ANTHROPIC_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
-
 function readRecordString(value: unknown, key: string): string | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = (value as Record<string, unknown>)[key];
@@ -182,26 +180,6 @@ function readRecordString(value: unknown, key: string): string | undefined {
     ? candidate
     : undefined;
 }
-
-export const isAnthropicCompatibleModel = (
-  modelDefinition: ModelDefinition,
-  customProviders?: CustomProviderConfig[],
-): boolean => {
-  if (modelDefinition.provider === "anthropic") {
-    return true;
-  }
-  if (modelDefinition.provider === "custom") {
-    const providerName = modelDefinition.customProviderName;
-    if (!providerName) return false;
-    const cp = customProviders?.find((p) => p.name === providerName);
-    return cp?.protocol === "anthropic-compatible";
-  }
-  return false;
-};
-
-export const getInvalidAnthropicToolNames = (toolNames: string[]): string[] => {
-  return toolNames.filter((name) => !ANTHROPIC_TOOL_NAME_PATTERN.test(name));
-};
 
 /**
  * Tool availability is per-turn. If a server disconnects, older tool-call /

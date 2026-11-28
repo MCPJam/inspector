@@ -28,12 +28,29 @@ export function localHarnessIdOf(harness: string | undefined): SupportedLocalHar
     : null;
 }
 
+/** Why this machine can't run a harness at all, before the account is asked. */
+export type LocalVenueMachineRefusal =
+  | "unsupported-harness"
+  | "hosted-server"
+  | "turned-off"
+  | "unsupported-platform"
+  | "not-released"
+  | "unattended-unverified";
+
+/** A machine reason, or `member`: the account check said no. */
+export type LocalVenueRefusal = LocalVenueMachineRefusal | "member";
+
+export type LocalVenueDecision =
+  | { venue: "local"; harnessId: SupportedLocalHarnessId }
+  | { venue: "hosted"; refusal: LocalVenueRefusal; harnessId: SupportedLocalHarnessId | null };
+
 /**
  * Can THIS Inspector run `harness` on this machine at all — before asking
  * about the account? A supported harness, a local (not hosted) server with the
  * kill switch on, a pack built for this target, lifecycle conformance recorded
  * (or the development override), and — for a harness certified per target
- * (D8) — this target among them.
+ * (D8) — this target among them. Null when it can; otherwise the first rule
+ * that failed, which is what a refusal names.
  *
  * `unattended` (evals and swarms) additionally needs, for a harness whose
  * unattended runs depend on its own command sandbox (Codex, D2), this target
@@ -42,31 +59,58 @@ export function localHarnessIdOf(harness: string | undefined): SupportedLocalHar
  * and a target outside the set simply never selects the local venue for
  * unattended work (preparation refuses it too, independently).
  */
+export function localVenueMachineRefusal(
+  harness: string | undefined,
+  scope: "attended" | "unattended" = "attended",
+): LocalVenueMachineRefusal | null {
+  const id = localHarnessIdOf(harness);
+  if (id === null) return "unsupported-harness";
+  if (HOSTED_MODE) return "hosted-server";
+  if (!LOCAL_HARNESS_ENABLED) return "turned-off";
+  const target = localPackTarget();
+  if (target === null || !expectedPackFor(id, target)) return "unsupported-platform";
+  const manifest = localHarnessManifestsForDevelopment(LOCAL_HARNESS_MANIFEST)[id];
+  if (!manifest?.lifecycleConformanceVersion) return "not-released";
+  if (manifest.nativeTargets !== undefined && !manifest.nativeTargets.includes(target)) return "unsupported-platform";
+  const sandboxed = manifest.unattendedSandboxTargets;
+  return scope === "unattended" && sandboxed !== undefined && !sandboxed.includes(target)
+    ? "unattended-unverified"
+    : null;
+}
+
 export const isLocalHarnessVenue = (
   harness: string | undefined,
   scope: "attended" | "unattended" = "attended",
-) => {
-  const id = localHarnessIdOf(harness);
-  if (id === null || HOSTED_MODE || !LOCAL_HARNESS_ENABLED) return false;
-  const target = localPackTarget();
-  if (target === null || !expectedPackFor(id, target)) return false;
-  const manifest = localHarnessManifestsForDevelopment(LOCAL_HARNESS_MANIFEST)[id];
-  if (!manifest?.lifecycleConformanceVersion) return false;
-  if (manifest.nativeTargets !== undefined && !manifest.nativeTargets.includes(target)) return false;
-  return (
-    scope === "attended" ||
-    manifest.unattendedSandboxTargets === undefined ||
-    manifest.unattendedSandboxTargets.includes(target)
-  );
-};
+) => localVenueMachineRefusal(harness, scope) === null;
+
+/**
+ * Where `harness` runs for this member and project, and why not here when it
+ * can't. The account is asked only once the machine qualifies, exactly as
+ * `shouldUseLocalHarness` always has, and its errors propagate unchanged.
+ */
+export async function decideLocalHarnessVenue(
+  harness: string | undefined,
+  bearer?: string,
+  projectId?: string,
+  options: { scope?: "attended" | "unattended" } = {},
+): Promise<LocalVenueDecision> {
+  const harnessId = localHarnessIdOf(harness);
+  const machine = localVenueMachineRefusal(harness, options.scope);
+  if (machine !== null || harnessId === null) {
+    return { venue: "hosted", refusal: machine ?? "unsupported-harness", harnessId };
+  }
+  return (await localHarnessAccountEnabled(bearer, projectId, harnessId))
+    ? { venue: "local", harnessId }
+    : { venue: "hosted", refusal: "member", harnessId };
+}
+
 export async function shouldUseLocalHarness(
   harness: string | undefined,
   bearer?: string,
   projectId?: string,
   options: { scope?: "attended" | "unattended" } = {},
 ) {
-  const id = localHarnessIdOf(harness);
-  return id !== null && isLocalHarnessVenue(id, options.scope) && await localHarnessAccountEnabled(bearer, projectId, id);
+  return (await decideLocalHarnessVenue(harness, bearer, projectId, options)).venue === "local";
 }
 
 /**
@@ -149,7 +193,13 @@ export async function withLocalHarnessSlot<T>(run: () => Promise<T>, signal?: Ab
   finally { release(); }
 }
 
-export function assertLocalHarnessCapabilities(args: { builtInToolIds?: readonly string[]; computerEnvironmentId?: string; hasAttachments?: boolean; browserToolPolicy?: unknown; harnessId?: string }) {
+export function assertLocalHarnessCapabilities(args: { builtInToolIds?: readonly string[]; computerEnvironmentId?: string; hasAttachments?: boolean; browserToolPolicy?: unknown; harnessId?: string; codeGradingFeatures?: readonly string[] }) {
+  if (args.codeGradingFeatures?.length) {
+    const name = harnessDisplayName(args.harnessId ?? DEFAULT_LOCAL_HARNESS_ID);
+    const features = args.codeGradingFeatures;
+    const list = features.length > 1 ? `${features.slice(0, -1).join(", ")} and ${features[features.length - 1]}` : features[0];
+    throw new Error(`This suite's ${list} need a cloud sandbox for the agent. Local ${name} runs on your machine, so run this suite with a cloud client.`);
+  }
   const unsupported = args.builtInToolIds?.filter(id => ["bash", "browser", "computer", "desktop", "video"].includes(id)) ?? [];
   if (args.computerEnvironmentId || args.hasAttachments || args.browserToolPolicy || unsupported.length) {
     const name = harnessDisplayName(args.harnessId ?? DEFAULT_LOCAL_HARNESS_ID);
@@ -177,7 +227,7 @@ async function assertUnattendedGit(harnessId: SupportedLocalHarnessId): Promise<
     ({ stdout } = await promisify(execFile)(gitPath, ["--version"], { timeout: 5_000, env: { ...process.env, PATH: process.platform === "win32" ? process.env.PATH : "/usr/bin:/bin" } }));
   } catch { throw new Error(`Local ${name} requires Git 2.31 or newer. Install Git (Command Line Tools on macOS), then retry.`); }
   const version = /git version (\d+)\.(\d+)/.exec(stdout);
-  if (!version || Number(version[1]) < 2 || (Number(version[1]) === 2 && Number(version[2]) < 31)) throw new Error(`Unattended local ${name} requires Git 2.31 or newer`);
+  if (!version || Number(version[1]) < 2 || (Number(version[1]) === 2 && Number(version[2]) < 31)) throw new Error(`Local ${name} requires Git 2.31 or newer. Update Git, then retry.`);
 }
 
 export async function prepareLocalHarnessRun(args: { bearer: string; projectId: string; trustedActor?: LocalHarnessActor; harnessId?: SupportedLocalHarnessId }) {

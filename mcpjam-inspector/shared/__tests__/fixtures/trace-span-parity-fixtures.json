@@ -1,5 +1,5 @@
 {
-  "__readme": "Parity fixtures for the EvalTraceSpan shape across repos. Kept in lockstep with mcpjam-backend (tests/convex/fixtures/trace-span-parity-fixtures.json). The backend cannot import this repo's Zod (Convex bundling isolation), so this JSON is the common ground truth. 'accept' rows are valid spans, several carrying the GenAI harness metadata (finishReason/provider/responseId/responseTimestamp/ttfcMs) added for OTel alignment: evalTraceSpanZ must parse each, and the backend normalizeTraceSpans() must PRESERVE every field. 'reject' rows omit a required field (id/name/category/startMs/endMs) or use an invalid category \u2014 both validators must refuse (Zod rejects; normalizeTraceSpans drops the span). NOTE: optional-field TYPE mismatches (e.g. ttfcMs as a string) are intentionally NOT in this shared reject set, because the backend normalizer leniently drops a bad optional rather than failing the whole span \u2014 those cases live as inspector-only assertions in eval-trace.test.ts. Harness EVIDENCE provenance (outputSource/wireCorroborated/evidenceRequestId/evidenceStatus) rides the same rails: a harness run's tool spans record whether their output came from the model's narration or from a wire call the proxy actually saw, so a producer emitting them against a backend that has not yet added them would be silently stripped by normalizeTraceSpans and hard-rejected by the closed traceSpanValidator \u2014 which is why the backend deploys first.",
+  "__readme": "Parity fixtures for the EvalTraceSpan shape across repos. Kept in lockstep with mcpjam-backend (tests/convex/fixtures/trace-span-parity-fixtures.json). The backend cannot import this repo's Zod (Convex bundling isolation), so this JSON is the common ground truth. 'accept' rows are valid spans, several carrying the GenAI harness metadata (finishReason/provider/responseId/responseTimestamp/ttfcMs) added for OTel alignment: evalTraceSpanZ must parse each, and the backend normalizeTraceSpans() must PRESERVE every field. 'reject' rows omit a required field (id/name/category/startMs/endMs) or use an invalid category \u2014 both validators must refuse (Zod rejects; normalizeTraceSpans drops the span). NOTE: optional-field TYPE mismatches (e.g. ttfcMs as a string) are intentionally NOT in this shared reject set, because the backend normalizer leniently drops a bad optional rather than failing the whole span \u2014 those cases live as inspector-only assertions in eval-trace.test.ts. Harness EVIDENCE provenance (outputSource/wireCorroborated/evidenceRequestId/evidenceStatus) rides the same rails: a harness run's tool spans record whether their output came from the model's narration or from a wire call the proxy actually saw, so a producer emitting them against a backend that has not yet added them would be silently stripped by normalizeTraceSpans and hard-rejected by the closed traceSpanValidator \u2014 which is why the backend deploys first. Per-call `cost` evidence follows the same rule and sits on llm spans only; the step span repeats the call's tokens, so a cost there would count the call twice. A local org llm span also carries `callId`, the usage writeback's requestId (`<turnId>:<stepIndex>`, non-empty, at most 200 characters), which the backend matches to the usage row it priced; both sides drop an invalid callId and keep the span.",
   "accept": [
     {
       "label": "llm span with full harness metadata (finishReason=length)",
@@ -22,6 +22,105 @@
         "responseId": "msg_0123456789",
         "responseTimestamp": "2026-06-18T00:00:00.000Z",
         "ttfcMs": 240
+      }
+    },
+    {
+      "label": "llm span with provider-reported cost evidence",
+      "value": {
+        "id": "p0-s1-llm",
+        "parentId": "p0-s1",
+        "name": "LLM",
+        "category": "llm",
+        "startMs": 1300,
+        "endMs": 2100,
+        "promptIndex": 0,
+        "stepIndex": 1,
+        "modelId": "anthropic/claude-sonnet-4.5",
+        "inputTokens": 1200,
+        "outputTokens": 300,
+        "totalTokens": 1500,
+        "cost": {
+          "calculationVersion": 1,
+          "currency": "USD",
+          "completeness": "complete",
+          "amountUsd": 0.0088,
+          "source": "provider_reported",
+          "reporter": "gateway",
+          "funding": "mcpjam",
+          "usage": {
+            "uncachedInputTokens": 200,
+            "cacheReadTokens": 600,
+            "cacheWriteTokens": 400,
+            "outputTokens": 300
+          },
+          "usageSource": "provider",
+          "recordedAt": 1781740800000
+        }
+      }
+    },
+    {
+      "label": "llm span with a partial list-price estimate",
+      "value": {
+        "id": "p0-s2-llm",
+        "name": "LLM",
+        "category": "llm",
+        "startMs": 2200,
+        "endMs": 2900,
+        "cost": {
+          "calculationVersion": 1,
+          "currency": "USD",
+          "completeness": "partial",
+          "amountUsd": 0.0045,
+          "source": "list_price",
+          "parts": { "input": 0.0015, "output": 0.003 },
+          "missing": ["cache_write_rate"],
+          "rate": {
+            "source": "list_price",
+            "modelId": "openai/gpt-5-mini",
+            "provider": "openai",
+            "versionId": "price-v1",
+            "retrievedAt": 1781740800000,
+            "rates": { "currency": "USD", "input": 0.25, "output": 2, "cacheRead": 0.025 }
+          },
+          "funding": "customer",
+          "usage": { "uncachedInputTokens": 6000, "cacheWriteTokens": 100, "outputTokens": 1500 },
+          "usageSource": "provider"
+        }
+      }
+    },
+    {
+      "label": "llm span whose cost is unavailable",
+      "value": {
+        "id": "p0-s3-llm",
+        "name": "LLM",
+        "category": "llm",
+        "startMs": 3000,
+        "endMs": 3400,
+        "cost": {
+          "calculationVersion": 1,
+          "currency": "USD",
+          "completeness": "unavailable",
+          "reason": "no_rate",
+          "funding": "customer"
+        }
+      }
+    },
+    {
+      "label": "local org llm span carrying its usage writeback call id",
+      "value": {
+        "id": "p1-s0-llm",
+        "parentId": "p1-s0",
+        "name": "LLM",
+        "category": "llm",
+        "startMs": 0,
+        "endMs": 900,
+        "promptIndex": 1,
+        "stepIndex": 0,
+        "modelId": "gpt-4.1",
+        "inputTokens": 800,
+        "outputTokens": 120,
+        "totalTokens": 920,
+        "callId": "turn-7f3a:0"
       }
     },
     {

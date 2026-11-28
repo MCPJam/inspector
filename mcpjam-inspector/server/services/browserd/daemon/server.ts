@@ -248,7 +248,7 @@ export function buildBrowserdStack(
      */
     captureTypedText?: boolean;
     /** Export the persistent profile while the command queue is drained. */
-    profileExport?: () => Promise<Uint8Array>;
+    profileExport?: BrowserdHandlerDeps["profileExport"];
     /** Serves workspace ports on this box's loopback (hosted desktop only). */
     preview?: BrowserdHandlerDeps["preview"];
   } & DaemonServerOptions,

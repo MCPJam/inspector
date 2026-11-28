@@ -50,20 +50,31 @@ const REDACTED_HEADERS = new Set([
 
 const REDACTED_PLACEHOLDER = "<redacted>";
 
-function redactHeaderValue(name: string, value: string): string {
-  if (!REDACTED_HEADERS.has(name.toLowerCase())) return value;
+function redactHeaderValue(
+  name: string,
+  value: string,
+  credentialHeaders: ReadonlySet<string>
+): string {
+  const key = name.toLowerCase();
+  if (!REDACTED_HEADERS.has(key) && !credentialHeaders.has(key)) return value;
   // Preserve the auth scheme (`Bearer`, `Basic`, `DPoP`) — it is protocol
-  // information, not a secret, and it is the first thing you check.
+  // information, not a secret, and it is the first thing you check. A
+  // server's own credential header has no scheme, so its first word could be
+  // part of the secret.
+  if (!REDACTED_HEADERS.has(key)) return REDACTED_PLACEHOLDER;
   const scheme = /^([A-Za-z][A-Za-z0-9-]*)\s+\S/.exec(value)?.[1];
   return scheme ? `${scheme} ${REDACTED_PLACEHOLDER}` : REDACTED_PLACEHOLDER;
 }
 
-function collectHeaders(headers: HeadersInit | Headers | undefined): Record<string, string> {
+function collectHeaders(
+  headers: HeadersInit | Headers | undefined,
+  credentialHeaders: ReadonlySet<string>
+): Record<string, string> {
   const out: Record<string, string> = {};
   if (!headers) return out;
   try {
     new Headers(headers as HeadersInit).forEach((value, key) => {
-      out[key] = redactHeaderValue(key, value);
+      out[key] = redactHeaderValue(key, value, credentialHeaders);
     });
   } catch {
     // A malformed HeadersInit must never fail the request it describes.
@@ -179,13 +190,20 @@ function requestUrlOf(input: Parameters<typeof fetch>[0]): string {
  *
  * The logger is guarded and the wrapper adds nothing to the request, so a
  * failure to log can never fail the RPC.
+ *
+ * `credentialHeaderNames` adds the server's own credential headers (a stored
+ * `X-Tenant-Key`, say) to the always-redacted set.
  */
 export function wrapFetchForHttpLogging(
   serverId: string,
   logger: HttpExchangeLogger,
-  fetchFn?: typeof fetch
+  fetchFn?: typeof fetch,
+  credentialHeaderNames: readonly string[] = []
 ): typeof fetch {
   const base = fetchFn ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
+  const credentialHeaders = new Set(
+    credentialHeaderNames.map((name) => name.toLowerCase())
+  );
   return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const startedAt = Date.now();
     const emit = (event: Omit<HttpExchangeLogEvent, "serverId">) => {
@@ -200,7 +218,7 @@ export function wrapFetchForHttpLogging(
     const request = {
       method: requestMethodOf(input, init),
       url: requestUrlOf(input),
-      headers: collectHeaders(requestHeadersOf(input, init)),
+      headers: collectHeaders(requestHeadersOf(input, init), credentialHeaders),
     };
     const bodyValues = deriveMirroredBodyValues(init?.body);
 
@@ -211,7 +229,7 @@ export function wrapFetchForHttpLogging(
         response: {
           status: response.status,
           statusText: response.statusText,
-          headers: collectHeaders(response.headers),
+          headers: collectHeaders(response.headers, credentialHeaders),
         },
         durationMs: Date.now() - startedAt,
         bodyValues,

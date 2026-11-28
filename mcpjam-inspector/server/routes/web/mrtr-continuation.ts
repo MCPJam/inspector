@@ -28,6 +28,10 @@ import type {
 } from "@mcpjam/sdk";
 import { resumeInputRequiredOperation } from "@mcpjam/sdk";
 import {
+  selectLocalMrtrSchema as selectManualMrtrSchema,
+  validateLocalMrtrAnswer as validateManualMrtrAnswer,
+} from "../mcp/local-mrtr-forms.js";
+import {
   ErrorCode,
   WebRouteError,
   assertBearerToken,
@@ -183,7 +187,19 @@ mrtrContinuation.post("/resume", async (c) =>
       c,
       normalizeResumeOAuth(rawBody),
       resumeSchema,
-      { timeoutMs: WEB_CALL_TIMEOUT_MS },
+      {
+        timeoutMs: WEB_CALL_TIMEOUT_MS,
+        observeFeatures: true,
+        // This route drives and persists rounds below. Register its fulfiller
+        // before connect so the fresh connection retains the form claims.
+        mrtrInputCollectorForServer: () => async () => {
+          throw new Error("Resume forms are handled by the continuation driver");
+        },
+        mrtrInputOptionsForServer: () => ({
+          extensionClaims: ["openai/elicitation"],
+          selectFormSchema: selectManualMrtrSchema,
+        }),
+      },
     );
 
     try {
@@ -246,12 +262,15 @@ mrtrContinuation.post("/resume", async (c) =>
         // outrunning the budget can lose its lease after the wire has left.
         resumeInputRequiredOperation(client, state, responses, {
           requestOptions: { timeout: WEB_CALL_TIMEOUT_MS },
+          selectFormSchema: selectManualMrtrSchema,
+          validateContent: validateManualMrtrAnswer,
         });
 
       const outcome = await resumeMrtrContinuationLeg({
         bearer,
         submission,
         bindingFingerprint,
+        selectFormSchema: selectManualMrtrSchema,
         driveLeg,
         ...(body.serverName ? { serverName: body.serverName } : {}),
       });

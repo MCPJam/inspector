@@ -181,6 +181,13 @@ describe("buildSyntheticModelDefinition", () => {
     expect(result.contextLength).toBeDefined();
   });
 
+  it("reads a bare GPT-6 id as OpenAI, not as an Ollama tag", () => {
+    // A bare id the catalog does not know falls through to the Ollama rule.
+    expect(buildSyntheticModelDefinition("gpt-6.1-sol").provider).toBe(
+      "openai",
+    );
+  });
+
   it("parses custom:NAME/... into provider='custom' + customProviderName", () => {
     const result = buildSyntheticModelDefinition(
       "custom:my-provider/some-model"

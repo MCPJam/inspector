@@ -225,6 +225,26 @@ describe("Evaluate history rows", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it("puts an ⓘ beside the hinted column headers only", () => {
+    const { rerender } = render(
+      <table>
+        <EvaluateHistoryHeader
+          hints={{ Latency: "Median time.", Calls: "Tool calls." }}
+        />
+      </table>,
+    );
+    expect(screen.getByRole("button", { name: "About Latency" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "About Calls" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "About Tokens" })).toBeNull();
+    rerender(
+      <table>
+        <EvaluateHistoryHeader />
+      </table>,
+    );
+    expect(screen.queryByRole("button", { name: /^About / })).toBeNull();
+    expect(screen.getByRole("columnheader", { name: "Latency" })).toBeTruthy();
+  });
+
   it("keeps the actions column but hides the button when the row cannot be deleted", () => {
     render(
       <table>

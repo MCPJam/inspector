@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { once } from "node:events";
 import test from "node:test";
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -147,20 +148,27 @@ test("http target: foreign paths get 404 without touching the upstream", async (
 });
 
 test("http target: unreachable upstream returns 502", async () => {
-  // Bind then close to get a port that refuses connections.
-  const { server, port } = await startUpstream((_req, res) => res.end());
-  server.close();
-  await once(server, "close");
+  // An upstream that drops every connection, kept listening so the port
+  // stays ours: a closed port can be taken by another test's server, which
+  // then answers instead.
+  const upstream = createNetServer((socket) => socket.destroy());
+  upstream.listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const { port } = upstream.address() as AddressInfo;
 
-  await withHttpBridge(`http://127.0.0.1:${port}/mcp`, async (bridge) => {
-    const response = await fetch(`${bridge.localAddr}${PREFIX}`, {
-      method: "POST",
-      body: "{}",
+  try {
+    await withHttpBridge(`http://127.0.0.1:${port}/mcp`, async (bridge) => {
+      const response = await fetch(`${bridge.localAddr}${PREFIX}`, {
+        method: "POST",
+        body: "{}",
+      });
+      assert.equal(response.status, 502);
+      const body = (await response.json()) as { error?: string };
+      assert.match(body.error ?? "", /unreachable/i);
     });
-    assert.equal(response.status, 502);
-    const body = (await response.json()) as { error?: string };
-    assert.match(body.error ?? "", /unreachable/i);
-  });
+  } finally {
+    upstream.close();
+  }
 });
 
 test("http target: SSE responses stream without buffering", async () => {

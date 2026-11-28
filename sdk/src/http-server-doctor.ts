@@ -55,6 +55,7 @@ import type {
   DoctorToolsCollectionResult,
   ServerDoctorResult,
 } from "./server-doctor-core.js";
+import { http1Fetch } from "./http1-fetch.js";
 
 const MAX_PAGINATION_PAGES = 1000;
 
@@ -528,6 +529,9 @@ async function connectViaHttp(
   if (!preferSSE) {
     const streamableTransport = new StreamableHTTPClientTransport(url, {
       requestInit,
+      // The doctor connects and closes at once: the pattern that crashes on
+      // Node 26's HTTP/2 fetch (see `http1-fetch.ts`).
+      fetch: http1Fetch,
       reconnectionOptions: config.reconnectionOptions,
       authProvider: config.authProvider,
       sessionId: config.sessionId,
@@ -557,6 +561,7 @@ async function connectViaHttp(
 
   const sseTransport = new SSEClientTransport(url, {
     requestInit,
+    fetch: http1Fetch,
     eventSourceInit: config.eventSourceInit,
     authProvider: config.authProvider,
   });

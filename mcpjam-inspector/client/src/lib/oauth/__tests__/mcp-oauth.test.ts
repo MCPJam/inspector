@@ -1529,37 +1529,6 @@ describe("mcp-oauth", () => {
       ).not.toBeNull();
     });
 
-    it("normalizes malformed persisted oauth trace history", async () => {
-      const { appendOAuthTraceHttpHistory, loadOAuthTrace } = await import(
-        "../oauth-trace"
-      );
-
-      localStorage.setItem(
-        "mcp-oauth-trace-linear",
-        JSON.stringify({
-          version: 1,
-          source: "refresh",
-          currentStep: "idle",
-          steps: [],
-          httpHistory: null,
-        })
-      );
-
-      const trace = loadOAuthTrace("linear");
-      expect(trace?.httpHistory).toEqual([]);
-      expect(() =>
-        appendOAuthTraceHttpHistory(trace!, {
-          step: "idle",
-          timestamp: Date.now(),
-          request: {
-            method: "GET",
-            url: "https://example.com",
-            headers: {},
-          },
-        })
-      ).not.toThrow();
-    });
-
     it("detects OAuth token grant requests", async () => {
       const { isOAuthTokenGrantRequest } = await import("../mcp-oauth");
 
@@ -1843,8 +1812,9 @@ describe("mcp-oauth", () => {
       });
       expect(initiateResult.success).toBe(true);
 
+      const callbackState = issuedCallbackState();
       const callbackResult = await handleOAuthCallback("oauth-code", {
-        callbackState: issuedCallbackState(),
+        callbackState,
       });
 
       expect(callbackResult.success).toBe(true);
@@ -1852,6 +1822,19 @@ describe("mcp-oauth", () => {
       expect(callbackResult.serverConfig?.requestInit?.headers).toEqual({
         Authorization: "Bearer access-token",
       });
+      // The next connect carries a summary of the flow, never its secrets.
+      const { takeOAuthFlowSummary } = await import("../flow-summary");
+      const summary = takeOAuthFlowSummary("asana");
+      expect(summary).toMatchObject({ refreshTokenIssued: true });
+      for (const secret of [
+        "access-token",
+        "refresh-token",
+        "code-verifier",
+        "oauth-code",
+        callbackState,
+      ]) {
+        expect(JSON.stringify(summary)).not.toContain(secret);
+      }
       expect(getStoredTokens("asana")).toBeUndefined();
       expect(localStorage.getItem("mcp-tokens-asana")).toBeNull();
       expect(localStorage.getItem("mcp-discovery-asana")).not.toBeNull();

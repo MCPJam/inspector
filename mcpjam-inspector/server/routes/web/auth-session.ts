@@ -65,6 +65,11 @@ authSession.post("/revoke", async (c) => {
       "auth.session.revoke_incomplete",
       { reason: result.reason, status: result.status },
     );
+  } else if (!result.revoked && result.reason === "token_refused") {
+    getRequestLogger(c, "routes.web.auth-session").event(
+      "auth.session.revoke_refused",
+      {},
+    );
   }
   return c.json(result);
 });

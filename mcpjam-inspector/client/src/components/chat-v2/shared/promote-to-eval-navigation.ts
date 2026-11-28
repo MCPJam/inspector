@@ -22,9 +22,7 @@ export type PromotedTestCaseTarget = {
  * case is the artifact just created, and the editor is where it can be
  * reviewed and adjusted.
  *
- * Lands in the redesigned Evaluate tab (`/evaluate`) unconditionally, NOT
- * behind `evaluate-enabled`: the redesign is where eval work is going, and
- * promoting is not the moment to fork a user onto the tab being retired.
+ * Opens the current Evaluate editor directly at `/evaluate`.
  *
  * Returns whether it navigated, so a caller whose ids didn't resolve (an
  * older backend, a shape change) can fall back to its toast instead of

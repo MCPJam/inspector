@@ -66,6 +66,15 @@ describe("playgroundHarnessBoxReason", () => {
     ).toBe("credential");
   });
 
+  it("never gives a web client a box, though it is on an external account", () => {
+    for (const harnessId of ["claude-web", "chatgpt-web"]) {
+      expect(playgroundHarnessBoxReason(turn({ harnessId }))).toBeNull();
+      expect(
+        playgroundHarnessBoxReason(turn({ harnessId, comparePane: true })),
+      ).toBeNull();
+    }
+  });
+
   it("never applies to a turn with no harness, a local target, or a scenario", () => {
     for (const overrides of [
       { harnessId: undefined, comparePane: true },
@@ -107,6 +116,23 @@ describe("playgroundCredentialRefusal", () => {
       await playgroundCredentialRefusal({ ...ask, harnessId: "claude-code" }),
     ).toBeNull();
     expect(readinessMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a Cursor model the account no longer offers, and lets the auto model through", async () => {
+    readinessMock.mockResolvedValue({
+      ok: true,
+      value: { readiness: "ready", modelAvailable: false },
+    });
+    expect(
+      await playgroundCredentialRefusal({ ...ask, modelId: "cursor/gone" }),
+    ).toBe("Cursor no longer offers this model. Choose another model for this client.");
+    expect(readinessMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modelId: "cursor/gone" }),
+    );
+    expect(
+      await playgroundCredentialRefusal({ ...ask, modelId: "cursor/auto" }),
+    ).toBeNull();
+    readinessMock.mockReset();
   });
 });
 
@@ -244,6 +270,32 @@ describe("acquirePlaygroundHarnessBox", () => {
     await result.box.release();
   });
 
+  it("hands the harness the ceiling of a box that pauses, and none from an older backend", async () => {
+    const retainUntil = Date.now() + 4 * 60 * 60_000;
+    provisionMock.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        sandboxRowId: "row",
+        sandboxId: "sbx",
+        idleMs: 5 * 60_000,
+        retainUntil,
+      },
+    });
+    const kept = await acquirePlaygroundHarnessBox(args);
+    if (!kept.ok) throw new Error("expected a box");
+    expect(kept.box.binding).toMatchObject({ idleMs: 5 * 60_000, retainUntil });
+    await kept.box.release();
+
+    provisionMock.mockResolvedValueOnce({
+      ok: true,
+      value: { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 },
+    });
+    const older = await acquirePlaygroundHarnessBox(args);
+    if (!older.ok) throw new Error("expected a box");
+    expect(older.box.binding).not.toHaveProperty("retainUntil");
+    await older.box.release();
+  });
+
   it("keeps the box alive across a turn longer than its idle window, then leaves it for the next turn", async () => {
     provisionMock.mockResolvedValue({
       ok: true,
@@ -294,6 +346,44 @@ describe("acquirePlaygroundHarnessBox", () => {
     await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(touchMock.mock.calls.length).toBe(beats);
     expect(releaseMock).not.toHaveBeenCalled();
+  });
+
+  it("says the call took a box prepared before Send, and nothing when the backend did not say so", async () => {
+    const box = { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 };
+    provisionMock.mockResolvedValueOnce({
+      ok: true,
+      value: { ...box, prepared: true },
+    });
+    const prepared = await acquirePlaygroundHarnessBox(args);
+    expect(prepared).toMatchObject({ ok: true, prepared: true });
+    if (!prepared.ok) throw new Error("expected a box");
+    // The box itself is the same box either way.
+    expect(prepared.box.binding).not.toHaveProperty("prepared");
+    await prepared.box.release();
+
+    provisionMock.mockResolvedValueOnce({ ok: true, value: box });
+    const plain = await acquirePlaygroundHarnessBox(args);
+    expect(plain.ok).toBe(true);
+    expect(plain).not.toHaveProperty("prepared");
+    if (plain.ok) await plain.box.release();
+  });
+
+  it("marks only a box taken prepared as one no turn has used", async () => {
+    const box = { sandboxRowId: "row", sandboxId: "sbx", idleMs: 5 * 60_000 };
+    provisionMock.mockResolvedValueOnce({
+      ok: true,
+      value: { ...box, prepared: true },
+    });
+    const prepared = await acquirePlaygroundHarnessBox(args);
+    if (!prepared.ok) throw new Error("expected a box");
+    expect(prepared.box.binding.unused).toBe(true);
+    await prepared.box.release();
+
+    provisionMock.mockResolvedValueOnce({ ok: true, value: box });
+    const reused = await acquirePlaygroundHarnessBox(args);
+    if (!reused.ok) throw new Error("expected a box");
+    expect(reused.box.binding).not.toHaveProperty("unused");
+    await reused.box.release();
   });
 
   it("returns the control plane's refusal untouched", async () => {

@@ -85,6 +85,8 @@ export * from "./flows/index.js";
 export * from "./test-plan/index.js";
 // The decision scan's questions, candidates and grading, all pure.
 export * from "./decisions/index.js";
+// The reviewer path's evidence, findings and reviewer-only rule, all pure.
+export * from "./reviewer/index.js";
 
 /**
  * The MCP dial (`./mcp-dial.js`) is deliberately NOT re-exported here.

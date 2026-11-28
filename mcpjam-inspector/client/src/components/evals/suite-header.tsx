@@ -1,4 +1,12 @@
 import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@mcpjam/design-system/breadcrumb";
+import {
   useState,
   useCallback,
   useEffect,
@@ -78,6 +86,8 @@ interface SuiteHeaderProps {
   settingsActions?: ReactNode;
   /** Tabbed Suite settings: the tab strip, which also adds the eyebrow and subtitle. */
   settingsTabStrip?: ReactNode;
+  /** Untabbed Suite settings: the breadcrumb's way back to the suite. */
+  onBackToSuite?: () => void;
   onRerun: (
     suite: EvalSuite,
     opts?: {
@@ -166,6 +176,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     isEditMode,
     settingsActions,
     settingsTabStrip,
+    onBackToSuite,
     onRerun,
     onReplayRun,
     onCancelRun,
@@ -339,6 +350,27 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             : "mb-1 w-full max-w-5xl px-6 pt-8 mx-auto min-w-0"
         }
       >
+        {!settingsTabStrip && onBackToSuite ? (
+          <Breadcrumb className="mb-1 min-w-0">
+            <BreadcrumbList className="min-w-0 flex-nowrap text-xs">
+              <BreadcrumbItem className="min-w-0">
+                <BreadcrumbLink asChild>
+                  <button
+                    type="button"
+                    className="truncate border-0 bg-transparent p-0"
+                    onClick={onBackToSuite}
+                  >
+                    {suite.name}
+                  </button>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>Settings</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        ) : null}
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0" data-setting-key="name">
             {settingsTabStrip ? <SuiteSettingsEyebrow /> : null}
@@ -758,7 +790,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           onClick={onSetupCi}
         >
           <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          Setup CI
+          Set up CI
         </Button>
       ) : null}
     </>
@@ -873,7 +905,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       onClick={onOpenExportSuite}
     >
       <Code2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      Setup SDK
+      Set up SDK
     </Button>
   ) : null;
 

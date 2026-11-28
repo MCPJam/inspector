@@ -75,7 +75,7 @@ jobs:
       # passes the commit it published from. A dispatch builds the commit the
       # `v<version>` tag names, not whatever `main` has merged since; the tag
       # exists only once that version is on npm, so a dispatch between a
-      # version PR merging and its release finishing stops here.
+      # version commit landing and its release finishing stops here.
       - name: Resolve the release commit
         id: commit
         env:

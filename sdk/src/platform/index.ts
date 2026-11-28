@@ -35,10 +35,13 @@ export {
   type PlatformFeatureKey,
 } from "./features.js";
 
+export { CLIENT_DECLARATION_HEADER } from "./client-declaration.js";
 export {
   DEFAULT_PLATFORM_API_BASE_URL,
   DEFAULT_PLATFORM_USER_AGENT,
   API_VOCABULARY_HEADER,
+  HOST_CONFIG_FEATURES,
+  HOST_CONFIG_FEATURES_HEADER,
   EVAL_VOCABULARY_HEADER,
   PlatformApiClient,
   RUN_LAUNCH_HEADERS,
@@ -111,15 +114,67 @@ export type {
   PlatformDirectorySubmissionCounts,
   PlatformDirectorySubmissionCreateBody,
   PlatformDirectorySubmissionDeleted,
+  PlatformDirectorySubmissionPlugin,
   PlatformDirectorySubmissionResults,
   PlatformDirectorySubmissionRunBody,
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionUpdateBody,
   PlatformDirectorySubmissionView,
 } from "./directory-submission-types.js";
+export type {
+  PlatformDirectorySubmissionEvent,
+  PlatformDirectorySubmissionEventBody,
+  PlatformDirectorySubmissionExportFile,
+  PlatformDirectorySubmissionFinding,
+  PlatformDirectorySubmissionFindingsQuery,
+  PlatformDirectorySubmissionHandoff,
+  PlatformDirectorySubmissionSnapshotsView,
+} from "./directory-submission-handoff-types.js";
+export type {
+  PlatformDirectoryTestArgumentDraft,
+  PlatformDirectoryTestArgumentDrafting,
+  PlatformDirectoryTestArgumentUndecided,
+  PlatformDirectoryTestCaseCounts,
+  PlatformDirectoryTestPlanCatalog,
+  PlatformDirectoryTestPlanDraft,
+  PlatformDirectoryTestPlanRevision,
+  PlatformDirectoryTestPlanSaveBody,
+  PlatformDirectoryTestPlanSaved,
+  PlatformDirectoryTestPlanView,
+  PlatformDirectoryToolTestSweep,
+  PlatformDirectoryToolTests,
+} from "./directory-test-plan-types.js";
+export type {
+  PlatformDirectoryEvalCaseList,
+  PlatformDirectoryEvalCaseSource,
+  PlatformDirectoryPortalTestCase,
+  PlatformDirectorySubmissionEvalExport,
+  PlatformDirectorySubmissionEvalImport,
+  PlatformDirectorySubmissionEvalLink,
+  PlatformDirectorySubmissionEvalLinkBody,
+  PlatformDirectorySubmissionEvalResult,
+  PlatformDirectorySubmissionEvalRun,
+  PlatformDirectorySubmissionEvals,
+} from "./directory-submission-eval-types.js";
+export { directoryTestPlanSchema } from "./directory-test-plan-schema.js";
 export { directorySubmissionConflict } from "./directory-submission-client.js";
-// The nine directory submission operations and their input and result types.
+export type {
+  PlatformReviewerAttempt,
+  PlatformReviewerAttemptCreateBody,
+  PlatformReviewerAttemptStart,
+  PlatformReviewerAttemptState,
+  PlatformReviewerStage,
+} from "./directory-reviewer-attempt-types.js";
+// The directory submission operations and their input and result types.
 export * from "./directory-submission-operations.js";
+export * from "./directory-reviewer-attempt-operations.js";
+export * from "./directory-submission-handoff-operations.js";
+export * from "./directory-test-plan-operations.js";
+export * from "./directory-submission-eval-operations.js";
+export * from "./eval-run-insights-operations.js";
+export * from "./mock-operations.js";
+export * from "./mock-run-operations.js";
+export type * from "./mock-types.js";
 
 export {
   computeRunTargets,
@@ -157,6 +212,7 @@ export type {
   PlatformTurnTrace,
   PlatformTurnUsage,
   PlatformChatSessionTraceTurn,
+  PlatformChatSessionTraceEvent,
   PlatformSessionSummary,
   PlatformSessionSourceType,
   PlatformSessionParentRef,
@@ -238,6 +294,8 @@ export type {
   PlatformScoreContractDiff,
   PlatformScoreContractScorer,
   PlatformScoreContractSide,
+  PlatformEvalRunFindingsBuildRequested,
+  PlatformEvalRunInsightsCanceled,
   PlatformEvalRunInsightsRequested,
   PlatformAdhocEnvironment,
   PlatformAdhocEnvironmentBody,
@@ -266,6 +324,8 @@ export type {
   PlatformEvalRunEnvironment,
   PlatformEvalRunLauncher,
   PlatformEvalRunAttribution,
+  PlatformEvalRunAccount,
+  PlatformEvalRunAccountIdentity,
   PlatformEvalRunDisclosure,
   PlatformDisclosureRailDestination,
   PlatformManagedRailDisclosure,
@@ -366,6 +426,13 @@ export type {
   PlatformEvalIterationReportUnavailableReason,
   PlatformEvalFindingsAnalysis,
   PlatformUnifiedFindings,
+  PlatformEvalFindingsView,
+  PlatformEvalFindingsViewStatus,
+  PlatformFindingProblem,
+  PlatformFindingOption,
+  PlatformFindingOptionKind,
+  PlatformFindingExplanation,
+  PlatformFindingObservationOutcome,
   PlatformInsightsStatus,
   PlatformSwarmRunInsights,
   PlatformSwarmRunInsightsCanceled,
@@ -1129,3 +1196,4 @@ export type {
   JudgeBacktestRequest,
   JudgeBacktestReport,
 } from "../contract/judge-backtest.js";
+export { PLATFORM_EVAL_FINDINGS_VIEW_VERSION } from "./findings-view-types.js";

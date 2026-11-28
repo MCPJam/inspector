@@ -255,14 +255,14 @@ export function SuiteStageFactsList({
       <div className="mt-3 flex items-baseline gap-2" data-stage-facts={stage}>
         <p className="text-xs text-muted-foreground">
           No run target yet — attach{" "}
-          {composeCapable ? "an environment" : "a client"} under Where it runs.
+          {composeCapable ? "an environment" : "a client"} under Clients and models.
         </p>
         <button
           type="button"
           onClick={onGoToWhereItRuns}
           className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
         >
-          Where it runs
+          Clients and models
         </button>
       </div>
     );

@@ -26,7 +26,7 @@ import {
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
@@ -149,7 +149,10 @@ function PairingPassList({
         >
           <div className="flex w-[250px] min-w-0 shrink-0 items-center gap-2">
             <img
-              src={resolveHostLogoByName(pairing.client, theme)}
+              src={resolveHostLogo(
+                { name: pairing.client, hostStyle: pairing.hostStyle },
+                theme,
+              )}
               alt=""
               className="size-6 shrink-0 object-contain"
             />

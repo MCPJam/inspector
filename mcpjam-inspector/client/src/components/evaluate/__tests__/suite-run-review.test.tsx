@@ -69,7 +69,7 @@ describe("suite run review", () => {
     render(<SuiteRunReview suite={suite}
       cases={[cases[0]]} caseTitle={caseTitle} initialIterations={2}
       environments={environments} hostNamesById={names} onStart={onStart} onClose={vi.fn()} />);
-    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Set up run" })).toBeVisible();
     expect(screen.getByText(caseTitle || "Untitled test case")).toBeVisible();
     expect(screen.getByText("Each client/model combination runs this test case.")).toBeVisible();
     expect(screen.queryByText(/runs the whole suite/)).toBeNull();
@@ -279,6 +279,24 @@ describe("suite run review", () => {
     expect(
       localStorage.getItem("mcpjam:suite-run-iterations:suite"),
     ).toBeNull();
+  });
+  it.each([
+    ["runner_without_sandboxes", true],
+    ["grading_not_enforce", false],
+  ])("links a code-evaluator refusal on rule %s to MCPJam: %s", async (rule, linked) => {
+    const refused = Object.assign(new Error("This suite has a Required code evaluator."), {
+      reason: "EVAL_CODE_EVALUATORS_UNAVAILABLE",
+      rule,
+    });
+    render(
+      <SuiteRunReview suite={suite} cases={cases} environments={environments} hostNamesById={names}
+        onStart={vi.fn().mockRejectedValue(refused)} onClose={vi.fn()} />,
+    );
+    await userEvent.setup().click(screen.getByRole("button", { name: "Start run" }));
+    expect(await screen.findByText("This suite has a Required code evaluator.")).toBeVisible();
+    const link = screen.queryByRole("link", { name: "Open on MCPJam" });
+    expect(Boolean(link)).toBe(linked);
+    if (link) expect(link.getAttribute("href")).toBe("https://app.mcpjam.com/evaluate?run=suite");
   });
   it("does not show its own in-progress launch as a blocker", async () => {
     let finish!: () => void;

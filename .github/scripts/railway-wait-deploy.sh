@@ -40,6 +40,7 @@ SERVICE=""
 ENVIRONMENT=""
 PREVIOUS_ID=""
 MODE="wait"
+DEPLOYMENT=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -47,6 +48,7 @@ while [ "$#" -gt 0 ]; do
     -e) ENVIRONMENT="$2"; shift 2 ;;
     -p) PREVIOUS_ID="$2"; shift 2 ;;
     --latest) MODE="latest"; shift ;;
+    --deployment) MODE="exact"; DEPLOYMENT="$2"; shift 2 ;;
     *)
       echo "::error::railway-wait-deploy.sh: unexpected argument $1" >&2
       exit 2
@@ -60,6 +62,36 @@ if [ -z "$SERVICE" ] || [ -z "$ENVIRONMENT" ]; then
 fi
 
 POLL_SECONDS="${RAILWAY_WAIT_POLL_SECONDS:-15}"
+
+# A deploy-by-SHA job gets an exact id from Railway. Poll that deployment
+# through GraphQL and verify it still belongs to the expected service and
+# environment. No CLI installation or checkout of the deployed code needed.
+if [ "$MODE" = "exact" ]; then
+  : "${RAILWAY_API_TOKEN:?RAILWAY_API_TOKEN is required for an exact deploy}"
+  [ -n "$DEPLOYMENT" ] || exit 2
+  PAYLOAD=$(jq -nc --arg id "$DEPLOYMENT" '{
+    query: "query($id:String!){deployment(id:$id){id,status,serviceId,environmentId}}",
+    variables: {id:$id}
+  }') || exit 1
+  while :; do
+    if RESULT=$(curl --fail --silent --max-time 20 \
+      -H "Authorization: Bearer $RAILWAY_API_TOKEN" \
+      -H "Content-Type: application/json" --data "$PAYLOAD" \
+      https://backboard.railway.app/graphql/v2); then
+      STATUS=$(jq -r --arg id "$DEPLOYMENT" --arg s "$SERVICE" --arg e "$ENVIRONMENT" '
+        .data.deployment | select(.id == $id and .serviceId == $s and .environmentId == $e) | .status
+      ' <<<"$RESULT") || exit 1
+      case "$STATUS" in
+        SUCCESS) exit 0 ;;
+        FAILED|CRASHED|CANCELLED|REMOVED|SKIPPED) exit 1 ;;
+        "")
+          if jq -e '.data.deployment != null' <<<"$RESULT" >/dev/null; then exit 1; fi
+          ;;
+      esac
+    fi
+    sleep "$POLL_SECONDS"
+  done
+fi
 
 # Echo "<id>\t<status>" for the newest deployment. Returns non-zero when the
 # API call itself failed, which the callers treat as "ask again" rather than

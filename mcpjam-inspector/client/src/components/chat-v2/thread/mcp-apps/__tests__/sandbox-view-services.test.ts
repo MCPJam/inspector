@@ -40,6 +40,22 @@ describe("sandbox view API routing", () => {
     expect(mocks.fetch).toHaveBeenLastCalledWith("/api/web/apps/mcp-apps/view-admissions/admission", expect.objectContaining({ method: "DELETE", body: JSON.stringify({ source: request.source, projectId: "project", serverId: "server" }) }));
   });
 
+  it("uses the saved server ID for a display-name source and its release", async () => {
+    mocks.server.mockReturnValue({ projectId: "project", serverId: "saved-server-id" });
+    const service = createSandboxViewServices(() => true);
+    const source = { ...request.source, serverId: "Bits & Bolts QA" };
+    await service.prepareSandboxView({ ...request, source, sourceReceipt: "signed-receipt" });
+    expect(mocks.server).toHaveBeenCalledWith("Bits & Bolts QA");
+    expect(JSON.parse(mocks.fetch.mock.calls[0][1].body)).toMatchObject({
+      serverId: "saved-server-id", source: { ...source, serverId: "saved-server-id" },
+      sourceReceipt: "signed-receipt",
+    });
+    await service.releaseSandboxView({ admissionId: prepared.admissionId });
+    expect(JSON.parse(mocks.fetch.mock.calls.at(-1)![1].body)).toMatchObject({
+      serverId: "saved-server-id", source: { ...source, serverId: "saved-server-id" },
+    });
+  });
+
   it("uses the platform web route without resolving a synthetic saved server", async () => {
     await createSandboxViewServices(() => false).prepareSandboxView({ ...request, source: { ...request.source, serverId: MCPJAM_PLATFORM_SERVER_ID } });
     expect(mocks.fetch.mock.calls[0][0]).toBe("/api/web/apps/mcp-apps/view-admissions");

@@ -67,6 +67,12 @@ export interface HarnessProxyServerInput {
    * is what makes a fully-off run byte-identical to a pre-evidence one.
    */
   evidenceTurnId?: string;
+  /**
+   * Open a new connection for every request. Box egress pins the credential it
+   * injects to the outbound connection, so an agent that outlives a turn must
+   * not carry the previous turn's session grant on a reused connection.
+   */
+  closeConnection?: true;
 }
 
 /** A single Claude Code `.mcp.json` server entry (http transport). */
@@ -139,9 +145,11 @@ export function buildHarnessProxyMcpJson(
       ...(server.sealedProxyToken ||
       server.proxyToken ||
       server.scopeStepUpCorrelationId ||
-      server.evidenceTurnId
+      server.evidenceTurnId ||
+      server.closeConnection
         ? {
             headers: {
+              ...(server.closeConnection ? { Connection: "close" } : {}),
               ...(server.sealedProxyToken
                 ? { "X-MCPJam-Proxy-Token": server.sealedProxyToken }
                 : server.proxyToken
@@ -326,9 +334,9 @@ export function attributeCursorToolCall(args: {
   if (typeof provider !== "string" || typeof inner !== "string" || !inner) {
     return parseHarnessToolName(rawToolName, keyToServerId);
   }
-  // The reserved host-tool channel wraps an already namespaced MCP name.
-  if (provider === "ai-sdk-harness-tools") {
-    const hosted = parseHarnessToolName(inner, keyToServerId);
+  const hostToolName = hostChannelToolName(input);
+  if (hostToolName) {
+    const hosted = parseHarnessToolName(hostToolName, keyToServerId);
     if (hosted.serverId) return hosted;
   }
   // Exact key first, THEN the `user-`-stripped form. Never the other way round.
@@ -338,4 +346,19 @@ export function attributeCursorToolCall(args: {
       ? keyToServerId[provider.slice("user-".length)]
       : undefined);
   return serverId ? { serverId, toolName: inner } : { toolName: inner };
+}
+
+/**
+ * The host tool a Cursor call names on the reserved host-tool channel, which
+ * wraps the name MCPJam registered (`mcp__<key>__<tool>`) in the call's input
+ * while the stream shows an opaque ACP name.
+ */
+export function hostChannelToolName(input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const { providerIdentifier, toolName } = input as Record<string, unknown>;
+  return providerIdentifier === ACP_RESERVED_MCP_SERVER_NAME &&
+    typeof toolName === "string" &&
+    toolName
+    ? toolName
+    : undefined;
 }

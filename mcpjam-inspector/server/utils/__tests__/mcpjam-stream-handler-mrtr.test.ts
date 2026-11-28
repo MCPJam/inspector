@@ -57,10 +57,6 @@ vi.mock("@/shared/http-tool-calls", async () => {
   };
 });
 
-vi.mock("../mcpjam-tool-helpers", () => ({
-  serializeToolsForConvex: vi.fn(() => []),
-}));
-
 vi.mock("../logger", () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));
@@ -135,6 +131,53 @@ describe("mcpjam-stream-handler — hosted MRTR (§12.5)", () => {
           m.content.some((p: any) => p.type === "tool-call"),
       ) && !history.some((m) => m?.role === "tool");
     expect(hasUnresolved).toBe(true);
+  });
+
+  it("keeps the finished provider call's llm span and cost when a tool suspends", async () => {
+    const cost = {
+      calculationVersion: 1,
+      currency: "USD",
+      completeness: "complete",
+      amountUsd: 0.0021,
+      source: "provider_reported",
+      funding: "mcpjam",
+    };
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        toolCallStep[0],
+        {
+          type: "finish",
+          finishReason: "tool-calls",
+          messageMetadata: { inputTokens: 3, outputTokens: 4, cost },
+        },
+      ]),
+    );
+    // The step has a call to run, which suspends.
+    vi.mocked(hasUnresolvedToolCalls).mockReturnValueOnce(true);
+    vi.mocked(executeToolCallsFromMessages).mockRejectedValue(
+      Object.assign(new Error("suspended"), { code: "MRTR_SUSPENDED" }),
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "do it" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "sys",
+      tools: { do_thing: { _serverId: "srv" } } as any,
+      mcpClientManager: managerStub(),
+      onConversationComplete: vi.fn(),
+    } as any);
+    await lastExecution;
+
+    const snapshots = writtenChunks.filter(
+      (c) => c?.type === "data-trace-event" && c.data?.type === "trace_snapshot",
+    );
+    const spans = snapshots[snapshots.length - 1].data.snapshot.spans as any[];
+    expect(
+      spans
+        .filter((span) => span.category === "llm")
+        .map((span) => [span.stepIndex, span.cost]),
+    ).toEqual([[0, cost]]);
+    expect(executeToolCallsFromMessages).toHaveBeenCalled();
   });
 
   it("resumes: drives the leg, splices the result, and runs the model to a final assistant message", async () => {

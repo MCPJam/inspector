@@ -1,0 +1,104 @@
+---
+title: "Clients reference"
+sidebarTitle: "Reference"
+description: "Every client setting and its effect, plus who can change clients, sharing, servers for evals, and comparing hosts."
+icon: "user-cog"
+hideFooterPagination: true
+---
+
+Look up a client setting here. To create your first client, see [Clients](/inspector/clients).
+
+In the app, clients are also called hosts, for example in the **Compare** view and its URL. Built-in clients such as ChatGPT Desktop or Claude Desktop come from templates; [Host presets](/inspector/host-templates) explains what each template captures.
+
+## Where clients live
+
+In the sidebar, select **Connect**. The top of the page switches between **Servers** and **Client**, and has a **Compare** view.
+
+- **Client view:** **Add client** opens the **New Client** dialog. Select the switcher next to it to change the active client.
+- **Servers view:** the same switcher, plus the project's servers.
+- The client view shows a diagram of the client on the left and its settings on the right. The settings always have three tabs: **Agent**, **MCP Protocol** and **Apps**. **Tools** appears when your deployment offers built-in tools besides the browser. **Browser** appears for web clients and when the browser tool is available to your account.
+
+## Agent tab
+
+How the model works with tools during a chat.
+
+- **Model** and **Reasoning effort**: the model the client runs, and how much reasoning it does before answering.
+- **Temperature** (0 to 1): lower values make answers more consistent across runs; higher values allow more variation.
+- **Require tool approval**: pauses before tool calls so you can approve or deny each one. Turning it off doesn't skip every pause: calls that change your project always pause, and read-only lookups of your own project never do. See [Workspace tools](/inspector/playground/reference#workspace-tools) for which project tools pause.
+- **Respect tool visibility**: honors the SEP-1865 `_meta.ui.visibility` field. When on, tools whose visibility is `["app"]` are hidden from the model. When off, every tool goes to the model, like hosts that don't filter by visibility.
+- **Progressive tools** (`Auto`, `On`, `Off`): when on, the model gets `search_mcp_tools` and `load_mcp_tools` instead of the full tool list and loads only the tools it needs. **Auto** turns it on once the client has about 30 tools, 10k tokens of tool definitions, or 3% of the model's context window; **On** always uses it; **Off** never does.
+- **Tool results sent to the model**: which parts of a tool result the model receives. Choose one of the four combinations below by selecting `content`, `structuredContent`, or `_meta`. Selecting `_meta` selects all three parts, and at least one part stays selected. The line under the setting describes the current choice.
+  - With all three on (the default), the model gets the whole result as one JSON string.
+  - With `content` and `structuredContent` on, the model gets each of them once, without `_meta`.
+  - With only `content` on, the model gets `content`. If `content` is empty, it gets `structuredContent` instead.
+  - With only `structuredContent` on, the model gets `structuredContent`. If there is none, it gets `content` instead.
+
+  This is what the model reads. What a widget receives when it calls a tool is set by **Widget tool results** on the Apps tab.
+- **MCP tool-result images** and **UI placement**: whether images in tool results reach the model and where previews appear.
+
+## MCP Protocol tab
+
+What MCPJam sends when it connects to your server, and how it handles requests.
+
+- **Protocol version**: **Automatic** negotiates the version when MCPJam connects. Pick a specific revision to pin every server on this client to it.
+- **Mirror tool params into `Mcp-Param-*` headers (SEP-2243)**: **Mirror** (default) copies tool arguments marked `x-mcp-header` into `Mcp-Param-{Name}` headers on `tools/call`, as MCP 2026-07-28 requires. **Omit** simulates a client that doesn't, so you can see your server's response (a conforming server answers `-32020 HeaderMismatch`).
+- **Paginated list traversal**: **Walk every page** (default) follows `nextCursor` to the end; **First page only** stops after the first page, like hosts that ignore pagination.
+- **Multi-round tool results (MRTR)**, **Tool cancellation** and **Tool list changed notifications**: whether the client supports multi-round tool results, whether stopping a call reaches your server, and whether the client listens for tool list changes and fetches the tools again.
+- **Mid-session sign-in**: how the client reacts when one call asks for sign-in (an HTTP `401`, or a tool result that asks for sign-in): **Prompt to sign in**, **Notify** or **Pass through**. See [Mid-session sign-in](/inspector/lazy-authentication).
+- **Default all project servers to enterprise managed auth**: connects every HTTP server through your identity provider (XAA, cross-app access) unless the server sets its own auth method. Servers without an XAA client registration fail to connect. It applies the next time a server connects. See [XAA Debugger](/inspector/xaa-debugger).
+- **Elicitation**: off removes the `elicitation` capability. On advertises form elicitation; the **URL mode** option adds URL elicitation.
+- **JSON editor**: the rest of the tab is JSON. Edit `clientInfo` (the `name` and `version` sent in `initialize`; match a real host's when your server branches on it, for example `"clientInfo": { "name": "claude-ai", "version": "1.0.0" }`), `supportedProtocolVersions`, `capabilities`, and `connectionDefaults`: `requestTimeout` in milliseconds and `headers` added to every HTTP request. The request timeout is `10000` for most templates and `300000` for command-line agents such as Claude Code, Codex CLI and Cursor CLI.
+
+### Per-server overrides
+
+To change the timeout or headers for one server only, open **Servers**, select the server's **⋯** menu, choose **Configure**, and expand **Connection overrides**. The timeout is in milliseconds. Other servers keep the client's defaults. See [Request timeout](/inspector/connecting-servers#request-timeout).
+
+## Apps tab
+
+How the client renders and sandboxes MCP App views (`ui://` resources). These settings only matter when your server returns a view.
+
+- **MCP App support**: advertises the MCP UI extension (`io.modelcontextprotocol/ui`). Views render only when the advertised extension includes `text/html;profile=mcp-app` in `mimeTypes`; the built-in templates do.
+- **`app.*` capabilities**: the host capabilities sent in `ui/initialize`, such as `openLinks`, `serverTools`, `serverResources`, `logging`, `updateModelContext` and `message`. Templates follow each host's published set.
+- **Display modes**: which of `inline`, `fullscreen` and `pip` the client offers, and how it answers a view's display-mode requests.
+- **Inject window.openai**: adds the OpenAI Apps SDK `window.openai` shim to the view. On by default for ChatGPT, Copilot and MCPJam templates; off for Claude and Cursor.
+- **Browser storage**: three switches, `localStorage`, `sessionStorage` and `IndexedDB`. Turning one off makes only that storage API unavailable to the view.
+- **Same-origin app iframe**: when off, the view runs in an opaque origin, so its requests send `Origin: null`.
+- **Widget tool results**: which parts of a tool result reach a view that called the tool: **Structured content**, **Text**, **Image**, **Audio**, **Embedded resource** and **Resource link**. Turn one off to emulate a host that drops it.
+- **OpenAI plugin extensions**: which ChatGPT plugin extensions the client offers (Sidebar Apps, Conversation panels, File viewers, Forms and others). ChatGPT and Codex templates turn all of them on; other templates turn on only the ones their host supports, or none.
+- **Sandbox**: CSP mode, CSP restrictions per directive, custom CSP directives, and the Permissions Policy (`camera`, `microphone`, `geolocation`, `clipboard-write`).
+- **Style tokens**: the theme variables the client passes to views.
+
+## Tools tab
+
+Built-in tools the client offers in addition to your MCP servers, such as web search. Check a tool to make it available in every chat that uses this client.
+
+## Browser tab
+
+Appears only when the browser tool is available to your account, or when the client already has a browser set up.
+
+- **Browser**: turns the browser tool on or off for every chat that uses this client.
+- **Browser profile**: optionally pins a saved browser profile. Without one, new chats use your own default profile.
+
+## Managing clients
+
+- **Create**: select **Add client**, select a template, then select **Create**. Every client starts from a template; the **MCPJam** template is selected by default.
+- **Who can change clients**: only project **Admins** can create, edit or delete clients. **Editors** can use them. An Admin changes your role from the project's **Share** dialog; see [Sharing Projects](/inspector/projects#sharing-projects).
+- **Delete** can be disabled for two reasons, shown as the button's tooltip:
+  - **You need at least one client.** It's the project's last client. Create another client first.
+  - **In use by a test suite.** A project environment or an active Swarms journey still uses the client. To free it:
+    1. In the sidebar, select **Environments** and remove the client from each environment that uses it.
+    2. Archive the Swarms journeys that use the client, or switch them to another client.
+    3. Select **Delete** again.
+- Clients belong to the project. Everyone in a shared project sees the same list, and saves sync.
+
+## Servers for evals
+
+Each client in an eval suite connects its own server group, chosen in **Suite settings** under **Where it runs**. A client with no server group connects no servers, so the run won't start.
+
+To run a suite against staging only, open **Suite settings** → **Where it runs** → **Servers** and select your saved staging server. MCPJam selects or creates a group that contains only that server. This changes the server group for every client in the suite.
+
+See [How evals work](/evaluate/how-evals-work).
+
+## Comparing hosts
+
+The **Compare** view shows several clients side by side, so you can spot differences in capabilities, sandbox policies and protocol settings. Toggle the clients you want. When you change the default selection (ChatGPT and Claude), the URL adds a `?hosts=` list of them. Copy the URL to share that comparison with anyone in the same project.

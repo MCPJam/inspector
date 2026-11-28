@@ -80,6 +80,7 @@ import {
 } from "../../utils/harness/local/acting-user.js";
 import { registerLocalInstance } from "../../utils/harness/harness-model-broker.js";
 import { stopAllLocalHarnessSessions } from "../../utils/harness/local/session-registry.js";
+import { localEvalVenue } from "../../utils/harness/local/eval-venue.js";
 
 const localHarness = new Hono();
 
@@ -364,6 +365,14 @@ localHarness.get("/availability", async (c) => {
         ? null
         : { displayRoot: suggestedWorkspace.displayRoot },
   });
+});
+
+/** `GET /eval-venue` — where an eval with this harness runs for a project, before launch. */
+localHarness.get("/eval-venue", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ error: "projectId is required" }, 400);
+  const bearer = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  return c.json(await localEvalVenue({ harnessId: (await requestHarnessId(c))!, bearer, projectId }));
 });
 
 /**

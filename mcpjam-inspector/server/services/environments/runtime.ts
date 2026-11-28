@@ -436,16 +436,24 @@ export async function resolveEnvironmentForRuntime(
       : undefined;
   let raw: unknown;
   try {
-    raw = await query(skillScope).catch((error: unknown) => {
+    raw = await query(skillScope).catch(async (error: unknown) => {
       // DEPLOY SKEW: a backend that predates the scope refuses the argument
-      // instead of ignoring it. The turn then resolves the environment as
-      // that backend always did, with the client's own selection only.
-      if (!skillScope || !SKILL_SCOPE_REFUSED.test(String(error))) throw error;
+      // instead of ignoring it, and production redacts that refusal to the
+      // same "Server Error" an outage produces. So a redacted failure gets one
+      // retry without the scope, and only a retry that succeeds counts as
+      // skew: the turn resolves as that backend always did, with the client's
+      // own selection, and the scope pauses for a while. A retry that also
+      // fails was an outage or another bug, so the turn fails with the first
+      // error and the scope is not paused.
+      if (!skillScope || !isRedactedServerError(error)) throw error;
+      const resolved = await query(undefined).catch(() => {
+        throw error;
+      });
       skillScopeRefusedUntil = Date.now() + SKILL_SCOPE_RETRY_MS;
       logger.warn(
         "[environments] Backend does not accept skillScope yet; client turns get the client's own skill selection until it deploys.",
       );
-      return query(undefined);
+      return resolved;
     });
   } catch (error) {
     throw translateEnvironmentRuntimeError(error);
@@ -455,7 +463,17 @@ export async function resolveEnvironmentForRuntime(
   return spec;
 }
 
-const SKILL_SCOPE_REFUSED = /extra field [`'"]?skillScope(?:[`'"]|\b)/i;
+/**
+ * A failure Convex sent as "Server Error" with no `ConvexError` payload:
+ * production's redaction of any developer error, an argument refusal
+ * included. A dev deployment puts its detail after the same text. Any `data`,
+ * a string payload included, means the backend chose to refuse.
+ */
+function isRedactedServerError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const data = (error as { data?: unknown } | null)?.data;
+  return data === undefined && /\bServer Error\b/.test(message);
+}
 /** How long a refusal stops this process from sending the scope. */
 const SKILL_SCOPE_RETRY_MS = 10 * 60_000;
 let skillScopeRefusedUntil = 0;
@@ -563,6 +581,7 @@ export interface EnvironmentPreview {
     requireToolApproval: boolean | null;
     respectToolVisibility: boolean | null;
     progressiveToolDiscovery: boolean | null;
+    runUnloadedToolCalls: boolean | null;
     builtInToolIds: string[];
     /** Presence only. The computer's workdir/kind is execution configuration
      *  and never crosses to the browser through this route. */
@@ -683,6 +702,7 @@ export function toEnvironmentPreview(
         runtimeConfig,
         "respectToolVisibility"
       ),
+      runUnloadedToolCalls: readBoolean(runtimeConfig, "runUnloadedToolCalls"),
       progressiveToolDiscovery: readBoolean(
         runtimeConfig,
         "progressiveToolDiscovery"

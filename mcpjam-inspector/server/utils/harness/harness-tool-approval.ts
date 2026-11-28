@@ -7,17 +7,12 @@ export function harnessToolApprovalRefusalReason(args: {
   /** Whether the host has any selected MCP servers. Selects whether the
    *  MCP-surface arm applies; the native-surface arm applies regardless. */
   hasSelectedMcpServers: boolean;
-  /** Nobody can answer an approval on this run (evals, swarms). */
-  unattended?: boolean;
 }): string | undefined {
   if (!args.requireToolApproval) return undefined;
   const name = args.adapter.displayName;
-  if (args.unattended) {
-    return (
-      `The ${name} client cannot wait for tool approval in evals or swarms. ` +
-      "Turn off tool approvals for this client to continue."
-    );
-  }
+  // A turn nobody can answer pauses too: MCPJam answers each request with a
+  // denial (`turnApprovalPolicy`), so every rule below applies to it.
+  //
   // The runtime runs its own native tools in-sandbox. If it can't pause on
   // those, approval is unsound for the whole turn — servers or no servers.
   if (!args.adapter.supportsNativeToolApproval) {

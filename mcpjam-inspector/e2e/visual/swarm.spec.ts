@@ -16,7 +16,12 @@ for (const theme of ["light", "dark"] as const) {
       await page.clock.setFixedTime(FIXED_TIME);
       await page.goto(`/p/${PROJECT_ID}/swarms`);
       await expect(
-        page.getByRole("button", { name: /Plan a weather-safe walk/ }),
+        page
+          .getByRole("complementary", { name: "Run history" })
+          .getByRole("button", { name: /Weather Tools/ }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "Weather Tools", exact: true }),
       ).toBeVisible();
       if (screen === "swarm-personas") {
         await page

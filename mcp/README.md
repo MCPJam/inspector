@@ -47,6 +47,16 @@ beta; they are listed [after the table](#held-tools).
 | `list_server_revisions` | List a saved MCP server's stored revisions, newest first: captures of its tools and server info, recorded whenever they change. | — |
 | `get_server_revision` | Read one stored revision of a saved MCP server: every tool's definition and the server info it reported. Fields listed in `droppedFields` were too large to store, so they are unknown, not absent. | — |
 | `diff_server_revisions` | Compare two stored revisions of a saved MCP server: tools added, removed and changed with old and new definitions, and server info changes with values. A field in `droppedFields` was not stored on that side, so a change to it is unknown. | — |
+| `create_mock_server` | Create a mock of a saved MCP server, or of nothing: a definition that states only what it changes, with the real server answering for the rest. Needs the `mock-servers-enabled` flag. | — |
+| `update_mock_server` | Save a new version of a mock from a whole definition or a JSON merge patch, against the head version you read. | — |
+| `get_mock_server` | Read a mock in bounded pages: a summary with a page of its changes, a page of names by kind (`search` narrows), one entry, or one field or path, with a long string in ordered chunks. Each page fits this server's response budget. | — |
+| `patch_mock_server` | Set or remove exactly one path of a mock against the head version you read, without sending the entry: for example one late tool's description. | — |
+| `refresh_mock_server` | Read a mock's real server again as the caller and preview what changed since the saved listing and which overrides no longer fit; `apply` saves the new listing as the next version. | — |
+| `open_mock_run` | Open a test run of a mock: a version pinned, with its own copy of the version's records, at an MCP URL of its own for 24 hours. Returns the run ID, version, URL, epoch and expiry. | — |
+| `reset_mock_run` | Restore a run's records to the version's seed. Returns a new URL at the next epoch; the old one is refused. | — |
+| `close_mock_run` | End a test run at once. Safe to repeat. | — |
+| `get_mock_forwarding_policy` | Read whether mock servers may call their real servers, for one mock or the project's workspace. | — |
+| `set_mock_forwarding_policy` | Allow or block mock servers calling their real servers for the workspace. Workspace admins only; an agent's request is held for a person to approve. | — |
 | `list_server_accounts` | List the accounts a saved MCP server signs in with: id, name, default, needs reconnecting, hosted-only. Never a token. | — |
 | `get_server_account` | Read one of a saved server's accounts by id or name. Never a token; another person's account answers not found. | — |
 | `delete_server_account` | Delete one of a saved server's accounts and ask its issuer to revoke the token. The default account is refused while other accounts exist. | — |
@@ -73,17 +83,38 @@ beta; they are listed [after the table](#held-tools).
 | `create_directory_submission` | Start a rehearsal of a directory's form for a saved server, prefilled from your account. Nothing is sent to the directory. In beta. | — |
 | `list_directory_submissions` | List a project's directory submissions, newest first, optionally for one server or one flow. | — |
 | `get_directory_submission` | Read one submission: each answer with who set it and whether it was confirmed, the portal's checks, and the latest results by step. | — |
-| `update_directory_submission` | Save answers to a submission. A stale revision is refused only for the fields someone else changed since. In beta. | — |
+| `update_directory_submission` | Save answers to a submission, or its gate: which checks fail a run. A stale revision is refused only for the fields someone else changed since. In beta. | — |
 | `delete_directory_submission` | Delete a directory submission and its answers. | — |
 | `start_directory_submission_run` | Grade a submission's server and saved answers, and get a run to poll. In beta. | — |
-| `get_directory_submission_results` | Read a submission's results grouped by the portal's steps, with findings whose answers changed since marked stale. | — |
+| `get_directory_submission_results` | Read a submission's results grouped by the portal's steps, with findings whose answers changed since marked stale, and the run's verdict under the submission's gate. | — |
+| `create_reviewer_attempt` | Start MCPJam signing in to a submission's server as the directory's reviewer, with credentials named as project secrets, never their values. In beta. | — |
+| `list_reviewer_attempts` | List a submission's reviewer sign-in attempts, newest first, with their state and stages. | — |
+| `get_reviewer_attempt` | Read one reviewer sign-in attempt: its state, each stage with its evidence, and what it waits for. | — |
+| `resume_reviewer_attempt` | Continue a reviewer sign-in attempt that waits for a person, in a new run. In beta. | — |
+| `cancel_reviewer_attempt` | Stop a reviewer sign-in attempt that is running or waiting for a person. | — |
+| `get_directory_submission_handoff` | The first call when resuming a submission from its id or a link: status, blockers, missing answers, next actions and what only a person can still do in the portal. | — |
+| `list_directory_submission_findings` | Page through a submission's findings by status, step or lane; every finding is reachable however many there are. | — |
+| `get_directory_submission_finding` | Read one check's result on a submission with the evidence behind it. | — |
+| `export_directory_submission` | Export a submission's pack as JSON or Markdown, the same bytes the page and the CLI save, with no secret in it. | — |
+| `list_directory_submission_events` | List the statuses, snapshots and directory findings recorded about a submission, with who recorded each and how they knew. | — |
+| `record_directory_submission_status` | Record a submission's status in the directory, reported or observed, in the directory's own words. In beta. | — |
+| `record_directory_submission_snapshot` | Record which server revision a copy of the catalog holds, such as what the directory's client still has. In beta. | — |
+| `import_directory_finding` | Keep what a directory said about a submission, word for word, apart from MCPJam's own findings. In beta. | — |
+| `get_directory_submission_test_plan` | Read a submission's saved test plan: what each tool's calls may change, which run, the cases in order, the budget and cleanup, and what keeps it from running. | — |
+| `draft_directory_submission_test_plan` | Draft a test plan that calls every tool the server lists, destructive calls last, with what still needs filling in. Saves nothing. | — |
+| `save_directory_submission_test_plan` | Save a submission's test plan as its next revision, at the revision you read; a plan saved since is never overwritten. In beta. | — |
+| `get_directory_submission_tool_tests` | Read what a run's test plan calls showed, tool by tool, valid input apart from expected refusals, with the calls that may have changed data named. | — |
+| `get_directory_submission_evals` | Read the eval suite holding a submission's test cases, its linked run, and each case's result there: how it was graded, whether the judge's verdict counts, and the client that ran it. | — |
+| `set_directory_submission_evals` | Link a submission to the eval suite in its project that holds its test cases, or to the run that last ran them, at the revision you read. In beta. | — |
+| `import_directory_submission_test_cases` | Import the review test cases a ChatGPT plugin package declares into the submission's linked suite; importing a version again writes nothing. In beta. | — |
+| `export_directory_submission_test_cases` | Export the linked suite's cases as the successful and graceful-failure lists ChatGPT's form takes, as a JSON file's exact bytes. | — |
 | `start_conformance_run` | Start a conformance run on a saved MCP server with the checks and tool inputs saved for it, and get a run id to poll. Costs no MCPJam credits, but may call the server's tools. | — |
 | `get_conformance_run` | Get a conformance run's status, outcome and score: whether it finished, its grade, and the number are three separate answers. | — |
 | `list_conformance_runs` | List a project's conformance runs, newest first, optionally for one saved server; pass `nextCursor` back as `cursor` for older runs. | — |
 | `get_conformance_report` | Page through a conformance run's failing checks, 50 at a time, each with the suite and id to read it in full. | — |
 | `get_conformance_check` | Read one conformance check in full: its failure, duration, and stored details and output, each capped at 16 KB. | — |
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
-| `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
+| `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. Without a suite, lists the one holding the project's most recent run; when no listed run has finished, adds the newest one that has. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
 | `run_eval_suite` | Start an asynchronous rerun of an existing eval suite, against one target or several. Fan-out is explicit: a suite with several attached targets refuses with TARGET_REQUIRED unless you name targets or pass allAttached, and each target is one PAID run. | — |
 | `create_eval_suite` | Create a runnable eval suite from authored test cases. | — |
@@ -116,6 +147,9 @@ beta; they are listed [after the table](#held-tools).
 | `backtest_eval_run` | Preview draft assertions against stored evidence; reports missing capture and never changes saved results. | — |
 | `backtest_eval_run_judge` | Preview a draft judge rubric against recorded evidence. Spends model budget without changing saved verdicts; supports continuation. | — |
 | `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
+| `build_eval_run_findings` | Build a settled eval run's findings from its recorded evidence: no model call, no quota. On a run never analyzed, a finished build starts the analysis. | — |
+| `request_eval_run_insights` | Start the findings analysis the app's run page runs. Included with MCPJam (no credits); counts against the daily insight quota. Read the result from `get_eval_run`'s `insights.findings`. | — |
+| `cancel_eval_run_insights` | Stop a running eval run analysis, the recovery path for a run stuck pending. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |

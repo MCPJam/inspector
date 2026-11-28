@@ -461,6 +461,84 @@ describe("directory readiness over MCP alone", () => {
     ).toEqual(["listing"]);
     expect(fetched).toContain(flowUrl);
   });
+
+  it("resumes a submission from its id: the handoff, the findings it points at, then the pack", async () => {
+    // A second agent given only the link's project and submission, with no
+    // history: what to do next comes from the record, as data it can call.
+    const api = "https://app.example.test/api/v1";
+    const submission = `${api}/projects/project-1/directory-submissions/sub-1`;
+    const scope = { project: "project-1", submission: "sub-1" };
+    const pageFindings = {
+      operation: "list_directory_submission_findings",
+      why: "12 checks fail the run, and this summary lists the first 10. Page through the violated findings for the rest.",
+      input: { ...scope, status: "violated" },
+    };
+    const pack = {
+      format: "markdown",
+      filename: "claude-connector-sub-1-r4.md",
+      mediaType: "text/markdown",
+      content: "# Claude connector: sub-1\n",
+    };
+    stubOutboundFetch({
+      [`${api}/projects`]: {
+        items: [{ id: "project-1", name: "Acme", organizationId: "org-a", updatedAt: 1 }],
+      },
+      [`${submission}/handoff`]: {
+        submission: { id: "sub-1", projectId: "project-1", revision: 4 },
+        currentStep: "connection",
+        nextActions: [pageFindings],
+      },
+      [`${submission}/findings?status=violated`]: {
+        items: [{ checkId: "claude.endpoint.https", status: "violated", step: "connection" }],
+      },
+      [`${submission}/export?format=markdown`]: pack,
+    });
+    const env = makeEnv({ guestAccess: "off" });
+    const token = await authkitToken();
+    const call = async (name: string, args: Record<string, unknown>) =>
+      jsonRpcResult(
+        await worker.fetch(
+          mcpRequest("tools/call", { name, arguments: args }, token),
+          env
+        )
+      );
+    const listed = await jsonRpcResult(
+      await worker.fetch(mcpRequest("tools/list", {}, token), env)
+    );
+    expect(listed.tools.map((tool: { name: string }) => tool.name)).toEqual(
+      expect.arrayContaining([
+        "get_directory_submission_handoff",
+        "list_directory_submission_findings",
+        "get_directory_submission_finding",
+        "export_directory_submission",
+        "list_directory_submission_events",
+        "record_directory_submission_status",
+        "record_directory_submission_snapshot",
+        "import_directory_finding",
+      ])
+    );
+
+    const handoff = await call("get_directory_submission_handoff", scope);
+    expect(handoff.isError).toBeFalsy();
+    expect(handoff.structuredContent.currentStep).toBe("connection");
+    const [next] = handoff.structuredContent.nextActions;
+    const page = await call(next.operation, next.input);
+    expect(page.isError).toBeFalsy();
+    expect(
+      page.structuredContent.findings.map((entry: { checkId: string }) => entry.checkId)
+    ).toEqual(["claude.endpoint.https"]);
+    const exported = await call("export_directory_submission", {
+      ...scope,
+      format: "markdown",
+    });
+    expect(exported.isError).toBeFalsy();
+    expect(exported.structuredContent).toMatchObject({ submissionId: "sub-1", ...pack });
+    expect(fetched.filter((url) => url.startsWith(submission))).toEqual([
+      `${submission}/handoff`,
+      `${submission}/findings?status=violated`,
+      `${submission}/export?format=markdown`,
+    ]);
+  });
 });
 
 describe("routes that need no token", () => {

@@ -64,7 +64,7 @@ import {
   loadSavedClientSecret,
   oauthTargetUrl,
 } from "@/lib/oauth/saved-client-secret";
-import { isWebUrl, useAuthorizationPopup } from "./conformance-oauth-popup";
+import { isWebUrl, useOAuthPopupHandoff } from "@/lib/oauth/popup-handoff";
 export {
   createAppsState,
   createOAuthState,
@@ -193,7 +193,7 @@ export function useConformanceRun({
   }, []);
 
   const { remember: rememberSession, forget: forgetSession, cancel: cancelSession } = useConformanceOAuthSession();
-  const authorizationPopup = useAuthorizationPopup();
+  const authorizationPopup = useOAuthPopupHandoff();
   const deadline = useConformanceDeadline((message) => {
     authorizationPopup.expire();
     cancelSession();
@@ -376,10 +376,11 @@ export function useConformanceRun({
       runToken: number,
       serverName: string,
       state?: string,
+      iss?: string,
     ) => {
       if (!isOAuthRunActive(runToken, serverName)) return;
       try {
-        await submitOAuthConformanceCode({ sessionId, code, state }, ...(runBudget().signal ? [{ signal: runBudget().signal }] : []));
+        await submitOAuthConformanceCode({ sessionId, code, state, ...(iss ? { iss } : {}) }, ...(runBudget().signal ? [{ signal: runBudget().signal }] : []));
         if (!isOAuthRunActive(runToken, serverName)) return;
         setOAuth((prev) => ({
           ...prev,
@@ -414,8 +415,38 @@ export function useConformanceRun({
         });
         return;
       }
-      const cleanupFns: Array<() => void> = [];
-      const popup = authorizationPopup.open(authorizationUrl, cleanupFns);
+      // Only the first answer whose `state` matches this request counts. A
+      // popup that reads as closed is not a failure: COOP makes that happen
+      // straight away, so the run deadline decides when to give up.
+      const handoff = authorizationPopup.start({
+        authorizationUrl,
+        flow: "conformance",
+        onResult: (message) => {
+          cleanup();
+          if (message.error) {
+            if (!isOAuthRunActive(runToken, serverName)) return;
+            cancelSession();
+            setOAuth({
+              status: "error",
+              // The client can't check `iss` here (the runner holds the
+              // issuer), so the provider's own error text stays unshown.
+              error:
+                "Sign-in didn't finish. Run the checks again.",
+            });
+            return;
+          }
+          if (!message.code) return;
+          void handleOAuthCallback(
+            sessionId,
+            message.code,
+            runToken,
+            serverName,
+            message.state ?? undefined,
+            message.iss ?? undefined,
+          );
+        },
+      });
+      const popup = handoff.popup;
       setOAuth({
         status: "running",
         sessionId,
@@ -425,51 +456,14 @@ export function useConformanceRun({
       });
 
       const cleanup = () => {
-        for (const fn of cleanupFns) fn();
+        handoff.cancel();
         if (oauthListenerCleanupRef.current === cleanup) {
           oauthListenerCleanupRef.current = null;
         }
       };
       oauthListenerCleanupRef.current = cleanup;
-
-      const onCode = (data: { code: string; state?: string }) => {
-        cleanup();
-        void handleOAuthCallback(
-          sessionId,
-          data.code,
-          runToken,
-          serverName,
-          data.state,
-        );
-      };
-
-      const handleMessage = (event: MessageEvent) => {
-        // The callback page posts to window.location.origin, so anything from
-        // elsewhere is a foreign window injecting an authorization code.
-        if (event.origin !== window.location.origin) return;
-        if (event.data?.type !== "OAUTH_CALLBACK" || !event.data?.code) return;
-        onCode(event.data);
-      };
-
-      window.addEventListener("message", handleMessage);
-      cleanupFns.push(() =>
-        window.removeEventListener("message", handleMessage),
-      );
-
-      try {
-        const channel = new BroadcastChannel("oauth_callback_channel");
-        channel.onmessage = (event) => {
-          if (event.data?.type !== "OAUTH_CALLBACK" || !event.data?.code) {
-            return;
-          }
-          onCode(event.data);
-        };
-        cleanupFns.push(() => channel.close());
-      } catch {
-        // BroadcastChannel not available
-      }
     },
-    [authorizationPopup.open, handleOAuthCallback],
+    [authorizationPopup.start, cancelSession, handleOAuthCallback, isOAuthRunActive],
   );
 
   const runOAuth = useCallback(
@@ -578,11 +572,11 @@ export function useConformanceRun({
 
   const openAuthorizationWindow = useCallback(() => {
     if (!oauth.waitingForAuth || !oauth.authorizationUrl) return;
-    const popup = authorizationPopup.open(oauth.authorizationUrl);
+    const popup = authorizationPopup.reopen();
     setOAuth((prev) =>
       prev.waitingForAuth ? { ...prev, popupBlocked: !popup } : prev,
     );
-  }, [authorizationPopup.open, oauth.authorizationUrl, oauth.waitingForAuth]);
+  }, [authorizationPopup.reopen, oauth.authorizationUrl, oauth.waitingForAuth]);
 
   // The listeners for the code stay unwired after a skip, so a consent that
   // completes late in another tab cannot resurrect the suite.

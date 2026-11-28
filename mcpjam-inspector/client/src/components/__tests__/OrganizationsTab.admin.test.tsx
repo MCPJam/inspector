@@ -76,6 +76,16 @@ vi.mock("@/hooks/useOrganizations", async () => {
   };
 });
 
+vi.mock("@/hooks/useCredentialExportPolicy", () => ({
+  useCredentialExportPolicy: () => ({
+    exportPolicy: "deny",
+    isLoading: false,
+    error: null,
+    isSaving: false,
+    setExportPolicy: vi.fn(),
+  }),
+}));
+
 vi.mock("@/hooks/useImageUpload", () => ({
   useImageUpload: () => mockUploadImage,
 }));
@@ -508,6 +518,40 @@ describe("OrganizationsTab member management", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.queryByText("transfer-member@example.com"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lets a non-admin member read Security, and nothing else", () => {
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [{ ...organization, myRole: "member" }],
+      isLoading: false,
+    });
+
+    const { unmount } = render(
+      <OrganizationsTab organizationId="org-1" section="security" />,
+    );
+    expect(screen.getByRole("heading", { name: "Security" })).toBeVisible();
+    expect(screen.getByTestId("org-credential-export-toggle")).toBeDisabled();
+    expect(
+      screen.getByText("Only organization owners and admins can change this."),
+    ).toBeVisible();
+    expect(screen.queryByText("Access restricted")).not.toBeInTheDocument();
+    unmount();
+
+    render(
+      <OrganizationsTab organizationId="org-1" section="data-management" />,
+    );
+    expect(screen.getByText("Access restricted")).toBeInTheDocument();
+  });
+
+  it("gives an admin the Security switch", () => {
+    render(<OrganizationsTab organizationId="org-1" section="security" />);
+
+    expect(screen.getByTestId("org-credential-export-toggle")).toBeEnabled();
+    expect(
+      screen.queryByText(
+        "Only organization owners and admins can change this.",
+      ),
     ).not.toBeInTheDocument();
   });
 

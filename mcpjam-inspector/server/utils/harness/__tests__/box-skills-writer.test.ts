@@ -13,7 +13,10 @@ import {
   fakeSkillBox,
   type FakeSkillBox,
 } from "../../../test/support/fake-skill-box";
-import { writeTurnToBox } from "../../../test/support/skill-delivery";
+import {
+  frozenPlan,
+  writeTurnToBox,
+} from "../../../test/support/skill-delivery";
 import {
   planBoxSkills,
   writeBoxSkills,
@@ -58,7 +61,8 @@ const runTurn = (
   harnessId: string,
   box: FakeSkillBox,
   ...artifacts: PinnedSkillArtifact[]
-) => writeTurnToBox(harnessId, { pinnedHarnessSkills: artifacts }, box);
+) =>
+  writeTurnToBox(harnessId, frozenPlan(harnessId, artifacts), box);
 
 /** The adapter's own turn-time write, as `harnessId`'s adapter makes it. */
 async function adapterWrite(
@@ -308,16 +312,44 @@ describe("a box that runs more than one runtime", () => {
     expect(box.skillFolders(AGENTS)).toEqual(["gamma"]);
     expect(box.skillFolders(CLAUDE)).toEqual(["alpha", "beta", "hand-placed"]);
 
-    // OpenCode takes no skills, and reads both folders: it finds no MCPJam
-    // skill in either, while the hand-placed one stays.
-    await runTurn("opencode", box, artifact("delta"));
-    expect(box.skillFolders(AGENTS)).toEqual([]);
+    // A runtime that also reads Claude Code's folder finds no MCPJam skill
+    // there but its own, while the hand-placed one stays.
+    const alsoReadsClaude = {
+      ...HARNESS_SKILLS.codex,
+      readFolders: [".agents/skills", ".claude/skills"],
+    };
+    await writeBoxSkills({
+      session: box.session,
+      descriptor: alsoReadsClaude,
+      home: BOX_HOME,
+      plan: planBoxSkills(alsoReadsClaude, [skill("delta")]),
+      readFiles: async () => NO_FILES,
+    });
+    expect(box.skillFolders(AGENTS)).toEqual(["delta"]);
     expect(box.skillFolders(CLAUDE)).toEqual(["hand-placed"]);
 
     // The next Claude Code turn delivers a different set: nothing stale.
     await runTurn("claude-code", box, artifact("beta"));
     expect(box.skillFolders(CLAUDE)).toEqual(["beta", "hand-placed"]);
     expect(box.files.get(HAND_PLACED)).toBe("a person's own skill");
+  });
+
+  it("leaves no stale skill folder where OpenCode reads after a Claude Code turn", async () => {
+    const box = fakeSkillBox();
+    const openCodeReads = () =>
+      HARNESS_SKILLS.opencode.readFolders.flatMap((folder) =>
+        box.skillFolders(`${BOX_HOME}/${folder}`),
+      );
+    await runTurn("claude-code", box, artifact("alpha"), artifact("beta"));
+    const result = await runTurn("opencode", box, artifact("delta"));
+    expect(result.delivered).toEqual([{ skillId: "sk_delta", name: "delta" }]);
+    expect(openCodeReads()).toEqual(["delta"]);
+
+    // A later OpenCode turn with another set keeps nothing of this one, and
+    // neither turn touches Claude Code's folder, which OpenCode doesn't read.
+    await runTurn("opencode", box, artifact("epsilon"));
+    expect(openCodeReads()).toEqual(["epsilon"]);
+    expect(box.skillFolders(CLAUDE)).toEqual(["alpha", "beta"]);
   });
 
   it("puts a Codex turn's skills back whole after an OpenCode turn cleared their shared folder", async () => {
@@ -345,15 +377,63 @@ describe("a box that runs more than one runtime", () => {
     expect(adapter.changed).toBe(false);
   });
 
-  it("leaves every folder alone on a runtime that takes no skills and reads none of them", async () => {
+  it("leaves every other client's folder alone on a runtime that reads only its own", async () => {
     const box = fakeSkillBox();
     await runTurn("claude-code", box, artifact("alpha"));
     await runTurn("codex", box, artifact("gamma"));
-    const before = new Map(box.files);
+    const others = () =>
+      [...box.files].filter(
+        ([path]) =>
+          path.startsWith(`${CLAUDE}/`) || path.startsWith(`${AGENTS}/`),
+      );
+    const before = others();
     for (const harnessId of ["cursor", "copilot-cli"]) {
       await runTurn(harnessId, box, artifact("delta"));
     }
-    expect(box.files).toEqual(before);
+    expect(others()).toEqual(before);
+  });
+
+  it("with the seed switch on, gives a box with no manifest the adapter's empty one", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_SEED_SKILLS_MANIFEST", "1");
+    try {
+      const box = fakeSkillBox();
+      const claude = HARNESS_SKILLS["claude-code"];
+      await writeBoxSkills({
+        session: box.session,
+        descriptor: claude,
+        home: BOX_HOME,
+        plan: planBoxSkills(claude, []),
+        readFiles: async () => NO_FILES,
+        hostedBox: true,
+      });
+      expect([...box.files.keys()]).toEqual([
+        `${CLAUDE}/.ai-sdk-harness-skills.json`,
+      ]);
+      box.commands.length = 0;
+      const result = await adapterWrite("claude-code", box, []);
+      expect(result.changed).toBe(false);
+      expect(box.commands).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("with the seed switch on, leaves a local session's missing manifest alone", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_SEED_SKILLS_MANIFEST", "1");
+    try {
+      const box = fakeSkillBox();
+      const claude = HARNESS_SKILLS["claude-code"];
+      await writeBoxSkills({
+        session: box.session,
+        descriptor: claude,
+        home: BOX_HOME,
+        plan: planBoxSkills(claude, []),
+        readFiles: async () => NO_FILES,
+      });
+      expect([...box.files.keys()]).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("writes nothing to a folder the turn neither delivers to nor finds MCPJam's skills in", async () => {

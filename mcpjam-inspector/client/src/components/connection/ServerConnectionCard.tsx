@@ -41,6 +41,7 @@ import {
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import { ErrorCard } from "@/components/ui/error-card";
+import { MockMarker } from "./mock/MockMarker";
 import {
   SERVER_CARD_CLASS_NAME,
   SERVER_CARD_INTERACTIVE_CLASS_NAME,
@@ -635,6 +636,7 @@ export function ServerConnectionCard({
                   </span>
                 )}
               </div>
+              <MockMarker projectId={projectId} serverId={hostedServerId} />
 
               {/* The red "Error" pill that used to sit here was the fourth
                   red element announcing one failure — after the status dot,

@@ -217,6 +217,66 @@ describe("v1 readiness resume", () => {
     });
   });
 
+  it("hands a resumed run the reviewer attempt that names it, and only that", async () => {
+    // The node that held the attempt in memory stopped; the attempt names the run.
+    queries["claudeReadinessRuns:getReadinessRun"] = () => ({
+      ...RUN_ROW,
+      submissionId: "sub_1",
+    });
+    let newest = { id: "att_1", currentRunId: RUN };
+    queries["directoryReviewerAttempts:listDirectoryReviewerAttempts"] = (args) => {
+      expect(args).toEqual({ submissionId: "sub_1", limit: 1 });
+      return [newest];
+    };
+    expect((await request("POST", RESUME)).status).toBe(202);
+    expect(executeHostedReadinessRunMock.mock.calls[0]![0]).toMatchObject({
+      reviewerAttemptId: "att_1",
+    });
+
+    newest = { id: "att_1", currentRunId: "run_other" };
+    executeHostedReadinessRunMock.mockClear();
+    expect((await request("POST", RESUME)).status).toBe(202);
+    const execution = executeHostedReadinessRunMock.mock.calls[0]![0];
+    expect("reviewerAttemptId" in execution).toBe(false);
+  });
+
+  it("authorizes a resumed submission run's reviewer account as itself again", async () => {
+    queries["claudeReadinessRuns:getReadinessRun"] = () => ({
+      ...RUN_ROW,
+      submissionId: "sub_1",
+    });
+    queries["directoryReviewerAttempts:listDirectoryReviewerAttempts"] = () => [
+      { id: "att_1", currentRunId: "run_other", reviewerAccountId: "acct_reviewer" },
+    ];
+    authorizeServerMock.mockImplementation(
+      async (_c, _token, _project, _server, options?: { connectionId?: string }) => ({
+        ...AUTHORIZED,
+        oauthAccessToken: options?.connectionId ? "reviewer-token" : "saved-token",
+      }),
+    );
+    expect((await request("POST", RESUME)).status).toBe(202);
+    expect(authorizeServerMock.mock.calls[1]!.slice(1)).toEqual([
+      "tok",
+      PROJECT,
+      "s1",
+      // Bounded like the server's own authorize, so a hung exchange ends.
+      { connectionId: "acct_reviewer", signal: expect.any(AbortSignal) },
+    ]);
+    expect(executeHostedReadinessRunMock.mock.calls[0]![0]).toMatchObject({
+      mcpHeaders: { authorization: "Bearer saved-token" },
+      reviewer: {
+        accountId: "acct_reviewer",
+        mcpHeaders: { authorization: "Bearer reviewer-token" },
+      },
+    });
+  });
+
+  it("asks for no reviewer account on a resumed run that grades no submission", async () => {
+    expect((await request("POST", RESUME)).status).toBe(202);
+    expect(authorizeServerMock).toHaveBeenCalledTimes(1);
+    expect("reviewer" in executeHostedReadinessRunMock.mock.calls[0]![0]).toBe(false);
+  });
+
   it("takes `{}` as no body, and refuses any field", async () => {
     expect((await request("POST", RESUME, {})).status).toBe(202);
     vi.clearAllMocks();

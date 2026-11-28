@@ -33,6 +33,8 @@ import {
   executeHostedReadinessRun,
   type ExecuteHostedReadinessOptions,
 } from "../../services/readiness/worker.js";
+import { rehearseReviewerSignInLive } from "../../services/readiness/reviewer-sign-in-live.js";
+import type { ReadinessReviewerAccount } from "../../services/readiness/reviewer-path.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 
@@ -46,7 +48,9 @@ export type ReadinessPublisher = (typeof READINESS_PUBLISHERS)[number];
  * The package shapes need an uploaded archive, and no hosted surface has a way
  * to receive one — the CLI reads it off the local disk. Listing them here and
  * refusing them at the edge means the refusal can name the CLI, rather than
- * surfacing later as a lane that mysteriously never evaluates.
+ * surfacing later as a lane that mysteriously never evaluates. The one
+ * exception is a ChatGPT plugin submission's run, which grades a plugin
+ * version already stored in the project (`pluginVersionId`).
  */
 export const HOSTED_SUBMISSION_MODES = [
   "mcp-only",
@@ -95,6 +99,26 @@ export interface StartHostedReadinessRunInput {
    * run; the worker grades that frozen copy.
    */
   submissionId?: string;
+  /**
+   * A ChatGPT plugin submission's package: a plugin version stored in the
+   * project. The backend checks it and freezes it with the answers, and the
+   * worker downloads that version (`run-package.ts`).
+   */
+  pluginVersionId?: string;
+  /**
+   * The submission's reviewer sign-in attempt the run works on. Handed to the
+   * worker only: the backend run takes no attempt, and the run joins it.
+   */
+  reviewerAttemptId?: string;
+  /**
+   * The submission's saved test plan revision the run executes. The backend
+   * refuses one that is not the current revision, then freezes it.
+   */
+  testPlanRevision?: number;
+  /** The submission's reviewer account, authorized as itself (`reviewerAccountForRun`). */
+  reviewer?: ReadinessReviewerAccount;
+  /** Authorizes the account the run's sign-in connects (`reviewerAuthorizerFor`). */
+  authorizeReviewer?: (accountId: string) => Promise<ReadinessReviewerAccount>;
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
   /**
@@ -195,6 +219,12 @@ export async function startHostedReadinessRun(
           ? { claimedFeatures: input.claimedFeatures }
           : {}),
         ...(input.submissionId ? { submissionId: input.submissionId } : {}),
+        ...(input.pluginVersionId
+          ? { pluginVersionId: input.pluginVersionId }
+          : {}),
+        ...(input.testPlanRevision !== undefined
+          ? { testPlanRevision: input.testPlanRevision }
+          : {}),
       },
     );
   } catch (error) {
@@ -239,6 +269,13 @@ export async function startHostedReadinessRun(
           ? { claimedFeatures: input.claimedFeatures }
           : {}),
         ...(input.submissionId ? { submissionId: input.submissionId } : {}),
+        ...(input.reviewerAttemptId
+          ? { reviewerAttemptId: input.reviewerAttemptId }
+          : {}),
+        ...(input.reviewer ? { reviewer: input.reviewer } : {}),
+        ...(input.authorizeReviewer
+          ? { authorizeReviewer: input.authorizeReviewer }
+          : {}),
         analyticsActor: input.analyticsActor,
       },
       input.authorized,
@@ -256,23 +293,35 @@ export async function startHostedReadinessRun(
   };
 }
 
+/** The headers an authorize exchange's account sends on MCP requests. */
+export function readinessMcpHeaders(
+  authorized: AuthorizedReadinessServer,
+): Record<string, string> {
+  return {
+    ...(authorized.serverConfig.headers ?? {}),
+    ...(authorized.oauthAccessToken
+      ? { authorization: `Bearer ${authorized.oauthAccessToken}` }
+      : {}),
+  };
+}
+
 /**
  * Execute a run in this process, detached, on a lease this node holds, with
  * the credentials of the authorize exchange that let it start or resume.
  */
 export function executeHostedReadinessRunDetached(
-  run: Omit<ExecuteHostedReadinessOptions, "mcpHeaders" | "fetchFn">,
+  run: Omit<
+    ExecuteHostedReadinessOptions,
+    "mcpHeaders" | "fetchFn" | "reviewerSignIn"
+  >,
   authorized: AuthorizedReadinessServer,
 ): void {
-  const headers: Record<string, string> = {
-    ...(authorized.serverConfig.headers ?? {}),
-  };
-  if (authorized.oauthAccessToken) {
-    headers.authorization = `Bearer ${authorized.oauthAccessToken}`;
-  }
+  const headers = readinessMcpHeaders(authorized);
 
   void executeHostedReadinessRun({
     ...run,
+    // Run only on a reviewer attempt the worker joined.
+    reviewerSignIn: rehearseReviewerSignInLive,
     // The saved credential goes only on MCP requests to the endpoint. The
     // SDK keeps it off discovery, including authorization-server metadata
     // on an origin the server chooses.
@@ -355,6 +404,10 @@ export function toReadinessRunDto(
       hasReport && options.reportUrl ? options.reportUrl(run.id) : null,
     submissionId: run.submissionId ?? null,
     submissionRevision: run.submissionRevision ?? null,
+    // The stored plugin version a ChatGPT plugin submission's run grades.
+    pluginVersionId: run.pluginVersionId ?? null,
+    // The test plan revision whose calls the run makes.
+    testPlanRevision: run.testPlanRevision ?? null,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };

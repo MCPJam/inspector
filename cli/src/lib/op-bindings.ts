@@ -51,6 +51,16 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_server_revisions: { command: "cloud projects servers revisions" },
   get_server_revision: { command: "cloud projects servers revision" },
   diff_server_revisions: { command: "cloud projects servers revision-diff" },
+  create_mock_server: { command: "cloud mocks create" },
+  update_mock_server: { command: "cloud mocks update" },
+  get_mock_server: { command: "cloud mocks get" },
+  patch_mock_server: { command: "cloud mocks patch" },
+  refresh_mock_server: { command: "cloud mocks refresh" },
+  open_mock_run: { command: "cloud mocks run open" },
+  reset_mock_run: { command: "cloud mocks run reset" },
+  close_mock_run: { command: "cloud mocks run close" },
+  get_mock_forwarding_policy: { command: "cloud mocks policy get" },
+  set_mock_forwarding_policy: { command: "cloud mocks policy set" },
   // `default` runs the same operation as `rename`, with `isDefault` in place
   // of a name.
   list_server_accounts: { command: "cloud server-accounts list" },
@@ -208,6 +218,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   backtest_eval_run: { command: "cloud eval backtest" },
   backtest_eval_run_judge: { command: "cloud eval judge-backtest" },
   request_eval_run_judge: { command: "cloud eval judge" },
+  request_eval_run_insights: { command: "cloud eval request-insights" },
+  cancel_eval_run_insights: { command: "cloud eval cancel-insights" },
+  build_eval_run_findings: { command: "cloud eval build-findings" },
   list_eval_github_repos: { command: "cloud eval github list" },
   connect_eval_github_repo: { command: "cloud eval github connect" },
   // The pre-rename spellings, still advertised and still bound — to the
@@ -411,12 +424,46 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   create_directory_submission: { command: "readiness submission create" },
   list_directory_submissions: { command: "readiness submission list" },
   get_directory_submission: { command: "readiness submission get" },
+  // `readiness submission gate` runs it too, with only `checkGate`.
   update_directory_submission: { command: "readiness submission set" },
   delete_directory_submission: { command: "readiness submission delete" },
   start_directory_submission_run: { command: "readiness submission run" },
   get_directory_submission_results: {
     command: "readiness submission results",
   },
+  // A submission's test plan; `readiness submission run --test-plan-revision`
+  // starts a run that makes its calls.
+  get_directory_submission_test_plan: { command: "readiness submission plan show" },
+  draft_directory_submission_test_plan: { command: "readiness submission plan draft" },
+  save_directory_submission_test_plan: { command: "readiness submission plan save" },
+  get_directory_submission_tool_tests: { command: "readiness submission plan results" },
+  // The eval suite holding a submission's test cases; `evals unlink` runs the
+  // link too, with `null` for what it clears.
+  get_directory_submission_evals: { command: "readiness submission evals show" },
+  set_directory_submission_evals: { command: "readiness submission evals link" },
+  import_directory_submission_test_cases: { command: "readiness submission evals import" },
+  export_directory_submission_test_cases: { command: "readiness submission evals export" },
+  // `readiness reviewer status` lists the attempts, or shows the one it is given.
+  create_reviewer_attempt: { command: "readiness reviewer start" },
+  list_reviewer_attempts: { command: "readiness reviewer status" },
+  get_reviewer_attempt: { command: "readiness reviewer status" },
+  create_reviewer_handoff: { command: "readiness reviewer handoff" },
+  resume_reviewer_attempt: { command: "readiness reviewer resume" },
+  cancel_reviewer_attempt: { command: "readiness reviewer cancel" },
+  // Resuming a submission from its id, and recording what happened in the
+  // directory itself.
+  get_directory_submission_handoff: { command: "readiness submission handoff" },
+  list_directory_submission_findings: {
+    command: "readiness submission findings",
+  },
+  get_directory_submission_finding: { command: "readiness submission finding" },
+  export_directory_submission: { command: "readiness submission export" },
+  list_directory_submission_events: { command: "readiness submission events" },
+  record_directory_submission_status: { command: "readiness submission status" },
+  record_directory_submission_snapshot: {
+    command: "readiness submission snapshot",
+  },
+  import_directory_finding: { command: "readiness submission import-finding" },
   // Hosted conformance, beside the local `mcpjam conformance` commands: those
   // grade what this machine reaches and record nothing in a project, these
   // run on the platform against a saved server and leave a run to poll.

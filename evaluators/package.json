@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/evaluators",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "description": "Pure evaluator contracts, assertions and trajectory matching",
   "type": "module",
   "main": "./dist/index.js",
@@ -49,5 +49,10 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MCPJam/inspector.git",
+    "directory": "evaluators"
+  }
 }

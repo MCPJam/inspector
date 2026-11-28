@@ -84,6 +84,10 @@ function request(
   );
 }
 
+/** Convex document-id-shaped ids for the routes that check id shape. */
+const HOST_ID = "h1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+const IMAGE_ID = "img1xxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
 const ENV_ROW = {
   environmentId: "env1",
   projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -801,10 +805,10 @@ describe("v1 project environment routes", () => {
       expect(mismatch.status).toBe(400);
       const badEffort = await request(
         "POST",
-        "/api/v1/projects/p1/environments/ensure-adhoc",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/environments/ensure-adhoc",
         {
           body: {
-            hostId: "h1",
+            hostId: HOST_ID,
             modelSelection: {
               ...SELECTION,
               settings: { reasoningEffort: "turbo" },
@@ -838,8 +842,8 @@ describe("v1 project environment routes", () => {
       });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/environments/ensure-adhoc",
-        { body: { hostId: "h1", modelSelection: SELECTION } },
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/environments/ensure-adhoc",
+        { body: { hostId: HOST_ID, modelSelection: SELECTION } },
       );
       expect(res.status).toBe(200);
       expect(
@@ -1382,7 +1386,7 @@ describe("v1 project environment routes", () => {
       environmentId: "env-adhoc",
       projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
       origin: "adhoc" as const,
-      hostId: "h1",
+      hostId: HOST_ID,
       revision: 1,
       createdAt: 1,
       updatedAt: 1,
@@ -1398,8 +1402,8 @@ describe("v1 project environment routes", () => {
         "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/environments/ensure-adhoc",
         {
           body: {
-            hostId: "h1",
-            sandboxImageId: "img1",
+            hostId: HOST_ID,
+            sandboxImageId: IMAGE_ID,
             modelId: "anthropic/claude-haiku-4.5",
           },
         },
@@ -1410,11 +1414,11 @@ describe("v1 project environment routes", () => {
         "projectEnvironments:ensureAdhocEnvironment",
         {
           projectId: "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-          hostId: "h1",
+          hostId: HOST_ID,
           modelId: "anthropic/claude-haiku-4.5",
           // The public name is renamed at the boundary; the internal one must
           // not leak and the public one must not be forwarded.
-          computerEnvironmentId: "img1",
+          computerEnvironmentId: IMAGE_ID,
         },
       );
       const body = (await res.json()) as any;
@@ -1435,7 +1439,7 @@ describe("v1 project environment routes", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/environments/ensure-adhoc",
-        { body: { hostId: "h1" } },
+        { body: { hostId: HOST_ID } },
       );
       expect(res.status).toBe(200);
       expect(((await res.json()) as any).created).toBe(false);
@@ -1448,7 +1452,7 @@ describe("v1 project environment routes", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/environments/ensure-adhoc",
-        { body: { hostId: "h1" } },
+        { body: { hostId: HOST_ID } },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
@@ -1460,9 +1464,41 @@ describe("v1 project environment routes", () => {
       const res = await request(
         "POST",
         "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/environments/ensure-adhoc",
-        { body: { hostId: "h1", computerEnvironmentId: "img1" } },
+        { body: { hostId: HOST_ID, computerEnvironmentId: IMAGE_ID } },
       );
       expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    // Production Convex redacts a rejected `v.id(...)` argument to the same
+    // "Server Error" a crash produces, so these must never reach it.
+    it.each([
+      ["hostId", { hostId: "h1" }],
+      ["serverAttachmentId", { hostId: HOST_ID, serverAttachmentId: "sa1" }],
+      ["sandboxImageId", { hostId: HOST_ID, sandboxImageId: "img1" }],
+    ])(
+      "answers a malformed %s with 400 before the mutation",
+      async (field, body) => {
+        const res = await request(
+          "POST",
+          "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/environments/ensure-adhoc",
+          { body },
+        );
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as { message: string }).message).toContain(
+          field,
+        );
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it("answers a malformed project id with 404 before the mutation", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/environments/ensure-adhoc",
+        { body: { hostId: HOST_ID } },
+      );
+      expect(res.status).toBe(404);
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
   });

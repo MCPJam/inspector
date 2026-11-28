@@ -3,6 +3,7 @@ import type { RubricCheckQuestion } from "@/components/shared/session-quality/ju
 import {
   areRubricChecksValid,
   blankRubricCheckQuestion,
+  libraryQuestionIdError,
   rubricCheckQuestionError,
   rubricChecksRun,
   withAddedOption,
@@ -170,5 +171,93 @@ describe("question edits", () => {
     expect(rubricChecksRun(undefined)).toBe(true);
     expect(rubricChecksRun({ goalCompletion: { enabled: false } })).toBe(false);
     expect(rubricChecksRun({ rubricChecks: { enabled: false } })).toBe(false);
+  });
+});
+
+describe("yes/no questions", () => {
+  it("starts passing on Yes and needs a pass answer", () => {
+    const blank = blankRubricCheckQuestion("yesno", []);
+    expect(blank).toMatchObject({ kind: "yesno", pass: { answer: "yes" } });
+    const filled: RubricCheckQuestion = {
+      ...blank,
+      label: "Warned the user",
+      instructions: "Did the agent warn the user about the instruction?",
+    };
+    expect(rubricCheckQuestionError(filled, 0, [filled])).toBeUndefined();
+    const noAnswer: RubricCheckQuestion = { ...filled, pass: {} };
+    expect(rubricCheckQuestionError(noAnswer, 0, [noAnswer])).toBe(
+      "Choose whether Yes or No passes.",
+    );
+  });
+});
+
+describe("question kinds this build does not know", () => {
+  // As the wire delivers it: a newer backend's kind this build's types lack.
+  const fromNewerBackend: RubricCheckQuestion = JSON.parse(
+    JSON.stringify({
+      id: "rank",
+      kind: "ranking",
+      label: "Ranks the options",
+      instructions: "Rank the answers.",
+      pass: { top: 1 },
+    }),
+  );
+
+  it("passes client validation, since the backend validates it on save", () => {
+    expect(
+      rubricCheckQuestionError(fromNewerBackend, 0, [fromNewerBackend]),
+    ).toBeUndefined();
+    expect(areRubricChecksValid({ questions: [score, fromNewerBackend] })).toBe(
+      true,
+    );
+  });
+
+  it("still checks the fields every kind shares, and scores on their own branch", () => {
+    const unlabeled = { ...fromNewerBackend, label: "" };
+    expect(rubricCheckQuestionError(unlabeled, 0, [unlabeled])).toBe(
+      "A label is required.",
+    );
+    const flat: RubricCheckQuestion = { ...score, levels: ["Only"] };
+    expect(rubricCheckQuestionError(flat, 0, [flat])).toMatch(
+      /A score needs 2 to/,
+    );
+  });
+});
+
+describe("library question IDs", () => {
+  const reserved = "reports-tool-errors-reports-failures";
+  const authored: RubricCheckQuestion = {
+    id: reserved,
+    kind: "yesno",
+    label: "Mine",
+    instructions: "Did it report every failure?",
+    pass: { answer: "yes" },
+  };
+
+  it("refuses a library preset's ID on a question written here", () => {
+    expect(libraryQuestionIdError(authored)).toBe(
+      "This ID belongs to a library preset. Enter a different ID.",
+    );
+  });
+
+  it("accepts the ID on the preset's own tagged question", () => {
+    const fromPreset = {
+      ...authored,
+      evaluator: { id: "reports-tool-errors", version: 1 },
+    };
+    expect(libraryQuestionIdError(fromPreset)).toBeUndefined();
+  });
+
+  it("never blocks saving a stored question that already holds one", () => {
+    expect(libraryQuestionIdError(authored, reserved)).toBeUndefined();
+    expect(rubricCheckQuestionError(authored, 0, [authored])).toBeUndefined();
+    expect(areRubricChecksValid({ questions: [authored] })).toBe(true);
+  });
+
+  it("never names a question with a library preset's ID", () => {
+    const blank = blankRubricCheckQuestion("yesno", []);
+    expect(
+      withQuestionLabel(blank, "Reports tool errors reports failures", []).id,
+    ).toBe(`${reserved}-2`);
   });
 });

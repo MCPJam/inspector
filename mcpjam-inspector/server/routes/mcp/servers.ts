@@ -2,6 +2,7 @@ import { commandApprovalReview } from "./command-approval-review.js";
 import { promoteLocalServerCheck } from "../../utils/local-server-check-queue.js";
 import {
   listBaseServers,
+  localConnectionKeysForServer,
   removeServerConnections,
 } from "../../utils/mcp-connections.js";
 import { Hono } from "hono";
@@ -13,11 +14,18 @@ import {
 import { logger } from "../../utils/logger";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 import {
+  authorizeServerLocal,
   executeLocalServerConnect,
   parseLocalConnectRequestBody,
   readAuthorizedStdioLaunchSpec,
+  readLocalApiBearer,
   respondWithLocalRouteError,
 } from "../../utils/local-server-resolver.js";
+import { resolveServerCanvasRollout } from "../../utils/server-canvas-rollout.js";
+import {
+  claimCanvasRefresh,
+  runCanvasRefresh,
+} from "../../services/server-canvas/refresh.js";
 import {
   approveStdioLaunch,
   checkStdioLaunchApproval,
@@ -46,42 +54,53 @@ function hasBearerAuthorizationHeader(headers: unknown): boolean {
   return false;
 }
 
-function redactServerConfig(config: unknown) {
+function isNonEmptyRecord(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    Object.keys(value as Record<string, unknown>).length > 0
+  );
+}
+
+/**
+ * The config fields the browser reads from this list: the connection card and
+ * edit form (`url`, `command`, `args`, `timeout`, capabilities), the wire
+ * version pin, and which secrets exist. Projected rather than redacted, so a
+ * credential the SDK keeps on the config (`accessToken` after a refresh) or a
+ * field added later stays in this process unless it is named here.
+ */
+const LISTED_CONFIG_FIELDS = [
+  "url",
+  "command",
+  "args",
+  "timeout",
+  "capabilities",
+  "clientCapabilities",
+  "mcpProtocolVersion",
+] as const;
+
+function listedServerConfig(config: unknown) {
   if (!config || typeof config !== "object") {
     return config;
   }
   const record = config as Record<string, unknown>;
-  const redacted: Record<string, unknown> = { ...record };
-  if ("env" in redacted) {
-    redacted.hasEnv =
-      !!redacted.env &&
-      typeof redacted.env === "object" &&
-      Object.keys(redacted.env as Record<string, unknown>).length > 0;
-    delete redacted.env;
+  const listed: Record<string, unknown> = {};
+  for (const field of LISTED_CONFIG_FIELDS) {
+    if (record[field] !== undefined) listed[field] = record[field];
   }
-  const requestInit = redacted.requestInit;
+  if ("env" in record) listed.hasEnv = isNonEmptyRecord(record.env);
+  const requestInit = record.requestInit;
   if (
     requestInit &&
     typeof requestInit === "object" &&
-    !Array.isArray(requestInit)
+    "headers" in requestInit
   ) {
-    const nextRequestInit = { ...(requestInit as Record<string, unknown>) };
-    if ("headers" in nextRequestInit) {
-      redacted.hasHeaders =
-        !!nextRequestInit.headers &&
-        typeof nextRequestInit.headers === "object" &&
-        Object.keys(nextRequestInit.headers as Record<string, unknown>).length >
-          0;
-      // Flag bearer auth before the header value is stripped, so the edit form
-      // can keep the auth type as "bearer" and preserve the hidden token.
-      redacted.hasBearerToken = hasBearerAuthorizationHeader(
-        nextRequestInit.headers
-      );
-      delete nextRequestInit.headers;
-    }
-    redacted.requestInit = nextRequestInit;
+    listed.hasHeaders = isNonEmptyRecord(requestInit.headers);
+    // Flagged so the edit form keeps the auth type as "bearer" and the
+    // hidden token stays where it is.
+    listed.hasBearerToken = hasBearerAuthorizationHeader(requestInit.headers);
   }
-  return redacted;
+  return listed;
 }
 
 const servers = new Hono();
@@ -97,7 +116,7 @@ servers.get("/", async (c) => {
         id,
         name: id,
         status,
-        config: redactServerConfig(config),
+        config: listedServerConfig(config),
       }));
 
     return c.json({
@@ -285,6 +304,92 @@ servers.post("/reconnect", async (c) => {
   return executeLocalServerConnect(c, parsed.params, {
     removeOnFailure: false,
   });
+});
+
+// Refresh the server canvas for a connected project server: a fresh capture
+// and every background probe on the existing connection, behind
+// `server-canvas`. Body: {projectId, serverId}. Answers 202 once queued; the
+// page watches Convex for the results.
+servers.post("/canvas/refresh", async (c) => {
+  let body: unknown;
+  try {
+    body = await readRequestJson(c);
+  } catch (error) {
+    return c.json(
+      {
+        success: false,
+        error: "Failed to parse request body",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      400
+    );
+  }
+  const raw = (body ?? {}) as Record<string, unknown>;
+  const projectId = typeof raw.projectId === "string" ? raw.projectId.trim() : "";
+  const serverId = typeof raw.serverId === "string" ? raw.serverId.trim() : "";
+  if (!projectId || !serverId) {
+    return respondWithLocalRouteError(
+      c,
+      new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "projectId and serverId are required"
+      )
+    );
+  }
+  const bearer = readLocalApiBearer(c);
+  if (!bearer) {
+    return respondWithLocalRouteError(
+      c,
+      new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        "Authorization bearer token is required"
+      )
+    );
+  }
+  try {
+    if (!(await resolveServerCanvasRollout(bearer))) {
+      return c.json({ status: "disabled" }, 409);
+    }
+    const authorized = await authorizeServerLocal(c, bearer, projectId, serverId);
+    const manager = c.mcpClientManager;
+    const managerKey = localConnectionKeysForServer(manager, serverId)[0];
+    if (!managerKey) return c.json({ status: "not-connected" }, 409);
+    // A refresh already running for this server answers for this one too.
+    const release = claimCanvasRefresh({ caller: "local", projectId, serverId });
+    if (!release) return c.json({ status: "accepted" }, 202);
+    void runCanvasRefresh({
+      hosted: false,
+      projectId,
+      serverId,
+      manager,
+      managerKey,
+      convexBearer: bearer,
+      ...(authorized.oauthCredentialId
+        ? { accountKey: authorized.oauthCredentialId }
+        : {}),
+    })
+      .then((run) => run.done)
+      .finally(release);
+    return c.json({ status: "accepted" }, 202);
+  } catch (error) {
+    if (error instanceof WebRouteError) {
+      return respondWithLocalRouteError(c, error);
+    }
+    reportRouteFailure("Error refreshing the server canvas", error, {
+      source: "mcp.servers.canvasRefresh",
+      hop: "mcpjam_internal",
+      context: { serverId },
+    });
+    return c.json(
+      {
+        success: false,
+        error: "Refresh could not start. Try again in a moment.",
+      },
+      500
+    );
+  }
 });
 
 // Approve, on this device, the command a stdio server runs. Body:

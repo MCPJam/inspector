@@ -431,6 +431,8 @@ interface EvalFixtureOptions {
    * (no `--api-key` flag) — see `evalArgvNoKey`.
    */
   deleteCredentialAfterLaunch?: boolean;
+  /** `accounts` on the `run-1` and `run-case` reads. */
+  runAccounts?: unknown[];
 }
 
 async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
@@ -1088,6 +1090,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           notes: null,
           createdAt: 10,
           completedAt: 20,
+          ...(options.runAccounts ? { accounts: options.runAccounts } : {}),
           ...(policy2
             ? {
                 verdictPolicyVersion: 2,
@@ -1267,6 +1270,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           notes: null,
           createdAt: 1,
           completedAt: 2,
+          ...(options.runAccounts ? { accounts: options.runAccounts } : {}),
           ...(options.runOneImportEligibility
             ? { importEligibility: options.runOneImportEligibility }
             : {}),
@@ -5776,6 +5780,130 @@ test("eval status summarizes the judges that graded, and stays silent about the 
   }
 });
 
+// Fake values only. `srv-gone` is not among the project's servers, so its
+// line names the server by id.
+const RUN_ACCOUNTS = [
+  {
+    serverId: "srv-ready",
+    accountId: "conn-1",
+    name: "test-automation-1",
+    kind: "personal",
+    tokenUploaded: true,
+    tokenStoredAt: 1763372820000,
+    identity: {
+      source: "profile",
+      name: "Test Automation",
+      email: "test-automation-1@example.com",
+      emailSource: "profile",
+    },
+  },
+  { serverId: "srv-gone", name: "QA bot", kind: "project" },
+];
+
+test("eval status names the account each server used", async () => {
+  const fixture = await startEvalFixture({ runAccounts: RUN_ACCOUNTS });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "status",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1"
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const lines = run.stdout.trimEnd().split("\n");
+    // After the payload, before the judge summary and the closing View link.
+    assert.deepEqual(lines.slice(-4, -2), [
+      "Account on Ready Server: test-automation-1 (personal, test-automation-1@example.com)",
+      "Account on srv-gone: QA bot (project)",
+    ]);
+    assert.match(lines.at(-2) ?? "", /^Judge goal completion: /);
+    assert.ok(fixture.requests.includes("/api/v1/projects/proj-alpha/servers"));
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval status --format json carries the accounts and no account lines", async () => {
+  const fixture = await startEvalFixture({ runAccounts: RUN_ACCOUNTS });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "status",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    // One document, so a pipeline can parse stdout whole.
+    const body = JSON.parse(run.stdout);
+    assert.deepEqual(body.run.accounts, RUN_ACCOUNTS);
+    assert.ok(!run.stdout.includes("Account on"));
+    // No server-name read for output nobody reads as prose.
+    assert.ok(!fixture.requests.includes("/api/v1/projects/proj-alpha/servers"));
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --wait names the account each server used", async () => {
+  const fixture = await startEvalFixture({ runAccounts: RUN_ACCOUNTS });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--wait"
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0, run.stderr);
+    const lines = run.stdout.split("\n");
+    assert.ok(
+      lines.includes(
+        "Account on Ready Server: test-automation-1 (personal, test-automation-1@example.com)"
+      ),
+      run.stdout
+    );
+    assert.ok(lines.includes("Account on srv-gone: QA bot (project)"));
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval update --min-iterations off sends an explicit null", async () => {
   const fixture = await startEvalFixture();
   try {
@@ -6050,8 +6178,9 @@ test("eval update refuses both iteration flags rather than preferring one", asyn
       run.stderr,
       /Use either --min-iterations or --iterations, not both/
     );
-    // A floor RAISES a case's own count and a default REPLACES it, so a case at
-    // 7 resolves to 7 under a floor of 3 and to 3 under a default of 3.
+    // A floor RAISES a case's own count and a case's own count overrides a
+    // default, so a case at 2 resolves to 3 under a floor of 3 and to 2 under a
+    // default of 3.
     assert.match(run.stderr, /raises a case's own count/);
     assert.equal(fixture.createBodies.length, 0);
   } finally {

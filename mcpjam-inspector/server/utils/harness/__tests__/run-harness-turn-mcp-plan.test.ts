@@ -49,7 +49,12 @@ vi.mock("@ai-sdk/harness/agent", () => ({
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
 }));
 
+const forwardingRefresh = vi.hoisted(() =>
+  vi.fn((runtime: object, ..._rest: unknown[]) => runtime),
+);
+
 vi.mock("../registry.js", () => ({
+  harnessConversationState: vi.fn(() => null),
   buildBrokerDummyAuth: vi.fn(() => ({
     anthropic: {
       apiKey: "",
@@ -63,7 +68,7 @@ vi.mock("../registry.js", () => ({
     forwardingRuntime: {
       runtimeVersion: "2.1.245",
       configurationVersion: "config-v1",
-      refresh: (runtime: object) => runtime,
+      refresh: forwardingRefresh,
     },
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
@@ -142,8 +147,6 @@ vi.mock("../harness-session-state.js", async (importOriginal) => ({
 
 const broker = vi.hoisted(() => ({ start: vi.fn() }));
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => {
     broker.start();
@@ -154,6 +157,10 @@ vi.mock("../harness-model-broker.js", () => ({
       expiresAt: Date.now() + 60_000,
     };
   }),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 const RAW = { content: [{ type: "text", text: "raw from the server" }] };
@@ -206,6 +213,7 @@ import { setManagerConnections } from "../../mcp-connections";
 function manager() {
   return {
     getServerConfig: vi.fn(() => ({ url: "https://server.test/mcp" })),
+    getAllToolAnnotations: vi.fn(() => ({})),
     getInitializationInfo: vi.fn(() => ({
       transport: "streamable-http",
       protocolVersion: "2025-11-25",
@@ -523,7 +531,7 @@ describe("the route receipt on the persisted turn trace", () => {
         unavailableServerIds: ["srv-a"],
       });
       if (route === "host-tools") {
-        projectSpy.mockResolvedValueOnce({ tools: {}, keyToServerId: {} });
+        projectSpy.mockResolvedValueOnce({ tools: {}, keyToServerId: {}, toolRegistry: new Map() });
       }
       const receipt = await persisted(options);
       expect(receipt).not.toHaveProperty("profile");
@@ -568,5 +576,84 @@ describe("the route receipt on the persisted turn trace", () => {
       forwarding: { kind: "pass-through" },
     });
     expect(receipt).not.toHaveProperty("profile");
+  });
+});
+
+describe("a forwarded chat turn on its lane", () => {
+  /** The lane this chat's turns share, as the backend claims it. */
+  const onLane = async (state: unknown = null) => {
+    const { claimHarnessSessionState } = await import("../harness-session-state.js");
+    vi.mocked(claimHarnessSessionState).mockResolvedValueOnce({
+      ok: true,
+      leaseId: "lease-1",
+      stateVersion: 1,
+      state,
+      fingerprintChanged: false,
+      laneId: "lane-1",
+    } as never);
+    const { startHarnessModelBroker } = await import("../harness-model-broker.js");
+    return vi.mocked(startHarnessModelBroker);
+  };
+
+  it("asks its model lease for the lane's session grant and forwards on the lane's session envelopes", async () => {
+    const start = await onLane();
+    start.mockResolvedValueOnce({
+      ok: true,
+      proxyBaseUrl: "https://broker.example",
+      forwarding: {},
+      expiresAt: Date.now() + 60_000,
+      sessionGrantOrigin: "https://inspector.test",
+    } as never);
+    await runHarnessTurn(admit("forwarded-native") as never, "none");
+    const { sessionGrant } = start.mock.calls.at(-1)![0] as {
+      sessionGrant?: { laneId: string; leaseId: string };
+    };
+    expect(sessionGrant).toEqual({ laneId: "lane-1", leaseId: expect.any(String) });
+    const args = forwarding.prepare.mock.calls.at(-1)![0] as {
+      session?: { leaseId: string };
+      toolCatalog?: unknown;
+    };
+    // The envelopes are bound on the same lane lease the grant rides.
+    expect(args.session).toMatchObject({ leaseId: sessionGrant!.leaseId });
+    // Claude Code's agent can outlive the turn: its entries are versioned by
+    // each server's tools.
+    expect(args.toolCatalog).toEqual(expect.any(Function));
+  });
+
+  it("keeps per-turn forwarding contexts when the grant is injected on another origin", async () => {
+    const start = await onLane();
+    start.mockResolvedValueOnce({
+      ok: true,
+      proxyBaseUrl: "https://broker.example",
+      forwarding: {},
+      expiresAt: Date.now() + 60_000,
+      sessionGrantOrigin: "https://preview.example",
+    } as never);
+    await runHarnessTurn(admit("forwarded-native") as never, "none");
+    const args = forwarding.prepare.mock.calls.at(-1)![0];
+    expect(args).not.toHaveProperty("session");
+    expect(args).not.toHaveProperty("toolCatalog");
+  });
+
+  // A paused process keeps the configuration it started with, so only one
+  // that started on the lane's session envelopes may be kept.
+  it.each([
+    ["started on per-turn contexts", {}, "https://inspector.test", false],
+    ["started on session envelopes", { mcpjamSessionEnvelopes: true }, "https://inspector.test", true],
+    ["started on session envelopes, granted on another origin", { mcpjamSessionEnvelopes: true }, "https://preview.example", false],
+  ])("decides whether to keep a paused process %s", async (_case, data, grantOrigin, stable) => {
+    const start = await onLane({ resumeState: { type: "continue", data } });
+    start.mockResolvedValueOnce({
+      ok: true,
+      proxyBaseUrl: "https://broker.example",
+      forwarding: {},
+      expiresAt: Date.now() + 60_000,
+      sessionGrantOrigin: grantOrigin,
+    } as never);
+    forwardingRefresh.mockClear();
+    await runHarnessTurn(admit("forwarded-native") as never, "none");
+    expect(loggerSpy.error).not.toHaveBeenCalled();
+    expect(forwardingRefresh).toHaveBeenCalled();
+    expect(forwardingRefresh.mock.calls.at(-1)![3]).toEqual({ sessionStable: stable });
   });
 });

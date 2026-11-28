@@ -9,6 +9,10 @@
  */
 
 import {
+  authorizationServerMetadataUrls,
+  MCP_AUTHORIZATION_SERVER_METADATA_FORMS,
+} from "../metadata-candidates.js";
+import {
   describeAuthenticatedRequestFailure,
   describeTokenRequestFailure,
 } from "./shared/response-error.js";
@@ -131,33 +135,10 @@ export function buildActions_2025_06_18(
 // Helper: Build authorization server metadata URLs to try (RFC 8414 ONLY)
 // 2025-06-18 spec: Only requires RFC8414, does NOT support OIDC Discovery
 function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
-  const url = new URL(authServerUrl);
-  const urls: string[] = [];
-
-  if (url.pathname === "/" || url.pathname === "") {
-    // Root path - only RFC8414
-    urls.push(
-      new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
-    );
-  } else {
-    // Path-aware discovery - only RFC8414
-    const pathname = url.pathname.endsWith("/")
-      ? url.pathname.slice(0, -1)
-      : url.pathname;
-
-    // 2025-06-18 spec: RFC8414 with path, then root fallback
-    urls.push(
-      new URL(
-        `/.well-known/oauth-authorization-server${pathname}`,
-        url.origin,
-      ).toString(),
-    );
-    urls.push(
-      new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
-    );
-  }
-
-  return urls;
+  return authorizationServerMetadataUrls(
+    authServerUrl,
+    MCP_AUTHORIZATION_SERVER_METADATA_FORMS.legacy
+  ).map(({ url }) => url);
 }
 
 // Factory function to create the 2025-06-18 state machine

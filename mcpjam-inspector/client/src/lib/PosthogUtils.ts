@@ -325,7 +325,6 @@ export const options = {
     // targeting degrading to "no person properties" is acceptable; throwing
     // inside `loaded` would take out the whole analytics init.
     posthog.setPersonPropertiesForFlags?.({
-      ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
       deployment: HOSTED_MODE ? "hosted" : "self_hosted",
       platform: detectPlatform(),
     });
@@ -405,7 +404,6 @@ export const getPostHogOptions = (
         // Same flag person properties as the enabled branch.
         loaded: (posthog: any) => {
           posthog.setPersonPropertiesForFlags?.({
-            ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
             deployment: HOSTED_MODE ? "hosted" : "self_hosted",
             platform: detectPlatform(),
           });

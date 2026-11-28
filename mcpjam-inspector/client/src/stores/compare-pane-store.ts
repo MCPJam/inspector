@@ -5,6 +5,10 @@ import type { EnvironmentOverrides } from "@/shared/execution-target";
 export interface ComparePaneOption {
   paneId: string;
   label: string;
+  logoSrc?: string;
+  modelName?: string;
+  /** The pane's configured servers, absent when its environment is unresolved. */
+  serverSummary?: string;
   /** The client the pane runs; its built-in and browser tools are listed. */
   hostId: string | null;
   /** The environment an environment pane runs; null for a client pane. */

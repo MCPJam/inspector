@@ -7,10 +7,6 @@
  * widget-backed `show_servers` tool lives in `showServers.ts` and reuses the
  * helpers here.
  */
-import type {
-  SwarmJourneyFinding,
-  SwarmJourneyFindings,
-} from "@mcpjam/sdk/contract";
 import {
   callServerToolOperation,
   renderServerWidgetOperation,
@@ -32,6 +28,27 @@ import {
   deleteDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  createReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  exportDirectorySubmissionTestCasesOperation,
+  getDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  setDirectorySubmissionEvalsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -84,9 +101,6 @@ import {
   cancelProjectServerConnectionOperation,
   getProjectServerOperation,
   getServerPromptOperation,
-  describePlatformRefusal,
-  isPlatformApiError,
-  platformRefusalHint,
   listStudiesOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
@@ -114,6 +128,16 @@ import {
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  createMockServerOperation,
+  updateMockServerOperation,
+  getMockServerOperation,
+  patchMockServerOperation,
+  refreshMockServerOperation,
+  openMockRunOperation,
+  resetMockRunOperation,
+  closeMockRunOperation,
+  getMockForwardingPolicyOperation,
+  setMockForwardingPolicyOperation,
   listServerAccountsOperation,
   getServerAccountOperation,
   deleteServerAccountOperation,
@@ -131,7 +155,6 @@ import {
   updateEvalSuiteOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
-  deleteProjectOperation,
   getCapabilitiesOperation,
   listPersonasOperation,
   getPersonaOperation,
@@ -166,6 +189,9 @@ import {
   getSwarmRunInsightsOperation,
   requestSwarmRunInsightsOperation,
   cancelSwarmRunInsightsOperation,
+  requestEvalRunInsightsOperation,
+  cancelEvalRunInsightsOperation,
+  buildEvalRunFindingsOperation,
   publishStudyOperation,
   unpublishStudyOperation,
   listStudySessionsOperation,
@@ -201,13 +227,21 @@ import {
   uninstallRegistryServerOperation,
   sendFeedbackOperation,
   ALL_OPERATIONS,
-  formatPermalinkLines,
   runOperationWithPermalinks,
   withPermalinkEnvelope,
   type PlatformOperation,
-  type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
-import type { ToolAnnotations } from "@modelcontextprotocol/server";
+import {
+  describeOperationError,
+  errorStructuredContent,
+  HELD_OPERATION_NAMES,
+  HELD_WHILE_IN_BETA,
+  MCP_RESULT_PROJECTIONS,
+  operationAnnotations,
+  operationDescription,
+  toolError,
+  toolSuccess,
+} from "@mcpjam/sdk/internal/mcp-surface";
 import { MCPJAM_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
 import {
   PLATFORM_WIDGETS_ENABLED,
@@ -217,84 +251,10 @@ import {
 } from "../shared/platform-widgets.js";
 import type { PlatformToolContext } from "../server.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
-import { isClosedWorldOperation } from "./closedWorldOperations.js";
 import {
   describeGuestMintFailure,
   guestMintErrorContent,
 } from "../guestMint.js";
-
-/**
- * Catalog tools HELD off this surface while their feature is in beta.
- *
- * This catalog is one static list, built with no caller in hand, so it cannot
- * offer a beta only to the organizations that have it. Advertising these to
- * everyone would offer most callers tools they cannot use, so they are
- * withheld from everyone instead, until the tool list is resolved per caller.
- * REST, the SDK and the CLI are unaffected.
- *
- * Each held operation keeps its place, and its rationale, in
- * `CATALOG_OPERATIONS_INCLUDING_HELD` below; `PLATFORM_CATALOG_OPERATIONS`
- * filters it out and `EXCLUDED_FROM_CATALOG` gives the reason. Releasing a
- * feature is deleting its entry here.
- */
-const HELD_WHILE_IN_BETA: ReadonlyArray<{
-  feature: string;
-  operations: ReadonlyArray<PlatformOperation<any, any>>;
-}> = [
-  { feature: "unified sessions", operations: [searchSessionsOperation] },
-  {
-    feature: "the registry directory",
-    operations: [
-      searchRegistryDirectoryOperation,
-      getRegistryDirectoryServerOperation,
-      listRegistryDirectorySourcesOperation,
-      installRegistryDirectoryServerOperation,
-    ],
-  },
-  {
-    feature: "the hosted browser",
-    operations: [
-      driveChatSessionBrowserOperation,
-      observeChatSessionBrowserOperation,
-    ],
-  },
-  {
-    feature: "Cloud Skills",
-    operations: [listProjectSkillsOperation, getProjectSkillOperation],
-  },
-  {
-    feature: "Computers",
-    operations: [listImagesOperation, getImageOperation],
-  },
-  {
-    feature: "Agent Plugins",
-    operations: [listProjectPluginsOperation, getPluginVersionOperation],
-  },
-  {
-    feature: "GitHub checks",
-    operations: [
-      listEvalGithubReposOperation,
-      connectEvalGithubRepoOperation,
-      listEvalCheckReposOperation,
-      connectEvalCheckRepoOperation,
-    ],
-  },
-  {
-    feature: "description experiments",
-    operations: [
-      proposeEvalDescriptionRewriteOperation,
-      startEvalDescriptionExperimentOperation,
-      getEvalDescriptionExperimentOperation,
-    ],
-  },
-  { feature: "scheduled runs", operations: [setEvalSuiteScheduleOperation] },
-];
-
-const HELD_OPERATION_NAMES: ReadonlySet<string> = new Set(
-  HELD_WHILE_IN_BETA.flatMap(({ operations }) =>
-    operations.map((operation) => operation.name)
-  )
-);
 
 /**
  * Every operation this catalog carries, in list order — including the held
@@ -338,6 +298,20 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  // MOCK SERVERS. Reads are bounded pages (see get_mock_server), so a mock with
+  // hundreds of tools or a very long description stays inside this server's
+  // response text budget. The policy write is a workspace admin decision and
+  // the agent registry gates it.
+  createMockServerOperation,
+  updateMockServerOperation,
+  getMockServerOperation,
+  patchMockServerOperation,
+  refreshMockServerOperation,
+  openMockRunOperation,
+  resetMockRunOperation,
+  closeMockRunOperation,
+  getMockForwardingPolicyOperation,
+  setMockForwardingPolicyOperation,
   // SERVER ACCOUNTS — the reads plus the delete. The upload and the update
   // are in EXCLUDED_FROM_CATALOG; deleting the default while other accounts
   // exist is refused, so the delete never moves runs onto another account.
@@ -373,6 +347,30 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   deleteDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  createReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
+  // Resuming a submission from its id, so an agent with only these tools
+  // can pick one up, read every finding, export the pack and record what
+  // happened in the directory.
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
+  getDirectorySubmissionTestPlanOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  getDirectorySubmissionEvalsOperation,
+  setDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  exportDirectorySubmissionTestCasesOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -429,6 +427,11 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
+  // The run page's Analyze button as three steps: build findings, request the
+  // analysis, cancel it. Results are read from get_eval_run's `insights`.
+  buildEvalRunFindingsOperation,
+  requestEvalRunInsightsOperation,
+  cancelEvalRunInsightsOperation,
   // The description-rewrite experiment, beside the judge request it most
   // resembles: propose and start are spends with a stated cap, so they carry
   // the same risk metadata the judge request does, and the read closes the
@@ -605,6 +608,8 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     )
   ),
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
+  create_reviewer_handoff:
+    "Returns a single-use browser sign-in link that should stay with the requester. Generate it in Readiness or through a direct API or CLI call so it stays out of the MCP host transcript.",
   // Its create/update siblings moved INTO the catalog; this reason had to stop
   // being the blanket one they shared, because that rationale is no longer
   // true of project lifecycle as a category. What is true of delete
@@ -789,144 +794,6 @@ if (
 }
 
 /**
- * Operations that REMOVE OR INVALIDATE something that already existed, DERIVED
- * from the catalog's own `risk` metadata rather than listed here.
- *
- * Not only permanent deletion: `update_client` and `set_client_servers` carry
- * `risk: "destructive"` because replacing a live setting invalidates the one
- * that was in force, and a replacement server list detaches every server it
- * omits. They remain in the catalog behind compare-and-set; what stays OUT is
- * resource removal, which no precondition makes recoverable.
- *
- * Deriving is the whole point of that field: it exists so five surfaces make
- * one decision from one place instead of each re-deriving it. This set can
- * only ADD to what `ADDITIVE_WRITE_NAMES` below already leaves destructive; a
- * `risk: "destructive"` operation is never advertised as additive, even if
- * someone lists it there.
- *
- * `LEGACY_DESTRUCTIVE_NAMES` covers the operations that predate `risk`. It
- * shrinks to nothing as those are backfilled; it does not grow.
- */
-const LEGACY_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
-  deleteEvalSuiteOperation.name,
-  deleteEvalCaseOperation.name,
-  deleteProjectServerOperation.name,
-  deleteProjectOperation.name,
-  // Cancelling a run terminates in-flight work.
-  cancelEvalRunOperation.name,
-]);
-
-const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
-  ALL_OPERATIONS.filter(
-    (operation) =>
-      operation.risk === "destructive" ||
-      LEGACY_DESTRUCTIVE_NAMES.has(operation.name)
-  ).map((operation) => operation.name)
-);
-
-/**
- * Writes that are PURELY ADDITIVE — they create new rows or start new work and
- * never change, replace, cancel, revoke or delete anything that already
- * exists. Only these advertise `destructiveHint: false`; every other write
- * advertises `true`.
- *
- * Claude's directory review asks for `destructiveHint: true` on every tool
- * that "modifies or deletes data", which is wider than `risk: "destructive"`:
- * an update overwrites what was there, a forced insight regeneration replaces
- * the previous analysis, a cancel ends work in flight, and making a project
- * private revokes members' access. The MCP spec reads the same way — `false`
- * promises "only additive updates". So the hint is not derived from `risk`.
- *
- * OPT-IN, one name at a time, and that direction is the point: a write nobody
- * reviewed advertises the conservative `true`. A forgotten entry here costs a
- * confirmation prompt; a forgotten entry in a deny-list would tell clients a
- * destructive tool is safe. Audited against the handlers on 2026-10-06.
- *
- * Deliberately NOT here, though they look additive:
- * - `connect_project_server` and `install_registry_server`: a new connection
- *   request can evict the caller's oldest unopened one at the concurrency cap,
- *   and `reauthorize` cancels the requests in flight for that URL.
- * - `request_eval_run_judge`, `request_swarm_run_insights`,
- *   `request_study_insights`: a forced or failed-only regrade overwrites the
- *   stored verdicts or analysis.
- * - `upsert_study_member`: re-inviting clears `revokedAt`, so it can restore
- *   access someone revoked.
- * - `run_eval_suite`: `refreshSnapshot` replaces the suite's saved snapshot,
- *   and the run can invoke third-party tools with destructive effects.
- * - `run_eval_case` and `launch_goal_run`: their agents can invoke the same
- *   third-party write tools, even though the run records themselves are new.
- */
-const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
-  "create_project",
-  "create_project_server",
-  "create_eval_suite",
-  "create_eval_case",
-  "create_eval_cases",
-  "generate_eval_cases",
-  "import_eval_cases",
-  "backtest_eval_run",
-  "backtest_eval_run_judge",
-  "ensure_adhoc_environment",
-  "create_persona",
-  "generate_personas",
-  "create_goal",
-  "generate_goals",
-  "create_swarm",
-  // Each call mints a new study with its own share link; a taken name is
-  // refused rather than overwritten.
-  "publish_study",
-  "create_client",
-  "duplicate_client",
-  // A new rehearsal; a replayed key returns the one it made.
-  "create_directory_submission",
-  "send_feedback",
-]);
-
-/**
- * Writes a client MAY safely repeat after a dropped response: the identical
- * call lands on the state the first one produced and answers success — not a
- * conflict, not a not-found, and not a second effect. Each was checked against
- * its handler on 2026-10-06:
- *
- * - `delete_project_server` answers `{deleted: true}` again (the soft delete
- *   never checks `deletedAt`).
- * - `cancel_eval_run`, `cancel_goal_run`, `cancel_project_server_connection`
- *   treat an already-cancelled target as a no-op that returns it.
- * - `send_feedback` replays the stored receipt for a key, and dedupes
- *   identical content without one for 24 hours.
- * - `ensure_adhoc_environment` returns the same content-addressed row.
- * - Dismissing, undismissing, re-inviting and archiving a goal set a state
- *   that a repeat sets again; `update_project` writes the same values with no
- *   token to go stale.
- *
- * OPT-IN; absent means `idempotentHint: false`, the conservative claim.
- * Looks idempotent and is not: the compare-and-set edits (`update_client`,
- * `set_client_servers`) answer 409 because the first call rotated the config
- * id; the hard deletes (`delete_eval_suite`, `delete_eval_case`,
- * `uninstall_registry_server`) answer not-found; unpublishing a named study
- * answers not-found; rotating a share link mints another; and anything that
- * runs a third party's tool cannot promise a repeat is harmless.
- */
-const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
-  "delete_project_server",
-  "cancel_eval_run",
-  "cancel_goal_run",
-  "cancel_project_server_connection",
-  "send_feedback",
-  "ensure_adhoc_environment",
-  "dismiss_swarm_finding",
-  "undismiss_swarm_finding",
-  "dismiss_study_finding",
-  "undismiss_study_finding",
-  "upsert_study_member",
-  "update_project",
-  // The preflight reads the goal by id whether or not it is archived, and the
-  // mutation is a no-op on an archived row; a repeat answered
-  // `{archived: true}` on production.
-  "archive_goal",
-]);
-
-/**
  * Catalog operations that render as MCP Apps widgets, mapped to their view
  * in the shared UI bundle. The rest stay plain: list_projects and
  * list_project_servers defer to the richer show_servers widget,
@@ -977,93 +844,6 @@ export function registerPlatformCatalogTools(
 }
 
 /**
- * `list_models` answers with the whole public catalog: about 255 models and
- * 440 KB, three-quarters of it per-model observation timestamps and marketing
- * copy. The text rendering is capped, but `structuredContent` would still
- * carry all of it into a client, and Claude's directory review asks for
- * responses sized to the task. This keeps what choosing a model needs.
- *
- * MCP-only: the CLI and REST still return the full rows, and the omitted
- * fields are named in the result so nothing is silently missing.
- */
-const MODEL_CATALOG_OMITTED_FIELDS = [
-  "description",
-  "observations",
-  "architecture (beyond modalities)",
-  "top_provider",
-  "per_request_limits",
-  "default_parameters",
-  "pricing (beyond prompt and completion)",
-] as const;
-
-function stringList(value: unknown): string[] | undefined {
-  return Array.isArray(value) &&
-    value.every((entry) => typeof entry === "string")
-    ? (value as string[])
-    : undefined;
-}
-
-export function compactModelCatalogForModel(payload: object): object {
-  const items = (payload as { items?: unknown }).items;
-  if (!Array.isArray(items)) return payload;
-  return {
-    ...payload,
-    items: items.map((raw) => {
-      const model = (raw ?? {}) as Record<string, unknown>;
-      const pricing = (model.pricing ?? {}) as Record<string, unknown>;
-      const architecture = (model.architecture ?? {}) as Record<
-        string,
-        unknown
-      >;
-      const parameters = stringList(model.supported_parameters);
-      return {
-        id: model.id,
-        name: model.name,
-        ...(model.provider !== undefined ? { provider: model.provider } : {}),
-        ...(model.providerSource !== undefined
-          ? { providerSource: model.providerSource }
-          : {}),
-        ...(model.context_length !== undefined
-          ? { contextLength: model.context_length }
-          : {}),
-        ...(pricing.prompt !== undefined || pricing.completion !== undefined
-          ? {
-              pricingPerToken: {
-                prompt: pricing.prompt,
-                completion: pricing.completion,
-              },
-            }
-          : {}),
-        ...(stringList(architecture.input_modalities)
-          ? { inputModalities: architecture.input_modalities }
-          : {}),
-        ...(stringList(architecture.output_modalities)
-          ? { outputModalities: architecture.output_modalities }
-          : {}),
-        ...(parameters ? { supportsTools: parameters.includes("tools") } : {}),
-        ...(Array.isArray(model.supportedReasoningEfforts)
-          ? { supportedReasoningEfforts: model.supportedReasoningEfforts }
-          : {}),
-        ...(model.guestAllowed !== undefined
-          ? { guestAllowed: model.guestAllowed }
-          : {}),
-        ...(model.deprecated_at !== undefined && model.deprecated_at !== null
-          ? { deprecatedAt: model.deprecated_at }
-          : {}),
-      };
-    }),
-    compacted: { omittedFields: [...MODEL_CATALOG_OMITTED_FIELDS] },
-  };
-}
-
-/** Per-tool reshaping of a successful result, applied on this surface only. */
-const MCP_RESULT_PROJECTIONS: Readonly<
-  Record<string, ((payload: object) => object) | undefined>
-> = {
-  list_models: compactModelCatalogForModel,
-};
-
-/**
  * UI registration for a widget-backed tool: the shared app bundle under the
  * view's own resource URI, and a callback whose payload carries the
  * `widget` tag the bundle routes on. This is the callback a widget-backed
@@ -1091,62 +871,6 @@ export function platformWidgetUi(
   };
 }
 
-export function operationAnnotations(
-  operation: PlatformOperation<unknown, unknown>
-): ToolAnnotations {
-  // The title goes here as well as on the tool: Claude's directory reads a
-  // tool's display name from `annotations.title` only, and flags every tool
-  // without one even when its top-level `title` is set.
-  return { title: operation.title, ...behaviorAnnotations(operation) };
-}
-
-function behaviorAnnotations(
-  operation: PlatformOperation<unknown, unknown>
-): ToolAnnotations {
-  if (operation.readOnly) {
-    return {
-      readOnlyHint: true,
-      destructiveHint: false,
-      openWorldHint: !isClosedWorldOperation(operation.name),
-    };
-  }
-  // `mayBeDestructive` operations (call_server_tool, send_chat_message) run
-  // the caller's own third-party tools, whose effects nobody upstream can
-  // know. They used to omit the hint so clients would assume destructive;
-  // Claude's directory wants it stated, so it is stated.
-  const additive =
-    ADDITIVE_WRITE_NAMES.has(operation.name) &&
-    !DESTRUCTIVE_OPERATION_NAMES.has(operation.name) &&
-    operation.mayBeDestructive !== true;
-  return {
-    readOnlyHint: false,
-    destructiveHint: !additive,
-    idempotentHint: IDEMPOTENT_WRITE_NAMES.has(operation.name),
-    openWorldHint: !isClosedWorldOperation(operation.name),
-  };
-}
-
-/**
- * The spend cue a client shows next to a tool that costs money.
- *
- * Read off the operation's own `risk` facet rather than a hand-kept name list:
- * the catalog already knows which operations spend, and a second list here
- * would go stale the first time an operation is re-classified — silently, and
- * in the direction that omits the warning.
- *
- * MCP has no "this costs money" annotation, so the honest place for it is the
- * DESCRIPTION, which every client renders. `run_eval_suite` can start several
- * paid runs at once, and a user approving a tool call deserves to know that
- * before the call, not from the invoice.
- */
-export function operationDescription(
-  operation: PlatformOperation<unknown, unknown>
-): string {
-  return operation.risk === "spend"
-    ? `${operation.description} COSTS MONEY: this consumes the organization's credits or configured provider keys.`
-    : operation.description;
-}
-
 export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
@@ -1158,6 +882,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   // first tool execution), never at connect/list_tools.
   const bearer = await context.getBearerToken();
   if (!bearer.ok) {
+    context.onGuestMintFailed?.();
     return toolError(
       describeGuestMintFailure(bearer.failure),
       guestMintErrorContent(bearer.failure)
@@ -1172,8 +897,8 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     // Declared on every eval-run launch this call may make, so a run started
     // by an agent reads as MCP rather than as the generic API badge every
     // hosted launch used to show. `client` names WHICH agent, when the request
-    // said; see `PlatformToolContext.callerUserAgent` on why it is the
-    // request's user-agent and not the `initialize` handshake's `clientInfo`.
+    // said: its own `clientInfo.name` when this request carries one, else its
+    // user-agent (see `PlatformToolContext.callerUserAgent`).
     //
     // Set on the CLIENT rather than on the operation's input, deliberately: an
     // operation's `inputSchema` is exposed verbatim as the MCP tool's own
@@ -1181,7 +906,9 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     // choose its own badge.
     launcher: {
       kind: "mcp",
-      ...(context.callerUserAgent ? { client: context.callerUserAgent } : {}),
+      ...((context.callerClientName ?? context.callerUserAgent)
+        ? { client: context.callerClientName ?? context.callerUserAgent }
+        : {}),
     },
   });
 
@@ -1219,337 +946,4 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
       errorStructuredContent(error)
     );
   }
-}
-
-// Carry a machine-readable error code into the widget so it can tell an empty
-// state (NOT_FOUND: no accessible projects, or a selector that matched nothing)
-// apart from a real failure (network, timeout, auth) and render the former
-// calmly instead of with the alarming destructive styling. The model/CLI still
-// see `isError` plus the human-readable text message.
-function errorStructuredContent(
-  error: unknown
-): Record<string, unknown> | undefined {
-  if (isPlatformApiError(error)) {
-    // A usage-limit refusal also carries WHEN to come back and whether credits
-    // would help — allowlisted by `describePlatformRefusal`, never the raw
-    // server envelope — so an agent can wait instead of looping or suggesting
-    // a top-up that cannot lift it.
-    const refusal = describePlatformRefusal(error);
-    // A feature-gate refusal keeps its own code and the feature it names, so
-    // an agent can tell FEATURE_UNAVAILABLE for one beta from any other 403.
-    // Only these two keys: the rest of `details` is the server's envelope.
-    const feature =
-      typeof error.details?.feature === "string"
-        ? error.details.feature
-        : undefined;
-    const detailCode = error.details?.code;
-    const details =
-      feature !== undefined || detailCode === "FEATURE_UNAVAILABLE"
-        ? {
-            ...(typeof detailCode === "string" ? { code: detailCode } : {}),
-            ...(feature !== undefined ? { feature } : {}),
-          }
-        : {};
-    return {
-      error: {
-        code: error.code,
-        message: error.message,
-        // The failing request's id, so a report of this failure can be joined
-        // to the server's logs. Only responses carry one.
-        ...(error.requestId ? { requestId: error.requestId } : {}),
-        ...(refusal ? { refusal } : {}),
-        ...(Object.keys(details).length > 0 ? { details } : {}),
-      },
-    };
-  }
-  return undefined;
-}
-
-function describeOperationError(error: unknown): string {
-  if (isPlatformApiError(error)) {
-    // Wire errors keep their stable code for agent retry logic; synthesized
-    // client-side errors (status 0) are already self-explanatory messages.
-    const message =
-      error.status > 0 ? `${error.code}: ${error.message}` : error.message;
-    // In the text as well as `structuredContent`, for the same reason as the
-    // retry guidance below: the text is the channel every host shows a model.
-    const base = error.requestId
-      ? `${message} (request id: ${error.requestId})`
-      : message;
-    // Hosts vary in whether the model sees `structuredContent`, so the retry
-    // guidance is in the text too.
-    const refusal = describePlatformRefusal(error);
-    return [
-      base,
-      refusal ? platformRefusalHint(refusal) : undefined,
-    ]
-      .filter((part): part is string => part !== undefined)
-      .join(" ");
-  }
-  return error instanceof Error ? error.message : String(error);
-}
-
-// Cap on the model-visible text rendering. Resource reads, tool schemas,
-// and doctor reports are unbounded upstream; hosts feed `content` into model
-// context, so an uncapped pretty-print can blow a turn's budget. Mirrors the
-// inspector workspace built-ins' MODEL_OUTPUT_CAP philosophy (never fail
-// over size, degrade to a readable prefix). `structuredContent` stays
-// complete — widgets and programmatic consumers read that, not the text.
-const MODEL_TEXT_CAP = 24_000;
-
-// ── insights-envelope compaction ─────────────────────────────────────────────
-// Runs BEFORE both renderings (text AND structuredContent): the generic text
-// cap is a blind character slice, and an insights envelope sliced mid-JSON
-// would read as complete while silently missing findings. This compaction is
-// deterministic and self-describing — every omission lands in the envelope's
-// own `truncation` counters, so a reader can never mistake a compacted
-// response for a complete one.
-export const MODEL_MAX_FINDINGS = 8;
-export const MODEL_MAX_EVIDENCE_PER_FINDING = 2;
-export const MODEL_CONTRACT_JSON_CAP = 600;
-
-type EnvelopeLike = {
-  journeyFindings?: SwarmJourneyFindings | null;
-  schemaVersion: number;
-  findings: Array<Record<string, unknown>>;
-  truncation: {
-    truncated: boolean;
-    omittedFindings: number;
-    omittedEvidence: number;
-    contractTruncated: boolean;
-  };
-};
-
-function isInsightsEnvelope(value: unknown): value is EnvelopeLike {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as EnvelopeLike;
-  // `typeof null === "object"`, so the truncation check must reject null
-  // explicitly: a payload with `truncation: null` would otherwise pass as an
-  // envelope and throw while compaction read its counters, turning one
-  // malformed field into a failed tool call.
-  return (
-    candidate.schemaVersion === 1 &&
-    Array.isArray(candidate.findings) &&
-    typeof candidate.truncation === "object" &&
-    candidate.truncation !== null
-  );
-}
-
-export const MODEL_MAX_SESSION_IDS_PER_FINDING = 5;
-export const MODEL_EXCERPT_CAP = 400;
-export const MODEL_PHRASE_CAP = 240;
-
-/**
- * Cut `text` to at most `cap` characters, ellipsis included, preferring the
- * last word boundary. Text with no space to cut at is hard-cut rather than
- * collapsed to a bare ellipsis.
- */
-export function clampAtWord(text: string, cap: number): string {
-  if (text.length <= cap) return text;
-  const head = text.slice(0, cap - 1);
-  const space = head.lastIndexOf(" ");
-  return (space > 0 ? head.slice(0, space) : head).trimEnd() + "…";
-}
-
-const JOURNEY_BASIS_RANK: Record<SwarmJourneyFinding["basis"], number> = {
-  verifiedMechanism: 0,
-  populationFact: 1,
-  sessionReport: 2,
-};
-
-/**
- * Compact a swarm run's `journeyFindings` the way {@link compactEnvelope}
- * compacts the envelope's own findings: verified mechanisms first, a head
- * slice, evidence capped per finding, model phrases clamped. Personas and
- * populations are never touched: they are the counts every sentence rests on.
- */
-export function compactJourneyFindings(value: SwarmJourneyFindings) {
-  let omittedEvidence = 0;
-  let contractTruncated = false;
-  const clampPhrase = (phrase: string | null, cap: number) => {
-    if (phrase === null || phrase.length <= cap) return phrase;
-    contractTruncated = true;
-    return clampAtWord(phrase, cap);
-  };
-  const findings = [...value.findings]
-    .sort((a, b) => JOURNEY_BASIS_RANK[a.basis] - JOURNEY_BASIS_RANK[b.basis])
-    .slice(0, MODEL_MAX_FINDINGS)
-    .map((finding) => {
-      omittedEvidence += Math.max(
-        0,
-        finding.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING
-      );
-      omittedEvidence += Math.max(
-        0,
-        finding.sessionIds.length - MODEL_MAX_SESSION_IDS_PER_FINDING
-      );
-      let reportExcerpt = finding.reportExcerpt;
-      if (reportExcerpt) {
-        omittedEvidence += Math.max(
-          0,
-          reportExcerpt.citations.length - MODEL_MAX_EVIDENCE_PER_FINDING
-        );
-        reportExcerpt = {
-          actual: clampPhrase(reportExcerpt.actual, MODEL_EXCERPT_CAP)!,
-          // This object is REBUILT rather than spread, so a field left out
-          // here is silently dropped from everything the model reads.
-          ...(reportExcerpt.account
-            ? {
-                account: clampPhrase(reportExcerpt.account, MODEL_EXCERPT_CAP)!,
-              }
-            : {}),
-          citations: reportExcerpt.citations.slice(
-            0,
-            MODEL_MAX_EVIDENCE_PER_FINDING
-          ),
-        };
-      }
-      return {
-        ...finding,
-        sessionIds: finding.sessionIds.slice(
-          0,
-          MODEL_MAX_SESSION_IDS_PER_FINDING
-        ),
-        citations: finding.citations.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING),
-        outcomePhrase: clampPhrase(finding.outcomePhrase, MODEL_PHRASE_CAP),
-        mechanismPhrase: clampPhrase(finding.mechanismPhrase, MODEL_PHRASE_CAP),
-        fixPhrase: clampPhrase(finding.fixPhrase, MODEL_PHRASE_CAP),
-        reportExcerpt,
-      };
-    });
-  const omittedFindings = value.findings.length - findings.length;
-  return {
-    value: { ...value, findings },
-    omittedFindings,
-    omittedEvidence,
-    contractTruncated,
-  };
-}
-
-function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
-  const journey = envelope.journeyFindings
-    ? compactJourneyFindings(envelope.journeyFindings)
-    : null;
-  let omittedEvidence = journey?.omittedEvidence ?? 0;
-  let contractTruncated = journey?.contractTruncated ?? false;
-  // Findings arrive ready-first from the producer, so a head slice keeps
-  // every server-ready finding before any investigation is dropped.
-  const kept = envelope.findings.slice(0, MODEL_MAX_FINDINGS).map((finding) => {
-    const next = { ...finding };
-    const evidence = Array.isArray(finding.evidence)
-      ? (finding.evidence as unknown[])
-      : [];
-    if (evidence.length > MODEL_MAX_EVIDENCE_PER_FINDING) {
-      omittedEvidence += evidence.length - MODEL_MAX_EVIDENCE_PER_FINDING;
-      next.evidence = evidence.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING);
-    }
-    const target = finding.target as
-      | { currentDefinition?: Record<string, unknown> }
-      | undefined;
-    const def = target?.currentDefinition;
-    if (def) {
-      const clipped = { ...def };
-      for (const key of ["inputSchemaJson", "outputSchemaJson"] as const) {
-        const json = clipped[key];
-        if (typeof json === "string" && json.length > MODEL_CONTRACT_JSON_CAP) {
-          clipped[key] = json.slice(0, MODEL_CONTRACT_JSON_CAP);
-          clipped.truncated = true;
-          contractTruncated = true;
-        }
-      }
-      next.target = { ...target, currentDefinition: clipped };
-    }
-    return next;
-  });
-  const omittedFindings =
-    envelope.findings.length - kept.length + (journey?.omittedFindings ?? 0);
-  if (omittedFindings === 0 && omittedEvidence === 0 && !contractTruncated) {
-    return envelope;
-  }
-  return {
-    ...envelope,
-    findings: kept,
-    ...(journey ? { journeyFindings: journey.value } : {}),
-    truncation: {
-      truncated: true,
-      omittedFindings: envelope.truncation.omittedFindings + omittedFindings,
-      omittedEvidence: envelope.truncation.omittedEvidence + omittedEvidence,
-      contractTruncated:
-        envelope.truncation.contractTruncated || contractTruncated,
-    },
-  };
-}
-
-/** Compact every insights envelope found at the payload's top level or one
- * level down (`{ run: { insights } }`, `{ scenario: { insights } }`). */
-export function compactInsightsForModel<T extends object>(payload: T): T {
-  let changed = false;
-  const out: Record<string, unknown> = {
-    ...(payload as Record<string, unknown>),
-  };
-  for (const [key, value] of Object.entries(out)) {
-    if (isInsightsEnvelope(value)) {
-      const compacted = compactEnvelope(value);
-      if (compacted !== value) {
-        out[key] = compacted;
-        changed = true;
-      }
-      continue;
-    }
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      const inner = value as Record<string, unknown>;
-      if (isInsightsEnvelope(inner.insights)) {
-        const compacted = compactEnvelope(inner.insights);
-        if (compacted !== inner.insights) {
-          out[key] = { ...inner, insights: compacted };
-          changed = true;
-        }
-      }
-    }
-  }
-  return changed ? (out as T) : payload;
-}
-
-/**
- * @param permalinks Rendered as ONE concise line each, above the JSON.
- *
- * Duplicated deliberately, and only here: hosts vary in whether they render
- * `structuredContent` at all, so a permalink that existed only there would be
- * invisible in some clients — and the model is meant to see it and hand it to
- * the user verbatim. The lines lead so they survive the truncation below,
- * which is exactly what a large list result would otherwise cut. The JSON
- * itself is NOT re-scanned for permalinks: the array inside it is the same
- * data, and printing both twice would spend the model's budget on URLs.
- */
-function toolSuccess(payload: object, permalinks: PlatformPermalink[] = []) {
-  payload = compactInsightsForModel(payload);
-  const header = permalinks.length
-    ? `${formatPermalinkLines(permalinks)}\n\n`
-    : "";
-  let text = `${header}${JSON.stringify(payload, null, 2)}`;
-  if (text.length > MODEL_TEXT_CAP) {
-    text = `${text.slice(0, MODEL_TEXT_CAP)}\n…[truncated ${
-      text.length - MODEL_TEXT_CAP
-    } chars; the complete payload is in structuredContent]`;
-  }
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text,
-      },
-    ],
-    structuredContent: payload as Record<string, unknown>,
-  };
-}
-
-function toolError(
-  message: string,
-  structuredContent?: Record<string, unknown>
-) {
-  return {
-    isError: true,
-    content: [{ type: "text" as const, text: message }],
-    ...(structuredContent ? { structuredContent } : {}),
-  };
 }

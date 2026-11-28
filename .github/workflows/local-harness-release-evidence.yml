@@ -19,11 +19,17 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Only the newest commit on `main` can be released, so a newer push replaces
-# a run still going.
+# One run at a time, and never cancelled. `main` takes a push every few
+# minutes and a run takes about half an hour, so replacing the run still going
+# meant almost none finished and the release ran conformance itself. Now the
+# running one finishes and GitHub keeps only the newest push pending behind it.
+# Most commits change no conformance input, so the run that finishes leaves a
+# marker the newer commit's digest also names: its plan finds it and ends, and
+# a release from it finds the same marker. A commit that did change an input
+# gets its own run as soon as the one ahead finishes.
 concurrency:
   group: local-harness-release-evidence
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read

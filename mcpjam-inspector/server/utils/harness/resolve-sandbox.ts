@@ -65,6 +65,17 @@ export interface TrustedHarnessSandboxBinding {
    * turn heartbeats within it, and a warm agent exits after it.
    */
   idleMs?: number;
+  /**
+   * Epoch milliseconds a box that pauses keeps its processes until, from the
+   * same reply. A warm agent may be kept until then (`warm-retention.ts`).
+   */
+  retainUntil?: number;
+  /**
+   * This turn took a box prepared before Send that no turn had used (the
+   * backend says `prepared` once, on the call that takes it). Preparation
+   * never starts a bridge (`prepare-conversation-box.ts`), so none runs there.
+   */
+  unused?: true;
 }
 
 export async function resolveHarnessSandbox(args: {

@@ -41,7 +41,24 @@ updates:
       - "/mcpjam-inspector/test-servers/mcp-check-fixture"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+    # Room for every group below at once. The carve-out groups are meant to
+    # sit open until someone does their migration, and each one holds a slot:
+    # on 2026-11-15 ten carve-out PRs filled the old limit of 10, so the
+    # routine minor/patch and major groups had not opened a PR since early
+    # October. 16 carve-outs + 4 routine groups = 20. Security updates have
+    # their own fixed limit and are not counted here.
+    open-pull-requests-limit: 20
+    # No automatic rebases. From 2026-11-10 to 11-15 Dependabot branches ran
+    # test.yml 55 times and 41 of those runs failed, all on carve-out PRs
+    # that are red until a person migrates them (above all pinned-browser,
+    # 12 runs, and harness-adapters, 15). Each one was re-run every time a
+    # lockfile change on main made it conflict, and failed the same way
+    # every time. A person merges every Dependabot PR anyway (see
+    # dependabot-auto-merge.yml), so when a PR is ready and in conflict,
+    # comment `@dependabot rebase` on it. This covers security PRs too: they
+    # still open on their own, but a conflicted one waits for that comment.
+    # Dependabot keeps rebasing PRs it opened before this setting for 30 days.
+    rebase-strategy: disabled
     groups:
       # The desktop packaging chain gets its own groups. dependabot-auto-merge
       # holds any PR that TOUCHES electron/sharp/@electron*, so leaving these
@@ -527,6 +544,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Every github-actions group PR is held for a person, and every one so
+    # far has failed CI until that person does work on it: moving the action
+    # pins in local-harness-pack.yml changes a pack input, so the release
+    # gate test (runtime-contract.test.ts) fails until the PR also runs
+    # `node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --write`
+    # and the affected packs are republished. Automatic rebases re-ran that
+    # failing suite 8 times on #6923 in five days. When you take one up,
+    # comment `@dependabot rebase` first.
+    rebase-strategy: disabled
     groups:
       github-actions:
         patterns: ["*"]

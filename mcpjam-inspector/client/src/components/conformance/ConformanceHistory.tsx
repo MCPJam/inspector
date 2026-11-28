@@ -6,11 +6,12 @@
  * redacted artifact at `/conformance/shared/:token`.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { FlaskConical } from "lucide-react";
+import { LoadingState } from "@/components/evals/LoadingState";
+import { FlaskConical, Loader2 } from "lucide-react";
 import { useOpenRunFromHistory, useRunBack } from "./conformance-run-origin";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
@@ -40,9 +41,15 @@ import type {
   SharedSuiteReport,
 } from "./conformance-shared-artifact";
 import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
-import { RunResultRing } from "./RunResultRing";
+import {
+  ConformanceHistoryTable,
+  HISTORY_SOURCE_LABEL,
+} from "./ConformanceHistoryTable";
+import { ConformanceHistoryEmpty } from "./ConformanceHistoryEmpty";
 import {
   ConformanceHistoryFilters,
+  DEFAULT_HISTORY_SORT,
+  isBackendHistoryOrder,
   searchAndSortHistory,
   type HistorySort,
 } from "./ConformanceHistoryFilters";
@@ -94,36 +101,44 @@ export type ConformanceRunListItem = {
   sharingEnabled: boolean;
 };
 
-/** Where a run came from, in the words the History table uses. */
-export const HISTORY_SOURCE_LABEL: Record<string, string> = {
-  ui: "UI",
-  sdk: "SDK",
-  cli: "CLI",
-  github_action: "GitHub",
-  github_app: "GitHub",
-  api: "API",
-};
+export {
+  HISTORY_SOURCE_LABEL,
+  historyDateFormat,
+} from "./ConformanceHistoryTable";
 
-export const historyDateFormat = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
+/**
+ * The app's loading state (the evals one), centered in all the height left
+ * below the toolbar, where the table will be.
+ */
+function HistoryLoader() {
+  return (
+    <div
+      className="flex min-h-64 flex-1 items-center justify-center"
+      role="status"
+      data-testid="conformance-history-loading"
+    >
+      <LoadingState />
+    </div>
+  );
+}
+
+const NO_RUNS_TITLE = "No conformance runs yet";
+const NO_RUNS_DESCRIPTION =
+  "Runs from the Inspector, the CLI, GitHub, and the API land here.";
 
 /** Runs per page while History shows the newest first. */
 const HISTORY_PAGE_SIZE = 20;
 /**
  * Runs per page while History reads every run. The backend matches runs by
- * server only and orders them by date only, so search and the name sort work
- * on the whole history, not on the pages loaded so far.
+ * server only and orders them newest first only, so search and every other
+ * sort work on the whole history, not on the pages loaded so far.
  */
 const HISTORY_READ_ALL_PAGE_SIZE = 100;
 
 /**
  * Every conformance run in the project, newest first, as one table. A row
- * opens the run's detail page. Above it, a search box, a server filter and a
- * sort, laid out like the Swarms sessions filters.
+ * opens the run's detail page. Above it, a full-width search box with the
+ * server filter at its right end; the Server, Score and Date headers sort.
  */
 export function ConformanceHistory({
   projectId,
@@ -138,18 +153,28 @@ export function ConformanceHistory({
   /** A saved server's id, or null for every server. */
   const [serverFilter, setServerFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<HistorySort>("newest");
+  const [sort, setSort] = useState<HistorySort>(DEFAULT_HISTORY_SORT);
   const openRun = useOpenRunFromHistory(projectId);
 
   const query = search.trim().toLowerCase();
-  // One server's runs all share a name, so the name sort needs no more of
-  // them than are loaded. A search does.
+  // Any order but the backend's needs every run. One server's runs all share
+  // a name, though, so the name sort needs no more of them than are loaded.
   const readsEveryRun =
-    query.length > 0 || (sort === "server" && serverFilter === null);
+    query.length > 0 ||
+    (!isBackendHistoryOrder(sort) &&
+      !(sort.key === "server" && serverFilter !== null));
   /** History is paging forward on its own, on the large page. */
   const [readAll, setReadAll] = useState(false);
   /** Once there are runs, the toolbar stays up through every reload. */
   const [hadRuns, setHadRuns] = useState(false);
+  /**
+   * The rows as last shown with every run they needed, kept while a sort
+   * reads the rest of the history so the table switches order only once.
+   */
+  const settled = useRef<{
+    serverFilter: string | null;
+    rows: ConformanceRunListItem[];
+  } | null>(null);
 
   const page = useQuery(
     "conformanceRuns:listRuns" as any,
@@ -182,6 +207,8 @@ export function ConformanceHistory({
     setCursor(null);
   }
   if (rows.length > 0 && !hadRuns) setHadRuns(true);
+  /** The page `rows` already holds; the query's newest can be a render ahead. */
+  const [mergedPage, setMergedPage] = useState<typeof page>(undefined);
 
   useEffect(() => {
     if (!page) return;
@@ -190,9 +217,11 @@ export function ConformanceHistory({
       const seen = new Set(previous.map((row) => row._id));
       return [...previous, ...page.page.filter((row) => !seen.has(row._id))];
     });
+    setMergedPage(page);
   }, [cursor, page]);
 
-  // Search and the name sort keep loading pages until the history is complete.
+  // Search and the column sorts keep loading pages until the history is
+  // complete.
   useEffect(() => {
     if (readAll && page && !page.isDone) setCursor(page.continueCursor);
   }, [readAll, page]);
@@ -214,26 +243,20 @@ export function ConformanceHistory({
   // Only the first load returns early: a reload keeps the toolbar and its focus.
   if (!hadRuns && serverFilter === null) {
     if (page === undefined && rows.length === 0) {
-      return (
-        <p className="text-sm text-muted-foreground" role="status">
-          Loading run history…
-        </p>
-      );
+      return <HistoryLoader />;
     }
 
     if (rows.length === 0) {
       return (
-        <EmptyState
-          icon={FlaskConical}
-          title="No conformance runs yet"
-          className="h-auto py-10"
-          description="Runs from the Inspector, the CLI, GitHub, and the API land here."
+        <ConformanceHistoryEmpty
+          title={NO_RUNS_TITLE}
+          description={NO_RUNS_DESCRIPTION}
         />
       );
     }
   }
 
-  const visibleRows = searchAndSortHistory(rows, {
+  const sortedRows = searchAndSortHistory(rows, {
     query,
     sort,
     texts: (run) => [
@@ -242,130 +265,111 @@ export function ConformanceHistory({
       HISTORY_SOURCE_LABEL[run.source] ?? run.source,
     ],
     serverName: serverLabel,
+    score: (run) => run.score,
+    createdAt: (run) => run.createdAt,
   });
-  const readingEveryRun = readAll && (!page || !page.isDone);
+  // Also true on the render where a sort or search has just asked for every
+  // run, before the large page is set, and on the one where the last page has
+  // arrived but is not in `rows` yet: done then would sort without it.
+  const readingEveryRun =
+    readsEveryRun && !(page?.isDone && mergedPage === page);
+  // A sort over part of the history leads with the wrong runs, then reorders
+  // once the rest arrives. Keep the last complete order up, dimmed, until then.
+  // A search narrows as pages arrive, so it shows them as they come.
+  const holdOrder =
+    readingEveryRun &&
+    query.length === 0 &&
+    settled.current !== null &&
+    settled.current.serverFilter === serverFilter &&
+    settled.current.rows.length > 0;
+  const visibleRows =
+    holdOrder && settled.current ? settled.current.rows : sortedRows;
+  if (!readingEveryRun) settled.current = { serverFilter, rows: sortedRows };
+  // A sort with no complete order of its own to hold (just switched servers,
+  // say) would show part of the history in the wrong order: the loader waits
+  // for all of it instead.
+  const awaitingOrder = readingEveryRun && query.length === 0 && !holdOrder;
   const filteredServerName = serverFilter
     ? (serverNames?.get(serverFilter) ?? serverFilter)
     : null;
 
-  const header = "text-[11px] font-semibold tracking-[0.06em] text-foreground";
-  const columns =
-    "grid w-full grid-cols-[minmax(0,1.8fr)_repeat(6,minmax(0,1fr))] items-center gap-x-4";
-  const cell = "min-w-0 truncate";
-
-  const notice = (text: string, status = false) => (
-    <p
-      className="px-1 text-sm text-muted-foreground"
-      role={status ? "status" : undefined}
-    >
-      {text}
-    </p>
-  );
-
   return (
-    <section className="space-y-3" aria-label="Run history">
+    <section
+      className="flex flex-1 flex-col space-y-3"
+      aria-label="Run history"
+    >
       <ConformanceHistoryFilters
         search={search}
         onSearchChange={setSearch}
         serverFilter={serverFilter}
         onServerFilterChange={changeServerFilter}
         serverNames={serverNames}
-        sort={sort}
-        onSortChange={setSort}
       />
 
-      {readingEveryRun && rows.length > 0
-        ? notice("Loading every run…", true)
-        : null}
+      {/* Always in the DOM, out of the flow: the sorted header's spinner is
+          what sighted users see, so the table never shifts for this. */}
+      <p className="sr-only" role="status">
+        {readingEveryRun && rows.length > 0 && !awaitingOrder
+          ? "Loading every run…"
+          : ""}
+      </p>
 
       {page === undefined && rows.length === 0 ? (
-        notice("Loading run history…", true)
+        <HistoryLoader />
       ) : rows.length === 0 ? (
-        notice(
-          filteredServerName
-            ? `No runs for ${filteredServerName} yet.`
-            : "No conformance runs yet.",
-          true,
+        filteredServerName ? (
+          <ConformanceHistoryEmpty
+            title={`No runs for ${filteredServerName} yet`}
+            description="Run a check on it, or clear the filter to see every server's runs."
+            clear={{
+              label: "Clear server filter",
+              onClear: () => changeServerFilter(null),
+            }}
+          />
+        ) : (
+          <ConformanceHistoryEmpty
+            title={NO_RUNS_TITLE}
+            description={NO_RUNS_DESCRIPTION}
+          />
         )
-      ) : visibleRows.length === 0 ? (
-        readingEveryRun ? null : (
-          <p
-            className="px-1 text-sm text-muted-foreground"
-            role="status"
-            data-testid="conformance-history-no-match"
-          >
-            No runs match &ldquo;{search.trim()}&rdquo;.
-          </p>
+      ) : visibleRows.length === 0 || awaitingOrder ? (
+        readingEveryRun ? (
+          <HistoryLoader />
+        ) : (
+          <ConformanceHistoryEmpty
+            title={`No runs match “${search.trim()}”`}
+            description="Try another search, or clear it to see every run."
+            clear={{ label: "Clear search", onClear: () => setSearch("") }}
+          />
         )
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <div className={`${columns} bg-muted/60 px-4.5 py-2`}>
-            <span className={`${cell} ${header}`}>SERVER</span>
-            <span className={`${cell} ${header}`}>PROTOCOL</span>
-            <span className={`${cell} ${header}`}>SCORE</span>
-            <span className={`${cell} ${header}`}>CHECKS</span>
-            <span className={`${cell} ${header}`}>RESULT</span>
-            <span className={`${cell} ${header}`}>DATE</span>
-            <span className={`${cell} ${header}`}>SOURCE</span>
-          </div>
-          <ul>
-            {visibleRows.map((run) => (
-              <li
-                key={run._id}
-                className="border-t border-border/60 first:border-t-0"
-              >
-                <button
-                  type="button"
-                  className={`${columns} bg-popover px-4.5 py-3.5 text-left text-popover-foreground transition-colors hover:bg-muted/30`}
-                  data-testid="conformance-history-row"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openRun(run._id);
-                  }}
-                >
-                  <span className={`${cell} text-sm font-semibold`}>
-                    {serverLabel(run)}
-                  </span>
-                  <span className={`${cell} text-[13px] text-muted-foreground`}>
-                    {run.protocolVersion ?? "Auto"}
-                  </span>
-                  <span
-                    className={`${cell} text-sm tabular-nums ${
-                      run.score == null ? "text-muted-foreground" : ""
-                    }`}
-                  >
-                    {run.score == null ? "—" : `${run.score}%`}
-                  </span>
-                  <span
-                    className={`${cell} text-sm font-semibold tabular-nums`}
-                  >
-                    {run.passed}/{run.applicable}
-                  </span>
-                  <span className="flex min-w-0 items-center">
-                    <RunResultRing run={run} />
-                  </span>
-                  <span className="whitespace-nowrap text-[13px] text-muted-foreground">
-                    {historyDateFormat.format(run.createdAt)}
-                  </span>
-                  <span className={`${cell} text-[13px] text-muted-foreground`}>
-                    {HISTORY_SOURCE_LABEL[run.source] ?? run.source}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <ConformanceHistoryTable
+          rows={visibleRows}
+          sort={sort}
+          onSort={setSort}
+          loading={readingEveryRun}
+          dimmed={holdOrder}
+          serverLabel={serverLabel}
+          onOpenRun={openRun}
+        />
       )}
 
       {readsEveryRun || visibleRows.length === 0 ? null : page === undefined ? (
-        <Button variant="outline" size="sm" disabled>
-          Loading…
+        <Button
+          variant="outline"
+          size="sm"
+          className="self-start"
+          disabled
+          aria-busy
+        >
+          <Loader2 aria-hidden className="size-4 animate-spin" />
+          Load more
         </Button>
       ) : !page.isDone ? (
         <Button
           variant="outline"
           size="sm"
+          className="self-start"
           onClick={() => setCursor(page.continueCursor)}
         >
           Load more
@@ -747,6 +751,7 @@ export function ConformanceSharedPage({ token }: { token: string }) {
           suiteKinds.map((kind) => ({
             suiteKind: kind,
             advisories: reports[kind]!.advisories,
+            passedAdvisories: reports[kind]!.passedAdvisories,
           })),
         )}
       />

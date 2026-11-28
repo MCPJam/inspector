@@ -34,11 +34,17 @@ import {
   usageError,
   writeError,
 } from "./lib/output.js";
+import {
+  resetCommandOutcome,
+  resolveCommandOutcome,
+} from "./lib/command-outcome.js";
 import { installDeploymentPreflight } from "./lib/deployment-preflight.js";
+import { recordErrorHelp, writeErrorHelp } from "./lib/error-help.js";
 import { installProxyDispatcher } from "./lib/network-proxy.js";
 import { addGlobalOptions } from "./lib/server-config.js";
 import {
   captureCommandEvent,
+  captureUsageErrorEvent,
   initTelemetry,
   type TelemetryOptions,
 } from "./lib/telemetry.js";
@@ -76,6 +82,7 @@ export async function main(
   // embedders, and anything scripting the CLI in-process call it repeatedly.
   // Clearing here makes each invocation independent of whatever preceded it.
   process.exitCode = 0;
+  resetCommandOutcome();
 
   const program = addGlobalOptions(
     new Command()
@@ -85,14 +92,15 @@ export async function main(
         "Test, debug, and validate MCP servers locally, or manage MCPJam Cloud via `mcpjam cloud`. Health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.",
       )
       .allowExcessArguments(false)
-      .exitOverride()
-      .configureOutput({
-        writeOut: (value) => process.stdout.write(value),
-        writeErr: () => {
-          // Usage errors are emitted as structured JSON in the catch block.
-        },
-      }),
+      .exitOverride(),
   );
+  // Usage errors are emitted as structured JSON in the catch block, so
+  // Commander's own error text is dropped. Help it prints as an error is kept.
+  const errorHelp = recordErrorHelp(program);
+  program.configureOutput({
+    writeOut: (value) => process.stdout.write(value),
+    writeErr: errorHelp.writeErr,
+  });
   const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
   installDeploymentPreflight(program);
 
@@ -141,10 +149,8 @@ export async function main(
     }
     const normalizedExitCode =
       typeof process.exitCode === "number" ? process.exitCode : 0;
-    captureCommandEvent(
-      normalizedExitCode,
-      normalizedExitCode === 0 ? undefined : "UNKNOWN_ERROR",
-    );
+    const { outcome, errorCode } = resolveCommandOutcome(normalizedExitCode);
+    captureCommandEvent(normalizedExitCode, outcome, errorCode);
     await telemetry.flush();
     return {
       exitCode: normalizedExitCode,
@@ -156,7 +162,9 @@ export async function main(
     if (error instanceof CommanderError) {
       if (
         error.code === "commander.helpDisplayed" ||
-        error.code === "commander.version"
+        error.code === "commander.version" ||
+        // `mcpjam help [command]`, written to stdout.
+        (error.code === "commander.help" && error.exitCode === 0)
       ) {
         await telemetry.flush();
         return {
@@ -165,8 +173,14 @@ export async function main(
         };
       }
 
-      writeError(usageError(error.message), format);
-      captureCommandEvent(2, "USAGE_ERROR");
+      const help =
+        error.code === "commander.help" ? errorHelp.captured() : undefined;
+      if (help) {
+        writeErrorHelp(help, format);
+      } else {
+        writeError(usageError(error.message), format);
+      }
+      captureUsageErrorEvent(argv);
       await telemetry.flush();
       return {
         exitCode: 2,
@@ -176,7 +190,16 @@ export async function main(
 
     const normalizedError = normalizeCliError(error);
     writeError(normalizedError, format);
-    captureCommandEvent(normalizedError.exitCode, normalizedError.code);
+    if (normalizedError.code === "USAGE_ERROR") {
+      // An option parser can throw one before `preAction` names the command.
+      captureUsageErrorEvent(argv, normalizedError.exitCode);
+    } else {
+      const { outcome, errorCode } = resolveCommandOutcome(
+        normalizedError.exitCode,
+        normalizedError.code,
+      );
+      captureCommandEvent(normalizedError.exitCode, outcome, errorCode);
+    }
     await telemetry.flush();
     return {
       exitCode: normalizedError.exitCode,

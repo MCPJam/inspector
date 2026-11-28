@@ -1178,7 +1178,7 @@ describe("web chat-v2 — environment execution target", () => {
 
     const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
     expect(handlerArgs.harness).toBe("claude-code");
-    expect(handlerArgs.runtimeSkillsOverride).toEqual([
+    expect(handlerArgs.skillPlan.harness.skills).toEqual([
       {
         skillId: "sk_env",
         name: "release-notes",
@@ -1189,7 +1189,7 @@ describe("web chat-v2 — environment execution target", () => {
     ]);
     // A named environment captured its server skills: the harness lists no
     // connected server's own.
-    expect(handlerArgs).not.toHaveProperty("liveTurn");
+    expect(handlerArgs.skillPlan.harness.live).toBe(false);
   });
 
   it("propagates a resolver ENV_* failure as a 409 rather than running the turn", async () => {
@@ -1317,7 +1317,7 @@ describe("web chat-v2 — environment execution target", () => {
       expect(args.skills).toBeUndefined();
       const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
       expect(
-        handlerArgs.runtimeSkillsOverride.map(
+        handlerArgs.skillPlan.harness.skills.map(
           (skill: { name: string }) => skill.name
         )
       ).toEqual(["release-notes"]);
@@ -1325,7 +1325,7 @@ describe("web chat-v2 — environment execution target", () => {
       expect(handlerArgs).not.toHaveProperty("includeProjectSkills");
       // A client's turn is live: the harness may offer the connected
       // servers' own skills, as MCPJam's agent does.
-      expect(handlerArgs.liveTurn).toBe(true);
+      expect(handlerArgs.skillPlan.harness.live).toBe(true);
       expect(projectPoolWasRead()).toBe(false);
     });
   });
@@ -1706,12 +1706,13 @@ describe("web chat-v2 — turn provenance (P1)", () => {
     ]);
   });
 
-  it("does NOT record a capture on a HARNESS turn, which cannot deliver it", async () => {
-    // The reviewer's finding, at the route level: a harness adapter receives
-    // only the flat `runtimeSkillsOverride` (authored + plugin). A capture's
-    // address is `<serverSlug>/<name>` and `isValidSkillName` rejects `/`, so
-    // the adapter skips it. Recording it would make the trace claim a skill the
-    // model never received.
+  it("records a capture on a harness turn whose runtime takes it through MCPJam's skill tools", async () => {
+    // At the route level: a harness adapter's box receives only the flat
+    // the box's copies (authored + plugin). A capture's address is
+    // `<serverSlug>/<name>` and `isValidSkillName` rejects `/`, so it never
+    // lands there. Claude Code takes it through MCPJam's skill tools instead
+    // (its descriptor's `serverSkills`), so the model does receive it and the
+    // record names it beside the authored skill.
     convexQueryMock.mockResolvedValue({
       ...SPEC_WITH_PROVENANCE,
       host: {
@@ -1747,15 +1748,19 @@ describe("web chat-v2 — turn provenance (P1)", () => {
     const persistArgs = await runEnvironmentTurn();
 
     // Assert DELIVERY as well as the record — the invariant is that the two
-    // agree, and checking only the record would pass even if the capture had
-    // reached `runtimeSkillsOverride` (which would make the record wrong in
-    // the other direction).
+    // agree. The box holds the authored skill alone: the capture reaching
+    // the box's copies would put a `/`-named folder where the adapter
+    // skips it.
     const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
-    expect(handlerArgs.runtimeSkillsOverride).toEqual([
+    expect(handlerArgs.skillPlan.harness.skills).toEqual([
       expect.objectContaining({ skillId: "sk_env", name: "release-notes" }),
     ]);
-    // The authored skill IS delivered by the harness, so it is recorded.
-    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([PROVENANCE]);
+    // The authored skill is on the box and the capture is served by the
+    // tools, so both are recorded.
+    expect(persistArgs.turnTrace.skillsAtTurn).toEqual([
+      PROVENANCE,
+      { name: "refunds", contentHash: "h_capture" },
+    ]);
     // The environment binding is still true and still recorded.
     expect(persistArgs.turnTrace.environmentAtTurn).toEqual({
       environmentId: "env_1",

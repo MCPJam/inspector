@@ -77,6 +77,15 @@ export function rubric(path = RUBRIC_PATH) {
   return readFileSync(path, "utf8").replace(/^---[\s\S]*?\n---\n/, "");
 }
 
+export async function copyRubric() {
+  const { errorsSection } = await import("../check-error-rules.mjs");
+  const root = resolve(dirname(RUBRIC_PATH), "../../..");
+  return [
+    rubric(),
+    errorsSection(readFileSync(resolve(root, "DESIGN.md"), "utf8")),
+  ].join("\n\n");
+}
+
 const schema = (properties) => ({
   type: "object",
   properties: {
@@ -304,7 +313,7 @@ export async function main(argv, call = callClaude) {
   const waived = process.env.SLOP_WAIVER === "true";
   const items = collectAdded(base);
   if (!items.length) return report({ items, findings: [], usd: 0, waived, posted: 0 });
-  const text = rubric();
+  const text = await copyRubric();
   const classified = await classify(items, text, call);
   let usd = cost(classified.usage, MODELS.classify);
   let findings = matchFindings(items, classified.items);

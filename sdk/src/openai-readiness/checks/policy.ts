@@ -41,6 +41,8 @@ import {
 
 export interface OpenAIPolicyEvidence {
   profile?: OpenAISubmissionProfile;
+  /** Saved portal listing answers, when this is a rehearsal. */
+  listingMetadata?: { field: string; text: string }[];
   /**
    * Metadata the PACKAGE carries, so a run with no submission profile is still
    * gradeable.
@@ -263,7 +265,7 @@ export function runOpenAIPolicyChecks(
   findings.push(
     gradeCopy(
       NON_PROMOTIONAL_LISTING,
-      profile
+      evidence.listingMetadata ?? (profile
         ? [
             { field: "listing.name", text: profile.name },
             {
@@ -272,13 +274,15 @@ export function runOpenAIPolicyChecks(
             },
             { field: "listing.description", text: profile.description },
           ]
-        : [],
+        : []),
       () =>
         notEvaluated(
           NON_PROMOTIONAL_LISTING,
           stamp,
-          "no submission profile was supplied, so there is no listing copy to read",
-          missingInput(OPENAI_READINESS_INPUTS.submissionProfile),
+          evidence.listingMetadata !== undefined
+            ? "This rehearsal has no listing text to check. Supply the listing name and descriptions in the plugin package."
+            : "no submission profile was supplied, so there is no listing copy to read",
+          missingInput(evidence.listingMetadata !== undefined ? "listing text" : OPENAI_READINESS_INPUTS.submissionProfile),
         ),
     ),
   );

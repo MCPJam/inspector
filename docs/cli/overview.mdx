@@ -4,7 +4,7 @@ description: "Local MCP testing and mcpjam cloud: probing, debugging, OAuth, con
 icon: "terminal"
 ---
 
-The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level: inspect, debug, and test MCP servers from the command line or CI (connectivity, OAuth, MCP Apps, tools/resources/prompts, protocol conformance). Most local commands are one-shot; `mcpjam mcp` and `subscriptions listen` keep a process open. Account-bound commands live under `mcpjam cloud` and talk to your MCPJam account. There are no compatibility aliases for the old Cloud paths — see [Migrating to CLI 4.0](/cli/migration).
+The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level: inspect, debug, and test MCP servers from the command line or CI (connectivity, OAuth, MCP Apps, tools/resources/prompts, protocol conformance). Most local commands are one-shot; `mcpjam mcp` and `subscriptions listen` keep a process open. Account-bound commands live under `mcpjam cloud` and talk to your MCPJam account. There are no compatibility aliases for the old Cloud paths; see [Migrating to CLI 4.0](/cli/migration).
 
 ## Recommended: Use with Agent Skills
 
@@ -20,7 +20,7 @@ To convert existing promptfoo, pytest, Jest, or CSV tests, use the [MCP eval imp
 npx skills add mcpjam/inspector --skill mcpjam-eval-import
 ```
 
-To drive MCPJam's hosted eval tools — launch a run, poll it to a verdict, and triage a failure down to the step — use the [run MCPJam evals skill](https://github.com/MCPJam/inspector/tree/main/skills/run-mcpjam-evals). This one is about running suites that already exist, not writing them.
+To drive MCPJam's hosted eval tools (launch a run, poll it to a verdict, and triage a failure down to the step) use the [run MCPJam evals skill](https://github.com/MCPJam/inspector/tree/main/skills/run-mcpjam-evals). This one is about running suites that already exist, not writing them.
 
 ```bash
 npx skills add mcpjam/inspector --skill run-mcpjam-evals
@@ -47,7 +47,7 @@ npx -y @mcpjam/cli@latest --help
 
 ### Local MCP testing
 
-These stay at the program root. They reject `--api-key` / `--api-url` / `--project` — except `test`, which accepts them only to reach MCPJam-hosted inference.
+These stay at the program root. They reject `--api-key` / `--api-url` / `--project`, except `test`, which accepts them only to reach MCPJam-hosted inference.
 
 | Group | Purpose | Key commands |
 |-------|---------|-------------|
@@ -79,9 +79,7 @@ Account-bound commands. Declare `--api-key` / `--api-url` on `mcpjam cloud` (bef
 | [`cloud eval`](/cli/reference#cloud-eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
 | [`cloud tunnel`](/cli/reference#cloud-tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel --server <name> <url>`, `tunnel --server <name> -- <command>` |
 | [`cloud clients`](/cli/reference#cloud-clients-commands) | Manage clients in your hosted MCPJam projects (`cloud hosts` is a deprecated alias) | `list`, `get`, `create`, `update`, `servers`, `duplicate`, `delete`, `templates` |
-| [`cloud environments`](/cli/reference#cloud-environments-commands) | Manage project environments — the host + servers + pinned skills/plugins bundles eval suites and goals run against | `list`, `get`, `resolve`, `create`, `update`, `archive`, `restore` |
-| [`cloud images`](/cli/reference#cloud-images-commands) | Manage custom Computer sandbox images (blueprints) | `list`, `get`, `create`, `validate`, `edit`, `build`, `logs`, `use`, `reset`, `promote`, `delete` |
-| [`cloud skills`](/cli/reference#cloud-skills-commands) | List and read Cloud Skills in your hosted MCPJam projects — discover the skill IDs that `--compose-skill` and `--skill` require (read-only; authoring is in the app) | `list`, `get` |
+| [`cloud environments`](/cli/reference#cloud-environments-commands) | Manage project environments, the host and server bundles eval suites and goals run against | `list`, `get`, `resolve`, `archive`, `ensure-adhoc` |
 | [`cloud projects servers`](/cli/reference#cloud-projects-servers-commands) | Connect MCP servers to a project and manage pending connection requests | `connect`, `connect-status`, `connect-cancel` |
 
 Also under `mcpjam cloud`: `goals` (`journeys` is a deprecated alias), `personas`, `swarms`, and `studies` (which publishes an environment for outside testers and reads what they did; `scenarios` and `user-testing` are deprecated aliases for it). Full flag tables are in the [command reference](/cli/reference).
@@ -92,10 +90,10 @@ Also under `mcpjam cloud`: `goals` (`journeys` is a deprecated alias), `personas
 
 Credential precedence for Cloud commands:
 
-1. `--api-key` — must be an `sk_` key. A `mcpjam_…` legacy key is a usage error.
-2. `MCPJAM_API_KEY` — same `sk_` rule. A legacy value in this env var is ignored (with a warning) so SDK eval reporting can still use it.
+1. `--api-key`: must be an `sk_` key. A `mcpjam_…` legacy key is a usage error.
+2. `MCPJAM_API_KEY`: same `sk_` rule. A legacy value in this env var is ignored (with a warning) so SDK eval reporting can still use it.
 3. Stored OAuth from `mcpjam cloud login`
-4. Missing — Cloud commands fail with login guidance before they hit the network (`mcpjam cloud status` reports `missing` instead)
+4. Missing: Cloud commands fail with login guidance before they hit the network (`mcpjam cloud status` reports `missing` instead)
 
 API URL precedence:
 
@@ -116,7 +114,7 @@ Most Cloud commands pick one project:
 2. An explicit `project` field in `--file` / `--json`
 3. `MCPJAM_PROJECT`
 4. The nearest valid `.mcpjam/project.json`
-5. Automatic — the most recently updated project you can see
+5. Automatic; the most recently updated project you can see
 
 Empty `--project` or `MCPJAM_PROJECT` is a usage error. `MCPJAM_PROJECT_ID` does **not** select a Cloud CLI project (it is SDK eval reporting only).
 
@@ -128,7 +126,7 @@ mcpjam cloud eval list             # uses the link
 mcpjam cloud link --remove
 ```
 
-`mcpjam cloud eval` run-inspection commands (`status`, `cancel`, `judge`, `iterations`, `gate`, `compare`, `trace`, `steps`, `screenshot`, `video`) follow the same rule — `--project` is optional. `mcpjam cloud sessions list` does too; `--all-projects` restores a cross-project listing and cannot be combined with `--project`. Hosted `readiness` never reads the project link.
+`mcpjam cloud eval` run-inspection commands (`status`, `cancel`, `judge`, `iterations`, `gate`, `compare`, `trace`, `steps`, `screenshot`, `video`) follow the same rule; `--project` is optional. `mcpjam cloud sessions list` does too; `--all-projects` restores a cross-project listing and cannot be combined with `--project`. Hosted `readiness` never reads the project link.
 
 ## What `--host` means
 
@@ -140,7 +138,6 @@ mcpjam cloud link --remove
 | `test --host` | One host **template** to emulate for a local suite run: its handshake, tool visibility and model settings. Never the real client. |
 | `compat --host` | Which AI clients to report. Repeatable; default is all. |
 | `cloud eval --host`, `cloud goals`, `cloud studies` | A **saved project Host** (`<id-or-name>`), the client config an eval or goal run is stamped with. |
-| `cloud environments --host-id` | The project Host id the environment runs as. Distinct from eval's `--host`. |
 
 `--host` on a local command is mutually exclusive with `--client-capabilities`. A Cloud `--host` is mutually exclusive with `--server` / `--environment` when those already supply a closed server set.
 
@@ -161,9 +158,9 @@ These flags apply to every command. Cloud credentials `--api-key` / `--api-url` 
 
 The CLI auto-detects whether stdout is a terminal:
 
-- **Interactive terminal** — defaults to `--format human`. For most commands this is pretty-printed JSON; `server doctor` and the OAuth conformance commands provide dedicated human-readable summaries.
-- **Piped or redirected** (CI, `| jq`, agent invocation) — defaults to `--format json`, the full structured result.
-- **Conformance in CI** — `protocol conformance`, `protocol conformance-suite`, `oauth conformance`, `oauth conformance-suite`, `apps conformance`, and `apps conformance-suite` support `--reporter junit-xml` and `--reporter json-summary`.
+- **Interactive terminal**: defaults to `--format human`. For most commands this is pretty-printed JSON; `server doctor` and the OAuth conformance commands provide dedicated human-readable summaries.
+- **Piped or redirected** (CI, `| jq`, agent invocation): defaults to `--format json`, the full structured result.
+- **Conformance in CI**: `protocol conformance`, `protocol conformance-suite`, `oauth conformance`, `oauth conformance-suite`, `apps conformance`, and `apps conformance-suite` support `--reporter junit-xml` and `--reporter json-summary`.
 - **Explicit `--format`** always wins over the auto-detected default.
 
 **For agents**: raw JSON is the source of truth. Human format is a lossy presentation layer. If you're parsing output programmatically, pass `--quiet --format json`.
@@ -286,11 +283,11 @@ Connections to servers under test stay open between tool calls, so agents can al
 
 ## What's next
 
-- [MCPJam as an MCP server](/cli/mcp-server) — give MCP clients the testing engine over stdio
-- [Server inspection](/cli/server-inspection) — probe, doctor, and diagnostics
-- [OAuth conformance](/cli/oauth-conformance) — test your OAuth implementation
-- [OAuth login](/cli/oauth-login) — authenticate and debug OAuth flows
-- [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri` and `ui://` resource wiring
-- [Tools, resources & prompts](/cli/tools-resources-prompts) — exercise the connected surface
-- [Migrating to CLI 4.0](/cli/migration) — command-path and flag changes under `mcpjam cloud`
-- [Full command reference](/cli/reference) — every flag for every command
+- [MCPJam as an MCP server](/cli/mcp-server): give MCP clients the testing engine over stdio
+- [Server inspection](/cli/server-inspection): probe, doctor, and diagnostics
+- [OAuth conformance](/cli/oauth-conformance): test your OAuth implementation
+- [OAuth login](/cli/oauth-login): authenticate and debug OAuth flows
+- [MCP Apps conformance](/cli/apps-conformance): validate `_meta.ui.resourceUri` and `ui://` resource wiring
+- [Tools, resources & prompts](/cli/tools-resources-prompts): exercise the connected surface
+- [Migrating to CLI 4.0](/cli/migration): command-path and flag changes under `mcpjam cloud`
+- [Full command reference](/cli/reference): every flag for every command

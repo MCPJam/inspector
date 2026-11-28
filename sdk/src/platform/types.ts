@@ -3,6 +3,11 @@ export type {
   PlatformReadinessStartBody,
   PlatformReadinessLazyAuthProbe,
 } from "./readiness-start-types.js";
+import type { PlatformEvalRunAccount } from "./eval-run-account-types.js";
+export type {
+  PlatformEvalRunAccount,
+  PlatformEvalRunAccountIdentity,
+} from "./eval-run-account-types.js";
 export type {
   PlatformConformanceCheck,
   PlatformConformanceReport,
@@ -37,6 +42,11 @@ import type {
   SwarmReport,
 } from "../contract/index.js";
 import type { CaseJudgeSettings } from "../contract/judge-settings.js";
+import type {
+  CodeEvaluatorInput,
+  SuiteGradingInput,
+  SuiteScriptsInput,
+} from "../contract/code-evaluators.js";
 import type { PlatformGoalJudge } from "./goal-judge.js";
 export type {
   PlatformGoalJudge,
@@ -66,6 +76,16 @@ export type {
   PlatformFindingsJobStatus,
   PlatformReadinessObservationReason,
 } from "./analysis-outcome-types.js";
+import type { PlatformEvalFindingsView } from "./findings-view-types.js";
+export type {
+  PlatformEvalFindingsView,
+  PlatformEvalFindingsViewStatus,
+  PlatformFindingExplanation,
+  PlatformFindingObservationOutcome,
+  PlatformFindingOption,
+  PlatformFindingOptionKind,
+  PlatformFindingProblem,
+} from "./findings-view-types.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -781,6 +801,31 @@ export interface PlatformChatSessionTraceTurn {
   spansUnavailable?: true;
   /** Fewer spans came back than the turn recorded. */
   spansTruncated?: true;
+  /** The MCP event that started this turn; absent on every other turn. */
+  event?: PlatformChatSessionTraceEvent;
+}
+
+/**
+ * The MCP event that started a turn: a background trigger run, or a
+ * Playground event turn. Identity only: the event's data stays in the
+ * transcript.
+ */
+export interface PlatformChatSessionTraceEvent {
+  name: string;
+  /** The server's id for the event. */
+  eventId?: string;
+  /** When the server says the event occurred, exactly as it sent it. */
+  timestamp?: string;
+  /** When MCPJam received the event, in epoch ms like the turn's `startedAt`. */
+  receivedAt: number;
+  /** The subscription's delivery mode; absent when it is not known. */
+  delivery?: "poll" | "push" | "webhook";
+  /** `server` when the MCP server sent it, `simulation` for a test event. `replay` is reserved. */
+  origin: "server" | "simulation" | "replay";
+  /** MCPJam's id for the event subscription. */
+  subscriptionId?: string;
+  /** The background trigger that ran the turn; background trigger runs only. */
+  triggerId?: string;
 }
 
 export interface PlatformChatSessionTrace {
@@ -1125,6 +1170,12 @@ export interface PlatformEvalRun {
    * the credential carried no attribution claims.
    */
   attribution?: PlatformEvalRunAttribution;
+  /**
+   * The account the run used on each server, recorded when it started.
+   * ABSENT when the run recorded none (runs from before accounts were
+   * recorded); `[]` means it recorded that it used none.
+   */
+  accounts?: PlatformEvalRunAccount[];
   notes: string | null;
   /**
    * The project environment this run executed against, read from the run's
@@ -1485,9 +1536,12 @@ export type PlatformEvalLlmTouchpointId =
   | "goalCompletion"
   | "groundedness"
   | "rubricChecks"
+  | "customJudges"
   | "serverQuality"
   | "runInsights"
   | "runGroupQuality"
+  | "metadataAttribution"
+  | "suspectedCondition"
   | "evalFindingsPipeline";
 
 export type PlatformDisclosureFires =
@@ -1954,8 +2008,9 @@ export interface PlatformEvalSuiteSettingsBase {
    * API deployments.
    *
    * A FLOOR, not a default: it RAISES a case's own count and never lowers it,
-   * where `verdictPolicyDefaults.repetitions` REPLACES it. A case at 7
-   * resolves to 7 under a floor of 3 and to 3 under a default count of 3.
+   * where `verdictPolicyDefaults.repetitions` applies only to a case that sets
+   * no count of its own. A case at 2 resolves to 3 under a floor of 3 and to 2
+   * under a default count of 3; a case at 7 resolves to 7 under either.
    */
   minimumIterations?: number | null;
   matchOptions: PublicMatchOptions | null;
@@ -1976,6 +2031,12 @@ export interface PlatformEvalSuiteSettingsBase {
      */
     groundedness?: PlatformEvalSuiteGroundednessJudge;
   };
+  /** Code evaluators as stored (EFTW-90). Absent from older deployments. */
+  codeEvaluators?: CodeEvaluatorInput[];
+  /** Setup and cleanup scripts, `null` when the suite has none. */
+  scripts?: SuiteScriptsInput | null;
+  /** Grading box settings, `null` when unset. */
+  grading?: SuiteGradingInput | null;
   /**
    * The stored spelling of which criterion decides this suite's runs.
    *
@@ -4752,9 +4813,14 @@ export interface PlatformTraceDestination {
   /**
    * Which traces this destination subscribes to. `direct` is Playground, and
    * only sessions SHARED to the workspace are ever sent — a private Playground
-   * session is excluded server-side and cannot be opted in.
+   * session is excluded server-side and cannot be opted in. `event` selects
+   * background trigger runs; until they export under their own source type (a
+   * server-side rollout), they still match `direct`, as a Playground event
+   * turn always does.
    */
-  sourceTypes: Array<"eval" | "scenario" | "study" | "swarm" | "direct">;
+  sourceTypes: Array<
+    "eval" | "scenario" | "study" | "swarm" | "direct" | "event"
+  >;
   /**
    * False (the default) redacts prompts, outputs, tool arguments and
    * screenshots. The message envelopes still ship, so a vendor's GenAI views
@@ -5350,6 +5416,11 @@ export interface PlatformUnifiedFindings {
   };
   canBuild: boolean;
   canEnrich: boolean;
+  /**
+   * One problem per recorded observation, joined by the backend. Absent from
+   * older backends. Check `version` before rendering; render it alone.
+   */
+  findingsView?: PlatformEvalFindingsView;
 }
 
 export interface PlatformInsightsEnvelope {
@@ -5465,8 +5536,22 @@ export interface PlatformEvalCheckRepoConnected {
   outagePolicy: "fail_open" | "fail_closed";
 }
 
-/** Receipt for an eval-run insights (serverQuality) request. 202. */
+/** Receipt for an eval run analysis request. 202. */
 export interface PlatformEvalRunInsightsRequested {
+  runId: string;
+  projectId: string;
+  status: "pending";
+}
+
+/** Receipt for cancelling an eval run's analysis. */
+export interface PlatformEvalRunInsightsCanceled {
+  runId: string;
+  projectId: string;
+  canceled: true;
+}
+
+/** Receipt for a findings build. 202: poll `insights.unifiedFindings.job`. */
+export interface PlatformEvalRunFindingsBuildRequested {
   runId: string;
   projectId: string;
   status: "pending";
@@ -6039,6 +6124,10 @@ export interface PlatformReadinessRun {
   submissionId: string | null;
   /** The submission's revision when the run was requested: the answers it graded. */
   submissionRevision: number | null;
+  /** The stored plugin version a ChatGPT plugin submission's run grades; `null` otherwise. */
+  pluginVersionId: string | null;
+  /** The submission's test plan revision whose calls the run makes; `null` when it names none. */
+  testPlanRevision: number | null;
   createdAt: number;
   updatedAt: number;
 }

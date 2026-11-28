@@ -102,6 +102,29 @@ export interface PinnedSkillArtifact {
   frontmatter?: Record<string, unknown>;
   /** Supporting files (host-channel plugin skills only under P0.3). */
   files?: PinnedSkillArtifactFile[];
+  /**
+   * Set on a skill captured from an MCP server, by run preparation
+   * (`buildPinnedSkillSource`); never served. A runtime that takes server
+   * skills through MCPJam's skill tools gets this one there, never on its box.
+   */
+  server?: PinnedServerSkillCapture;
+}
+
+/** The capture a run froze a server's skill from, as its capability set holds it. */
+export interface PinnedServerSkillCapture {
+  serverSkillId: string;
+  versionId: string;
+  serverId: string;
+  serverLabel: string;
+  /** `<server>/<skill>`: how MCPJam's skill tools address it in this run. */
+  ref: string;
+  skillUri: string;
+  versionNumber: number;
+  capturedAt: number;
+  /** SHA-256 of the captured SKILL.md body, which every load re-checks. */
+  contentSha256?: string;
+  /** Each supporting file's captured size, which every read re-checks. */
+  fileSizes?: Record<string, number>;
 }
 
 /**

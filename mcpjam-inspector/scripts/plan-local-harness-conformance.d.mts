@@ -24,6 +24,8 @@ export declare function planConformance(input: {
   certifiedOnly?: boolean;
   /** A push that changed no conformance input runs no legs. */
   inputsUnchanged?: boolean;
+  /** Runner label for every macOS leg instead of `macos-latest`. */
+  macosRunner?: string;
   record?: RuntimeCompatRecordJson;
   /** Manifest facts by harness id; defaults to the committed definitions. */
   facts?: Record<string, { nativePlatforms: string[]; nativeTargets?: string[] }>;

@@ -285,6 +285,11 @@ export default defineConfig(({ mode }) => {
             });
           },
         },
+        // The startup recovery card asks the local server whether it is up.
+        "^/health$": {
+          target: env.VITE_API_BASE_URL || "http://localhost:6274",
+          changeOrigin: true,
+        },
         // Proxy AuthKit calls through the local server so refresh tokens stay
         // in an HttpOnly local session cookie instead of browser storage.
         "/user_management": {

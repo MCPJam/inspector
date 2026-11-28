@@ -28,6 +28,7 @@ import {
   type TraceWidgetSnapshot,
 } from "@/components/evals/trace-viewer-adapter";
 import { TraceViewer } from "@/components/evals/trace-viewer";
+import { turnEventsFromTurnTraces } from "@/components/evals/trace-turn-event";
 import { BrowserArtifactsView } from "@/components/evals/browser-artifacts-view";
 import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
 import {
@@ -277,7 +278,7 @@ interface ShareUsageThreadDetailProps {
    */
   sessionLink?: string;
   /**
-   * Enables the "Promote to test case" affordance.
+   * Enables the "Save as test case" affordance.
    *
    * Supplied by surfaces that know the two things a `SharedChatThread` cannot
    * tell us: which project the session belongs to, and whether the viewer is
@@ -523,6 +524,7 @@ export function ShareUsageThreadDetail({
   // artifacts ride the envelope so the Raw view includes them.
   const traceEnvelope: TraceEnvelope | null = useMemo(() => {
     if (!messages) return null;
+    const turnEvents = turnEventsFromTurnTraces(turnTraces);
     return {
       ...(thread?.recordedContext
         ? { recordedContext: thread.recordedContext }
@@ -538,9 +540,11 @@ export function ShareUsageThreadDetail({
         ? { browserInteractionSteps: interactionSteps }
         : {}),
       ...(replayUrl ? { videoUrl: replayUrl } : {}),
+      ...(turnEvents.length > 0 ? { turnEvents } : {}),
     };
   }, [
     messages,
+    turnTraces,
     thread?.recordedContext,
     widgetSnapshots,
     hydratedSpans,
@@ -618,7 +622,7 @@ export function ShareUsageThreadDetail({
         return null;
       case "pending":
       case "running":
-        return "This session is still running. It can be promoted once the run finishes.";
+        return "This session is still running. It can be saved as a test case once the run finishes.";
       case "rate_limited":
         return "This session's run stopped on a rate limit, so the conversation is incomplete. Only sessions from runs that finished can become test cases.";
       case "failed":
@@ -630,12 +634,12 @@ export function ShareUsageThreadDetail({
         // session at once. Without this line the only symptom is a trickle of
         // one-off "unknown outcome" tickets that each look like bad data.
         warnMissingRunAttemptStatusOnce();
-        return "This session's run outcome is unknown, so it cannot be promoted to a test case.";
+        return "This session's run outcome is unknown, so it can't be saved as a test case. Open a session from a run that finished.";
       default:
         // `null` (an attempt the backend could not identify) and any status
         // this client has not learned yet. A property of the session, so no
         // warning.
-        return "This session's run outcome is unknown, so it cannot be promoted to a test case.";
+        return "This session's run outcome is unknown, so it can't be saved as a test case. Open a session from a run that finished.";
     }
   }, [canPromoteThread, thread?.sourceType, thread?.runAttemptStatus]);
 
@@ -821,7 +825,7 @@ export function ShareUsageThreadDetail({
                   aria-disabled
                   aria-describedby={promoteBlockedReasonId}
                 >
-                  Promote to test case
+                  Save as test case
                 </Button>
                 <span id={promoteBlockedReasonId} className="sr-only">
                   {promoteBlockedReason}
@@ -836,7 +840,7 @@ export function ShareUsageThreadDetail({
                 data-testid="share-usage-promote-to-test-case"
                 onClick={() => setPromoteOpen(true)}
               >
-                Promote to test case
+                Save as test case
               </Button>
             )
           ) : null}

@@ -72,9 +72,8 @@ export function RunHistory({
   if (runs.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        No runs yet. A run is scheduled for each event the subscription delivers
-        while the trigger is enabled; a simulated event from the Events tab runs
-        it too.
+        No runs yet. A run is scheduled when this subscription receives an
+        occurrence while the trigger is enabled.
       </p>
     );
   }

@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Commit what the caller staged to ONE bot branch and open, or refresh, its ONE
-# pull request — for the local-harness revocation list
-# (`local-harness-revocations.yml`). Pack pins no longer use it: they ride in
-# the version PR that `prepare-release.yml` opens.
+# pull request — for the local-harness pack pins
+# (`local-harness-pack-prebuild.yml`, branch `bot/local-harness-pack-pins`) and
+# the revocation list (`local-harness-revocations.yml`).
 #
 #   bash .github/scripts/local-harness-bot-pr.sh '<{"branch","title","body"} JSON>'
 #
 # The branch is rebuilt from the checked-out commit and force-pushed every
 # time: a newer run's pin replaces an older one, so there is never more than
-# one OPEN PR per harness and never a stale pin stacked under a fresh one.
+# one OPEN PR per branch and never a stale pin stacked under a fresh one. When
+# nothing is staged, main already carries the change, so an open PR on the
+# branch is stale and is closed.
 # Auto-merge is requested; the approval rule on main still applies — that
 # review is the one human gate on what users download.
 #
@@ -34,6 +36,11 @@ esac
 
 if git diff --cached --quiet; then
   echo "nothing staged: main already carries this"
+  stale="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
+  if [ -n "$stale" ]; then
+    gh pr merge "$stale" --disable-auto >/dev/null 2>&1 || true
+    gh pr close "$stale" --comment "Main already carries this, so this PR is no longer needed."
+  fi
   exit 0
 fi
 

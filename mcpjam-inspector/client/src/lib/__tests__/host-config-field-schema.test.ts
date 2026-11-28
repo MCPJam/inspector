@@ -131,6 +131,7 @@ describe("groupHostConfigFields", () => {
       "modelId",
       "temperature",
       "requireToolApproval",
+      "runUnloadedToolCalls",
       "respectToolVisibility",
       "modelVisibleMcpToolResults.directContent.image",
       "modelVisibleMcpToolResults.embeddedResources.blob.image",

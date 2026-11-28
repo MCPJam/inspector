@@ -34,9 +34,17 @@ interface NavMainProps {
   onItemClick?: (url: string) => void;
   /** Learn more hover card integration */
   learnMore?: LearnMoreProps | null;
+  /** Wraps one row's contents, e.g. to anchor a callout to it. */
+  wrapItem?: (url: string, node: React.ReactNode) => React.ReactNode;
 }
 
-export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) {
+export function NavMain({
+  items,
+  label,
+  onItemClick,
+  learnMore,
+  wrapItem,
+}: NavMainProps) {
   const { open: sidebarOpen, isMobile, setOpenMobile } = useSidebar();
   // The mobile sheet always shows labels, whatever the desktop rail does.
   const labelVisible = sidebarOpen || !!isMobile;
@@ -133,26 +141,29 @@ export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) 
         <SidebarMenu className="gap-0.5">
           {items.map((item) => {
             const button = renderButton(item);
+            const row = (
+              <SidebarItemHoverCard
+                title={item.title}
+                badge={item.badge}
+                tabId={item.url.replace(/^[#/]+/, "")}
+                onExpand={learnMore?.onExpand}
+                disabledMessage={
+                  item.disabled ? item.disabledTooltip : undefined
+                }
+                labelVisible={labelVisible}
+              >
+                {item.disabled ? (
+                  // An aria-disabled button gets no pointer events, so the
+                  // wrapper is what the hover card listens on.
+                  <div className="w-full cursor-not-allowed">{button}</div>
+                ) : (
+                  button
+                )}
+              </SidebarItemHoverCard>
+            );
             return (
               <SidebarMenuItem key={item.title}>
-                <SidebarItemHoverCard
-                  title={item.title}
-                  badge={item.badge}
-                  tabId={item.url.replace(/^[#/]+/, "")}
-                  onExpand={learnMore?.onExpand}
-                  disabledMessage={
-                    item.disabled ? item.disabledTooltip : undefined
-                  }
-                  labelVisible={labelVisible}
-                >
-                  {item.disabled ? (
-                    // An aria-disabled button gets no pointer events, so the
-                    // wrapper is what the hover card listens on.
-                    <div className="w-full cursor-not-allowed">{button}</div>
-                  ) : (
-                    button
-                  )}
-                </SidebarItemHoverCard>
+                {wrapItem ? wrapItem(item.url, row) : row}
               </SidebarMenuItem>
             );
           })}

@@ -205,7 +205,7 @@ masked-only extras are applied frame by frame (see below).
 | `maskAllInputs: true`                                 | Every input masked                                              |
 | `blockSelector`                                       | `img, picture, video, audio, canvas, svg image, iframe, object, embed` replaced by placeholders |
 | `captureCanvas: { recordCanvas: false }`              | No canvas frames                                                |
-| `maskAttributeFn`                                     | Masks every attribute except an allowlist that layout and styling need (`class`, `style`, `role`, SVG geometry, `aria-expanded` and other state, `data-state` and friends). `maskAllElementAttributes` would also mask `class` and `style`, which leaves a replay of unstyled boxes. A kept `style` has its `url(...)` and URL-like strings scrubbed and its other strings masked (`maskReplayStyle`). |
+| `maskAttributeFn`                                     | Masks every attribute except an allowlist that layout and styling need (`class`, `style`, `role`, SVG geometry, `aria-expanded` and other state, `data-state` and friends). `maskAllElementAttributes` would also mask `class` and `style`, which leaves a replay of unstyled boxes. rrweb's own `_cssText` (an inlined stylesheet's text) and the `rr_*` size, position and scroll placeholders stay; without `_cssText` the player draws unstyled HTML. Runtime CSS built from user data in the main document would be recorded with it. A kept `style` has its `url(...)` and URL-like strings scrubbed and its other strings masked (`maskReplayStyle`). |
 | `recordHeaders: false`, `recordBody: false`           | No network headers or bodies. A client `false` overrides the project's remote setting. |
 | `maskCapturedNetworkRequestFn`                        | posthog-js sends the recorded page URL and every network request through this. Names are scrubbed and headers and bodies dropped. |
 | `captureJsonLd: false`, `recordCrossOriginIframes: false` | Off                                                          |
@@ -493,8 +493,7 @@ Annotate once, get all three. **Do not** introduce a second attribute for this.
 truth.
 
 Truncation is not masking: a truncated token prefix is still credential
-material. That is why `OAuthFlowProgress`'s token rows carry `sensitive: true`
-even though they display `truncateValue(...)`.
+material.
 
 ## Existing annotated surfaces
 
@@ -502,12 +501,6 @@ even though they display `truncateValue(...)`.
   `sk_…` reveal.
 - `client/src/components/evals/copyable-code-block.tsx`: the `sensitive` prop.
 - `client/src/components/billing/PaymentsHistorySection.tsx`: invoice links.
-- `client/src/components/oauth/OAuthFlowProgressSimple.tsx`: the raw
-  `JSON.stringify(oauthTokens)` block. This is the one that matters: it is the
-  component `AuthTab` actually renders, and it prints the **untruncated** token
-  set.
-- `client/src/components/oauth/OAuthFlowProgress.tsx`: truncated access and
-  refresh token rows (`sensitive: true` on the detail shape).
 
 ## Two recorders, one boundary
 

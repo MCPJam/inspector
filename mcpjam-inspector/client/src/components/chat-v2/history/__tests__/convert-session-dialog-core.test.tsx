@@ -108,20 +108,25 @@ vi.mock("@/components/hosts/CreateHostDialog", () => ({
     ) : null,
 }));
 
-vi.mock("@/components/hosts/HostPicker", () => ({
-  HostPicker: ({
+vi.mock("@/components/hosts/client-multi-select", () => ({
+  ClientMultiSelect: ({
     value,
+    onChange,
     triggerId,
   }: {
-    value: string | null;
+    value: string[];
+    onChange: (next: string[]) => void;
     triggerId?: string;
   }) => (
     <button
       type="button"
       id={triggerId}
       data-testid="client-picker"
-      data-host={value ?? ""}
-    />
+      data-host={value.join(",")}
+      onClick={() => onChange([])}
+    >
+      Clear clients
+    </button>
   ),
 }));
 
@@ -266,7 +271,7 @@ describe("ConvertSessionDialogCore", () => {
       },
     });
     expect(screen.getByText(/has not completed/)).toBeTruthy();
-    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    const submit = screen.getByRole("button", { name: "Save as test case" });
     expect(submit.hasAttribute("disabled")).toBe(true);
   });
 
@@ -291,7 +296,7 @@ describe("ConvertSessionDialogCore", () => {
     });
     renderCore();
 
-    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    const submit = screen.getByRole("button", { name: "Save as test case" });
     await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
     fireEvent.click(submit);
 
@@ -328,7 +333,7 @@ describe("ConvertSessionDialogCore", () => {
     );
     renderCore();
 
-    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    const submit = screen.getByRole("button", { name: "Save as test case" });
     await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
     fireEvent.click(submit);
 
@@ -444,7 +449,7 @@ describe("ConvertSessionDialogCore", () => {
     // assertion in this file green.
     expect(
       screen
-        .getByRole("button", { name: "Promote to test case" })
+        .getByRole("button", { name: "Save as test case" })
         .hasAttribute("disabled"),
     ).toBe(true);
     fireEvent.click(screen.getByTestId("promote-create-client"));
@@ -456,6 +461,31 @@ describe("ConvertSessionDialogCore", () => {
       expect(
         screen.getByTestId("client-picker").getAttribute("data-host"),
       ).toBe("host-created"),
+    );
+  });
+
+  it("keeps the list empty when a client created inline is then cleared", async () => {
+    mocks.hosts = [];
+    const { rerender } = renderCore();
+    fireEvent.click(screen.getByTestId("promote-create-client"));
+    fireEvent.click(screen.getByTestId("create-host-dialog"));
+    mocks.hosts = [{ hostId: "host-created" }];
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("client-picker"));
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("client-picker").getAttribute("data-host"),
+      ).toBe(""),
     );
   });
 
@@ -488,7 +518,7 @@ describe("ConvertSessionDialogCore", () => {
     // pickers were added to prevent.
     expect(
       screen
-        .getByRole("button", { name: "Promote to test case" })
+        .getByRole("button", { name: "Save as test case" })
         .hasAttribute("disabled"),
     ).toBe(true);
   });
@@ -522,7 +552,7 @@ describe("ConvertSessionDialogCore", () => {
     expect(screen.queryByTestId("promote-server-check-pending")).toBeNull();
     expect(
       screen
-        .getByRole("button", { name: "Promote to test case" })
+        .getByRole("button", { name: "Save as test case" })
         .hasAttribute("disabled"),
     ).toBe(false);
   });
@@ -574,7 +604,7 @@ describe("ConvertSessionDialogCore", () => {
     await waitFor(() => expect(screen.getByText("Billing evals")).toBeTruthy());
     expect(
       screen
-        .getByRole("button", { name: "Promote to test case" })
+        .getByRole("button", { name: "Save as test case" })
         .hasAttribute("disabled"),
     ).toBe(true);
     // ...and it does not accuse the suite in the meantime.
@@ -717,7 +747,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
 
     expect(
       screen
-        .getByRole("button", { name: "Promote to test case" })
+        .getByRole("button", { name: "Save as test case" })
         .hasAttribute("disabled"),
     ).toBe(true);
 
@@ -738,7 +768,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     await waitFor(() =>
       expect(
         screen
-          .getByRole("button", { name: "Promote to test case" })
+          .getByRole("button", { name: "Save as test case" })
           .hasAttribute("disabled"),
       ).toBe(false),
     );
@@ -769,7 +799,23 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(screen.queryByTestId("promote-existing-suite-summary")).toBeNull();
   });
 
-  it("names Client and Server through their labels, not just their values", () => {
+  it("keeps the client list empty after the user clears it", async () => {
+    renderWithSuites();
+    fireEvent.click(screen.getByRole("radio", { name: "New suite" }));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("client-picker").getAttribute("data-host"),
+      ).not.toBe(""),
+    );
+    fireEvent.click(screen.getByTestId("client-picker"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("client-picker").getAttribute("data-host"),
+      ).toBe(""),
+    );
+  });
+
+  it("names Clients and Server through their labels, not just their values", () => {
     // Without a trigger id the accessible name is only the selected value —
     // "Claude", never "Client". `getByLabelText` fails unless the label is
     // really bound to the control.
@@ -923,7 +969,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     const optIn = screen.getByRole("checkbox");
     fireEvent.click(optIn);
     expect(optIn.getAttribute("data-state")).toBe("checked");
-    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    const submit = screen.getByRole("button", { name: "Save as test case" });
     await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
 
     fireEvent.click(screen.getByRole("combobox"));
@@ -934,7 +980,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     );
     expect(
       screen
-        .getByRole("button", { name: "Promote to test case" })
+        .getByRole("button", { name: "Save as test case" })
         .hasAttribute("disabled"),
     ).toBe(true);
   });
@@ -1026,7 +1072,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(screen.getByText("Checkout evals")).toBeTruthy();
     expect(
       screen
-        .getByRole("button", { name: "Promote to test case" })
+        .getByRole("button", { name: "Save as test case" })
         .hasAttribute("disabled"),
     ).toBe(false);
   });
@@ -1117,7 +1163,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(screen.getByLabelText("Suite name")).toBeTruthy();
     expect(
       screen
-        .getByRole("button", { name: "Promote to test case" })
+        .getByRole("button", { name: "Save as test case" })
         .hasAttribute("disabled"),
     ).toBe(false);
   });
@@ -1139,7 +1185,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     };
     const { rerender } = render(<ConvertSessionDialogCore {...props} />);
 
-    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    const submit = screen.getByRole("button", { name: "Save as test case" });
     await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
 
     mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
@@ -1153,7 +1199,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(screen.queryByTestId("promote-existing-suite-summary")).toBeNull();
     expect(
       screen
-        .getByRole("button", { name: "Promote to test case" })
+        .getByRole("button", { name: "Save as test case" })
         .hasAttribute("disabled"),
     ).toBe(true);
   });
@@ -1174,7 +1220,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     renderCore();
 
     fireEvent.click(screen.getByRole("checkbox"));
-    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    const submit = screen.getByRole("button", { name: "Save as test case" });
     await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
     fireEvent.click(submit);
 
@@ -1195,7 +1241,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     });
     renderWithSuites();
 
-    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    const submit = screen.getByRole("button", { name: "Save as test case" });
     await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
     fireEvent.click(submit);
 
@@ -1336,7 +1382,7 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
   it("BLOCKS submit until it is ticked, rather than warning", () => {
     renderCore({ detail: ACK_DETAIL });
     const submit = screen.getByRole("button", {
-      name: "Promote to test case",
+      name: "Save as test case",
     });
     expect(submit.hasAttribute("disabled")).toBe(true);
 
@@ -1367,7 +1413,7 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
     renderCore({ detail: ACK_DETAIL });
     const checkbox = ackCheckbox();
     const submit = screen.getByRole("button", {
-      name: "Promote to test case",
+      name: "Save as test case",
     });
     expect(submit.hasAttribute("disabled")).toBe(true);
 
@@ -1402,7 +1448,7 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
     renderCore({ detail: ACK_DETAIL });
     fireEvent.click(ackCheckbox());
     fireEvent.click(
-      screen.getByRole("button", { name: "Promote to test case" }),
+      screen.getByRole("button", { name: "Save as test case" }),
     );
     await waitFor(() => expect(importAction).toHaveBeenCalled());
     expect(importAction.mock.calls[0][0]).toMatchObject({
@@ -1414,7 +1460,7 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
     importAction.mockResolvedValue({ suiteId: "s", testCaseId: "c" });
     renderCore();
     fireEvent.click(
-      screen.getByRole("button", { name: "Promote to test case" }),
+      screen.getByRole("button", { name: "Save as test case" }),
     );
     await waitFor(() => expect(importAction).toHaveBeenCalled());
     expect(importAction.mock.calls[0][0]).not.toHaveProperty(
@@ -1589,7 +1635,7 @@ describe("ConvertSessionDialogCore — a suite CI owns", () => {
   });
 
   function submitButton() {
-    return screen.getByRole("button", { name: "Promote to test case" });
+    return screen.getByRole("button", { name: "Save as test case" });
   }
 
   it("keeps it out of the destination picker", () => {

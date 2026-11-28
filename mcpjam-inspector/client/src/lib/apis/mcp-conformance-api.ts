@@ -222,6 +222,7 @@ export async function submitOAuthConformanceCode(input: {
   sessionId: string;
   code: string;
   state?: string;
+  iss?: string;
 }, options?: { signal?: AbortSignal }): Promise<{ success: boolean }> {
   const path = isHostedMode()
     ? "/api/web/conformance/oauth/authorize"

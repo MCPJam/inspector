@@ -25,6 +25,7 @@ import {
   type ModelSelection,
   type SkippedModelCell,
 } from "@/components/environment-composer/environment-stack";
+import { sameServerSkillSelection } from "@/components/environment-composer/server-skill-selection";
 import type { HarnessModelTarget } from "@/lib/harness-model-locks";
 import type { ModelSelection as SavedModelSelection } from "@mcpjam/sdk/browser";
 import {
@@ -36,6 +37,8 @@ import {
 import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
 import { clientDisplayName } from "@/lib/client-display-name";
 import type {
+  ProjectEnvironmentServerSkillSelection,
+  ProjectEnvironmentSkillScope,
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
@@ -50,6 +53,8 @@ export type AdhocStackInput = {
   hostId: string;
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  serverSkillSelection?: ProjectEnvironmentServerSkillSelection;
+  skillScope?: ProjectEnvironmentSkillScope;
   computerEnvironmentId?: string;
   /** Explicit model override. Omit to inherit the client's model. */
   modelId?: string;
@@ -145,6 +150,10 @@ function sharedFields(
   return {
     serverAttachmentId: stack.serverAttachmentId ?? null,
     skillSelection: skillsEnabled ? stack.skillSelection ?? null : null,
+    serverSkillSelection: skillsEnabled
+      ? (stack.serverSkillSelection ?? null)
+      : null,
+    skillScope: skillsEnabled ? (stack.skillScope ?? null) : null,
     computerEnvironmentId: computersEnabled
       ? stack.computerEnvironmentId ?? null
       : null,
@@ -211,6 +220,11 @@ function matchingNamedEnvironment(
       env.serverSelection.mode === "selected") &&
     sameOptionalModel(env.modelId, modelId) &&
     sameSavedSelection(modelId, env.modelSelection, modelSelection) &&
+    (env.skillScope ?? null) === fields.skillScope &&
+    sameServerSkillSelection(
+      env.serverSkillSelection,
+      fields.serverSkillSelection,
+    ) &&
     stackFieldsEqual(
       {
         serverAttachmentId: env.serverAttachmentId ?? null,
@@ -472,7 +486,7 @@ export async function resolveComposerEnvironments(args: {
         if (name) {
           throw new ComposerResolveError(
             "CLIENT_UNSUPPORTED",
-            orgKeySurfaceRefusal(name, "study"),
+            orgKeySurfaceRefusal(name),
           );
         }
       }
@@ -488,6 +502,10 @@ export async function resolveComposerEnvironments(args: {
       ...(fields.skillSelection
         ? { skillSelection: fields.skillSelection }
         : {}),
+      ...(fields.serverSkillSelection
+        ? { serverSkillSelection: fields.serverSkillSelection }
+        : {}),
+      ...(fields.skillScope ? { skillScope: fields.skillScope } : {}),
       ...(fields.computerEnvironmentId
         ? { computerEnvironmentId: fields.computerEnvironmentId }
         : {}),

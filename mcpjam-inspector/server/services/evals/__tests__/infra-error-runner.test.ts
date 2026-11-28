@@ -71,6 +71,7 @@ import {
   harnessFailureEvidenceOf,
 } from "../../../utils/harness/harness-provider-error";
 import { HARNESS_PROXY_REFUSAL_STATUS } from "@/shared/harness-proxy-refusal-reasons";
+import type { RunBearer } from "../../../utils/run-bearer.js";
 
 type Turn = (opts: any) => Promise<unknown>;
 
@@ -104,6 +105,13 @@ async function runSuite(
   model: string,
   budgets = defaultEvalExecutionBudgets(),
   provider = "openai",
+  convexAuthToken: RunBearer = "token",
+  /**
+   * The run's details list these rows, as the backend precreates them, and a
+   * run that throws returns the error instead of rethrowing it.
+   */
+  precreatedRows = false,
+  extraOptions: Record<string, unknown> = {},
 ) {
   const rows = Array.from({ length: runs }, (_, index) => ({
     _id: `iter-${index + 1}`,
@@ -127,7 +135,11 @@ async function runSuite(
     finalize: vi.fn(async () => {}),
   };
   const convexClient = {
-    query: vi.fn(async () => ({ status: "running" })),
+    query: vi.fn(async (name: string) =>
+      precreatedRows && name === "testSuites:getTestSuiteRunDetails"
+        ? { iterations: rows }
+        : { status: "running" },
+    ),
     mutation: vi.fn(async () => ({})),
     action: vi.fn(async () => undefined),
   };
@@ -141,7 +153,7 @@ async function runSuite(
     getAllToolsMetadata: vi.fn(() => ({})),
     executeTool: vi.fn(),
   };
-  await runEvalSuiteWithAiSdk({
+  const run = runEvalSuiteWithAiSdk({
     suiteId: "suite-1",
     runId: "run-1",
     recorder,
@@ -168,11 +180,20 @@ async function runSuite(
     modelApiKeys: { openai: "sk-test" },
     convexClient,
     convexHttpUrl: "https://example.convex.site",
-    convexAuthToken: "token",
+    convexAuthToken,
     mcpClientManager: manager,
     executionBudgets: budgets,
+    ...extraOptions,
   } as any);
-  return { rows, recorder };
+  if (!precreatedRows) {
+    await run;
+    return { rows, recorder, setupError: undefined };
+  }
+  const setupError = await run.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  return { rows, recorder, setupError };
 }
 
 beforeEach(() => {
@@ -501,5 +522,130 @@ describe("local runner — the provider's own typed answer", () => {
     const { rows } = await runSuite(1, "gpt-4-turbo");
     expect(rows[0]).toMatchObject({ status: "completed", passed: false });
     expect(rows[0]).not.toHaveProperty("infraError");
+  });
+});
+
+describe("a scheduled run whose job token the backend stops renewing", () => {
+  const REFUSAL = "token_renewal_failed: owner_not_member";
+
+  /** A job token that works until `refuse()`, as the worker's does. */
+  function refusableBearer() {
+    let refused = false;
+    const bearer: RunBearer = {
+      current: () => {
+        if (refused) throw new Error(REFUSAL);
+        return "job-token-1";
+      },
+      last: () => "job-token-1",
+      onRenew: () => {},
+    };
+    return { bearer, refuse: () => (refused = true) };
+  }
+
+  it("hosted: the iteration still ends as a failure that names the reason", async () => {
+    const { bearer, refuse } = refusableBearer();
+    assistantTurnMock.mockImplementationOnce(async (opts: any) => {
+      refuse();
+      // The engine reads the authorization on each step and reports a failed
+      // read as the turn's error.
+      const error: Error = await opts.authContext.turnAuthorization
+        .getAuthorization()
+        .catch((caught: Error) => caught);
+      opts.onEngineError?.({
+        rawText: error.message,
+        promptIndex: 0,
+        message: error.message,
+        phase: "stream",
+      });
+      return { messages: opts.messages, turnTrace: { spans: [] } };
+    });
+    const { rows } = await runSuite(
+      1,
+      "gpt-5-mini",
+      undefined,
+      undefined,
+      bearer,
+    );
+    // An engine error with no typed infra evidence is written as a measured
+    // failure, as the uncategorized cases above are.
+    expect(rows[0]).toMatchObject({
+      status: "completed",
+      passed: false,
+      error: REFUSAL,
+    });
+  });
+
+  it("local: the iteration still ends as a failure that names the reason", async () => {
+    const { bearer, refuse } = refusableBearer();
+    streamTextMock.mockImplementationOnce(() => {
+      refuse();
+      throw new Error(REFUSAL);
+    });
+    const { rows } = await runSuite(
+      1,
+      "gpt-4-turbo",
+      undefined,
+      undefined,
+      bearer,
+    );
+    expect(rows[0]).toMatchObject({
+      status: "failed",
+      passed: false,
+      error: expect.stringContaining(REFUSAL),
+    });
+  });
+
+  it("refused before the run starts: its rows end setup_failed, not pending", async () => {
+    const { bearer, refuse } = refusableBearer();
+    refuse();
+    const { rows, recorder, setupError } = await runSuite(
+      2,
+      "gpt-4-turbo",
+      undefined,
+      undefined,
+      bearer,
+      true,
+    );
+    expect(String(setupError)).toContain(REFUSAL);
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        status: "setup_failed",
+        passed: false,
+        error: expect.stringContaining(REFUSAL),
+      });
+    }
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed" }),
+    );
+  });
+
+  it("refused as a case starts: its pending rows end setup_failed, not pending", async () => {
+    const { bearer, refuse } = refusableBearer();
+    refuse();
+    // The local-harness venue reads the token before an iteration claims its
+    // row, so the refusal ends the case, not one iteration.
+    const { rows, recorder, setupError } = await runSuite(
+      2,
+      "gpt-5-mini",
+      undefined,
+      undefined,
+      bearer,
+      true,
+      {
+        harnessRuntimeVenue: "local",
+        orgModelConfigTarget: { projectId: "project-1" },
+      },
+    );
+    expect(setupError).toBeUndefined();
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        status: "setup_failed",
+        passed: false,
+        error: REFUSAL,
+      });
+    }
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "completed" }),
+    );
   });
 });

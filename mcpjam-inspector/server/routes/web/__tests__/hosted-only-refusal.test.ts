@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuthorizedManager } from "../auth.js";
 import { WebRouteError } from "../errors.js";
+import { CREDENTIAL_EXPORT_SETTING_HINT } from "../../../../shared/credential-export-setting.js";
 
 // The authorize answer withholds a saved token and says which rule did it. A
 // hosted-only account's rule is the account's own, which no organization admin
@@ -65,14 +66,30 @@ describe("an export refusal names the rule that refused", () => {
     });
   });
 
+  it("keeps the backend's own sentence and cause when it sends them", async () => {
+    stubAuthorize({
+      oauthUnavailablePolicy: "hostedOnlyAccount",
+      oauthUnavailableCause: "not_acknowledged",
+      oauthUnavailableMessage:
+        "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+    });
+    const error = await refusal();
+    expect(error.message).toBe(
+      "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+    );
+    expect(error.details).toMatchObject({
+      exportDenied: true,
+      policy: "hostedOnlyAccount",
+      cause: "not_acknowledged",
+    });
+  });
+
   it.each([{}, { oauthUnavailablePolicy: "credentialExportPolicy" }])(
     "keeps the organization policy copy for %j",
     async (extra) => {
       stubAuthorize(extra);
       const error = await refusal();
-      expect(error.message).toContain(
-        "Ask an organization admin to change the credential export policy.",
-      );
+      expect(error.message).toContain(CREDENTIAL_EXPORT_SETTING_HINT);
       expect(error.details).toMatchObject({
         exportDenied: true,
         policy: "credentialExportPolicy",

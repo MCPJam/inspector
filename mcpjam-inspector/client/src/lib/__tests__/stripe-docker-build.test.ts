@@ -21,5 +21,5 @@ it("supplies the analytics environment to hosted Vite builds", () => {
     "../.github/workflows/pr-preview.yml",
     "utf8",
   );
-  expect(previewWorkflow.match(/VITE_ENVIRONMENT=preview/g)).toHaveLength(3);
+  expect(previewWorkflow.match(/VITE_ENVIRONMENT=preview/g)).toHaveLength(1);
 });

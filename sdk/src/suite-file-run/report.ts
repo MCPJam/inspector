@@ -424,7 +424,7 @@ function caseLine(
 }
 
 /** One phrase for an iteration a sign-in challenge interrupted. */
-function authRequiredLabel(
+export function authRequiredLabel(
   authRequired: NonNullable<
     LocalEvalRunMetadata["cases"][number]["iterations"][number]["authRequired"]
   >

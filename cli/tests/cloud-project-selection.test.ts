@@ -97,6 +97,30 @@ async function startFixture(): Promise<{
         );
         return;
       }
+      if (
+        (rest === "insights" || rest === "findings/build") &&
+        req.method === "POST"
+      ) {
+        res.statusCode = 202;
+        res.end(
+          JSON.stringify({
+            runId: "run-1",
+            projectId: evalRun[1],
+            status: "pending",
+          })
+        );
+        return;
+      }
+      if (rest === "insights" && req.method === "DELETE") {
+        res.end(
+          JSON.stringify({
+            runId: "run-1",
+            projectId: evalRun[1],
+            canceled: true,
+          })
+        );
+        return;
+      }
       if (rest === "compare") {
         res.end(
           JSON.stringify({
@@ -227,6 +251,21 @@ const INSPECTION_COMMANDS: ReadonlyArray<{
   { name: "status", args: ["status", "--run", "run-1"], pathIncludes: "/eval-runs/run-1" },
   { name: "cancel", args: ["cancel", "--run", "run-1"], pathIncludes: "/eval-runs/run-1/cancel" },
   { name: "judge", args: ["judge", "--run", "run-1"], pathIncludes: "/eval-runs/run-1/judge" },
+  {
+    name: "request-insights",
+    args: ["request-insights", "--run", "run-1"],
+    pathIncludes: "/eval-runs/run-1/insights",
+  },
+  {
+    name: "cancel-insights",
+    args: ["cancel-insights", "--run", "run-1"],
+    pathIncludes: "/eval-runs/run-1/insights",
+  },
+  {
+    name: "build-findings",
+    args: ["build-findings", "--run", "run-1"],
+    pathIncludes: "/eval-runs/run-1/findings/build",
+  },
   {
     name: "iterations",
     args: ["iterations", "--run", "run-1"],
@@ -444,4 +483,37 @@ test("sessions list --help shows --all-projects", async () => {
   assert.equal(run.exitCode, 0, run.stderr);
   assert.match(run.stdout, /--all-projects/);
   assert.match(run.stdout, /--project <id-or-name>/);
+});
+
+test("eval insights commands trim --run and refuse a blank one", async () => {
+  const fixture = await startFixture();
+  try {
+    const padded = await withEnv(isolatedEnv(), () =>
+      runCli(
+        cloudArgv(
+          fixture.baseUrl,
+          "eval",
+          "request-insights",
+          "--run",
+          " run-1 "
+        )
+      )
+    );
+    assert.notEqual(padded.exitCode, 2, padded.stderr);
+    assert.ok(
+      fixture.requestUrls.some((url) =>
+        url.includes("/eval-runs/run-1/insights")
+      ),
+      fixture.requestUrls.join(", ")
+    );
+    const blank = await withEnv(isolatedEnv(), () =>
+      runCli(
+        cloudArgv(fixture.baseUrl, "eval", "cancel-insights", "--run", "  ")
+      )
+    );
+    assert.equal(blank.exitCode, 2);
+    assert.match(blank.stderr + blank.stdout, /Pass an eval run ID with --run/);
+  } finally {
+    await fixture.close();
+  }
 });

@@ -54,28 +54,6 @@ describe("filterByFeatureFlags", () => {
     expect(titles).toEqual(["Always Visible"]);
   });
 
-  it("hides XAA Debugger when the xaa flag is off", () => {
-    const result = filterByFeatureFlags(
-      [
-        {
-          id: "others",
-          items: [
-            { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
-            {
-              title: "XAA Debugger",
-              url: "#xaa-flow",
-              icon: FakeIcon,
-              featureFlag: "xaa",
-            },
-          ],
-        },
-      ],
-      { xaa: false },
-    );
-
-    expect(result[0].items.map((i) => i.title)).toEqual(["OAuth Debugger"]);
-  });
-
   it("keeps Testing visible when unrelated flags are on", () => {
     const result = filterByFeatureFlags(makeSections(), {
       "registry-enabled": true,
@@ -131,17 +109,17 @@ describe("filterByFeatureFlags", () => {
     expect(evalsItems[0].featureFlag).toBeUndefined();
   });
 
-  it("hides Conformance when the feature flag is off", () => {
+  it("hides Compatibility when the feature flag is off", () => {
     const result = filterByFeatureFlags(
       [
         {
           id: "others",
           items: [
             {
-              title: "Conformance",
-              url: "#conformance",
+              title: "Compatibility",
+              url: "#compatibility",
               icon: FakeIcon,
-              featureFlag: "mcpjam-conformance",
+              featureFlag: "mcpjam-compatibility",
             },
             {
               title: "OAuth Debugger",
@@ -151,7 +129,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { "mcpjam-conformance": false },
+      { "mcpjam-compatibility": false },
     );
 
     expect(result[0].items.map((item) => item.title)).toEqual([
@@ -159,7 +137,7 @@ describe("filterByFeatureFlags", () => {
     ]);
   });
 
-  it("keeps Scenarios behind the existing sandboxes flag", () => {
+  it("keeps a billing-gated item behind its feature flag", () => {
     const sections = [
       {
         id: "connection",
@@ -168,7 +146,7 @@ describe("filterByFeatureFlags", () => {
             title: "Scenarios",
             url: "#scenarios",
             icon: FakeIcon,
-            featureFlag: "sandboxes-enabled",
+            featureFlag: "registry-enabled",
             billingFeature: "scenarios" as const,
           },
         ],
@@ -176,18 +154,18 @@ describe("filterByFeatureFlags", () => {
     ];
 
     expect(
-      filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items,
+      filterByFeatureFlags(sections, { "registry-enabled": true })[0].items,
     ).toEqual([
       {
         title: "Scenarios",
         url: "#scenarios",
         icon: FakeIcon,
-        featureFlag: "sandboxes-enabled",
+        featureFlag: "registry-enabled",
         billingFeature: "scenarios",
       },
     ]);
     expect(
-      filterByFeatureFlags(sections, { "sandboxes-enabled": false }),
+      filterByFeatureFlags(sections, { "registry-enabled": false }),
     ).toHaveLength(0);
   });
 
@@ -207,7 +185,6 @@ describe("filterByFeatureFlags", () => {
         },
       ],
       {
-        billingUiEnabled: true,
         gateDenied: { scenarios: true },
         enforcementActive: true,
       },
@@ -277,15 +254,13 @@ describe("declared nav flags are actually resolved", () => {
     expect(on).toContain("Sessions");
   });
 
-  it("shows Evaluate publicly and gates only Evaluate (Legacy)", () => {
+  it("shows only the public Evaluate tab regardless of the retired flag", () => {
     const items = navigationSections.flatMap((section) => section.items);
     expect(items.find((item) => item.url === "/evaluate")).toMatchObject({
       title: "Evaluate", billingFeature: "evals",
     });
     expect(items.find((item) => item.url === "/evaluate")?.featureFlag).toBeUndefined();
-    expect(items.find((item) => item.url === "/evals")).toMatchObject({
-      title: "Evaluate (Legacy)", featureFlag: "evaluate-enabled",
-    });
+    expect(items.find((item) => item.url === "/evals")).toBeUndefined();
     for (const enabled of [undefined, false, true]) {
       const titles = filterByFeatureFlags(
         navigationSections,
@@ -293,7 +268,7 @@ describe("declared nav flags are actually resolved", () => {
       )
         .flatMap((section) => section.items).map((item) => item.title);
       expect(titles).toContain("Evaluate");
-      expect(titles.includes("Evaluate (Legacy)")).toBe(enabled === true);
+      expect(titles).not.toContain("Evaluate (Legacy)");
       expect(titles).not.toContain("Ding Dong");
     }
   });
@@ -316,7 +291,6 @@ describe("applyBillingGateNavState", () => {
         },
       ],
       {
-        billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: false,
       },
@@ -346,7 +320,6 @@ describe("applyBillingGateNavState", () => {
         },
       ],
       {
-        billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: true,
       },
@@ -376,12 +349,7 @@ describe("getHostedNavigationSections", () => {
             icon: FakeIcon,
             billingFeature: "evals",
           },
-          {
-            title: "Conformance",
-            url: "#conformance",
-            icon: FakeIcon,
-            featureFlag: "mcpjam-conformance",
-          },
+          { title: "Conformance", url: "#conformance", icon: FakeIcon },
           { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
           { title: "XAA Debugger", url: "#xaa-flow", icon: FakeIcon },
         ],
@@ -399,12 +367,7 @@ describe("getHostedNavigationSections", () => {
         icon: FakeIcon,
         billingFeature: "evals",
       },
-      {
-        title: "Conformance",
-        url: "#conformance",
-        icon: FakeIcon,
-        featureFlag: "mcpjam-conformance",
-      },
+      { title: "Conformance", url: "#conformance", icon: FakeIcon },
       {
         title: "OAuth Debugger",
         url: "#oauth-flow",
@@ -542,54 +505,21 @@ describe("filterByFeatureFlags (Connect/Servers swap)", () => {
 });
 
 /**
- * Swarms and User Testing roll out on `sandboxes-enabled` in PostHog. The flag
- * decides whether the items exist; REEV-6's route gate then decides what a
- * visitor gets — a guest the preview, a member the real tab.
- *
- * The flag is deliberately NOT combined with sign-in here. Before REEV-6 the
- * sidebar resolved it as `flag && isAuthenticated`, which would hide the items
- * from exactly the signed-out visitors the preview was built for.
+ * Swarms and User Testing carry no feature flag. REEV-6's route gate decides
+ * what a visitor gets — a guest the preview, a member the real tab — so the
+ * sidebar has to show both items to a signed-out visitor too.
  */
-describe("Swarms and User Testing are flag-gated, not sign-in-gated (REEV-6)", () => {
+describe("Swarms and User Testing are not flag-gated or sign-in-gated (REEV-6)", () => {
   const MEASURE_ITEMS = ["User Testing", "Swarms"];
 
-  it("gates both items on sandboxes-enabled", () => {
-    const items = navigationSections
-      .flatMap((section) => section.items)
-      .filter((item) => MEASURE_ITEMS.includes(item.title));
-
-    expect(items).toHaveLength(2);
-    for (const item of items) {
-      expect(item.featureFlag).toBe("sandboxes-enabled");
-    }
-  });
-
-  it("hides both when the flag is off", () => {
-    const titles = filterByFeatureFlags(navigationSections, {
-      "sandboxes-enabled": false,
-    })
-      .flatMap((section) => section.items)
-      .map((item) => item.title);
-
-    for (const title of MEASURE_ITEMS) {
-      expect(titles).not.toContain(title);
-    }
-  });
-
-  it("shows both when the flag is on", () => {
-    const titles = filterByFeatureFlags(navigationSections, {
-      "sandboxes-enabled": true,
-    })
+  it("shows both items with no flag resolved", () => {
+    const titles = filterByFeatureFlags(navigationSections, {})
       .flatMap((section) => section.items)
       .map((item) => item.title);
 
     for (const title of MEASURE_ITEMS) {
       expect(titles).toContain(title);
     }
-  });
-
-  it("resolves the flag key before the nav renders", () => {
-    expect(SIDEBAR_RESOLVED_FLAG_KEYS).toContain("sandboxes-enabled");
   });
 
   // They stay CLICKABLE for a plan-locked org rather than disabled: the tab
@@ -611,7 +541,7 @@ describe("Events rollout navigation", () => {
     { sections: navigationSections },
     { sections: getHostedNavigationSections(navigationSections) },
   ])(
-    "shows Events and Triggers only with mcp-events-enabled",
+    "shows Inspect Events only with mcp-events-enabled",
     ({ sections }) => {
       const eventUrls = (flags: Record<string, boolean>) =>
         filterByFeatureFlags(sections, flags)
@@ -621,7 +551,7 @@ describe("Events rollout navigation", () => {
 
       expect(eventUrls({})).toEqual([]);
       expect(eventUrls({ "mcp-events-enabled": false })).toEqual([]);
-      expect(eventUrls({ "mcp-events-enabled": true })).toEqual(["/triggers", "/events"]);
+      expect(eventUrls({ "mcp-events-enabled": true })).toEqual(["/events"]);
     },
   );
 });

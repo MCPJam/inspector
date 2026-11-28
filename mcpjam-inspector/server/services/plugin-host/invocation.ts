@@ -80,10 +80,12 @@ export interface PluginInvocationPorts {
   /** Fresh request ports for one owned continuation leg; never retained by a receipt. */
   continuation?: {
     submission: PluginContinuationSubmission;
+    /** `pending` is the round this leg answers, as the receipt recorded it. */
     resume: (
       authorization: ResolvedInvocationContext,
       params: PluginToolCallParams,
       signal: AbortSignal,
+      pending: PluginInvocationSuspension,
     ) => Promise<unknown>;
   };
   /** Reuses existing actor/project/target authorization and feature-gate resolution. */
@@ -830,6 +832,7 @@ export class AuthorizedToolInvoker {
               authorization,
               sanitizePluginToolParams(params),
               controller.signal,
+              pending,
             );
           });
           const delivery = await this.resolve(

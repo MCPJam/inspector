@@ -207,7 +207,13 @@ export async function startHostedRecording(
     timeoutMs?: number;
   },
 ): Promise<void> {
-  if (!recordingEnabled()) return;
+  if (!recordingEnabled()) {
+    logger.info("[browser-session] browser.sandbox_recording_skipped", {
+      sandboxRowId: handle.sandboxRowId,
+      error: "Hosted browser recording is disabled",
+    });
+    return;
+  }
   const { client, sandboxRowId, sandboxId, sessionId, bootId } = handle;
   // IDEMPOTENT at the registry, before any network. `ensureLiveBrowserSession`
   // is called once per turn by the lazy browser-tool path, so an iteration
@@ -224,7 +230,13 @@ export async function startHostedRecording(
   // one), and narrowing it here is what lets the take's `stop` hold a
   // reference that cannot have become undefined.
   const record = client.record;
-  if (!record) return;
+  if (!record) {
+    logger.info("[browser-session] browser.sandbox_recording_skipped", {
+      sandboxRowId,
+      error: "The browser client has no recording method",
+    });
+    return;
+  }
   const now = deps.now ?? Date.now;
   const id = recordingIdFor(sessionId);
   // ABANDONED WHEN THE DEADLINE WINS. `Promise.race` does not cancel the work
@@ -250,7 +262,13 @@ export async function startHostedRecording(
     await Promise.race([
       (async () => {
         const status = await client.status();
-        if (status.kind !== "ok" || !status.features?.includes("record")) return;
+        if (status.kind !== "ok" || !status.features?.includes("record")) {
+          logger.info("[browser-session] browser.sandbox_recording_skipped", {
+            sandboxRowId,
+            error: "The browser does not advertise recording support",
+          });
+          return;
+        }
         const started = await record({
           action: "start",
           id,
@@ -433,14 +451,26 @@ async function collect(entry: ActiveRecording): Promise<HostedRecording | null> 
   const stopped = await entry.stop();
   // `recording` is absent on a `start` answer and null when nothing was
   // recording; both mean the same here — there is no file to read.
-  if (!stopped.ok || !stopped.recording) return null;
+  if (!stopped.ok || !stopped.recording) {
+    logger.info("[browser-session] browser.sandbox_recording_collected", {
+      ok: false,
+      error: "The browser did not return a recording",
+    });
+    return null;
+  }
   const { path, bytes, durationMs, distinctFrames, truncated } =
     stopped.recording;
   // A take that wrote nothing (ffmpeg died before its first fragment, or the
   // display never came up). Dropped rather than uploaded: a zero-byte video in
   // the trace viewer is a broken player, which reads as a bug in the product
   // rather than as a run that produced no picture.
-  if (bytes <= 0) return null;
+  if (bytes <= 0) {
+    logger.info("[browser-session] browser.sandbox_recording_collected", {
+      ok: false,
+      error: "The browser returned an empty recording",
+    });
+    return null;
+  }
   // BEFORE connecting: a refused path costs no network, and a daemon that names
   // a file outside its recordings dir is something to say loudly, not read.
   if (!isCollectableRecordingPath(path)) {

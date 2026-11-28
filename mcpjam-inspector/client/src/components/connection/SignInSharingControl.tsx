@@ -43,11 +43,13 @@ function stopSharingCopy(accounts: number) {
 /**
  * A project admin's switch between each member signing in with their own
  * accounts and one sign-in shared with the project, where admins connect up
- * to 8 project accounts for every member's hosted runs.
+ * to 8 project accounts for every member's runs.
  *
  * Both directions confirm first. Sharing lets every member's runs act as the
- * accounts, and turning it off deletes them, which the backend does as part
- * of the same write.
+ * accounts, including from their local apps, which receive the accounts'
+ * access tokens; turning it off deletes them, which the backend does as part
+ * of the same write. Local runs on a shared server have their own switch
+ * (`LocalRunsControl`).
  */
 export function SignInSharingControl({
   shared,
@@ -96,8 +98,8 @@ export function SignInSharingControl({
         </Label>
         <p className="text-xs text-muted-foreground">
           {shared
-            ? "Every member's hosted runs can act as the project accounts. Nobody can get their tokens out."
-            : "Admins connect up to 8 accounts that every member's hosted runs can act as. Nobody can get their tokens out."}
+            ? "Members' hosted runs act as the project accounts. Local runs follow the switch below."
+            : "Admins connect up to 8 accounts that every member's runs can act as, in MCPJam and in their local apps."}
         </p>
       </div>
       <Switch
@@ -117,7 +119,7 @@ export function SignInSharingControl({
             <AlertDialogDescription>
               {shared
                 ? stop.body
-                : "Every member's hosted runs will be able to act as the accounts admins connect here, and nobody can get their tokens out. Members' own accounts on this server stop being used while it is shared."}
+                : "Members' local apps will receive the access tokens of the accounts admins connect here. A token already sent keeps working until it expires. Members' own accounts on this server aren't used while sharing is on."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -84,7 +84,7 @@ describe("the generic local runner", () => {
     "pack-naming.ts": ["claude-code"],
     "runtime-lifecycle.ts": ["claude-code"],
     // The adapters' own resume-state shapes, which hosted turns share.
-    "resume-state.ts": ["claude-code", "codex", "copilot-cli", "cursor"],
+    "resume-state.ts": ["claude-code", "codex", "copilot-cli", "cursor", "opencode"],
   };
 
   it("names no runtime outside its definition", () => {

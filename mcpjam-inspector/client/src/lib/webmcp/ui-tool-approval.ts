@@ -55,7 +55,7 @@ function toolNameFromPart(part: ToolPartLike): string | null {
   return null;
 }
 
-function findPartByApprovalId(
+export function findPartByApprovalId(
   messages: UIMessage[],
   approvalId: string
 ): LocatedToolPart | null {

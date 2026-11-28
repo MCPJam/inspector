@@ -92,6 +92,65 @@ describe("GET /api/mcp/servers", () => {
     expect(data.servers[1].status).toBe("disconnected");
   });
 
+  it("lists only the config fields the browser reads, never a credential", async () => {
+    mcpClientManager.getServerSummaries.mockReturnValue([
+      {
+        id: "oauth-server",
+        status: "connected",
+        config: {
+          url: new URL("https://mcp.example.com/mcp"),
+          // Where the SDK puts a token after a 401 refresh.
+          accessToken: "tok_EFTW41_SECRET_refreshed",
+          refreshToken: "tok_EFTW41_SECRET_refresh",
+          clientSecret: "tok_EFTW41_SECRET_client",
+          requestInit: {
+            headers: {
+              Authorization: "Bearer tok_EFTW41_SECRET_bearer",
+              "X-Api-Key": "tok_EFTW41_SECRET_header",
+            },
+          },
+          eventSourceInit: { headers: { Cookie: "tok_EFTW41_SECRET_cookie" } },
+          sessionId: "tok_EFTW41_SECRET_session",
+          credentialSource: "mcpjam-backend",
+          credentialHeaderNames: ["x-api-key"],
+          timeout: 30_000,
+          clientCapabilities: { elicitation: {} },
+          mcpProtocolVersion: "2025-11-25",
+        },
+      },
+      {
+        id: "stdio-server",
+        status: "disconnected",
+        config: {
+          command: "node",
+          args: ["server.js"],
+          env: { API_KEY: "tok_EFTW41_SECRET_env" },
+        },
+      },
+    ]);
+
+    const res = await app.request("/api/mcp/servers");
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).not.toContain("tok_EFTW41_SECRET");
+    expect(body).not.toContain("credentialSource");
+    const data = JSON.parse(body);
+    expect(data.servers[0].config).toEqual({
+      url: "https://mcp.example.com/mcp",
+      timeout: 30_000,
+      clientCapabilities: { elicitation: {} },
+      mcpProtocolVersion: "2025-11-25",
+      hasHeaders: true,
+      hasBearerToken: true,
+    });
+    expect(data.servers[1].config).toEqual({
+      command: "node",
+      args: ["server.js"],
+      hasEnv: true,
+    });
+  });
+
   it("returns empty list when no servers configured", async () => {
     mcpClientManager.getServerSummaries.mockReturnValue([]);
 

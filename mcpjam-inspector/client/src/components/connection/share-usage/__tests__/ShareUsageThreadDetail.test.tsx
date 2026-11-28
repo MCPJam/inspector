@@ -1054,6 +1054,34 @@ describe("ShareUsageThreadDetail — span load failure", () => {
       }),
     );
   });
+
+  it("gives the timeline the event that started each turn", async () => {
+    const event = {
+      name: "comment.created",
+      receivedAt: 1_007_000,
+      delivery: "webhook",
+      origin: "server",
+      triggerId: "trg_1",
+    };
+    mockThreadState.sourceType = "direct";
+    mockTurnTracesState.traces = [
+      { promptIndex: 0, startedAt: 1_000_000, endedAt: 1_005_000, spanCount: 0 },
+      {
+        promptIndex: 1,
+        startedAt: 1_008_000,
+        endedAt: 1_012_000,
+        spanCount: 0,
+        eventAtTurn: event,
+      },
+    ];
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await openTrace();
+
+    await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+    expect(mockTraceViewer.mock.lastCall?.[0].trace).toMatchObject({
+      turnEvents: [{ promptIndex: 1, turnStartedAtMs: 1_008_000, event }],
+    });
+  });
 });
 
 /**

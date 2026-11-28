@@ -494,7 +494,7 @@ describe("a harness under the organization's key policy", () => {
     const standIn = noRunnableHarnessModel("claude-code", POLICY);
     expect(isNoRunnableHarnessModel(standIn)).toBe(true);
     expect(standIn.disabledReason).toBe(
-      "This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a gateway that serves Anthropic Messages.",
+      "This organization requires its own provider keys, so Claude Code runs only on an organization Anthropic provider or a custom provider that serves Anthropic Messages.",
     );
   });
 });

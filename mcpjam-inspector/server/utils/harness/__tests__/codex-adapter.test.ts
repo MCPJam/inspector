@@ -30,7 +30,9 @@ describe("the Codex adapter", () => {
     expect(getHarnessAdapter("claude-code").transport).toBeUndefined();
     expect(getHarnessAdapter("cursor").transport).toBeUndefined();
     expect(registeredHarnessIds().sort()).toEqual([
+      "chatgpt-web",
       "claude-code",
+      "claude-web",
       "codex",
       "copilot-cli",
       "cursor",

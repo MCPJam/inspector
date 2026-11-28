@@ -99,33 +99,39 @@ export const ANTHROPIC_NATIVE_MODEL_IDS: readonly NativeModelIdMapping[] =
   ]);
 
 // Every row here is a `SUPPORTED_MODELS` OpenAI row: `createLlmModel`
-// (server/utils/chat-helpers.ts) sends that id verbatim to api.openai.com, and
-// OpenAI's `GET /v1/models` lists models under the same ids. The canonical id
-// is the hosted catalog's spelling (shared/hosted-model-ids.generated.ts).
+// (server/utils/chat-helpers.ts) sends that id verbatim to api.openai.com.
+// OpenAI's `GET /v1/models` lists models under the same ids, except the GPT-6
+// rows, whose ids come from OpenAI's model pages (`OPENAI_MODEL_PAGE`). The
+// canonical id is the hosted catalog's spelling
+// (shared/hosted-model-ids.generated.ts).
 const OPENAI_VERBATIM =
   "SUPPORTED_MODELS row sent verbatim to api.openai.com by createLlmModel; listed under this id by GET /v1/models";
 const OPENAI_HOSTED = `${OPENAI_VERBATIM}; canonical spelling from hosted-model-ids.generated.ts`;
+// No key with GPT-6 access has listed these yet, so the id is the one on
+// OpenAI's model page rather than one seen in `GET /v1/models`.
+const OPENAI_MODEL_PAGE =
+  "SUPPORTED_MODELS row sent verbatim to api.openai.com by createLlmModel; id from OpenAI's model page (developers.openai.com/api/docs/models), read 2026-10-16, not yet seen in GET /v1/models; canonical spelling from hosted-model-ids.generated.ts";
 
 export const OPENAI_NATIVE_MODEL_IDS: readonly NativeModelIdMapping[] = [
   {
     canonicalId: "openai/gpt-6.1-sol",
     nativeId: "gpt-6.1-sol",
-    evidence: "Reviewed GPT-6 native name used by the org OpenAI model picker",
+    evidence: OPENAI_MODEL_PAGE,
   },
   {
     canonicalId: "openai/gpt-6-luna",
     nativeId: "gpt-6-luna",
-    evidence: "Reviewed GPT-6 native name used by the org OpenAI model picker",
+    evidence: OPENAI_MODEL_PAGE,
   },
   {
     canonicalId: "openai/gpt-6-sol",
     nativeId: "gpt-6-sol",
-    evidence: "Reviewed GPT-6 native name used by the org OpenAI model picker",
+    evidence: OPENAI_MODEL_PAGE,
   },
   {
     canonicalId: "openai/gpt-6-astra",
     nativeId: "gpt-6-astra",
-    evidence: "Reviewed GPT-6 native name used by the org OpenAI model picker",
+    evidence: OPENAI_MODEL_PAGE,
   },
 
   {

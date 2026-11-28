@@ -176,6 +176,13 @@ describe("hosted tab policy stays consistent with the manifests", () => {
 });
 
 describe("buildAppAtlas", () => {
+  it("advertises current Evaluate instead of retired eval links", () => {
+    const atlas = buildAppAtlas();
+    expect(atlas).toContain("### Evaluate (evaluate)");
+    expect(atlas).not.toContain("(evals)");
+    expect(atlas).not.toContain("Evaluate (New)");
+  });
+
   it("names every atlas surface with a navigable target", () => {
     const atlas = buildAppAtlas();
     for (const surface of APP_SURFACES.filter((s) => s.showInAtlas)) {

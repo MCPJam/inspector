@@ -10,8 +10,8 @@ import {
   runEvalSuiteOperation,
   showServersOperation,
 } from "@mcpjam/sdk/platform";
+import { compactModelCatalogForModel } from "@mcpjam/sdk/internal/mcp-surface";
 import {
-  compactModelCatalogForModel,
   EXCLUDED_FROM_CATALOG,
   PLATFORM_CATALOG_OPERATIONS,
   PLATFORM_TOOL_WIDGET_VIEWS,
@@ -158,6 +158,13 @@ const PLAIN_TOOLS = [
   "list_server_revisions",
   "get_server_revision",
   "diff_server_revisions",
+  "create_mock_server",
+  "update_mock_server",
+  "get_mock_server",
+  "patch_mock_server",
+  "refresh_mock_server",
+  "get_mock_forwarding_policy",
+  "set_mock_forwarding_policy",
   // Server accounts: metadata reads and the delete, no widget view.
   "list_server_accounts",
   "get_server_account",
@@ -200,6 +207,30 @@ const PLAIN_TOOLS = [
   "delete_directory_submission",
   "start_directory_submission_run",
   "get_directory_submission_results",
+  // A submission's reviewer sign-in attempts: state and stages, read by agents.
+  "create_reviewer_attempt",
+  "list_reviewer_attempts",
+  "get_reviewer_attempt",
+  "resume_reviewer_attempt",
+  "cancel_reviewer_attempt",
+  "get_directory_submission_handoff",
+  "list_directory_submission_findings",
+  "get_directory_submission_finding",
+  "export_directory_submission",
+  "list_directory_submission_events",
+  "record_directory_submission_status",
+  "record_directory_submission_snapshot",
+  "import_directory_finding",
+  // A submission's test plan and what its calls showed, read by agents.
+  "get_directory_submission_test_plan",
+  "draft_directory_submission_test_plan",
+  "save_directory_submission_test_plan",
+  "get_directory_submission_tool_tests",
+  // The eval suite holding a submission's test cases.
+  "get_directory_submission_evals",
+  "set_directory_submission_evals",
+  "import_directory_submission_test_cases",
+  "export_directory_submission_test_cases",
   "start_conformance_run",
   "get_conformance_run",
   "list_conformance_runs",
@@ -255,6 +286,10 @@ const PLAIN_TOOLS = [
   "backtest_eval_run",
   "backtest_eval_run_judge",
   "request_eval_run_judge",
+  // The run page's Analyze button as three tools: receipts, no widget view.
+  "build_eval_run_findings",
+  "request_eval_run_insights",
+  "cancel_eval_run_insights",
   // The description-rewrite experiment: agent-oriented payloads (a diff and
   // two arm counts), no widget view.
   "propose_eval_description_rewrite",
@@ -479,6 +514,16 @@ describe("platform tool registration", () => {
       "list_server_revisions",
       "get_server_revision",
       "diff_server_revisions",
+      "create_mock_server",
+      "update_mock_server",
+      "get_mock_server",
+      "patch_mock_server",
+      "refresh_mock_server",
+      "open_mock_run",
+      "reset_mock_run",
+      "close_mock_run",
+      "get_mock_forwarding_policy",
+      "set_mock_forwarding_policy",
       "list_server_accounts",
       "get_server_account",
       "delete_server_account",
@@ -509,6 +554,27 @@ describe("platform tool registration", () => {
       "delete_directory_submission",
       "start_directory_submission_run",
       "get_directory_submission_results",
+      "create_reviewer_attempt",
+      "list_reviewer_attempts",
+      "get_reviewer_attempt",
+      "resume_reviewer_attempt",
+      "cancel_reviewer_attempt",
+      "get_directory_submission_handoff",
+      "list_directory_submission_findings",
+      "get_directory_submission_finding",
+      "export_directory_submission",
+      "list_directory_submission_events",
+      "record_directory_submission_status",
+      "record_directory_submission_snapshot",
+      "import_directory_finding",
+      "get_directory_submission_test_plan",
+      "draft_directory_submission_test_plan",
+      "save_directory_submission_test_plan",
+      "get_directory_submission_tool_tests",
+      "get_directory_submission_evals",
+      "set_directory_submission_evals",
+      "import_directory_submission_test_cases",
+      "export_directory_submission_test_cases",
       "start_conformance_run",
       "get_conformance_run",
       "list_conformance_runs",
@@ -548,6 +614,9 @@ describe("platform tool registration", () => {
       "backtest_eval_run",
       "backtest_eval_run_judge",
       "request_eval_run_judge",
+      "build_eval_run_findings",
+      "request_eval_run_insights",
+      "cancel_eval_run_insights",
       "list_project_environments",
       "get_project_environment",
       "resolve_project_environment",
@@ -696,6 +765,10 @@ describe("platform tool registration", () => {
       "create_client",
       "duplicate_client",
       "create_directory_submission",
+      "record_directory_submission_status",
+      "record_directory_submission_snapshot",
+      "import_directory_finding",
+      "import_directory_submission_test_cases",
       "send_feedback",
     ]);
     // Writes whose identical repeat answers success on the state the first
@@ -717,6 +790,8 @@ describe("platform tool registration", () => {
       "upsert_study_member",
       "update_project",
       "archive_goal",
+      "save_directory_submission_test_plan",
+      "import_directory_submission_test_cases",
     ]);
     const names = new Set(registrations.map((registration) => registration.name));
     for (const name of [...ADDITIVE_WRITES, ...IDEMPOTENT_WRITES]) {
@@ -738,8 +813,11 @@ describe("platform tool registration", () => {
       "connect_project_server",
       "install_registry_server",
       "request_eval_run_judge",
+      "request_eval_run_insights",
+      "build_eval_run_findings",
       "request_study_insights",
       "request_swarm_run_insights",
+      "cancel_eval_run_insights",
       "cancel_study_insights",
       "cancel_swarm_run_insights",
       "upsert_study_member",
@@ -1198,6 +1276,41 @@ describe("runPlatformOperation", () => {
     expect(
       (result.structuredContent?.error as { requestId?: string }).requestId
     ).toBe("req_0123456789abcdef");
+  });
+
+  it("reports a guest mint failure, which never reaches the Platform API", async () => {
+    const onGuestMintFailed = vi.fn();
+    const result = (await runPlatformOperation(
+      { ...fakeToolContext(), onGuestMintFailed },
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(onGuestMintFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the agent by its clientInfo on what it launches, over its user agent", async () => {
+    const seen: Headers[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        seen.push(new Headers(init?.headers));
+        return Response.json({ data: [] });
+      })
+    );
+    await runPlatformOperation(
+      {
+        ...fakeToolContext({ bearerToken: "user-jwt", callerUserAgent: "node" }),
+        callerClientName: "claude-code",
+      },
+      listProjectsOperation,
+      {}
+    );
+    expect(JSON.parse(seen[0]!.get("x-mcpjam-client") ?? "null")).toEqual({
+      kind: "mcp",
+      client: "claude-code",
+    });
   });
 
   it("tells the model when a usage-limit refusal lifts, in both channels", async () => {

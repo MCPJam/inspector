@@ -23,9 +23,12 @@ vi.mock("@/hooks/useProjects", () => ({
   },
 }));
 vi.mock("convex/react", () => ({
+  // Each mutation calls through with its own name, so a test can tell which
+  // write ran, not only that one did.
   useMutation: (reference: never) => {
-    state.mutations.push(getFunctionName(reference));
-    return state.save;
+    const name = getFunctionName(reference);
+    state.mutations.push(name);
+    return (args: unknown) => state.save(name, args);
   },
 }));
 vi.mock("@/lib/apis/web/oauth-connections", () => ({
@@ -72,11 +75,29 @@ describe("useSignInSharing", () => {
 
   it("writes the server's sharing, then has the accounts list read again", async () => {
     await sharing().setSharing("personal");
-    expect(state.mutations).toContain("servers:setServerOAuthSharing");
-    expect(state.save).toHaveBeenCalledWith({
+    expect(state.save).toHaveBeenCalledWith("servers:setServerOAuthSharing", {
       serverId: "server-1",
       oauthSharing: "personal",
     });
+    expect(state.notify).toHaveBeenCalledOnce();
+  });
+
+  it("allows local runs with a share, since the dialog disclosed them", async () => {
+    await sharing().setSharing("shared");
+    expect(state.save).toHaveBeenCalledWith("servers:setServerOAuthSharing", {
+      serverId: "server-1",
+      oauthSharing: "shared",
+      acknowledgeLocalDelivery: true,
+    });
+  });
+
+  it("allows or stops local runs for an existing share", async () => {
+    await sharing().setLocalRuns(true);
+    expect(state.save).toHaveBeenCalledWith(
+      "credentials:setServerLocalDelivery",
+      { serverId: "server-1", allowed: true },
+    );
+    expect(state.save).toHaveBeenCalledOnce();
     expect(state.notify).toHaveBeenCalledOnce();
   });
 

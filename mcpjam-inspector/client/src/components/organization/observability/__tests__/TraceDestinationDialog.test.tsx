@@ -159,6 +159,19 @@ describe("TraceDestinationDialog", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("shows background trigger runs as a source an admin can clear", async () => {
+    open(existing({ sourceTypes: ["direct", "event"] }));
+    const checkbox = screen.getByRole("checkbox", {
+      name: /background triggers/i,
+    });
+    expect(checkbox.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByText("Save changes"));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].sourceTypes).toEqual(["direct"]);
+  });
+
   it("does not overwrite an endpoint the admin already typed", async () => {
     open(null);
     fireEvent.change(screen.getByLabelText("Endpoint URL"), {

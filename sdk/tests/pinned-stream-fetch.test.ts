@@ -20,6 +20,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createPinnedStreamingFetch } from "../src/oauth/pinned-stream-fetch.js";
 import { OAuthProxyError } from "../src/oauth-proxy-error.js";
+import { getDefaultUserAgent, setDefaultUserAgent } from "../src/user-agent.js";
 
 interface Recorded {
   url: string;
@@ -93,6 +94,50 @@ describe("the happy path still behaves like fetch", () => {
 
     expect(received[0].method).toBe("POST");
     expect(received[0].headers.authorization).toBe("Bearer t");
+  });
+
+  it("sends a User-Agent when the caller sets none, as fetch does", async () => {
+    const { origin, received } = await startServer((_req, res) => {
+      res.writeHead(202);
+      res.end();
+    });
+
+    await loopbackFetch()(`${origin}/mcp`);
+
+    expect(received[0].headers["user-agent"]).toBe(getDefaultUserAgent());
+    expect(received[0].headers["user-agent"]).toMatch(/^MCPJam\//);
+  });
+
+  it("sends the User-Agent an app set, read per request", async () => {
+    const { origin, received } = await startServer((_req, res) => {
+      res.writeHead(202);
+      res.end();
+    });
+    const pinnedFetch = loopbackFetch();
+    setDefaultUserAgent("MCPJam/3.24.0 (+https://mcpjam.com) MCP-Inspector/1.0");
+
+    try {
+      await pinnedFetch(`${origin}/mcp`);
+    } finally {
+      Reflect.deleteProperty(globalThis, Symbol.for("mcpjam.defaultUserAgent"));
+    }
+
+    expect(received[0].headers["user-agent"]).toBe(
+      "MCPJam/3.24.0 (+https://mcpjam.com) MCP-Inspector/1.0",
+    );
+  });
+
+  it("keeps the caller's User-Agent", async () => {
+    const { origin, received } = await startServer((_req, res) => {
+      res.writeHead(202);
+      res.end();
+    });
+
+    await loopbackFetch()(`${origin}/mcp`, {
+      headers: { "User-Agent": "custom/1.0" },
+    });
+
+    expect(received[0].headers["user-agent"]).toBe("custom/1.0");
   });
 
   it("reports the URL the chain ENDED at, not the one it started from", async () => {

@@ -29,7 +29,6 @@ export function getSubsectionsForGroup(
     isVerdictPolicyV2: boolean;
     showComputerEnvironment: boolean;
     showSchedule: boolean;
-    showDelete: boolean;
   },
 ): readonly SuiteSettingsSubsection[] {
   switch (groupId) {

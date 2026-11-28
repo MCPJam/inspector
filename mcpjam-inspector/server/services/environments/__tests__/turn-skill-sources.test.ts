@@ -131,7 +131,27 @@ describe("resolveTurnSkills for an environment", () => {
     expect(reasons(skills)).toEqual([["Deploy_Tool", "invalid-skill-name"]]);
   });
 
-  it("gives a name's box folder to its first copy", () => {
+  it("gives a name's box folder to its first skill", () => {
+    const spec = docsEnvironment();
+    const skills = resolveTurnSkills({
+      source: {
+        kind: "environment",
+        spec: {
+          ...spec,
+          skills: [
+            ...spec.skills!,
+            { ...spec.skills![0]!, skillId: "sk_docs_again" },
+          ],
+        },
+        attribution: null,
+      },
+      runtime: harness("claude-code"),
+    });
+    expect(skills.delivered.map((ref) => ref.skillId)).toEqual(["sk_docs"]);
+    expect(reasons(skills)).toEqual([["docs", "name-collision"]]);
+  });
+
+  it("takes a captured server skill through tools on Claude Code, so it holds no box folder", () => {
     const { spec, attribution } = evalEnvironment();
     const server = spec.serverSkills![0]!;
     const skills = resolveTurnSkills({
@@ -153,12 +173,15 @@ describe("resolveTurnSkills for an environment", () => {
       },
       runtime: harness("claude-code"),
     });
-    // A run writes a captured server skill under its plain name, which the
-    // environment's own skill before it already holds.
+    // The environment's own skill takes the `search` folder. Claude Code takes
+    // the captured server skill through MCPJam's skill tools, so none of it is
+    // written to the box and it holds no folder to collide over.
     expect(skills.delivered.map((ref) => ref.skillId)).toContain(
       "sk_own_search",
     );
-    expect(reasons(skills)).toEqual([[server.ref, "name-collision"]]);
+    expect(refs(skills)).toContain(server.ref);
+    expect(skills.excluded).toEqual([]);
+    expect(skills.serverSkillsVia).toBe("harness-tools");
   });
 
   it("leaves out a skill the backend left out of the environment, on every engine", () => {
@@ -284,6 +307,7 @@ describe("resolveTurnSkills for a client with no environment", () => {
     expect((await agentReceives(agent)).listed).toEqual(["my-notes"]);
     const box = resolveTurnSkills({ source, runtime: harness("claude-code") });
     expect(names(box)).toEqual(["my-notes"]);
-    expect(box.serverSkillsVia).toBe("none");
+    // Its connected servers' own skills join through MCPJam's skill tools.
+    expect(box.serverSkillsVia).toBe("harness-tools");
   });
 });

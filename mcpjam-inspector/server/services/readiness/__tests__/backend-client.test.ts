@@ -27,6 +27,8 @@ import {
   finalizeReadinessRun,
   getReadinessRunSubmission,
   heartbeatReadinessRun,
+  joinReviewerAttempt,
+  recordReviewerAttempt,
   requestManagedObservations,
 } from "../backend-client.js";
 
@@ -161,6 +163,121 @@ describe("claimReadinessRun", () => {
   ])("reports %s as unanswered, which is not a refusal", async (_label, responder) => {
     vi.stubGlobal("fetch", vi.fn(responder as never));
     expect((await claimReadinessRun(LEASE)).status).toBe("unanswered");
+  });
+});
+
+describe("joinReviewerAttempt", () => {
+  it("joins with the lease, the attempt and the service token", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ ok: true, attempt: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await joinReviewerAttempt(LEASE, "att_1")).toEqual({ joined: true });
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, any];
+    expect(String(url)).toBe(
+      "https://backend.test/internal/v1/claude-readiness/runs/reviewer-attempt",
+    );
+    expect(init.headers["x-inspector-service-token"]).toBe("service-token");
+    expect(JSON.parse(init.body)).toEqual({ ...LEASE, attemptId: "att_1" });
+  });
+
+  it("throws a lost lease, so the run stops writing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ok: false, error: "lease_lost" }, 409)),
+    );
+    await expect(joinReviewerAttempt(LEASE, "att_1")).rejects.toBeInstanceOf(
+      ReadinessLeaseLostError,
+    );
+  });
+
+  it.each([
+    ["a refusal", async () => jsonResponse({ ok: false, error: "attempt_busy" }, 409), "attempt_busy"],
+    ["a 500", async () => new Response("boom", { status: 500 }), "HTTP 500"],
+    ["a transport failure", () => Promise.reject(new Error("ECONNRESET")), "ECONNRESET"],
+  ])("reports %s as the reason it did not join", async (_label, responder, reason) => {
+    vi.stubGlobal("fetch", vi.fn(responder as never));
+    expect(await joinReviewerAttempt(LEASE, "att_1")).toEqual({ joined: false, reason });
+  });
+
+  it("hands back what the sign-in and a resume need, and nothing else", async () => {
+    const attempt = {
+      id: "att_1",
+      projectId: "proj_1",
+      passwordSecretName: "MCPJAM_REVIEWER_ACME_PASSWORD",
+      usernameSecretName: "MCPJAM_REVIEWER_ACME_EMAIL",
+      reviewerAccountId: "acct_1",
+      humanSignInCompletedAt: 1_700_000_000_000,
+      loginUrl: "https://auth.example.com/login",
+      tenant: "Acme",
+      state: "running",
+      stages: [],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ok: true, attempt })),
+    );
+    expect(await joinReviewerAttempt(LEASE, "att_1")).toEqual({
+      joined: true,
+      attempt: {
+        projectId: "proj_1",
+        passwordSecretName: "MCPJAM_REVIEWER_ACME_PASSWORD",
+        usernameSecretName: "MCPJAM_REVIEWER_ACME_EMAIL",
+        // A person's finished sign-in: without these a resume signs in again.
+        reviewerAccountId: "acct_1",
+        humanSignInCompletedAt: 1_700_000_000_000,
+        loginUrl: "https://auth.example.com/login",
+        tenant: "Acme",
+      },
+    });
+  });
+});
+
+describe("recordReviewerAttempt", () => {
+  it("posts the write beside the lease and the attempt", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ ok: true, attempt: {} }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const stage = { stage: "sign-in" as const, status: "passed" as const };
+    await recordReviewerAttempt(LEASE, "att_1", { stage });
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, any];
+    expect(String(url)).toBe(
+      "https://backend.test/internal/v1/claude-readiness/runs/reviewer-attempt",
+    );
+    expect(JSON.parse(init.body)).toEqual({
+      ...LEASE,
+      attemptId: "att_1",
+      stage,
+    });
+  });
+
+  it("throws a lost lease as one, and any other refusal with its code", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ok: false, error: "lease_lost" }, 409)),
+    );
+    await expect(
+      recordReviewerAttempt(LEASE, "att_1", { outcome: "passed" }),
+    ).rejects.toBeInstanceOf(ReadinessLeaseLostError);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          {
+            ok: false,
+            error: "attempt_not_running",
+            message: "This attempt is cancelled.",
+          },
+          409,
+        ),
+      ),
+    );
+    await expect(
+      recordReviewerAttempt(LEASE, "att_1", { outcome: "passed" }),
+    ).rejects.toMatchObject({
+      code: "attempt_not_running",
+      message: "This attempt is cancelled.",
+    });
   });
 });
 

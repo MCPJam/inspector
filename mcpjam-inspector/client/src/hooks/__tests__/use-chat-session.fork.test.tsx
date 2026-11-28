@@ -1,3 +1,4 @@
+import type { UIMessage } from "@ai-sdk/react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
@@ -283,6 +284,83 @@ describe("useChatSession fork preservation", () => {
     mockState.onFinish = null;
     mockState.sendAutomaticallyWhen = null;
     mockState.status = "ready";
+  });
+
+  describe("new turn admission", () => {
+    const options = {
+      selectedServers: [],
+      hostedContext: { projectId: "project-1", selectedServerIds: [] },
+    };
+
+    it.each(["manual", "event"])(
+      "refuses a competing turn while the %s send is in flight before React reports busy",
+      async (first) => {
+        let finish!: () => void;
+        mockState.sendMessage.mockReturnValueOnce(new Promise<void>((resolve) => {
+          finish = resolve;
+        }));
+        const { result } = renderHook(() => useChatSession(options));
+        await act(async () => {
+          expect(await result.current.sendMessage({ text: first })).toBe(true);
+          expect(await result.current.sendMessage({
+            text: first === "manual" ? "event" : "manual",
+            isCurrent: () => true,
+          })).toBe(false);
+        });
+        expect(mockState.status).toBe("ready");
+        expect(mockState.sendMessage).toHaveBeenCalledTimes(1);
+        await act(async () => finish());
+        await act(async () => {
+          expect(await result.current.sendMessage({ text: "next turn" })).toBe(true);
+        });
+        expect(mockState.sendMessage).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    it("rechecks busy state after server preparation and preserves unsent history", async () => {
+      let finish!: (rows: Array<{ serverId: string }>) => void;
+      const ensureServerIds = vi.fn(() => new Promise<Array<{ serverId: string }>>((resolve) => {
+        finish = resolve;
+      }));
+      const { result, rerender } = renderHook(() => useChatSession({
+        ...options,
+        selectedServers: ["server-1"],
+        hostedContext: { ...options.hostedContext, ensureServerIds },
+      }));
+      let pending!: Promise<boolean>;
+      act(() => {
+        pending = result.current.sendMessage({
+          text: "event",
+          isCurrent: () => true,
+          prependMessages: [{ id: "pending", role: "user", parts: [{ type: "text", text: "context" }] }],
+        });
+      });
+      expect(ensureServerIds).toHaveBeenCalledOnce();
+      mockState.status = "streaming";
+      rerender();
+      await act(async () => {
+        finish([{ serverId: "persisted-server" }]);
+        expect(await pending).toBe(false);
+      });
+      expect(mockState.sendMessage).not.toHaveBeenCalled();
+      expect(result.current.messages).toEqual([]);
+    });
+
+    it("releases admission after the transport rejects", async () => {
+      let reject!: (error: Error) => void;
+      mockState.sendMessage.mockReturnValueOnce(new Promise<void>((_resolve, rejectSend) => {
+        reject = rejectSend;
+      }));
+      const { result } = renderHook(() => useChatSession(options));
+      await act(async () => {
+        expect(await result.current.sendMessage({ text: "first" })).toBe(true);
+        reject(new Error("transport stopped"));
+      });
+      await act(async () => {
+        expect(await result.current.sendMessage({ text: "retry" })).toBe(true);
+      });
+      expect(mockState.sendMessage).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe("bounded auto-resume", () => {
@@ -878,6 +956,67 @@ describe("useChatSession fork preservation", () => {
     });
   });
 
+  it("carries each reopened turn's event onto the trace envelope", async () => {
+    // A trigger's thread as `/direct-chat/detail` returns it: three turns, the
+    // second of them started by an event.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify([
+            { role: "user", content: "first" },
+            { role: "assistant", content: "one" },
+            { role: "user", content: "event message" },
+            { role: "assistant", content: "two" },
+            { role: "user", content: "third" },
+            { role: "assistant", content: "three" },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const event = {
+      name: "comment.created",
+      eventId: "evt_1",
+      receivedAt: 1_500,
+      delivery: "poll" as const,
+      origin: "server" as const,
+      subscriptionId: "esub_1",
+      triggerId: "trg_1",
+    };
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      }),
+    );
+
+    act(() => {
+      void result.current.loadChatSession({
+        chatSessionId: "event-trigger-trg_1",
+        messagesBlobUrl: "https://storage.test/thread.json",
+        version: 3,
+        turnTraces: [
+          { turnId: "t0", promptIndex: 0, startedAt: 1_000, endedAt: 1_100 },
+          {
+            turnId: "t1",
+            promptIndex: 1,
+            startedAt: 2_000,
+            endedAt: 2_100,
+            eventAtTurn: event,
+          },
+          { turnId: "t2", promptIndex: 2, startedAt: 3_000, endedAt: 3_100 },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.liveTraceEnvelope?.turnEvents).toEqual([
+        { promptIndex: 1, turnStartedAtMs: 2_000, event },
+      ]);
+    });
+  });
+
   it("restores empty sessions even when the transcript blob URL is missing", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -1023,6 +1162,121 @@ describe("useChatSession fork preservation", () => {
       firstAssistant,
       secondUser,
     ]);
+  });
+
+  it("branches a multi-model column with its whole transcript and leaves the column intact", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      }),
+    );
+    const columnChatSessionId = result.current.chatSessionId;
+    const transcript = [
+      { id: "user-1", role: "user", parts: [{ type: "text", text: "compare" }] },
+      { id: "assistant-1", role: "assistant", parts: [{ type: "text", text: "answer" }] },
+    ] as UIMessage[];
+    act(() => {
+      result.current.setMessages(transcript);
+    });
+    let bodyAtSend: Record<string, unknown> | undefined;
+    mockState.sendMessage.mockImplementation(() => {
+      bodyAtSend = mockState.lastTransportOptions.body();
+    });
+
+    const outcome = await result.current.branchFromThread({ text: "follow up" });
+
+    expect(outcome).toEqual({ previousChatSessionId: columnChatSessionId });
+    const branchChatSessionId = result.current.chatSessionId;
+    expect(branchChatSessionId).not.toBe(columnChatSessionId);
+    // The branch carries the whole column, not a prefix.
+    expect(result.current.messages).toEqual(transcript);
+    await waitFor(() => {
+      expect(mockState.sendMessage).toHaveBeenCalled();
+    });
+    expect(bodyAtSend).toMatchObject({
+      chatSessionId: branchChatSessionId,
+      rewind: {
+        parentChatSessionId: columnChatSessionId,
+        rewoundFromMessageId: "assistant-1",
+        reason: "multi_model_column",
+      },
+    });
+    expect(mockState.sendsBySession.has(columnChatSessionId)).toBe(false);
+  });
+
+  it("keeps a restored column's Apps data in its branch", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      }),
+    );
+    const transcript = [
+      { id: "user-1", role: "user", parts: [{ type: "text", text: "compare" }] },
+      { id: "assistant-1", role: "assistant", parts: [{ type: "text", text: "answer" }] },
+    ] as UIMessage[];
+    const overrides = {
+      "call-1": { rawOutput: { ok: true } },
+    } as unknown as Parameters<
+      typeof result.current.startChatWithMessages
+    >[1] extends infer O
+      ? O extends { toolRenderOverrides?: infer T }
+        ? NonNullable<T>
+        : never
+      : never;
+    const initialChatSessionId = result.current.chatSessionId;
+    act(() => {
+      void result.current.startChatWithMessages(transcript, {
+        toolRenderOverrides: overrides,
+      });
+    });
+    await waitFor(() => {
+      expect(result.current.chatSessionId).not.toBe(initialChatSessionId);
+    });
+    expect(result.current.restoredToolRenderOverrides).toEqual(overrides);
+    const columnChatSessionId = result.current.chatSessionId;
+
+    const outcome = await result.current.branchFromThread({ text: "follow up" });
+
+    expect(outcome).toEqual({ previousChatSessionId: columnChatSessionId });
+    expect(result.current.chatSessionId).not.toBe(columnChatSessionId);
+    expect(result.current.restoredToolRenderOverrides).toEqual(overrides);
+  });
+
+  it("copies attached prompt messages into a column branch after the transcript", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      }),
+    );
+    const transcript = [
+      { id: "user-1", role: "user", parts: [{ type: "text", text: "compare" }] },
+      { id: "assistant-1", role: "assistant", parts: [{ type: "text", text: "answer" }] },
+    ] as UIMessage[];
+    const attached = [
+      { id: "prompt-1", role: "user", parts: [{ type: "text", text: "a prompt" }] },
+    ] as UIMessage[];
+    act(() => {
+      result.current.setMessages(transcript);
+    });
+    let bodyAtSend: Record<string, unknown> | undefined;
+    mockState.sendMessage.mockImplementation(() => {
+      bodyAtSend = mockState.lastTransportOptions.body();
+    });
+
+    await result.current.branchFromThread({
+      text: "follow up",
+      prependMessages: attached,
+    });
+
+    expect(result.current.messages).toEqual([...transcript, ...attached]);
+    await waitFor(() => expect(mockState.sendMessage).toHaveBeenCalled());
+    // The lineage still names the last message the column had.
+    expect(bodyAtSend).toMatchObject({
+      rewind: { rewoundFromMessageId: "assistant-1" },
+    });
   });
 
   it("refuses a previous thread's late cursor and sends only the current version", async () => {
@@ -1236,6 +1490,65 @@ describe("useChatSession fork preservation", () => {
     // caller then announces and offers a way back from.
     expect(result.current.chatSessionId).not.toBe(initialChatSessionId);
     expect(outcome).toBeNull();
+  });
+
+  it("tells a column branch its send never ran once the branch is live", async () => {
+    // The reset that minted the branch cleared the composer's queued widget
+    // context; the caller needs to know the send failed to put it back.
+    const ensureServerIds = vi
+      .fn()
+      .mockRejectedValue(new Error("could not resolve servers"));
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+          ensureServerIds,
+        },
+      }),
+    );
+    const columnChatSessionId = result.current.chatSessionId;
+    act(() => {
+      result.current.setMessages([
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hello" }] },
+      ] as UIMessage[]);
+    });
+    const onDispatchRefused = vi.fn();
+
+    const outcome = await result.current.branchFromThread({
+      text: "follow up",
+      onDispatchRefused,
+    });
+
+    expect(outcome).toBeNull();
+    expect(result.current.chatSessionId).not.toBe(columnChatSessionId);
+    expect(onDispatchRefused).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds a column branch's send when the caller's check fails at dispatch", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      }),
+    );
+    act(() => {
+      result.current.setMessages([
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hello" }] },
+      ] as UIMessage[]);
+    });
+    const onDispatchRefused = vi.fn();
+
+    const outcome = await result.current.branchFromThread({
+      text: "follow up",
+      isCurrent: () => false,
+      onDispatchRefused,
+    });
+
+    expect(outcome).toBeNull();
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+    expect(onDispatchRefused).toHaveBeenCalledTimes(1);
   });
 
   it("is a no-op when the target message is no longer in the thread", async () => {

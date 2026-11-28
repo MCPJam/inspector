@@ -32,6 +32,7 @@ const ALL_IDS: HostTemplateId[] = [
   "copilot-cli",
   "codex",
   "codex-cli",
+  "opencode",
   "copilot",
   "vscode",
   "agentcore",
@@ -159,11 +160,19 @@ describe("seedHostTemplate", () => {
       "claude-code",
       "claude-code-desktop",
       "claude-code-web",
+      "chatgpt",
+      "chatgpt-desktop",
+      "chatgpt-work",
+      "chatgpt-work-desktop",
       "codex-cli",
+      "opencode",
       "cursor",
+      "cursor-cli",
       "codex",
       "vscode",
       "goose",
+      "grokbot",
+      "notion",
     ]);
 
     for (const id of ALL_IDS) {
@@ -266,10 +275,23 @@ describe("seedHostTemplate", () => {
     expect(config.modelId).toBe("anthropic/claude-haiku-5.5");
     expect(config.harness).toBe("claude-code");
     expect(config.computer).toEqual({ kind: "personal" });
-    // requireToolApproval must be false — the harness rejects approval-gated turns.
-    expect(config.requireToolApproval).toBe(false);
+    // New clients ask before a tool runs.
+    expect(config.requireToolApproval).toBe(true);
     expect(config.progressiveToolDiscovery).toBe(true);
-    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.312");
+    // The pinned runtime's version, not the newer CLI the catalog probed.
+    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.290");
+  });
+
+  it("starts new clients from each harness CLI template with tool approval on", () => {
+    for (const id of [
+      "claude-code",
+      "codex-cli",
+      "copilot-cli",
+      "cursor-cli",
+      "opencode",
+    ] as const) {
+      expect(seedHostTemplate(id).requireToolApproval, id).toBe(true);
+    }
   });
 
   it("seeds the real Codex harness + a personal computer", () => {
@@ -297,10 +319,10 @@ describe("seedHostTemplate", () => {
     });
   });
 
-  // None of these profile fields may count as a native-admission gap, so the
-  // real CLI's MCP traffic can be forwarded as it sends it. The seed and the
+  // The CLI's measured handshake, which native admission counts as no gap,
+  // and the settings it checks at the values that add none. The seed and the
   // bundled catalog row it falls back to carry the same values.
-  it("seeds Cursor CLI with the bundled catalog's pass-through profile", () => {
+  it("seeds Cursor CLI with the bundled catalog's measured handshake", () => {
     const passThroughFields = (config: {
       respectToolVisibility?: boolean;
       connectionDefaults: { requestTimeout: number };
@@ -321,8 +343,8 @@ describe("seedHostTemplate", () => {
     expect(passThroughFields(seeded)).toEqual({
       respectToolVisibility: false,
       requestTimeout: 300_000,
-      clientCapabilities: {},
-      initialize: undefined,
+      clientCapabilities: { elicitation: { form: {} } },
+      initialize: { clientInfo: { name: "Cursor", version: "1.0.0" } },
       // The CLI's own negotiation, which native admission counts as no pin.
       versionNegotiation: "legacy-first",
     });
@@ -336,6 +358,7 @@ describe("seedHostTemplate", () => {
     expect(canonicalizeHostConfigV2(seeded).mcpProfile).toEqual({
       profileVersion: 1,
       versionNegotiation: "legacy-first",
+      initialize: { clientInfo: { name: "Cursor", version: "1.0.0" } },
     });
   });
 

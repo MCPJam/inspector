@@ -1,6 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { writeSkills } from "@ai-sdk/harness/utils";
+import { fakeSkillBox } from "../../../test/support/fake-skill-box";
 import {
+  EMPTY_ADAPTER_MANIFEST,
   clearAdapterSkills,
   handOffLegacySkillDirs,
   preseedAdapterSkills,
@@ -70,9 +72,7 @@ function makeSession(initial: {
         return ok;
       }
       if (argv[0] === "test" && argv[1] === "!" && argv[2] === "-e") {
-        return exists(argv[3])
-          ? { exitCode: 1, stdout: "", stderr: "" }
-          : ok;
+        return exists(argv[3]) ? { exitCode: 1, stdout: "", stderr: "" } : ok;
       }
       throw new Error(`fake session: unrecognized command: ${command}`);
     },
@@ -159,7 +159,8 @@ describe("preseedAdapterSkills", () => {
       homePath: "/home/user",
       skillsDir: ".agents/skills",
       skills: PAYLOAD,
-      invalidSkillNameMessage: ({ name }) => `Invalid Codex skill name: ${name}`,
+      invalidSkillNameMessage: ({ name }) =>
+        `Invalid Codex skill name: ${name}`,
       invalidSkillFilePathMessage: ({ skillName, filePath }) =>
         `Invalid Codex skill file path for ${skillName}: ${filePath}`,
     });
@@ -311,5 +312,91 @@ describe("clearAdapterSkills", () => {
     await clearAdapterSkills({ session, skillsBase: ROOT });
     expect(commands).toEqual([]);
     expect([...files.keys()]).toEqual([`${ROOT}/hand-placed/SKILL.md`]);
+  });
+});
+
+describe("seeding the empty adapter manifest", () => {
+  /** The adapter's own turn-time write for a turn with no skills. */
+  const adapterWrite = (sandbox: PreseedSession) =>
+    writeSkills({
+      sandbox: asLibSandbox(sandbox),
+      homePath: "/home/user",
+      skillsDir: ".claude/skills",
+      skills: [],
+      trailingNewline: true,
+    });
+
+  it("is byte for byte what the adapter's own write leaves for no skills", async () => {
+    const adapter = fakeSkillBox();
+    await adapterWrite(adapter.session);
+    expect(adapter.files.get(ADAPTER_MANIFEST)).toBe(EMPTY_ADAPTER_MANIFEST);
+  });
+
+  it("goes down in one command, so the adapter's write at dispatch only reads", async () => {
+    const box = fakeSkillBox();
+    await clearAdapterSkills({
+      session: box.session,
+      skillsBase: ROOT,
+      seedIfMissing: true,
+    });
+    expect(box.commands).toHaveLength(1);
+    expect([...box.files.keys()]).toEqual([ADAPTER_MANIFEST]);
+    expect(box.files.get(ADAPTER_MANIFEST)).toBe(EMPTY_ADAPTER_MANIFEST);
+
+    box.commands.length = 0;
+    const writes = vi.spyOn(box.session, "writeTextFile");
+    const result = await adapterWrite(box.session);
+    expect(result.changed).toBe(false);
+    expect(box.commands).toEqual([]);
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  it("leaves a box that has a manifest to the clear, as without it", async () => {
+    const box = fakeSkillBox();
+    await preseedAdapterSkills({
+      session: box.session,
+      skillsBase: ROOT,
+      payload: PAYLOAD,
+      trailingNewline: true,
+    });
+    await clearAdapterSkills({
+      session: box.session,
+      skillsBase: ROOT,
+      seedIfMissing: true,
+    });
+    expect(box.skillFolders(ROOT)).toEqual([]);
+    expect(JSON.parse(box.files.get(ADAPTER_MANIFEST)!)).toEqual({
+      version: 1,
+      state: "complete",
+      skills: [],
+    });
+  });
+
+  it("puts nothing down when the manifest can't be read", async () => {
+    const box = fakeSkillBox();
+    box.session.readTextFile = async () => {
+      throw new Error("read failed");
+    };
+    await clearAdapterSkills({
+      session: box.session,
+      skillsBase: ROOT,
+      seedIfMissing: true,
+    });
+    expect(box.commands).toEqual([]);
+    expect(box.files.size).toBe(0);
+  });
+
+  it("never fails the turn when the box refuses it", async () => {
+    const box = fakeSkillBox();
+    box.session.run = async () => {
+      throw new Error("box gone");
+    };
+    await expect(
+      clearAdapterSkills({
+        session: box.session,
+        skillsBase: ROOT,
+        seedIfMissing: true,
+      }),
+    ).resolves.toBeUndefined();
   });
 });

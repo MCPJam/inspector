@@ -1,7 +1,9 @@
-const admission = vi.hoisted(() => ({ execution: vi.fn(() => ({ ok: true })), harness: vi.fn(() => ({ ok: true, harness: undefined })), policy: vi.fn(() => null), failed: vi.fn(async () => {}) }));
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+const admission = vi.hoisted(() => ({ execution: vi.fn(() => ({ ok: true })), harness: vi.fn(() => ({ ok: true, harness: undefined })), policy: vi.fn(() => null), failed: vi.fn(async () => {}), explain: vi.fn(async ({ admission }: { admission: { reason: string } }) => admission.reason) }));
+vi.mock("../explain-harness-refusal.js", () => ({ explainEvalHarnessRefusal: admission.explain }));
 vi.mock("../harness-admission.js", async (original) => ({ ...await original<typeof import("../harness-admission.js")>(), checkEvalExecutionAdmission: admission.execution, checkEvalHarnessAdmission: admission.harness, casesAssertingWidgetRender: () => [], failRunBeforeExecution: admission.failed }));
 vi.mock("../../../utils/harness/harness-proxy-policy-enforcement.js", () => ({ harnessToolPolicyLaunchRefusal: admission.policy }));
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { ConvexError } from "convex/values";
 
 // Replays use the frozen client and environment; old backends fail closed
 // when they cannot identify the environment whose secrets would be delivered.
@@ -64,7 +66,7 @@ vi.mock("../../../utils/org-model-config.js", async (importOriginal) => ({
 }));
 
 import { prepareSuiteReplayFromRun, executeSuiteReplayFromRun } from "../replay-suite-run.js";
-import { buildReplayManager, storeReplayConfig } from "../route-helpers.js";
+import { buildReplayManager, fetchReplayConfig, storeReplayConfig } from "../route-helpers.js";
 import { namePin } from "../../../test/support/skill-delivery.js";
 import type { RunPinnedSkill } from "../run-plugin-snapshot.js";
 
@@ -90,6 +92,27 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllEnvs());
 
+it("replays recorded case accounts without reading an archived credential bundle", async () => {
+  const plan = [{ testCaseId: "case-1", serverId: "srv", connectionId: "original", source: "default" }];
+  const client = { query: vi.fn().mockResolvedValueOnce({
+    hasPerCaseAccounts: true, hasServerReplayConfig: true, suiteId: "suite-1", projectId: "project-1",
+    environment: { servers: ["srv"], serverBindings: [{ serverName: "srv", projectServerId: "srv" }] },
+  }).mockResolvedValueOnce(plan) };
+  const manager = { listServers: () => [], disconnectAllServers: vi.fn(async () => {}) };
+  const managerForCase = vi.fn().mockReturnValue(manager);
+  const close = vi.fn(async () => {});
+  const openReplayServers = vi.fn().mockResolvedValue({ manager, managerForCase, close, serverIds: ["srv"], serverBindings: [] });
+  vi.mocked(fetchReplayConfig).mockClear();
+  const prepared = await prepareSuiteReplayFromRun({ convexClient: client as never, convexAuthToken: "token", sourceRunId: "source-run-1", openReplayServers });
+  expect(fetchReplayConfig).not.toHaveBeenCalled();
+  expect(openReplayServers).toHaveBeenCalledWith(expect.objectContaining({ plan }));
+  expect(startSuiteRunWithRecorderMock).toHaveBeenLastCalledWith(expect.objectContaining({ evalAccountPlan: plan }));
+  await prepared.execute();
+  expect(runEvalSuiteWithAiSdkMock).toHaveBeenLastCalledWith(expect.objectContaining({ accountManagerForCase: managerForCase }));
+  await prepared.cleanup();
+  expect(close).toHaveBeenCalledOnce();
+});
+
 it.each(["running", "completed"])("adopts a snapshot replay in %s without setup or execution", async (status) => {
   const original = startSuiteRunWithRecorderMock.getMockImplementation()!;
   startSuiteRunWithRecorderMock.mockImplementationOnce(async () => ({ ...await original(), deduped: true, status }));
@@ -109,6 +132,19 @@ it("the synchronous replay returns an adopted run without executing and closes i
   expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
   const manager = vi.mocked(buildReplayManager).mock.results.at(-1)?.value;
   expect(manager.disconnectAllServers).toHaveBeenCalledTimes(1);
+});
+
+it("fails a replay this machine can't run with why, not the cloud's refusal", async () => {
+  const refusal = { ok: false, harness: "claude-code", reason: "needs a cloud computer", kind: "computers-unconfigured" };
+  const explained = "Couldn't run Claude Code on this machine because it isn't set up for this project. Set it up in the Playground, then run the eval again.";
+  admission.harness.mockReturnValueOnce(refusal as never);
+  admission.explain.mockResolvedValueOnce(explained);
+  admission.failed.mockClear();
+  await expect(prepareSuiteReplayFromRun({ convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "source-run-1" }))
+    .rejects.toThrow(explained);
+  expect(admission.explain).toHaveBeenCalledWith({ admission: refusal, bearer: "token", projectId: "project-1" });
+  expect(admission.failed).toHaveBeenCalledWith(expect.anything(), expect.anything(), "replay-run-1", { reason: explained });
+  expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
 });
 
 describe("prepareSuiteReplayFromRun — the environment it cannot name", () => {
@@ -169,6 +205,35 @@ it.each(["execution", "harness", "policy"] as const)("refuses replay when %s adm
   await expect(prepareSuiteReplayFromRun({ convexClient: convexClient(), convexAuthToken: "token", sourceRunId: "refused-run" })).rejects.toThrow();
   expect(admission.failed).toHaveBeenCalledOnce();
   expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+});
+
+describe("a web client's replay", () => {
+  function replay(record: () => Promise<unknown>) {
+    admission.harness.mockReturnValueOnce({ ok: true, harness: "claude-web" } as never);
+    admission.failed.mockClear();
+    const mutation = vi.fn(async (_name: string, _args: unknown) => record());
+    const client = { ...(convexClient() as unknown as Record<string, unknown>), mutation };
+    const prepared = prepareSuiteReplayFromRun({ convexClient: client as never, convexAuthToken: "token", sourceRunId: "source-run-1" });
+    return { mutation, prepared };
+  }
+
+  it("freezes its web accounts before any turn", async () => {
+    const { mutation, prepared } = replay(async () => []);
+    await (await prepared).execute();
+    expect(mutation).toHaveBeenCalledWith("webClientSuites:recordWebAccountsAtRun", { runId: "replay-run-1", vendor: "claude" });
+    expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledOnce();
+  });
+
+  it("stops before any turn when the backend won't freeze them", async () => {
+    const { prepared } = replay(async () => {
+      throw new ConvexError({ code: "VALIDATION", message: "Web clients are off for this project." });
+    });
+    await expect(prepared).rejects.toMatchObject({ status: 400, message: "Web clients are off for this project." });
+    expect(admission.failed).toHaveBeenCalledWith(expect.anything(), expect.anything(), "replay-run-1", {
+      reason: "Web clients are off for this project.",
+    });
+    expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () => {
@@ -253,7 +318,9 @@ describe("prepareSuiteReplayFromRun — the source run's skills", () => {
       options.pinnedSkillSource.pins.map((pin: RunPinnedSkill) => pin.name),
     ).toEqual(["deploy"]);
     expect(
-      options.pinnedHarnessSkills.map((skill: { name: string }) => skill.name),
+      options.pinnedSkillSource.harnessSkills.map(
+        (skill: { name: string }) => skill.name,
+      ),
     ).toEqual(["deploy"]);
   });
 
@@ -267,7 +334,7 @@ describe("prepareSuiteReplayFromRun — the source run's skills", () => {
 
     const options = runEvalSuiteWithAiSdkMock.mock.calls[0]![0] as any;
     expect(options.pinnedSkillSource.pins).toEqual([]);
-    expect(options.pinnedHarnessSkills).toEqual([]);
+    expect(options.pinnedSkillSource.harnessSkills).toEqual([]);
   });
 
   it("stops before any model call when a frozen skill's file can't be read", async () => {

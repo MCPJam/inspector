@@ -36,7 +36,14 @@ import {
   seedHostTemplate,
   type HostTemplateId,
 } from "../host-config/templates/index.js";
-import type { HostConfigInputV2 } from "../host-config/types.js";
+import type {
+  HostConfigInputV2,
+  ModelVisibleMcpToolResults,
+} from "../host-config/types.js";
+import {
+  bundledHostCompatCatalog,
+  getCatalogHost,
+} from "../host-compat/catalog.js";
 import { checkRole } from "../predicates/index.js";
 import type { Predicate } from "../predicates/types.js";
 import { requiresRenderObservations } from "../predicates/types.js";
@@ -310,9 +317,31 @@ function unsupportedInCase(
   return problems;
 }
 
+/**
+ * Compiled templates carry no model-visibility policy, so a local run takes
+ * the catalog row's tool-result rule (KES-1007) and nothing else from it:
+ * every other local input stays as it was.
+ */
+export function withCatalogStructuredContentRule(
+  id: HostTemplateId,
+  seeded: ReturnType<typeof seedHostTemplate>,
+  catalog = bundledHostCompatCatalog()
+): ReturnType<typeof seedHostTemplate> {
+  const rule = getCatalogHost(catalog, id)?.modelVisibleMcpToolResults
+    ?.structuredContent;
+  if (!rule) return seeded;
+  const policy = (
+    seeded as { modelVisibleMcpToolResults?: ModelVisibleMcpToolResults }
+  ).modelVisibleMcpToolResults;
+  return {
+    ...seeded,
+    modelVisibleMcpToolResults: { ...policy, structuredContent: rule },
+  };
+}
+
 function resolveHost(hostTemplateId: string): ResolvedLocalHost {
   const id = hostTemplateId as HostTemplateId;
-  const seeded = seedHostTemplate(id);
+  const seeded = withCatalogStructuredContentRule(id, seedHostTemplate(id));
   const connection = hostConnectionProfile(
     seeded as unknown as Record<string, unknown>
   );

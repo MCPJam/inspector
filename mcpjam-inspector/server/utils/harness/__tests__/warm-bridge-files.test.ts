@@ -173,6 +173,178 @@ describe("bridge expiry watchdog", () => {
   );
 });
 
+it("keeps a bridge kept through its box's pause until the ceiling, then exits", async () => {
+  // The fixture's clock reads 1000 when the bridge starts waiting.
+  const ceiling = 1000 + 4 * 60 * 60_000;
+  const w = await watchdog(
+    true,
+    JSON.stringify({ pid: 42, expiresAt: ceiling }),
+    ceiling - 1000,
+  );
+  // Its box pauses at the idle deadline and wakes an hour later.
+  for (const step of [WARM_BRIDGE_WINDOW_MS, 60 * 60_000]) {
+    w.advance(step);
+    w.run();
+    expect(w.exit).not.toHaveBeenCalled();
+  }
+  w.advance(ceiling - 1000 - WARM_BRIDGE_WINDOW_MS - 60 * 60_000 - 1);
+  w.run();
+  expect(w.exit).not.toHaveBeenCalled();
+  w.advance(1);
+  w.run();
+  expect(w.exit).toHaveBeenCalledWith(0);
+});
+
+/** A parked bridge's state under a private HOME, its meta naming this process. */
+function keptBridge() {
+  const root = mkdtempSync(join(tmpdir(), "warm-kept-home-"));
+  const home = join(root, "home");
+  const directory = join(home, ".ai-sdk-harness/.agent-runs/session/bridge");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(
+    join(directory, "bridge-meta.json"),
+    JSON.stringify({
+      pid: process.pid,
+      port: 8080,
+      state: "waiting",
+    }),
+  );
+  const marker = join(directory, "mcpjam-warm.json");
+  const run = (options: {
+    park: boolean;
+    retainUntil?: number;
+    spawned?: boolean;
+    configuration?: string;
+  }) =>
+    spawnSync(
+      "sh",
+      [
+        "-c",
+        warmBridgeCommand({
+          sessionId: "session",
+          configuration: "configuration",
+          token: "private-channel-token",
+          port: 8080,
+          windowMs: WARM_BRIDGE_WINDOW_MS,
+          includeHome: !options.park,
+          ...options,
+        }),
+      ],
+      { cwd: root, env: { ...process.env, HOME: home }, encoding: "utf8" },
+    ).status;
+  return {
+    run,
+    read: () =>
+      JSON.parse(readFileSync(marker, "utf8")) as Record<string, unknown>,
+    write: (saved: Record<string, unknown>) =>
+      writeFileSync(marker, JSON.stringify(saved)),
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+describe.skipIf(process.platform !== "linux")(
+  "a bridge kept through its box's pause",
+  () => {
+    const HOUR = 60 * 60_000;
+
+    it("parks to the box's ceiling and re-attaches after a wake while nothing changed", () => {
+      const bridge = keptBridge();
+      try {
+        const ceiling = Date.now() + 4 * HOUR;
+        expect(
+          bridge.run({ park: true, retainUntil: ceiling, spawned: true }),
+        ).toBe(0);
+        expect(bridge.read().expiresAt).toBe(ceiling);
+        // The wake restarted the box's ceiling later than the one it parked for.
+        expect(bridge.run({ park: false, retainUntil: ceiling + HOUR })).toBe(
+          0,
+        );
+        // The process keeps the window it was started with, so its marker does too.
+        expect(
+          bridge.run({
+            park: true,
+            retainUntil: ceiling + HOUR,
+            spawned: false,
+          }),
+        ).toBe(0);
+        expect(bridge.read().expiresAt).toBe(ceiling);
+      } finally {
+        bridge.cleanup();
+      }
+    });
+
+    it("resumes from saved files once process identity, configuration or expiry fails", () => {
+      const bridge = keptBridge();
+      try {
+        const ceiling = Date.now() + 4 * HOUR;
+        expect(
+          bridge.run({ park: true, retainUntil: ceiling, spawned: true }),
+        ).toBe(0);
+        const parked = bridge.read();
+        expect(
+          bridge.run({
+            park: false,
+            retainUntil: ceiling,
+            configuration: "changed",
+          }),
+        ).toBe(1);
+        for (const replaced of [
+          { pid: process.pid + 1 },
+          { birthIdentity: "0" },
+        ]) {
+          bridge.write({ ...parked, ...replaced });
+          expect(bridge.run({ park: false, retainUntil: ceiling })).toBe(1);
+        }
+        // Woken after the ceiling it was parked for: the clock passed its expiry.
+        bridge.write({ ...parked, expiresAt: Date.now() - 1 });
+        expect(bridge.run({ park: false, retainUntil: ceiling + HOUR })).toBe(
+          1,
+        );
+      } finally {
+        bridge.cleanup();
+      }
+    });
+
+    it("keeps the idle window with the switch off, refusing a bridge parked to the ceiling", () => {
+      const bridge = keptBridge();
+      try {
+        expect(
+          bridge.run({
+            park: true,
+            retainUntil: Date.now() + 4 * HOUR,
+            spawned: true,
+          }),
+        ).toBe(0);
+        expect(bridge.run({ park: false })).toBe(1);
+        expect(bridge.run({ park: true })).toBe(0);
+        expect(bridge.read().expiresAt).toBeLessThanOrEqual(
+          Date.now() + WARM_BRIDGE_WINDOW_MS,
+        );
+        expect(bridge.run({ park: false })).toBe(0);
+      } finally {
+        bridge.cleanup();
+      }
+    });
+
+    it("never parks a process started with the idle window to the ceiling", () => {
+      const bridge = keptBridge();
+      try {
+        expect(bridge.run({ park: true })).toBe(0);
+        const ceiling = Date.now() + 4 * HOUR;
+        expect(bridge.run({ park: false, retainUntil: ceiling })).toBe(0);
+        expect(
+          bridge.run({ park: true, retainUntil: ceiling, spawned: false }),
+        ).toBe(0);
+        expect(bridge.read().expiresAt).toBeLessThanOrEqual(
+          Date.now() + WARM_BRIDGE_WINDOW_MS,
+        );
+      } finally {
+        bridge.cleanup();
+      }
+    });
+  },
+);
+
 it("starts the whole idle window after a message shorter than one watchdog tick", async () => {
   const w = await watchdog();
   w.state("running"); w.advance(3200); w.state("waiting");

@@ -40,7 +40,10 @@ vi.mock("@/components/ui-playground/hooks/use-playground-state", () => ({
 }));
 
 vi.mock("@/components/ui-playground/PlaygroundMain", () => ({
-  PlaygroundMain: (props: { onFirstMessageSent?: () => void }) => {
+  PlaygroundMain: (props: {
+    onFirstMessageSent?: () => void;
+    onAutoRunStarted?: () => void;
+  }) => {
     mockPlaygroundMain(props);
     return (
       <button type="button" onClick={props.onFirstMessageSent}>
@@ -55,6 +58,10 @@ vi.mock("@/components/tools/SaveRequestDialog", () => ({
 }));
 
 import { PlaygroundCenter } from "../PlaygroundCenter";
+import {
+  readHomeChecklistAutorun,
+  writeHomeChecklistAutorun,
+} from "@/components/home/checklist/playground-autorun";
 
 describe("PlaygroundCenter first-run prompt handoff", () => {
   beforeEach(() => {
@@ -87,5 +94,32 @@ describe("PlaygroundCenter first-run prompt handoff", () => {
 
     expect(onFirstRunPromptConsumed).toHaveBeenCalledOnce();
     expect(completeOnboarding).not.toHaveBeenCalled();
+  });
+
+  it("drops Home's prompt once a mount tries it, and keeps it for a mount that didn't", () => {
+    writeHomeChecklistAutorun({
+      prompt: "What can this server do?",
+      progressKey: "k",
+    });
+    const first = render(<PlaygroundCenter enableMultiModelChat />);
+    expect(mockPlaygroundMain).toHaveBeenLastCalledWith(
+      expect.objectContaining({ autoRunInput: "What can this server do?" }),
+    );
+    first.unmount();
+    expect(readHomeChecklistAutorun()).not.toBeNull();
+
+    render(<PlaygroundCenter enableMultiModelChat />);
+    mockPlaygroundMain.mock.lastCall?.[0].onAutoRunStarted();
+    expect(readHomeChecklistAutorun()).toBeNull();
+  });
+
+  it("drops Home's prompt when the user sends before the auto-run commits", () => {
+    writeHomeChecklistAutorun({
+      prompt: "What can this server do?",
+      progressKey: "k",
+    });
+    render(<PlaygroundCenter enableMultiModelChat />);
+    fireEvent.click(screen.getByRole("button", { name: "Send first message" }));
+    expect(readHomeChecklistAutorun()).toBeNull();
   });
 });

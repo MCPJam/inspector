@@ -1,4 +1,5 @@
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
+import { replaceInRegion } from "./bridge-source-patch.js";
 
 /** Patch only the pinned ACP bridge; changed vendor code must be requalified. */
 export function patchCursorHostToolApproval(source: string): string {
@@ -74,16 +75,6 @@ let restoredCatalogPending = false;`);
 		}
 		const relay = hostToolRelay;`);
   return source;
-}
-
-function replaceInRegion(source: string, region: string, before: string, after: string): string {
-  const start = source.indexOf(`//#region ${region}`);
-  const end = source.indexOf("//#endregion", start);
-  if (start < 0 || end < start) throw new Error("Cursor host approval bridge region changed. Requalify the adapter.");
-  const original = source.slice(start, end);
-  if (original.split(after).length === 2 && !original.replace(after, "").includes(before)) return source;
-  if (original.split(before).length !== 2) throw new Error("Cursor host approval bridge anchor changed. Requalify the adapter.");
-  return source.slice(0, start) + original.replace(before, after) + source.slice(end);
 }
 
 export function withCursorHostToolApproval(harness: HarnessAgentAdapter): HarnessAgentAdapter {

@@ -11,6 +11,7 @@ import {
   useProjectServers,
   type ProjectMember,
 } from "../useProjects";
+import { useProjectServers as useViewProjectServers } from "../useViews";
 
 const { mockUseDbUserReady, mockUseMutation, mockUseQuery, mockThemeMode } =
   vi.hoisted(() => ({
@@ -232,6 +233,21 @@ describe("useProjectServers", () => {
     expect(mockUseQuery).toHaveBeenCalledWith("servers:getProjectServers", {
       projectId: "project-id",
     });
+  });
+
+  it("resolves server names to the current project's row for edit forms", () => {
+    const owned = { name: "Parts", projectId: "project-id", _id: "saved" };
+    const sibling = { name: "Parts", projectId: "sibling-id", _id: "other" };
+    mockUseQuery.mockReturnValue([owned, sibling]);
+    const scope = { isAuthenticated: true, projectId: "project-id" };
+
+    const { result } = renderHook(() => ({
+      servers: useProjectServers(scope),
+      views: useViewProjectServers(scope),
+    }));
+
+    expect(result.current.servers.serversRecord.Parts).toEqual(owned);
+    expect(result.current.views.serversByName.get("Parts")).toBe("saved");
   });
 
   it("skips the project servers query until the user row is ready", () => {

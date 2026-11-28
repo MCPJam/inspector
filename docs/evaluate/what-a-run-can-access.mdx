@@ -1,0 +1,145 @@
+---
+title: "What a run can access"
+description: "Which servers and credentials an eval run uses, how its models are paid for, and what data is sent outside MCPJam."
+icon: "shield"
+---
+
+An eval run sends real prompts to a real model, and the model calls tools on your real servers with the credentials saved for them. This page lists what a run can reach and what leaves MCPJam while it runs and is graded.
+
+<Frame caption="What crosses the MCPJam boundary during a run, to whom, and when.">
+  <img className="block dark:hidden" src="/images/evaluate/run-data-flow-light.svg" alt="The MCPJam boundary with four outbound flows: to your server, the model provider, the goal completion judge and the Jev classifier, each labeled with what is sent and when" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/run-data-flow-dark.svg" alt="The MCPJam boundary with four outbound flows: to your server, the model provider, the goal completion judge and the Jev classifier, each labeled with what is sent and when" width="760" />
+</Frame>
+
+## Servers and their auth
+
+A run connects each client's server group (see [Run a suite](/evaluate/run-a-suite#what-a-run-needs)) and uses the auth saved on each HTTP server:
+
+| Server auth | What the run sends |
+|---|---|
+| Stored bearer token | The token, on every request to that server. |
+| Stored headers | The headers saved on the server. |
+| OAuth | An OAuth access token for that server, added as a Bearer header when the run starts. |
+
+Header overrides set on a client are not applied to eval runs. Hosted runs can't start STDIO servers; run those on your machine with [`mcpjam test`](/cli/local-evals), which reads `command`, `args` and `env` from your MCP config.
+
+<Warning>
+  Evals call your real server. A case that asks the model to delete a record can delete it, and an iteration count of 5 asks five times. Point suites at a staging server, or give the server read-only credentials, before you add cases that change data.
+</Warning>
+
+## Model access
+
+Each iteration calls the model you picked, paid for in one of two ways:
+
+| Model | Who pays for the tokens | Cost on the results page |
+|---|---|---|
+| A model MCPJam provides | Your organization's MCPJam credits. | The MCPJam-billed cost. |
+| A model from your own provider key (BYOK) | Your provider, on your account. | A dash: MCPJam billed nothing, so there is no cost to show. |
+
+When your organization runs out of MCPJam credits, a run whose models all use credits can't start; switch at least one to a model from your own provider. On Enterprise plans an admin can make AI features run only on the organization's own providers, and then the model list offers only those.
+
+Every iteration also counts against your organization's eval iteration allowance, whichever model it uses.
+
+### Keys for CLI and SDK runs
+
+A hosted run started from the CLI uses the same models and credits as one started in the app; the CLI only needs an MCPJam credential to start it. A local `mcpjam test` run and an SDK run call the model from your machine, with the keys in your environment.
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash Hosted runs (mcpjam cloud eval)
+    # Sign in once on your machine...
+    mcpjam cloud login
+    # ...or, in CI, use an organization API key from Settings → API keys
+    export MCPJAM_API_KEY=sk_...
+    ```
+
+    ```bash Local runs (mcpjam test)
+    # The provider key for the suite's model (BYOK)
+    export ANTHROPIC_API_KEY=sk-ant-...
+    # Any of: OPENAI_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY (or GEMINI_API_KEY),
+    # DEEPSEEK_API_KEY, MISTRAL_API_KEY, OPENROUTER_API_KEY, XAI_API_KEY
+
+    # The MCPJam identity every run starts with (or a saved mcpjam cloud login)
+    export MCPJAM_API_KEY=sk_...
+
+    mcpjam test .mcpjam/evals/notes.yaml
+    ```
+
+    A model written `mcpjam/provider/model`, or `--inference mcpjam`, runs on your organization's MCPJam credits instead of a provider key. `--api-key` overrides `MCPJAM_API_KEY`, which overrides the saved login. Server credentials come from the `env` and `headers` in your MCP config, not from the auth saved in the app. See [Inference](/cli/local-evals#inference).
+
+    <Note>
+      There is no fallback between the two. A provider key the provider rejects fails the run with exit `3`; it never spends MCPJam credits instead.
+    </Note>
+  </Tab>
+  <Tab title="SDK">
+    ```bash
+    export ANTHROPIC_API_KEY=sk-ant-...   # read by HostRunner below
+    export MCPJAM_API_KEY=sk_...          # run identity; also uploads results
+    ```
+
+    ```ts evals/notes-keys.ts
+    import { HostRunner, MCPClientManager } from "@mcpjam/sdk";
+
+    const manager = new MCPClientManager({
+      notes: { command: "node", args: ["./notes-server.js"] },
+    });
+    await manager.connectToServer("notes");
+
+    // Your own provider key
+    const byok = new HostRunner({
+      tools: await manager.getTools(),
+      model: "anthropic/claude-sonnet-5",
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    });
+
+    // MCPJam credits: the mcpjam/ prefix, with apiKey falling back to MCPJAM_API_KEY
+    const hosted = new HostRunner({
+      tools: await manager.getTools(),
+      model: "mcpjam/anthropic/claude-sonnet-4.5",
+      apiKey: process.env.MCPJAM_API_KEY!,
+    });
+    ```
+
+    Hosted `mcpjam/` models are `mcpjam/anthropic/claude-*` and `mcpjam/openai/gpt-5*`. An `apiKey` or `mcpjamAuth` passed in run options takes precedence over `MCPJAM_API_KEY`, which takes precedence over the saved CLI login. Server credentials are whatever you pass to `MCPClientManager`. See [LLM providers](/sdk/reference/llm-providers) and [eval identity](/cli/local-evals#eval-identity-and-local-data).
+  </Tab>
+</Tabs>
+
+## What leaves MCPJam
+
+| Recipient | What it receives | When |
+|---|---|---|
+| The provider of each model you run | The case's prompts, your server's tool definitions, and the tool results the model reads. | Every iteration. |
+| The goal completion judge's model provider, through OpenRouter | The recorded conversation, the trace, the available tool definitions, runtime context, and supported inline media. Credentials are redacted. | Each completed iteration, while the judge is on. It is on and automatic by default, with `openai/gpt-5.4-mini`. |
+| TypeSafe AI's Jev classifier, through Vercel AI Gateway | For rubric checks: the request, the expected outcome, the final answer, and a clipped trajectory. Credentials are redacted. If Jev can't be reached, the same questions go to a fallback model through Vercel AI Gateway or OpenRouter. | Each iteration the goal completion judge grades, when the suite has grading criteria or rubric-check questions. |
+
+## Turn grading off
+
+<Steps>
+  <Step title="Open the suite's settings">
+    On the suite page, click **Suite settings**.
+  </Step>
+  <Step title="Clear the judge rows">
+    Under **Evaluators**, clear **Goal completion judge**. Rubric checks run on the iterations that judge grades, so they stop too. To keep the judge and stop only rubric checks, clear **Rubric checks** instead.
+  </Step>
+  <Step title="Save">
+    Click **Save settings**. The change applies to future runs.
+  </Step>
+</Steps>
+
+To keep the judge on for the suite but skip it for one case, turn on **Skip the judge for this case** in the case editor and save the case.
+
+{/* Screenshot: Suite settings, Evaluators section with the User value stage showing the Goal completion judge and Rubric checks checkboxes cleared, and the Save settings bar */}
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Run a suite" icon="play" href="/evaluate/run-a-suite">
+    Pick clients, models and iterations.
+  </Card>
+  <Card title="Configure grading" icon="sliders-horizontal" href="/evaluate/configure-grading">
+    Set the judge model and threshold.
+  </Card>
+  <Card title="Read results" icon="chart-column" href="/evaluate/read-results">
+    See what each iteration did.
+  </Card>
+</CardGroup>

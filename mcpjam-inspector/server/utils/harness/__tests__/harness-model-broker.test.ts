@@ -3,9 +3,12 @@ import {
   startHarnessModelBroker,
   startLoopbackModelBroker,
   revokeHarnessModelBroker,
-  reserveHarnessBox,
-  renewHarnessBoxReservation,
 } from "../harness-model-broker";
+import {
+  releaseHarnessBoxReservation,
+  renewHarnessBoxReservation,
+  reserveHarnessBox,
+} from "../harness-box-reservation";
 import {
   ORG_BINDING_UNCONFIRMED,
   orgLeaseUpstreamFrom,
@@ -126,6 +129,54 @@ describe("startHarnessModelBroker", () => {
     if (result.ok) {
       expect(result.proxyBaseUrl).toBe("https://proxy/anthropic");
       expect(result.runId).toBe("run_1");
+    }
+  });
+
+  it("asks for the lane's session grant and reads only an https origin back", async () => {
+    let seenBody: any = {};
+    let grantOrigin: unknown = "https://inspector.example/";
+    mockFetch((_url, init) => {
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({
+        ok: true,
+        runId: "run_1",
+        expiresAt: 123,
+        protocol: "anthropic",
+        proxyBaseUrl: "https://proxy/anthropic",
+        delivery: "e2b-network-transform",
+        grantOrigin,
+      });
+    });
+    const start = (sessionGrant?: { laneId: string; leaseId: string }) =>
+      startHarnessModelBroker({
+        box: { kind: "computer", computerId: "c1", projectId: "p1" },
+        harnessId: "claude-code",
+        modelId: "anthropic/claude-haiku-4.5",
+        ...(sessionGrant ? { sessionGrant } : {}),
+        bearer: "raw-token",
+      });
+
+    const asked = await start({ laneId: "lane-1", leaseId: "lease-1" });
+    expect(seenBody.sessionGrant).toEqual({
+      harnessSessionId: "lane-1",
+      leaseId: "lease-1",
+    });
+    expect(asked).toMatchObject({
+      ok: true,
+      sessionGrantOrigin: "https://inspector.example",
+    });
+
+    // Not asked: nothing sent, nothing read.
+    const unasked = await start();
+    expect(seenBody.sessionGrant).toBeUndefined();
+    expect(unasked).not.toHaveProperty("sessionGrantOrigin");
+
+    // An older backend names no origin; a non-https one is not trusted.
+    for (const value of [undefined, "http://inspector.example", "not a url"]) {
+      grantOrigin = value;
+      expect(
+        await start({ laneId: "lane-1", leaseId: "lease-1" }),
+      ).not.toHaveProperty("sessionGrantOrigin");
     }
   });
 
@@ -366,6 +417,19 @@ describe("harness box reservation", () => {
     });
   });
 
+  it("reads a 2xx whose body can't be read as unanswered: the claim may exist", async () => {
+    mockFetch(() => new Response("{", { status: 200 }));
+    await expect(
+      reserveHarnessBox({
+        box,
+        harnessId: "claude-code",
+        modelId: "anthropic/claude-haiku-4.5",
+        runId: "run_1",
+        bearer: "t",
+      })
+    ).resolves.toMatchObject({ ok: false, status: 502 });
+  });
+
   it("reserve names the pinned runtime version for every baked harness", async () => {
     const bodies: any[] = [];
     mockFetch((_url, init) => {
@@ -418,6 +482,44 @@ describe("harness box reservation", () => {
       modelId: "anthropic/claude-haiku-4.5",
       runId: "run_1",
     });
+  });
+
+  it("releases with a preparation's outcome; a turn's release sends none", async () => {
+    const urls: string[] = [];
+    const bodies: unknown[] = [];
+    mockFetch((url, init) => {
+      urls.push(url);
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ ok: true });
+    });
+    const claim = {
+      box,
+      harnessId: "claude-code" as const,
+      modelId: "anthropic/claude-haiku-4.5",
+      runId: "run_1",
+      bearer: "t",
+    };
+    await expect(
+      releaseHarnessBoxReservation({ ...claim, outcome: "uncertain" }),
+    ).resolves.toEqual({ ok: true });
+    await releaseHarnessBoxReservation({ ...claim, outcome: "clean" });
+    await releaseHarnessBoxReservation(claim);
+    expect(new Set(urls)).toEqual(
+      new Set([
+        "https://convex.example.com/web/harness/model-broker/reserve/release",
+      ]),
+    );
+    const sent = {
+      sandboxRowId: "sbxrow_1",
+      harnessId: "claude-code",
+      modelId: "anthropic/claude-haiku-4.5",
+      runId: "run_1",
+    };
+    expect(bodies).toEqual([
+      { ...sent, outcome: "uncertain" },
+      { ...sent, outcome: "clean" },
+      sent,
+    ]);
   });
 });
 

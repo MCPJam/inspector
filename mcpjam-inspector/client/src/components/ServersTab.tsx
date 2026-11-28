@@ -1,6 +1,6 @@
 import { pluginExtensionProfileForHost } from "@/lib/client-config-v2-plugin-extensions";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import { loadServerOrder, saveServerOrder, serverCheckQueue } from "@/lib/server-check-queue";
+import { useServerCardOrder } from "@/hooks/use-server-card-order";
 import {
   useCallback,
   useContext,
@@ -87,7 +87,7 @@ import {
   type OrgRegistryDialogSeed,
 } from "./registry/OrgRegistryServerDialog";
 import { track } from "@/lib/analytics";
-import { reportPossiblyOurFailure } from "@/lib/error-reporting";
+import { reportCaught, reportPossiblyOurFailure } from "@/lib/error-reporting";
 import {
   HoverCard,
   HoverCardContent,
@@ -157,6 +157,11 @@ import {
   writeOpenServerDetailModalState,
 } from "@/lib/server-detail-modal-resume";
 import { cn } from "@/lib/utils";
+import { ServerCanvasPage } from "./server-canvas/ServerCanvasPage";
+import {
+  useServerCanvasEnabled,
+  useServerCanvasRoute,
+} from "./server-canvas/use-server-canvas-route";
 import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
 import { useHostsConnectViewPhase } from "./hosts/HostsConnectViewPhaseContext";
 import {
@@ -170,6 +175,7 @@ import { onCredentialReentryRequest } from "@/lib/credential-refusal";
 
 
 const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
+const CONNECT_LOGS_PANEL_STORAGE_KEY = "mcpjam-connect-logs-panel-visible";
 const LOGGER_FOCUS_TTL_MS = 15 * 60 * 1000;
 
 interface PersistedLoggerFocus {
@@ -545,7 +551,10 @@ function SortableServerCard({
 interface ServersTabProps {
   projectServers: Record<string, ServerWithName>;
   pendingDashboardOAuth?: PendingDashboardOAuthState | null;
-  onConnect: (formData: ServerFormData) => void;
+  onConnect: (
+    formData: ServerFormData,
+    options?: { onConfigSaved?: () => void }
+  ) => void | Promise<void>;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
@@ -615,6 +624,7 @@ export function ServersTab({
   );
   const viewPhase = useHostsConnectViewPhase();
   const extensionSettingsEnabled = useFeatureFlagEnabled("plugin-extensions-enabled") === true;
+  const serverCanvasEnabled = useServerCanvasEnabled();
   const { isAuthenticated } = useConvexAuth();
   const { user: signedInUser } = useAuth();
 
@@ -760,12 +770,32 @@ export function ServersTab({
     return <ServersAutoConnectSwitch onToggled={handleAutoConnectToggled} />;
   };
 
+  const allNames = useMemo(() => Object.keys(projectServers), [projectServers]);
+  const orderProject = projects[activeProjectId];
+  const orderReady =
+    !!orderProject && orderProject.id === activeProjectId &&
+    areServersHydrated && !isLoadingProjects && !isAuthHydrating;
+  const {
+    orderedServerNames,
+    setOrderedServerNames,
+    catalogOrder,
+    beginRename,
+    beginImport,
+  } = useServerCardOrder({
+    projectId: activeProjectId,
+    queueProjectId: sharedProjectIdForHostScope ?? activeProjectId,
+    catalogNames: Object.keys(orderProject?.servers ?? {}),
+    visibleNames: allNames,
+    ready: orderReady,
+  });
+
   useAutoConnectProjectServers({
     projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
     serverNames: projectServerNames,
-    catalogLoaded: viewProjectServersList !== undefined,
-    suspendAutoConnect,
+    catalogLoaded: orderReady && viewProjectServersList !== undefined,
+    suspendAutoConnect: suspendAutoConnect || !orderReady,
+    serverOrder: catalogOrder,
   });
 
   const appReady = useAppReady();
@@ -807,7 +837,10 @@ export function ServersTab({
   });
 
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
-    useJsonRpcPanelVisibility();
+    useJsonRpcPanelVisibility({
+      storageKey: CONNECT_LOGS_PANEL_STORAGE_KEY,
+      defaultVisible: false,
+    });
   const [isAddingServer, setIsAddingServer] = useState(false);
   // Prefill for an agent-opened Add-server form (`ui_open_server_form`).
   // Undefined for a hand-opened form, which starts empty as before.
@@ -847,38 +880,8 @@ export function ServersTab({
     sessionKey: 0,
     serverSnapshot: null,
   });
-
-  // --- Self-contained local ordering (localStorage only, never synced to Convex) ---
-  const allNames = useMemo(() => Object.keys(projectServers), [projectServers]);
-
-  const [orderedServerNames, setOrderedServerNames] = useState<string[]>(() => {
-    const saved = loadServerOrder(activeProjectId);
-    if (saved && saved.length > 0) {
-      const existing = saved.filter((n: string) => allNames.includes(n));
-      const added = allNames.filter((n) => !existing.includes(n));
-      return [...existing, ...added];
-    }
-    return allNames;
-  });
-
-  useEffect(() => {
-    serverCheckQueue.setOrder(
-      sharedProjectIdForHostScope ?? activeProjectId,
-      orderedServerNames,
-    );
-  }, [sharedProjectIdForHostScope, activeProjectId, orderedServerNames]);
-
-  // Reconcile when servers are added/removed or project changes
-  useEffect(() => {
-    setOrderedServerNames((prev) => {
-      const saved = loadServerOrder(activeProjectId);
-      const base = saved && saved.length > 0 ? saved : prev;
-      const existing = base.filter((n) => allNames.includes(n));
-      const added = allNames.filter((n) => !existing.includes(n));
-      return [...existing, ...added];
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allNames.join(","), activeProjectId]);
+  const detailProjectRef = useRef(activeProjectId);
+  detailProjectRef.current = activeProjectId;
 
   useEffect(() => {
     const persistedFocus = readPersistedLoggerFocus(activeProjectId);
@@ -906,8 +909,6 @@ export function ServersTab({
       if (oldIndex !== -1 && newIndex !== -1) {
         const newOrder = arrayMove(orderedServerNames, oldIndex, newIndex);
         setOrderedServerNames(newOrder);
-        saveServerOrder(activeProjectId, newOrder);
-        if (sharedProjectIdForHostScope) serverCheckQueue.setOrder(sharedProjectIdForHostScope, newOrder);
       }
     }
     setActiveId(null);
@@ -935,7 +936,9 @@ export function ServersTab({
   }, [detailModalServer, detailModalState.isOpen]);
 
   useEffect(() => {
-    if (detailModalState.isOpen) {
+    // On a canvas route the page resumes itself: the OAuth return path
+    // brought the reader back to it.
+    if (detailModalState.isOpen || (serverCanvasEnabled && routeServerId)) {
       return;
     }
 
@@ -957,7 +960,7 @@ export function ServersTab({
       serverSnapshot: resumeServer,
     }));
     clearServerDetailModalOAuthResume();
-  }, [detailModalState.isOpen, projectServers]);
+  }, [detailModalState.isOpen, projectServers, serverCanvasEnabled, routeServerId]);
 
   useEffect(() => {
     track("servers_tab_viewed", {
@@ -1121,7 +1124,8 @@ export function ServersTab({
     routeServerState.kind === "found" ? routeServerState.target?.name : null;
 
   useEffect(() => {
-    if (!routeServerName) return;
+    // With the server canvas on, the route renders the page instead.
+    if (!routeServerName || serverCanvasEnabled) return;
     const server = projectServers[routeServerName];
     if (!server) return;
     setDetailModalState((prev) =>
@@ -1135,7 +1139,7 @@ export function ServersTab({
             serverSnapshot: server,
           }
     );
-  }, [routeServerName, projectServers]);
+  }, [routeServerName, projectServers, serverCanvasEnabled]);
 
 
   /**
@@ -1226,6 +1230,29 @@ export function ServersTab({
     },
     []
   );
+  const serverCanvas = useServerCanvasRoute({
+    enabled: serverCanvasEnabled,
+    routeServerId,
+    routeServerName,
+    routeLoading: routeServerState.kind === "loading" && isAuthenticated,
+    hostedProjectId,
+    projectServers,
+    hostedServerIdFor: (name) => sharedProjectServersRecord[name]?._id,
+    openModal: handleOpenDetailModal,
+  });
+  // Flags are evaluated for the anonymous id first and replaced once the
+  // signed-in actor's refresh lands, and the flag hook cannot tell the two
+  // apart. So a reload or an OAuth return on /servers/:serverId can open the
+  // modal, and take the OAuth resume marker, before server-canvas turns on.
+  // When the page takes the route over, close that modal so it never sits
+  // over the page.
+  const canvasServerName = serverCanvas.server?.name;
+  useEffect(() => {
+    if (!canvasServerName) return;
+    setDetailModalState((prev) =>
+      prev.isOpen ? { ...prev, isOpen: false } : prev
+    );
+  }, [canvasServerName]);
 
   const focusLoggerOnServer = useCallback(
     (serverName: string | null, sinceTimestamp = Date.now()) => {
@@ -1254,9 +1281,9 @@ export function ServersTab({
     () =>
       onCredentialReentryRequest((serverName) => {
         const server = projectServersRef.current[serverName];
-        if (server) handleOpenDetailModal(server, "configuration");
+        if (server) serverCanvas.openDetail(server, "configuration");
       }),
-    [handleOpenDetailModal]
+    [serverCanvas.openDetail]
   );
 
   const handleCloseDetailModal = useCallback(() => {
@@ -1268,19 +1295,24 @@ export function ServersTab({
 
   const handleSubmitDetailModal = useCallback(
     async (formData: ServerFormData, originalServerName: string) => {
-      const optimisticServerName = formData.name.trim() || originalServerName;
-
-      setDetailModalState((prev) => ({
-        ...prev,
-        serverName: optimisticServerName,
-        serverSnapshot: prev.serverSnapshot
-          ? { ...prev.serverSnapshot, name: optimisticServerName }
-          : prev.serverSnapshot,
-      }));
-
-      const result = await onUpdate(originalServerName, formData);
+      const originProjectId = activeProjectId;
+      const sessionKey = detailModalState.sessionKey;
+      const finishRename = beginRename(originalServerName, formData.name.trim());
+      let result: ServerUpdateResult;
+      try {
+        result = await onUpdate(originalServerName, formData);
+      } catch (error) {
+        finishRename(false);
+        throw error;
+      }
+      finishRename(result.ok);
 
       setDetailModalState((prev) => {
+        if (
+          detailProjectRef.current !== originProjectId ||
+          prev.sessionKey !== sessionKey
+        )
+          return prev;
         const liveServer = projectServers[result.serverName];
 
         return {
@@ -1296,7 +1328,13 @@ export function ServersTab({
 
       return result;
     },
-    [onUpdate, projectServers]
+    [
+      onUpdate,
+      projectServers,
+      beginRename,
+      activeProjectId,
+      detailModalState.sessionKey,
+    ]
   );
 
   useEffect(() => {
@@ -1331,9 +1369,22 @@ export function ServersTab({
       );
       return;
     }
-    servers.forEach((server) => {
+    const finishImport = beginImport(servers.map((server) => server.name));
+    servers.forEach(async (server) => {
       focusLoggerOnServer(server.name);
-      onConnect(server);
+      let saved = false;
+      try {
+        await onConnect(server, {
+          onConfigSaved: () => {
+            saved = true;
+            finishImport(server.name, true);
+          },
+        });
+      } catch (error) {
+        reportCaught(error, { source: "server_json_import" });
+      } finally {
+        if (!saved) finishImport(server.name, false);
+      }
     });
   };
 
@@ -2013,7 +2064,7 @@ export function ServersTab({
                         onRemove(serverName);
                       }}
                       hostedServerId={sharedProjectServersRecord[name]?._id}
-                      onOpenDetailModal={handleOpenDetailModal}
+                      onOpenDetailModal={serverCanvas.openDetail}
                       projectId={activeProjectId}
                       moveTargets={moveTargets}
                       onMoveToProject={handleMoveServerToProject}
@@ -2097,7 +2148,11 @@ export function ServersTab({
           </ResizablePanel>
         </>
       ) : (
-        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+        <CollapsedPanelStrip
+          onOpen={toggleJsonRpcPanel}
+          tooltipText="Show logs"
+          label="Logs"
+        />
       )}
     </ResizablePanelGroup>
   );
@@ -2176,7 +2231,11 @@ export function ServersTab({
           </ResizablePanel>
         </>
       ) : (
-        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+        <CollapsedPanelStrip
+          onOpen={toggleJsonRpcPanel}
+          tooltipText="Show logs"
+          label="Logs"
+        />
       )}
     </ResizablePanelGroup>
   );
@@ -2194,6 +2253,41 @@ export function ServersTab({
       </Card>
     </div>
   );
+
+  // What the detail modal and the server canvas page share.
+  const serverDetailProps = {
+    onSubmit: handleSubmitDetailModal,
+    onDisconnect,
+    onReconnect: handleReconnectServer,
+    existingServerNames: Object.keys(projectServers),
+    projectClientConfig: selectedProject?.clientConfig,
+    projectId: hostedProjectId,
+    extensionLaunchProfile: pluginExtensionProfileForHost(previewedHost?.config),
+    organizationId: selectedProject?.organizationId ?? null,
+    isSignedIn: Boolean(signedInUser),
+    // The tab now mounts under ActiveMcpProfileProvider (see the root
+    // wrapper), which is the source for general host-profile reads (e.g. the
+    // auth section's enterprise-policy guidance). The protocol chip stays
+    // PROP-FIRST: this explicit value wins over the provider (see the modal's
+    // resolution comment), so its source attribution is unchanged.
+    hostDefaultMcpProtocolVersion:
+      previewedHost?.config?.mcpProfile?.mcpProtocolVersion,
+    projectXaaDefaultIdentity:
+      selectedProject?.xaaTestDefaults?.defaultIdentity ?? null,
+  };
+  /** One settings thread per detail surface: a modal session, a plugin, a page. */
+  const extensionSettingsScopeFor = (key: string) =>
+    extensionSettingsEnabled && hostedProjectId && previewedHostId
+      ? {
+          projectId: hostedProjectId,
+          hostId: previewedHostId,
+          threadId: `settings:${key}`,
+          pluginWorkspace: {
+            version: 1 as const,
+            workspaceId: `connect-settings:${key}`,
+          },
+        }
+      : null;
 
   return (
     // The previewed host's mcpProfile scopes this tab so the server
@@ -2213,6 +2307,22 @@ export function ServersTab({
           ? shouldQueryProjectId(activeProjectId)
             ? renderLoadingContent()
             : renderNoProjectContent()
+          : serverCanvas.pending
+          ? renderLoadingContent()
+          : serverCanvas.server && hostedProjectId && routeServerId
+          ? (
+            <ServerCanvasPage
+              key={routeServerId}
+              server={serverCanvas.server}
+              {...serverDetailProps}
+              projectId={hostedProjectId}
+              hostedServerId={routeServerId}
+              extensionSettingsScope={extensionSettingsScopeFor(
+                `canvas:${routeServerId}`
+              )}
+              onBack={serverCanvas.back}
+            />
+          )
           : hasAnyServers
           ? renderConnectedContent()
           : renderEmptyContent()}
@@ -2287,34 +2397,11 @@ export function ServersTab({
             onClose={handleCloseDetailModal}
             server={detailModalServer}
             defaultTab={detailModalState.defaultTab}
-            onSubmit={handleSubmitDetailModal}
-            onDisconnect={onDisconnect}
-            onReconnect={handleReconnectServer}
-            existingServerNames={Object.keys(projectServers)}
-            projectClientConfig={selectedProject?.clientConfig}
-            projectId={hostedProjectId}
-            extensionLaunchProfile={pluginExtensionProfileForHost(previewedHost?.config)}
-            extensionSettingsScope={extensionSettingsEnabled && hostedProjectId && previewedHostId ? {
-              projectId: hostedProjectId,
-              hostId: previewedHostId,
-              threadId: `settings:${detailModalState.sessionKey}`,
-              pluginWorkspace: { version: 1, workspaceId: `connect-settings:${detailModalState.sessionKey}` },
-            } : null}
+            {...serverDetailProps}
+            extensionSettingsScope={extensionSettingsScopeFor(
+              `${detailModalState.sessionKey}`
+            )}
             hostedServerId={detailModalHostedServerId}
-            organizationId={selectedProject?.organizationId ?? null}
-            isSignedIn={Boolean(signedInUser)}
-            // The tab now mounts under ActiveMcpProfileProvider (see the
-            // root wrapper), which is the source for general host-profile
-            // reads (e.g. the auth section's enterprise-policy guidance).
-            // The protocol chip stays PROP-FIRST: this explicit value wins
-            // over the provider (see the modal's resolution comment), so
-            // its source attribution is unchanged.
-            hostDefaultMcpProtocolVersion={
-              previewedHost?.config?.mcpProfile?.mcpProtocolVersion
-            }
-            projectXaaDefaultIdentity={
-              selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
-            }
           />
         )}
 
@@ -2326,19 +2413,9 @@ export function ServersTab({
             onClose={() => pluginParts.setDetail(null)}
             projectId={hostedProjectId}
             extensionLaunchProfile={pluginExtensionProfileForHost(previewedHost?.config)}
-            extensionSettingsScope={
-              extensionSettingsEnabled && hostedProjectId && previewedHostId
-                ? {
-                    projectId: hostedProjectId,
-                    hostId: previewedHostId,
-                    threadId: `settings:plugin:${pluginParts.detail.pluginId}`,
-                    pluginWorkspace: {
-                      version: 1,
-                      workspaceId: `connect-settings:plugin:${pluginParts.detail.pluginId}`,
-                    },
-                  }
-                : null
-            }
+            extensionSettingsScope={extensionSettingsScopeFor(
+              `plugin:${pluginParts.detail.pluginId}`
+            )}
           />
         ) : null}
 

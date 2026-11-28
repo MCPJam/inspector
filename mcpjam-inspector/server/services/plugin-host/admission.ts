@@ -1,6 +1,7 @@
 import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import { makeFunctionReference } from "convex/server";
 import type { PluginWorkspaceDescriptor } from "../../../shared/plugin-workspace.js";
+import { isStandalonePublishedPluginId } from "../../../shared/plugin-deep-link.js";
 import { createConvexClient } from "../evals/route-helpers.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { timedPluginStep } from "./timing.js";
@@ -38,6 +39,7 @@ export async function readPluginExecutionContext(options: {
   serverBindings: ReadonlyMap<string, Readonly<PluginServerIdentity>>;
   hostConfig?: HostRuntimeConfig;
   serverNamesById: Readonly<Record<string, string>>;
+  publishedPluginIdsByServerId: Readonly<Partial<Record<string, string>>>;
 }> {
   if (
     !options.projectId?.trim() ||
@@ -110,8 +112,23 @@ export async function readPluginExecutionContext(options: {
           serverNamesById[id] = name;
       }
     }
+    const publishedPluginIdsByServerId: Record<string, string> =
+      Object.create(null);
+    const publishedIds = reply.publishedPluginIdsByServerId;
+    if (
+      publishedIds &&
+      typeof publishedIds === "object" &&
+      !Array.isArray(publishedIds)
+    ) {
+      for (const [id, binding] of bindings) {
+        const value = (publishedIds as Record<string, unknown>)[id];
+        if (binding.kind === "standalone" && isStandalonePublishedPluginId(value))
+          publishedPluginIdsByServerId[id] = value;
+      }
+    }
     return {
       serverNamesById: Object.freeze(serverNamesById),
+      publishedPluginIdsByServerId: Object.freeze(publishedPluginIdsByServerId),
       serverBindings: bindings,
       ...(options.hostId
         ? { hostConfig: reply.hostConfig as HostRuntimeConfig }

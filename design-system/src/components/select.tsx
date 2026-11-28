@@ -100,6 +100,8 @@ function SelectItem({
   className,
   children,
   description,
+  leading,
+  trailing,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Item> & {
   /**
@@ -110,6 +112,13 @@ function SelectItem({
    * there.
    */
   description?: string;
+  /** Dropdown-only content before the label, such as a logo. */
+  leading?: React.ReactNode;
+  /**
+   * Dropdown-only content pinned to the end of the row, such as a count
+   * badge. Wrapped in a div for the same reason as `description`.
+   */
+  trailing?: React.ReactNode;
 }) {
   return (
     <SelectPrimitive.Item
@@ -125,6 +134,7 @@ function SelectItem({
           <CheckIcon className="size-4" />
         </SelectPrimitive.ItemIndicator>
       </span>
+      {leading}
       {description ? (
         <div className="flex min-w-0 flex-col items-start gap-0.5">
           <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
@@ -137,6 +147,11 @@ function SelectItem({
         </div>
       ) : (
         <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      )}
+      {trailing && (
+        <div data-slot="select-item-trailing" className="ml-auto shrink-0">
+          {trailing}
+        </div>
       )}
     </SelectPrimitive.Item>
   );

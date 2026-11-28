@@ -4,6 +4,7 @@ import {
   dialAppResources,
   dialInitialize,
   dialMcpServer,
+  dialToolCall,
   dialToolListing,
 } from "../../src/directory-readiness/mcp-dial.js";
 
@@ -424,5 +425,67 @@ describe("a listing that stopped halfway is not a listing", () => {
     expect(listing.entries).toHaveLength(0);
     expect(listing.unsupported).toBe(true);
     expect(listing.complete).toBe(true);
+  });
+});
+
+describe("dialToolCall's capture", () => {
+  const options = (result: unknown) => ({
+    enteredUrl: URL_UNDER_TEST,
+    fetchFn: routedFetch({ "tools/call": [result] }).fetchFn,
+  });
+
+  it("reads only the named paths from the structured result", async () => {
+    const evidence = await dialToolCall(
+      options({
+        content: [{ type: "text", text: "Created." }],
+        structuredContent: {
+          project: { id: "proj_1", owner: { email: "review@example.com" } },
+          items: [{ id: 7 }],
+          count: Number.NaN,
+        },
+      }),
+      "create_project",
+      undefined,
+      900,
+      { name: "Scratch" },
+      ["project.id", "items.0.id", "project.owner", "count", "missing.path"]
+    );
+    // An object, a non-finite number and a missing path are never kept.
+    expect(evidence.captured).toEqual({
+      "project.id": "proj_1",
+      "items.0.id": 7,
+    });
+    expect(JSON.stringify(evidence)).not.toContain("review@example.com");
+    expect(JSON.stringify(evidence)).not.toContain("Created.");
+  });
+
+  it("captures nothing from a tool error, and nothing it was not asked for", async () => {
+    const structuredContent = { project: { id: "proj_1" } };
+    const failed = await dialToolCall(
+      options({ isError: true, content: [], structuredContent }),
+      "create_project",
+      undefined,
+      900,
+      {},
+      ["project.id"]
+    );
+    expect(failed.captured).toBeUndefined();
+    const unasked = await dialToolCall(
+      options({ content: [], structuredContent }),
+      "create_project"
+    );
+    expect(unasked).not.toHaveProperty("captured");
+  });
+
+  it("never reads a path through an inherited key", async () => {
+    const evidence = await dialToolCall(
+      options({ content: [], structuredContent: { id: "x" } }),
+      "create_project",
+      undefined,
+      900,
+      {},
+      ["constructor.name", "id.length"]
+    );
+    expect(evidence.captured).toEqual({});
   });
 });

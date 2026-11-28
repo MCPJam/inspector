@@ -1,0 +1,105 @@
+---
+title: "Use MCPJam in ChatGPT"
+sidebarTitle: "ChatGPT plugin"
+icon: "message-circle"
+description: "Install the MCPJam plugin from ChatGPT Plugins and connect your MCPJam account to list projects, check MCP servers and run evals from a chat."
+keywords: ["MCPJam ChatGPT plugin", "MCPJam plugin", "ChatGPT plugins", "MCP evals in ChatGPT", "MCPJam OAuth"]
+---
+
+## What you need
+
+- A ChatGPT account that can install plugins.
+- An MCPJam account with at least one project.
+- Pop-ups allowed for `chatgpt.com`. The MCPJam sign-in opens in a new window.
+
+<Steps>
+  <Step title="Install the plugin">
+    Open the [MCPJam plugin page](https://chatgpt.com/plugins/plugin_asdk_app_6ae3a54df10c8191b901cbadc1d0df56) in ChatGPT and select **Install plugin**.
+
+    You can also get there from ChatGPT: select **Plugins** in the sidebar, type `MCPJam` in **Search plugins**, select **MCPJam**, then select **Install plugin**.
+
+    <Frame>
+      <img src="/images/chatgpt-plugin/00-install.png" alt="MCPJam plugin page before installing. Look for the Install plugin button at the top right, next to the plugin name and the line By MCPJam · Test and evaluate MCP servers." />
+    </Frame>
+
+    When the install finishes, **Install plugin** is replaced by **Settings** and **Try in chat**, and MCPJam appears under **Installed**.
+
+    <Frame>
+      <img src="/images/chatgpt-plugin/01-plugin-page.png" alt="MCPJam plugin page after installing. Settings and Try in chat replace Install plugin at the top right, and three example prompts appear below." />
+    </Frame>
+  </Step>
+
+  <Step title="Connect your MCPJam account">
+    The plugin signs in with OAuth. ChatGPT sends you to MCPJam, you sign in and approve access, and you return to ChatGPT. ChatGPT never sees your MCPJam password.
+
+    To check the connection, select **Settings** on the plugin page. The account is connected when its email appears under **Connected accounts**, marked **Primary**. If it's the right account, you're set up.
+
+    <Frame>
+      <img src="/images/chatgpt-plugin/04-settings.png" alt="Plugin settings. Under Connected accounts, look for your MCPJam account email marked Primary." />
+    </Frame>
+
+    If the right account isn't listed, select **Connect another account** and sign in to MCPJam with that account.
+  </Step>
+</Steps>
+
+## Try it: list your projects
+
+This is optional. It confirms that ChatGPT can read your MCPJam data.
+
+1. On the plugin page, select the example prompt **List my MCPJam projects.** A new chat opens with the **MCPJam** chip already in the message box. Send the message.
+
+   <Frame>
+     <img src="/images/chatgpt-plugin/02-composer.png" alt="ChatGPT message box with the MCPJam chip followed by List my MCPJam projects, ready to send." />
+   </Frame>
+
+2. Compare the projects in the answer with the projects you see in MCPJam. If they match, the connection works.
+
+   <Frame>
+     <img src="/images/chatgpt-plugin/03-answer.png" alt="ChatGPT answer that lists MCPJam projects by name, starting with Demo project. Compare each name with the project list in MCPJam." />
+   </Frame>
+
+   To see which action ran, expand **Worked for…** above the answer. It shows **Listing Accessible MCPJam Projects**.
+
+## Ask about one of your projects
+
+Send `Show the MCP servers in [project name]`, replacing `[project name]` with a name from the list you just got.
+
+If you already have an eval run, send `Summarize my latest eval run` to get its verdict and the cases that failed.
+
+<Note>
+  Some requests change project data or use your organization's MCPJam credits or provider keys. Before the first eval run in a chat, ChatGPT asks you to confirm which suite runs and how many cases it has. A run can't be undone once it starts.
+</Note>
+
+## What the plugin includes
+
+The plugin bundles one app, which connects ChatGPT to your MCPJam account, and six skills that guide ChatGPT through MCPJam tasks.
+
+| Skill | Use it to |
+| --- | --- |
+| `run-mcpjam-evals` | Confirm a run before it spends credits, launch it, wait for a verdict and find the step that failed. |
+| `drive-mcpjam-playground` | Debug an MCP server in a hosted Playground session. |
+| `mcpjam-eval-import` | Turn promptfoo, pytest, Jest or CSV tests into an MCPJam suite file. |
+| `create-mcp-eval` | Write eval tests with `@mcpjam/sdk` for Jest or Vitest. |
+| `explore-to-sdk-evals` | Convert Explore cases into SDK eval tests. |
+| `user-value-chain-glossary` | Look up what a stage, verdict or friction signal means in eval results. |
+
+`mcpjam-eval-import`, `create-mcp-eval` and `explore-to-sdk-evals` work with the SDK and CLI, so they need a local development environment. Use them from Codex or a local agent.
+
+## Manage or remove the plugin
+
+- **Turn off a skill:** in plugin **Settings**, switch off its toggle.
+- **Remove the plugin:** in plugin **Settings**, select **Uninstall**, then **Uninstall** again to confirm. You can't use the plugin until you install it again.
+- **Check the version:** the **About** section shows the plugin version, the authorization method (OAuth) and the review status.
+
+<Frame>
+  <img src="/images/chatgpt-plugin/06-uninstall.png" alt="Uninstall MCPJam confirmation dialog with Cancel and Uninstall buttons." />
+</Frame>
+
+## Troubleshooting
+
+| Problem | What to do |
+| --- | --- |
+| Nothing happens after **Install plugin** | Your browser may have blocked the MCPJam sign-in window. Allow pop-ups for `chatgpt.com` and select **Install plugin** again. |
+| A project is missing from the answer | The plugin only sees projects the connected account can open. Check which account is listed under **Connected accounts**. |
+| ChatGPT answers without using MCPJam | Add the **MCPJam** chip from **Plugins** under the message box and send the message again. |
+| An SDK or CLI skill fails | These skills need a local development environment. Use them from Codex or a local agent. |

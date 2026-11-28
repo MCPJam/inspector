@@ -66,6 +66,24 @@ describe("wrapFetchForHttpLogging", () => {
     expect(events[0].response?.headers["set-cookie"]).toBe("<redacted>");
   });
 
+  it("redacts the server's own credential headers, in both directions", async () => {
+    const { events, log } = collector();
+    const base = vi.fn(async () =>
+      okResponse({ "X-Tenant-Key": "tok_EFTW41_SECRET_echoed" }),
+    ) as unknown as typeof fetch;
+
+    const wrapped = wrapFetchForHttpLogging("srv", log, base, ["x-tenant-KEY"]);
+    await wrapped("https://example.test/mcp", {
+      method: "POST",
+      headers: { "X-Tenant-Key": "tok_EFTW41 SECRET_header", "Mcp-Method": "tools/list" },
+    });
+
+    expect(events[0].request.headers["x-tenant-key"]).toBe("<redacted>");
+    expect(events[0].request.headers["mcp-method"]).toBe("tools/list");
+    expect(events[0].response?.headers["x-tenant-key"]).toBe("<redacted>");
+    expect(JSON.stringify(events)).not.toContain("tok_EFTW41");
+  });
+
   it("records the exchange and rethrows when the fetch itself fails", async () => {
     const { events, log } = collector();
     const base = vi.fn(async () => {

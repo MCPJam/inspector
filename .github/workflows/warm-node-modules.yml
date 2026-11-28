@@ -2,15 +2,15 @@ name: Warm node_modules caches
 
 # A PR run can restore caches saved on its own branch or on `main`, and the
 # node_modules caches in test.yml and lint.yml keep their ten `npm ci` runs per
-# PR off the critical path. Those workflows run on PRs and in the merge queue,
-# not on `main`, and a queue run saves to its gh-readonly-queue/* ref, which no
-# PR can read. So this saves the same entries on `main`.
+# PR off the critical path. Those workflows run on PRs, not on pushes to
+# `main`, so nothing would save a cache PRs can read. This saves the same
+# entries on `main`.
 #
 # Each job must match its consumers exactly: the key, the `path` list (the
 # cache's version is derived from it, so a different list is a different
 # entry), the container image, NODE_VERSION and `runs-on`. A cache lives with
-# the runner that saved it: Blacksmith routes actions/cache to its own store,
-# so the bare key is warmed twice, once there for lint.yml and once on GitHub
+# the runner that saved it: Blacksmith routes actions/cache to its own store
+# (one store for every Blacksmith runner size), so the bare key is warmed twice, once there for lint.yml and once on GitHub
 # for the slop-deletion workflow.
 # .github/scripts/warm-node-modules.test.mjs checks that in Build and Test.
 #

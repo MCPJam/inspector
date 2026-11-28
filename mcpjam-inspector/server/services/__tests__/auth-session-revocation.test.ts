@@ -63,7 +63,7 @@ describe("revokeAuthKitSession", () => {
   });
 
   it("resolves, never rejects, when the call fails", async () => {
-    const revoke = vi.fn().mockRejectedValue(new Error("Unauthenticated"));
+    const revoke = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
 
     await expect(
       revokeAuthKitSession("token-1", { convexUrl: CONVEX_URL, revoke }),
@@ -110,6 +110,133 @@ describe("revokeSessionWithAcknowledgment", () => {
   afterEach(() => {
     resetSessionRevocationRetriesForTests();
     setRevokedSessionCacheForTests(undefined);
+    vi.unstubAllGlobals();
+  });
+
+  /** What Convex sends for a bearer it will not accept (seen on a dev deployment). */
+  const refusedToken = () =>
+    new Response(
+      JSON.stringify({
+        code: "InvalidAuthHeader",
+        message: "Could not parse JWT payload.",
+      }),
+      { status: 401 },
+    );
+
+  it("reports a token Convex refuses without scheduling retries", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(refusedToken());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      revokeSessionWithAcknowledgment("token-1", {
+        convexUrl: CONVEX_URL,
+        verifiedSid: "session_1",
+      }),
+    ).resolves.toEqual({ revoked: false, reason: "token_refused" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(pendingSessionRevocationRetryCount()).toBe(0);
+  });
+
+  it("stops retrying once Convex refuses the token, without an error capture", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(refusedToken());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      revokeSessionWithAcknowledgment("token-1", {
+        convexUrl: CONVEX_URL,
+        verifiedSid: "session_1",
+        retryDelaysMs: [10, 20],
+      }),
+    ).resolves.toEqual({ revoked: false, reason: "failed", status: "pending" });
+
+    await vi.advanceTimersByTimeAsync(30);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(pendingSessionRevocationRetryCount()).toBe(0);
+    expect(loggerMock.error).not.toHaveBeenCalled();
+    expect(loggerMock.info).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        event: "auth.session.revoke_retry_ended",
+        reason: "token_refused",
+        attempts: 1,
+      }),
+    );
+  });
+
+  it("keeps retrying while Convex cannot fetch the issuer's signing keys", async () => {
+    const keyServerDown = new Response(
+      JSON.stringify({
+        code: "InvalidAuthHeader",
+        message:
+          "Could not fetch JWKS from URL 'https://api.workos.com/sso/jwks/client_1': HTTP 503 Service Unavailable. Check that the URL is correct and accessible.",
+      }),
+      { status: 401 },
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(keyServerDown)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ status: "success", value: { revoked: true } }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      revokeSessionWithAcknowledgment("token-1", {
+        convexUrl: CONVEX_URL,
+        verifiedSid: "session_1",
+        retryDelaysMs: [10],
+      }),
+    ).resolves.toEqual({ revoked: false, reason: "failed", status: "pending" });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(pendingSessionRevocationRetryCount()).toBe(0);
+    expect(loggerMock.info).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ event: "auth.session.revoke_retry_succeeded" }),
+    );
+  });
+
+  it("keeps retrying a 401 whose body was cut off", async () => {
+    const cutOff = new Response(
+      new ReadableStream({
+        pull(controller) {
+          controller.error(new TypeError("terminated"));
+        },
+      }),
+      { status: 401 },
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(cutOff)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ status: "success", value: { revoked: true } }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      revokeSessionWithAcknowledgment("token-1", {
+        convexUrl: CONVEX_URL,
+        verifiedSid: "session_1",
+        retryDelaysMs: [10],
+      }),
+    ).resolves.toEqual({ revoked: false, reason: "failed", status: "pending" });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(pendingSessionRevocationRetryCount()).toBe(0);
   });
 
   it("refuses the verified session in this process before the backend answers", async () => {

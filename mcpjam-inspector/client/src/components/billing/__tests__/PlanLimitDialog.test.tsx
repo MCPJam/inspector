@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PlanLimitDialog } from "../PlanLimitDialog";
-import { stashUpgradeReturnToken } from "@/hooks/use-upgrade-checkout";
+import {
+  stashUpgradeReturnToken,
+  type UpgradeOrigin,
+} from "@/hooks/use-upgrade-checkout";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
 
 // Hoisted so the vi.mock factories below (which vitest lifts to the top of the
@@ -142,7 +145,7 @@ beforeEach(() => {
 function arriveFromCheckout(
   url: string,
   organizationId = "org-1",
-  origin: "evals" | "credits" = "evals",
+  origin: UpgradeOrigin = "evals",
   userId = "user-1",
 ) {
   stashUpgradeReturnToken(organizationId, origin, userId);
@@ -818,6 +821,26 @@ describe("PlanLimitDialog", () => {
           expect.stringMatching(/Your credits are available now/),
         );
       });
+    });
+
+    it("says the turn limit is gone when the user came from the native harness wall", async () => {
+      billingState.plan = "pro";
+      arriveFromCheckout(
+        "/playground?upgrade=return&upgrade_org=org-1&upgrade_from=native_harness",
+        "org-1",
+        "native_harness",
+      );
+      render(<PlanLimitDialog />);
+
+      await waitFor(() => {
+        expect(toastSuccess).toHaveBeenCalledWith(
+          expect.stringMatching(/Native harnesses now run without a turn limit\.$/),
+        );
+      });
+      expect(trackMock).toHaveBeenCalledWith(
+        "plan_limit_upgrade_returned",
+        expect.objectContaining({ origin: "native_harness", upgraded: true }),
+      );
     });
 
     it("waits for billing status before deciding", () => {

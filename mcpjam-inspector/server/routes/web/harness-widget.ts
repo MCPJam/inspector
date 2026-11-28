@@ -122,6 +122,7 @@ async function authorizeWidgetConnection(c: Context, context: z.infer<typeof req
       {
         pluginComputerRuntime: !!scope.hostConfig.computer,
         lazyConnect: true,
+        observeFeatures: true,
         ...(input ? { elicitationCallback: input.host.callback } : {}),
         initializePins,
         mcpProtocolVersionsByServerId: pins.mcpProtocolVersionsByServerId,

@@ -166,6 +166,20 @@ export function panesForHostIds(
 }
 
 /**
+ * The one pane left when a saved column continues as a single chat: its
+ * client's pane, or the first pane for a column with no client. Environment
+ * panes go too, or two of them would bring the compare grid back over it.
+ */
+export function singleChatPanes(
+  panes: readonly ComparePane[],
+  hostId: string | undefined,
+): ComparePane[] {
+  if (!hostId) return panes.slice(0, 1);
+  const own = panes.find((pane) => paneHostId(pane) === hostId);
+  return [own ?? createPane({ kind: "host", hostId }, [])];
+}
+
+/**
  * The pane running `target` instead. It keeps its id and place, and drops
  * what belonged to the old target: its picked model and server choices.
  */

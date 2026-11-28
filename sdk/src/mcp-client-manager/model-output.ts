@@ -526,10 +526,33 @@ export async function mcpCallToolResultToModelOutputWithLinkedResources(
   );
   if (!hasImageCandidate) return undefined;
 
+  return {
+    type: "content",
+    value: await mapMcpContentBlocksForModel(result.content, options),
+  };
+}
+
+/**
+ * Maps a tool result's content blocks to model parts the way the image path
+ * does, with one image budget for the whole result. `renderOtherBlock` lets a
+ * caller show a block this mapper would replace with an omission marker (an
+ * embedded text resource, a non-image resource link); returning undefined
+ * keeps the marker.
+ */
+export async function mapMcpContentBlocksForModel(
+  blocks: readonly unknown[],
+  options: McpModelOutputWithLinkedResourcesOptions = {},
+  renderOtherBlock: (
+    block: Record<string, unknown>
+  ) => McpModelOutputContentPart | undefined = () => undefined
+): Promise<McpModelOutputContentPart[]> {
+  const policy = resolveModelVisibleMcpToolResults(
+    options.modelVisibleMcpToolResults
+  );
   const budget = makeImageBudget(options);
   const value: McpModelOutputContentPart[] = [];
 
-  for (const block of result.content) {
+  for (const block of blocks) {
     throwIfAborted(options.abortSignal);
 
     if (!isRecord(block)) {
@@ -577,8 +600,8 @@ export async function mcpCallToolResultToModelOutputWithLinkedResources(
       continue;
     }
 
-    value.push(mapUnsupportedBlock(block));
+    value.push(renderOtherBlock(block) ?? mapUnsupportedBlock(block));
   }
 
-  return { type: "content", value };
+  return value;
 }

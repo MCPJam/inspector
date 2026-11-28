@@ -1,10 +1,12 @@
 import { probeMcpServer } from "./server-probe.js";
+import { awaitWithSignal } from "./abort-signal.js";
+import { startSdkRunTelemetry } from "./telemetry.js";
 import { withSkillsExtensionCapability } from "./mcp-client-manager/index.js";
 import {
   getVerifiedServerSkill,
   isServerSkillRefusalError,
-  listServerSkillCatalog,
 } from "./server-skills.js";
+import { readServerSkillCatalog } from "./server-list-reads.js";
 import {
   listAllPrompts,
   listAllResourceTemplates,
@@ -39,6 +41,7 @@ import type {
   DoctorResourcesCollectionResult,
   DoctorSkillsCollectionResult,
   DoctorToolsCollectionResult,
+  ServerDoctorError,
   ServerDoctorResult,
 } from "./server-doctor-core.js";
 
@@ -62,6 +65,8 @@ export interface RunServerDoctorInput<TTarget = unknown> {
   retryPolicy?: RetryPolicy;
   /** Transport for the probe's requests. See `buildDoctorProbeConfig`. */
   fetchFn?: typeof fetch;
+  /** @internal set by a host that counts the run itself. See `startSdkRunTelemetry`. */
+  __suppressTelemetry?: boolean;
 }
 
 type WithConnectedManager = <T>(
@@ -79,9 +84,26 @@ export interface ServerDoctorDependencies {
   withManager?: WithConnectedManager;
 }
 
+/** One `sdk_run_completed` per call: `passed` only when the server is ready. */
 export async function runServerDoctor<TTarget = unknown>(
   input: RunServerDoctorInput<TTarget>,
   dependencies: ServerDoctorDependencies = {}
+): Promise<ServerDoctorResult<TTarget>> {
+  const telemetry = input.__suppressTelemetry
+    ? undefined
+    : startSdkRunTelemetry("server_doctor");
+  try {
+    const result = await diagnoseServer(input, dependencies);
+    void telemetry?.finish(result.status === "ready" ? "passed" : "failed");
+    return result;
+  } finally {
+    void telemetry?.finish("errored");
+  }
+}
+
+async function diagnoseServer<TTarget>(
+  input: RunServerDoctorInput<TTarget>,
+  dependencies: ServerDoctorDependencies
 ): Promise<ServerDoctorResult<TTarget>> {
   const probeServer = dependencies.probeServer ?? probeMcpServer;
   const withManager =
@@ -197,12 +219,56 @@ export async function runServerDoctor<TTarget = unknown>(
   return result;
 }
 
+export interface CollectConnectedServerDoctorStateOptions {
+  /**
+   * Read and verify a sample of the listed skills (the default). `false`
+   * lists skills without reading any skill file, so collection sends only
+   * list requests.
+   */
+  verifySkills?: boolean;
+  /**
+   * Ends collection early. The list requests still in flight are cancelled,
+   * a part still being listed is reported as an error that names the
+   * deadline, and the parts already listed are kept.
+   */
+  signal?: AbortSignal;
+}
+
+const COLLECTION_STOPPED: ServerDoctorError = {
+  code: "TIMEOUT",
+  message: "Listing did not finish before the collection deadline.",
+};
+
+/** `work`, or `stopped` once `signal` aborts first. */
+async function untilStopped<T>(
+  work: Promise<T>,
+  signal: AbortSignal | undefined,
+  stopped: (error: ServerDoctorError) => T
+): Promise<T> {
+  if (!signal) return work;
+  try {
+    return await awaitWithSignal(work, signal);
+  } catch (error) {
+    if (!signal.aborted) throw error;
+    // The list requests got the same signal and are cancelled; `work` then
+    // settles with an abort error that is dropped here. The race above keeps
+    // a handler on `work`, so that late rejection is not unhandled.
+    return stopped(COLLECTION_STOPPED);
+  }
+}
+
+function stoppedCheck(error: ServerDoctorError) {
+  return { check: errorCheck(error.message), error };
+}
+
 export async function collectConnectedServerDoctorState(
   manager: MCPClientManager,
-  serverId: string
+  serverId: string,
+  options: CollectConnectedServerDoctorStateOptions = {}
 ): Promise<ConnectedServerDoctorState> {
   const initInfo = manager.getInitializationInfo(serverId) ?? null;
   const capabilities = manager.getServerCapabilities(serverId) ?? null;
+  const { signal } = options;
 
   const [
     toolsResult,
@@ -211,11 +277,31 @@ export async function collectConnectedServerDoctorState(
     resourceTemplatesResult,
     skillsResult,
   ] = await Promise.all([
-    collectTools(manager, serverId),
-    collectResources(manager, serverId),
-    collectPrompts(manager, serverId),
-    collectResourceTemplates(manager, serverId),
-    collectSkills(manager, serverId),
+    untilStopped(collectTools(manager, serverId, signal), signal, (error) => ({
+      tools: [],
+      toolsMetadata: {},
+      ...stoppedCheck(error),
+    })),
+    untilStopped(
+      collectResources(manager, serverId, signal),
+      signal,
+      (error) => ({ resources: [], ...stoppedCheck(error) })
+    ),
+    untilStopped(
+      collectPrompts(manager, serverId, signal),
+      signal,
+      (error) => ({ prompts: [], ...stoppedCheck(error) })
+    ),
+    untilStopped(
+      collectResourceTemplates(manager, serverId, signal),
+      signal,
+      (error) => ({ resourceTemplates: [], ...stoppedCheck(error) })
+    ),
+    untilStopped(
+      collectSkills(manager, serverId, options.verifySkills ?? true, signal),
+      signal,
+      (error) => ({ skills: [], ...stoppedCheck(error) })
+    ),
   ]);
 
   return buildConnectedServerDoctorState({
@@ -238,7 +324,7 @@ export async function collectConnectedServerDoctorState(
  * with its bytes is almost never wrong for one skill alone — a sample answers
  * "does this server's skill serving work" without pretending to be an audit.
  */
-const DOCTOR_SKILL_VERIFY_SAMPLE = 5;
+export const DOCTOR_SKILL_VERIFY_SAMPLE = 5;
 
 /**
  * Why `skills/*` was not attempted, attributed to whoever actually withheld the
@@ -320,25 +406,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 async function collectSkills(
   manager: MCPClientManager,
-  serverId: string
+  serverId: string,
+  verify: boolean,
+  signal?: AbortSignal
 ): Promise<DoctorSkillsCollectionResult> {
-  let support:
-    | { active?: boolean; declared?: boolean; advertised?: boolean }
-    | undefined;
-  try {
-    support = manager.getSkillsSupport(serverId);
-  } catch {
-    support = undefined;
+  const read = await readServerSkillCatalog(manager, serverId, { signal });
+  if (read.status === "inactive") {
+    return {
+      skills: [],
+      check: skippedCheck(inactiveSkillsDetail(read.support)),
+    };
   }
-  if (!support?.active) {
-    return { skills: [], check: skippedCheck(inactiveSkillsDetail(support)) };
-  }
+  const failed = (error: unknown): DoctorSkillsCollectionResult => {
+    const structured = normalizeServerDoctorError(error);
+    return {
+      skills: [],
+      check: errorCheck(structured.message),
+      error: structured,
+    };
+  };
+  if (read.status === "failed") return failed(read.error);
 
   try {
-    const listing = await listServerSkillCatalog(manager, serverId);
-    const sample = listing.skills
-      .filter((skill) => !skill.unloadable)
-      .slice(0, DOCTOR_SKILL_VERIFY_SAMPLE);
+    const listing = read.listing;
+    const sample = verify
+      ? listing.skills
+          .filter((skill) => !skill.unloadable)
+          .slice(0, DOCTOR_SKILL_VERIFY_SAMPLE)
+      : [];
 
     const conformance: string[] = [];
     const capabilities = manager.getServerCapabilities(serverId) as
@@ -481,23 +576,23 @@ async function collectSkills(
     }
     return { skills: listing.skills, check: okCheck(parts.join(" ")) };
   } catch (error) {
-    const structured = normalizeServerDoctorError(error);
-    return {
-      skills: [],
-      check: errorCheck(structured.message),
-      error: structured,
-    };
+    return failed(error);
   }
 }
 
 async function collectTools(
   manager: MCPClientManager,
-  serverId: string
+  serverId: string,
+  signal?: AbortSignal
 ): Promise<DoctorToolsCollectionResult> {
   try {
     // Raw-evidence surface: bypass the SEP-2549 response cache so the doctor
     // reports the server's live surface, never a cached body.
-    const result = await listAllTools(manager, { serverId, cacheMode: "bypass" });
+    const result = await listAllTools(manager, {
+      serverId,
+      cacheMode: "bypass",
+      signal,
+    });
     const tools =
       result.tools?.map((tool) => {
         const { _meta: _ignoredMeta, ...toolWithoutMeta } = tool;
@@ -521,12 +616,14 @@ async function collectTools(
 
 async function collectResources(
   manager: MCPClientManager,
-  serverId: string
+  serverId: string,
+  signal?: AbortSignal
 ): Promise<DoctorResourcesCollectionResult> {
   try {
     const result = await listAllResources(manager, {
       serverId,
       cacheMode: "bypass",
+      signal,
     });
     const resources = result.resources ?? [];
     return {
@@ -545,12 +642,14 @@ async function collectResources(
 
 async function collectPrompts(
   manager: MCPClientManager,
-  serverId: string
+  serverId: string,
+  signal?: AbortSignal
 ): Promise<DoctorPromptsCollectionResult> {
   try {
     const result = await listAllPrompts(manager, {
       serverId,
       cacheMode: "bypass",
+      signal,
     });
     const prompts = result.prompts ?? [];
     return {
@@ -569,12 +668,14 @@ async function collectPrompts(
 
 async function collectResourceTemplates(
   manager: MCPClientManager,
-  serverId: string
+  serverId: string,
+  signal?: AbortSignal
 ): Promise<DoctorResourceTemplatesCollectionResult> {
   try {
     const result = await listAllResourceTemplates(manager, {
       serverId,
       cacheMode: "bypass",
+      signal,
     });
     const resourceTemplates = result.resourceTemplates ?? [];
     if (result.unsupported) {

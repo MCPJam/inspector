@@ -13,7 +13,9 @@ import {
   type McpModelVisibleToolResultPolicy,
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
+  projectToolResultByRule,
   readModelOutputImage,
+  structuredContentRuleOf,
 } from "@mcpjam/sdk";
 import {
   readMcpToolOriginServerId,
@@ -308,6 +310,41 @@ export async function mapMcpImageToolOutputs(
       if (rawOutputValue == null || typeof rawOutputValue !== "object") {
         if (strippedPart !== part) didChange = true;
         content.push(strippedPart);
+        continue;
+      }
+
+      // Earlier turns replay under the host's client rule, so a second turn
+      // sees no more of a result than the first one did.
+      const rule = structuredContentRuleOf(options.modelVisibleMcpToolResults);
+      if (
+        rule &&
+        Array.isArray((rawOutputValue as { content?: unknown }).content)
+      ) {
+        const ruleServerId =
+          (toolCallId ? serverIdByToolCallId.get(toolCallId) : undefined) ??
+          (hasImageResourceLinkCandidate(rawOutputValue)
+            ? await options.resolveLinkedResourceServerId?.({
+                toolCallId,
+                toolName: readToolName(part),
+              })
+            : undefined);
+        didChange = true;
+        content.push({
+          ...(strippedPart as Record<string, unknown>),
+          output: await projectToolResultByRule(
+            rawOutputValue as Parameters<typeof projectToolResultByRule>[0],
+            rule,
+            {
+              modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+              readResource: linkedResourceReaderForPart(
+                part,
+                ruleServerId,
+                options,
+              ),
+              abortSignal: options.abortSignal,
+            },
+          ),
+        });
         continue;
       }
 

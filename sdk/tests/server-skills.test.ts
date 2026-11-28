@@ -221,6 +221,36 @@ describe("size verification", () => {
   });
 });
 
+describe("a caller-supplied reader", () => {
+  it("reads SKILL.md through it instead of the manager, and still verifies", async () => {
+    const { manager, entry } = await makeManager();
+    const read = vi.fn(async (uri: string) => ({
+      contents: [{ uri, text: MARKDOWN, mimeType: "text/markdown" }],
+    }));
+    const loaded = await getVerifiedServerSkill(manager, {
+      serverId: SERVER_ID,
+      uri: SKILL_URI,
+      entry,
+      read,
+    });
+    expect(loaded.name).toBe("refunds");
+    expect(read).toHaveBeenCalledWith(SKILL_URI);
+    expect(manager.readResource).not.toHaveBeenCalled();
+
+    const tampered = await refusalFrom(() =>
+      getVerifiedServerSkill(manager, {
+        serverId: "other-server",
+        uri: SKILL_URI,
+        entry,
+        read: async (uri) => ({
+          contents: [{ uri, text: `${MARKDOWN}!`, mimeType: "text/markdown" }],
+        }),
+      })
+    );
+    expect(tampered.kind).toBe("size_mismatch");
+  });
+});
+
 describe("per-skill limits", () => {
   it("refuses a manifest over the entry limit, saying which limit", async () => {
     // 513 entries — one past what the draft requires hosts to support. The

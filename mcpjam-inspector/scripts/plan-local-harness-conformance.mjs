@@ -13,7 +13,7 @@
 //                  called run is the caller's.
 //   push / dispatch with no version
 //                  Packs built from source on every platform, as before.
-//                  A push that changed no conformance input (a version PR's
+//                  A push that changed no conformance input (a version commit's
 //                  lockfile bump, say) runs no legs: its parent's run already
 //                  proved the same thing, and the legs would compete for the
 //                  macOS runners the release's own evidence run needs. A run
@@ -29,8 +29,14 @@
 // the same Darwin kernel an Intel Mac runs. The Intel runners took two to
 // three times as long and GitHub retires them in 2027.
 //
+// `macosRunner` moves every macOS leg to another Apple Silicon label. A
+// release passes one: GitHub runs at most five macOS jobs at once for the
+// whole organization, and a release's ten macOS legs queued for twenty
+// minutes behind that cap.
+//
 // Claude Code and Codex have drivers and legs of their own. Every other local
-// runtime runs `run-gateway-turn.ts <harnessId>` on each target its definition
+// runtime runs `run-runtime-conformance.ts <harnessId>` (a gateway turn, or the
+// lifecycle of a runtime on its vendor's login) on each target its definition
 // advertises (`runtime_matrix`), so a runtime made local is covered with no
 // change here. A workflow_call that names no version for one runs nothing for
 // it: a release needs evidence only for the packs it may select.
@@ -60,6 +66,7 @@ const OWN_DRIVERS = new Set(["claude-code", "codex"]);
 // Each target's runner, from the one table above that lists all five.
 const RUNNERS = Object.fromEntries(CODEX_LEGS.map(({ platform_key, ...runner }) => [platform_key, runner]));
 const PACK_VERSION = /^\d+\.\d+\.\d+$/;
+const RUNNER_LABEL = /^[a-z0-9][a-z0-9.-]*$/;
 
 /** `copilot-cli=1.0.0,cursor=1.2.0` as a map, refusing anything else. */
 function parseRuntimeVersions(text, runtimes) {
@@ -81,7 +88,7 @@ function desiredVersion(record, harnessId) {
 /**
  * @param {{ event: string, claudeVersion?: string, codexVersion?: string,
  *           runtimeVersions?: string, harnesses?: string, certifiedOnly?: boolean,
- *           inputsUnchanged?: boolean,
+ *           inputsUnchanged?: boolean, macosRunner?: string,
  *           record?: ReturnType<typeof readRuntimeCompat>,
  *           facts?: ReturnType<typeof readManifestFacts> }} input
  */
@@ -98,12 +105,15 @@ export function planConformance(input) {
   for (const given of [input.claudeVersion, input.codexVersion]) {
     if (given && !/^\d+\.\d+\.\d+$/.test(given)) throw new Error(`not a pack version: ${given}`);
   }
+  const macosRunner = input.macosRunner || "macos-latest";
+  if (!RUNNER_LABEL.test(macosRunner)) throw new Error(`not a runner label: ${macosRunner}`);
+  const onRunner = (leg) => (leg.runner === "macos-latest" ? { ...leg, runner: macosRunner } : leg);
   // D8: a leg blocks exactly when its target is one the harness's manifest
   // advertises — the targets the release gate requires evidence for.
   const legsFor = (harnessId, legs) => {
     const advertised = new Set(advertisedTargetsOf(facts[harnessId]));
     return legs
-      .map((leg) => ({ ...leg, certified: advertised.has(leg.platform_key) }))
+      .map((leg) => ({ ...onRunner(leg), certified: advertised.has(leg.platform_key) }))
       .filter((leg) => !input.certifiedOnly || leg.certified)
       .filter((leg) => !pullRequest || leg.platform_key === "linux-x64");
   };
@@ -122,7 +132,7 @@ export function planConformance(input) {
       advertisedTargetsOf(facts[id]).map((target) => ({
         harness: id,
         platform_key: target,
-        ...RUNNERS[target],
+        ...onRunner(RUNNERS[target]),
         pack_version: version(id, named.get(id)),
       })),
     )
@@ -170,6 +180,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     harnesses: process.env.HARNESSES ?? "",
     certifiedOnly: process.env.CERTIFIED_ONLY === "true",
     inputsUnchanged,
+    macosRunner: process.env.MACOS_RUNNER ?? "",
   });
   for (const [key, value] of Object.entries(plan)) process.stdout.write(`${key}=${value}\n`);
 }

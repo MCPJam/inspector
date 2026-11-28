@@ -2392,6 +2392,16 @@ describe("operation catalog consistency", () => {
     list_server_revisions: { server: "s" },
     get_server_revision: { server: "s", revisionNumber: 2 },
     diff_server_revisions: { server: "s", revisionNumber: 2 },
+    create_mock_server: { name: "m", definition: {} },
+    update_mock_server: { mock: "m", patch: {}, expectedVersion: 1 },
+    get_mock_server: { mock: "m" },
+    patch_mock_server: { mock: "m", expectedVersion: 1, path: ["instructions"], value: "x" },
+    refresh_mock_server: { mock: "m", expectedVersion: 1 },
+    open_mock_run: { mock: "m" },
+    reset_mock_run: { mock: "m", runId: "r", expectedEpoch: 1 },
+    close_mock_run: { mock: "m", runId: "r" },
+    get_mock_forwarding_policy: {},
+    set_mock_forwarding_policy: { forwarding: "block" },
     list_server_accounts: { server: "s" },
     get_server_account: { server: "s", account: "test-automation-1" },
     upload_server_account_tokens: {
@@ -2432,6 +2442,49 @@ describe("operation catalog consistency", () => {
     delete_directory_submission: { submission: "sub" },
     start_directory_submission_run: { submission: "sub" },
     get_directory_submission_results: { submission: "sub" },
+    create_reviewer_attempt: {
+      submission: "sub",
+      passwordSecretName: "MCPJAM_REVIEWER_SUB_PASSWORD",
+    },
+    list_reviewer_attempts: { submission: "sub" },
+    get_reviewer_attempt: { submission: "sub", attempt: "att" },
+    resume_reviewer_attempt: { submission: "sub", attempt: "att" },
+    create_reviewer_handoff: { submission: "sub", attempt: "att" },
+    cancel_reviewer_attempt: { submission: "sub", attempt: "att" },
+    get_directory_submission_handoff: { submission: "sub" },
+    list_directory_submission_findings: { submission: "sub" },
+    get_directory_submission_finding: {
+      submission: "sub",
+      check: "claude.endpoint.https",
+    },
+    export_directory_submission: { submission: "sub" },
+    list_directory_submission_events: { submission: "sub" },
+    record_directory_submission_status: { submission: "sub", state: "submitted" },
+    record_directory_submission_snapshot: { submission: "sub", label: "directory" },
+    import_directory_finding: {
+      submission: "sub",
+      text: "Remove MCP from the name.",
+      via: "email",
+    },
+    get_directory_submission_test_plan: { submission: "sub" },
+    draft_directory_submission_test_plan: { submission: "sub" },
+    save_directory_submission_test_plan: {
+      submission: "sub",
+      expectedRevision: 0,
+      plan: {
+        schemaVersion: 1,
+        fixtures: [],
+        tools: [],
+        cases: [],
+        budget: { maxCalls: 1, concurrency: 1, callTimeoutMs: 30000 },
+        cleanup: [],
+      },
+    },
+    get_directory_submission_tool_tests: { submission: "sub" },
+    get_directory_submission_evals: { submission: "sub" },
+    set_directory_submission_evals: { submission: "sub", suite: "suite", expectedRevision: 1 },
+    import_directory_submission_test_cases: { submission: "sub" },
+    export_directory_submission_test_cases: { submission: "sub" },
     start_conformance_run: { server: "s" },
     get_conformance_run: { run: "r" },
     list_conformance_runs: {},
@@ -2507,6 +2560,9 @@ describe("operation catalog consistency", () => {
       draft: { assertions: { mode: "replace", list: [] } },
     },
     request_eval_run_judge: { project: "p", runId: "r" },
+    request_eval_run_insights: { project: "p", runId: "r" },
+    cancel_eval_run_insights: { project: "p", runId: "r" },
+    build_eval_run_findings: { project: "p", runId: "r" },
     list_eval_github_repos: {},
     connect_eval_github_repo: {
       suite: "s",
@@ -2789,6 +2845,22 @@ describe("operation catalog consistency", () => {
       "update_directory_submission",
       "delete_directory_submission",
       "start_directory_submission_run",
+      // A reviewer sign-in starts a run that signs in to the submission's
+      // server; a cancel stops one.
+      "create_reviewer_attempt",
+      "create_reviewer_handoff",
+      "resume_reviewer_attempt",
+      "cancel_reviewer_attempt",
+      // Records of what happened in the directory: append-only events.
+      "record_directory_submission_status",
+      "record_directory_submission_snapshot",
+      "import_directory_finding",
+      // A new revision of the plan whose calls a run may make. It calls nothing.
+      "save_directory_submission_test_plan",
+      // The eval suite holding a submission's test cases, and the cases a
+      // plugin package declares, written into it. Neither calls a tool.
+      "set_directory_submission_evals",
+      "import_directory_submission_test_cases",
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
@@ -2797,6 +2869,11 @@ describe("operation catalog consistency", () => {
       "backtest_eval_run",
       "backtest_eval_run_judge",
       "request_eval_run_judge",
+      // The run page's Analyze button: build findings, request the analysis,
+      // cancel it. Each changes the run's analysis state.
+      "request_eval_run_insights",
+      "cancel_eval_run_insights",
+      "build_eval_run_findings",
       // Description-rewrite experiment. Propose spends a small model budget
       // to draft the rewrite; start launches two replay arms and spends
       // eval-iteration credits. `get_eval_description_experiment` stays a
@@ -2886,6 +2963,15 @@ describe("operation catalog consistency", () => {
       "backfill_trace_destination",
       "create_goal",
       "update_goal",
+      // A mock server's saves and the workspace's forwarding policy.
+      "create_mock_server",
+      "update_mock_server",
+      "patch_mock_server",
+      "refresh_mock_server",
+      "open_mock_run",
+      "reset_mock_run",
+      "close_mock_run",
+      "set_mock_forwarding_policy",
       "archive_goal",
       "create_swarm",
       "update_swarm",
@@ -2990,15 +3076,18 @@ describe("server live operations", () => {
     );
   });
 
-  it("rejects stdio servers deterministically before any live call", async () => {
+  it("diagnoses a stdio server as unreachable before any live call", async () => {
     const { client, fetchMock } = makeClient();
 
-    await expect(
-      diagnoseServerOperation.execute(
-        { project: "new", server: "Docs" },
-        { client }
-      )
-    ).rejects.toThrow(/stdio servers are not supported/);
+    const result = await diagnoseServerOperation.execute(
+      { project: "new", server: "Docs" },
+      { client }
+    );
+
+    expect(result.report.status).toBe("error");
+    expect(result.report.error).toMatchObject({
+      details: { refusalReason: "hosted_stdio_unsupported" },
+    });
     expect(callsTo(fetchMock, "/doctor")).toHaveLength(0);
   });
 

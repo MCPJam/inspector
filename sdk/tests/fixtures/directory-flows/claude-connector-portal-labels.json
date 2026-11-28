@@ -2,7 +2,7 @@
   "flowId": "claude-connector",
   "capturedAt": "2026-11-13",
   "checkedAgainstScreenshots": false,
-  "note": "The Claude portal's MCP connector form and review page as text, transcribed from captures of the live portal. Set checkedAgainstScreenshots to true only after a person has compared every line with the captures. Left out on purpose: the connector list and the Company step's prefilled values (they showed a real account) and the test-setup placeholder (it holds an email address).",
+  "note": "The Claude portal's MCP connector form and review page as text, transcribed from captures of the live portal. Set checkedAgainstScreenshots to true only after a person has compared every line with the captures. Left out on purpose: the connector list and the Company step's prefilled values (they showed a real account) and the test-setup placeholder (it holds an email address). The Test & launch fields from Identity tool to Fixtures are MCPJam's reviewer check, not the portal's.",
   "title": "Submit an MCP connector",
   "steps": [
     {
@@ -301,6 +301,40 @@
     "testLaunch.selfTested": {
       "label": "I have run every tool via MCP Inspector or as a custom connector in Claude",
       "reviewLabel": "Self-tested"
+    },
+    "testLaunch.identityTool": {
+      "label": "Identity tool",
+      "placeholder": "whoami",
+      "helper": "A read-only tool on your server that returns the signed-in account. MCPJam calls it as the reviewer."
+    },
+    "testLaunch.identityArgs": {
+      "label": "Identity tool arguments",
+      "placeholder": "{}",
+      "helper": "Fixed JSON arguments, if the identity tool takes any."
+    },
+    "testLaunch.expectedIdentityPath": {
+      "label": "Identity path",
+      "placeholder": "$.user.email",
+      "helper": "Where the tool's result names the account, as a JSON path."
+    },
+    "testLaunch.expectedIdentity": {
+      "label": "Expected reviewer",
+      "placeholder": "review@example.com",
+      "helper": "The account reviewers sign in as."
+    },
+    "testLaunch.expectedOrganizationPath": {
+      "label": "Organization path",
+      "placeholder": "$.organization.name",
+      "helper": "Where the tool's result names the organization or project, as a JSON path."
+    },
+    "testLaunch.expectedOrganization": {
+      "label": "Expected organization",
+      "placeholder": "Sample Org",
+      "helper": "The organization or project reviewers should land in."
+    },
+    "testLaunch.fixtures": {
+      "label": "Fixtures",
+      "helper": "Resources your instructions name, each with a read-only tool call that finds it in the reviewer's account."
     },
     "compliance.acknowledgments": {
       "label": "Policy acknowledgements",

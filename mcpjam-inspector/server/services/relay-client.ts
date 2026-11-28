@@ -22,6 +22,7 @@
 import http from "node:http";
 import { WebSocket } from "ws";
 import { logger } from "../utils/logger";
+import { relayProxyAgent } from "./relay-proxy-agent";
 
 export const RELAY_SUBPROTOCOL = "mcpjam-tunnel.v1";
 
@@ -32,6 +33,8 @@ const WS_BACKPRESSURE_HIGH_WATER_BYTES = 1024 * 1024;
 const RECONNECT_MIN_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 const CONNECT_TIMEOUT_MS = 15_000;
+/** One dial, up to the WebSocket upgrade; the heartbeat takes over after it. */
+const DIAL_TIMEOUT_MS = 10_000;
 
 export const CLOSE_BAD_TOKEN = 4000;
 export const CLOSE_REPLACED = 4001;
@@ -170,10 +173,26 @@ export class RelayConnection {
     onPermanent?: (reason: string) => void
   ): void {
     if (this.closedByUs || this.permanent) return;
+    const attempt = new AbortController();
     const ws = new WebSocket(this.options.relayWsUrl, RELAY_SUBPROTOCOL, {
       headers: { Authorization: `Bearer ${this.options.connectToken}` },
+      // Through HTTPS_PROXY when one is set; undefined dials directly.
+      agent: relayProxyAgent(
+        this.options.relayWsUrl,
+        process.env,
+        attempt.signal
+      ),
     });
     this.ws = ws;
+    // ws starts its handshake timeout only once it has a socket, which
+    // through a proxy is after CONNECT. Without this deadline, a proxy that
+    // accepts the connection and never answers leaves the attempt pending for
+    // good: no open starts the heartbeat, and no close queues a retry.
+    const deadline = setTimeout(() => {
+      attempt.abort();
+      // Emits close, which queues the next attempt.
+      ws.terminate();
+    }, DIAL_TIMEOUT_MS);
 
     ws.on("message", (data, isBinary) => {
       if (isBinary) {
@@ -203,8 +222,15 @@ export class RelayConnection {
     ws.on("error", () => {
       // 'close' always follows.
     });
-    ws.on("open", () => this.startHeartbeat());
+    ws.on("open", () => {
+      clearTimeout(deadline);
+      this.startHeartbeat();
+    });
     ws.on("close", (code, reasonBuf) => {
+      clearTimeout(deadline);
+      // ws cannot reach a socket still waiting on CONNECT, so a close() during
+      // that wait would leave it open. After an upgrade it is already closed.
+      attempt.abort();
       this.stopHeartbeat();
       this.abortAllLocal();
       if (this.closedByUs) return;

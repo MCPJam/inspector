@@ -18,9 +18,10 @@ test.beforeEach(async ({ context }) => {
 });
 
 async function expectLocalAccessAccepted(page: Page) {
-  // This banner is mounted only after the local access gate admits the page.
-  // Convex must still keep protected app subscriptions blocked without a guest.
-  await expect(page.getByTestId("guest-session-refused-banner")).toBeVisible();
+  // The refused-guest recovery card is mounted only after the local access gate
+  // admits the page. Convex must still keep protected app subscriptions
+  // blocked without a guest.
+  await expect(page.getByTestId("startup-recovery-card")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Sign in", exact: true }),
   ).toBeVisible();

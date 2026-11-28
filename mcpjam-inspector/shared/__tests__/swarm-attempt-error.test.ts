@@ -165,7 +165,7 @@ describe("humanizeSwarmAttemptError", () => {
       "provider_empty_response",
     );
     expect(info.message).toBe(
-      "The model called `execute`, but your server has no tool by that name.",
+      "The model called `execute`, which was unavailable in this step.",
     );
     expect(info.code).toBe("provider_empty_response");
   });
@@ -175,7 +175,7 @@ describe("humanizeSwarmAttemptError", () => {
       "Backend step returned no content — Model tried to call unavailable tool 'computer'. Available tools: a, b (provider_empty_response)",
     );
     expect(info.message).toBe(
-      "The model called `computer`, but your server has no tool by that name.",
+      "The model called `computer`, which was unavailable in this step.",
     );
     expect(info.code).toBe("provider_empty_response");
   });
@@ -185,7 +185,7 @@ describe("humanizeSwarmAttemptError", () => {
       "Backend stream error: 502 Model tried to call unavailable tool 'execute'. Available tools: a",
     );
     expect(info.message).toBe(
-      "The model called `execute`, but your server has no tool by that name.",
+      "The model called `execute`, which was unavailable in this step.",
     );
     expect(info.httpStatus).toBe(502);
   });
@@ -195,7 +195,7 @@ describe("humanizeSwarmAttemptError", () => {
       "Model tried to call unavailable tool 'https://evil.example/x'.",
     );
     expect(info.message).toBe(
-      "The model called `a tool`, but your server has no tool by that name.",
+      "The model called `a tool`, which was unavailable in this step.",
     );
   });
 });
@@ -368,6 +368,19 @@ describe("isAccountLimit", () => {
     // humanizer lifts the code out of the JSON envelope.
     expect(isAccountLimit(undefined, code)).toBe(true);
     expect(isAccountLimit(`Limit reached. (${code}, HTTP 429)`)).toBe(true);
+  });
+
+  it("stops the whole run when the organization's native harness trial is used up", () => {
+    // Neither an upgrade nor a switch to MCPJam Harness happens mid-run, so
+    // every later native turn would be refused the same way.
+    expect(isAccountLimit(undefined, "native_harness_trial_exhausted")).toBe(
+      true,
+    );
+    expect(
+      accountLimitCode(
+        "This organization has used its 20 free native harness turns. (native_harness_trial_exhausted, HTTP 403)",
+      ),
+    ).toBe("native_harness_trial_exhausted");
   });
 
   it("does NOT claim a 429 on the user's own provider key", () => {

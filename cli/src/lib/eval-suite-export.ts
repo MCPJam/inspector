@@ -855,6 +855,11 @@ export function buildSuiteFileFromPlatform(
             },
           }
         : {}),
+      ...(detail.settings.codeEvaluators?.length
+        ? { codeEvaluators: detail.settings.codeEvaluators }
+        : {}),
+      ...(detail.settings.scripts ? { scripts: detail.settings.scripts } : {}),
+      ...(detail.settings.grading ? { grading: detail.settings.grading } : {}),
       model: suiteModel,
       ...(hoistedProvider === undefined ? {} : { provider: hoistedProvider }),
       ...(executionConfig.systemPrompt === undefined

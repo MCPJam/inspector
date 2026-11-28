@@ -1,56 +1,55 @@
-name: Prepare release
+name: Start release
 
-# Opens the version PR, which is how every release starts.
+# Starts a release: versions the pending changesets, pushes that version
+# commit to `main`, and dispatches Release (release.yml) on it. Soundcheck's
+# "Start release" runs this.
 #
-# `main` takes changes only through a reviewed pull request, with no bypass
-# for people or for CI, so Release cannot push its own version commit. This
-# workflow does that half up front instead: it runs `changeset version` on
-# current `main` and opens (or refreshes) a PR with the result. Merging that
-# PR is the release. release-trigger.yml starts Release as soon as `main` is
-# green with the new versions on it, and Release publishes the versions that
-# commit already carries and tags it, without writing to `main`.
+# `main` takes every other change only through a reviewed pull request. The
+# version commit is the one exception, and it is narrow by construction: it
+# is pushed by the release GitHub App, the only bypass actor on `main`, and it
+# may carry nothing but what `changeset version` writes for code already on
+# `main` (.github/scripts/release-commit.mjs). This run checks that before
+# pushing, and main-push-guard.yml checks it again on every push to `main`.
 #
-# Soundcheck's "Start release" dispatches this. Dispatching again while the PR
-# is open regenerates it from the latest `main`, which also versions any
-# changesets merged since, and resets its checkboxes to these inputs.
+# The release's choices (deploys, skip_verify, who started it) ride in the
+# commit message as trailers, so release-trigger.yml can retry the release
+# with the same choices if this run's dispatch never ran.
 #
-# It also brings the local-harness runtime packs up to date, so nobody
-# publishes a pack by hand and `main` never sits unreleasable behind one.
-# Usually the work is already done: `local-harness-pack-prebuild.yml` builds a
-# moved pack in the background when the change lands, and this run adopts it.
-# `packs` runs `local-harness-pack-pipeline.yml` per harness: a harness whose
-# pack inputs did not move is "up to date" in a minute; one whose inputs moved
-# is built, signed, published (or found byte-identical and recorded as an
-# equivalence) and conformance-tested, which takes a while. Each hands back a
-# pin, and the version PR carries every pin next to the versions, so its one
-# review covers both. If any harness's pipeline fails, no version PR opens;
-# dispatching again resumes it from wherever it stopped.
+# Local-harness pack pins are not part of it: they reach `main` in their own
+# reviewed PR (local-harness-pack-prebuild.yml), because that review is the
+# human check on the binaries users download. That PR and Release both run the
+# pack consistency gate, so this run does not repeat it.
 
 on:
   workflow_dispatch:
     inputs:
       deploy_backend_prod:
-        description: "Tick 'Deploy the backend to production' in the version PR"
+        description: "Deploy the backend to production"
         required: false
         default: false
         type: boolean
       deploy_webapp:
-        description: "Tick 'Deploy the webapp to production' in the version PR"
+        description: "Deploy the webapp to production"
         required: false
         default: false
         type: boolean
       skip_verify:
-        description: "Tick skip_verify in the version PR: release on merge without waiting for green checks"
+        description: "Urgent fix only: release without the full test run or the green-staging check"
         required: false
         default: false
         type: boolean
+      requested_by:
+        description: "Set by Soundcheck: who started this release"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
   # `@changesets/changelog-github` looks up each changeset's PR and author.
   pull-requests: read
-  # The local harness gate verifies pinned packs' build provenance.
-  attestations: read
+  # Dispatching Release.
+  actions: write
 
 concurrency:
   group: prepare-release
@@ -60,56 +59,7 @@ env:
   NODE_VERSION: "24.22.1"
 
 jobs:
-  harnesses:
-    runs-on: ubuntu-latest
-    outputs:
-      list: ${{ steps.list.outputs.list }}
-    steps:
-      - name: Enforce main branch
-        run: |
-          if [ "${GITHUB_REF_NAME}" != "main" ]; then
-            echo "prepare-release.yml must run from main" >&2
-            exit 1
-          fi
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Harnesses with a pack recipe
-        id: list
-        run: |
-          node --input-type=module <<'JS' >> "$GITHUB_OUTPUT"
-          import { listPackHarnessIds } from "./mcpjam-inspector/scripts/local-harness-pack-harnesses.mjs";
-          console.log(`list=${JSON.stringify(listPackHarnessIds())}`);
-          JS
-
-  # One pipeline per harness, side by side. The permissions are the ones its
-  # jobs ask for: publishing (contents), signing provenance (id-token,
-  # attestations) and the failure issue (issues).
-  packs:
-    name: ${{ matrix.harness }} pack
-    needs: harnesses
-    strategy:
-      fail-fast: false
-      matrix:
-        harness: ${{ fromJSON(needs.harnesses.outputs.list) }}
-    # Shared with the background prebuild (local-harness-pack-prebuild.yml):
-    # one pipeline per harness at a time. A prebuild already running finishes
-    # first, and this run then adopts the pack it published.
-    concurrency:
-      group: local-harness-pack-${{ matrix.harness }}
-      cancel-in-progress: false
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
-      issues: write
-    uses: ./.github/workflows/local-harness-pack-pipeline.yml
-    with:
-      harness: ${{ matrix.harness }}
-    secrets: inherit
-
-  version-pr:
-    needs: packs
+  version:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -120,13 +70,22 @@ jobs:
             exit 1
           fi
 
-      # The release token, not GITHUB_TOKEN: GitHub starts no workflows for a
-      # push or pull request made with GITHUB_TOKEN, so the PR's required checks
-      # would never report and it could never merge.
+      # The release App's token: it is the only actor that may push to `main`
+      # without a pull request, and unlike GITHUB_TOKEN its push starts
+      # Deploy Staging and the rest of `main`'s workflows. A dedicated App with
+      # Contents: write on this repo only, used by nothing else.
+      - name: Release App token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Checkout code
         uses: actions/checkout@v7
         with:
-          token: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -137,152 +96,97 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      # Versioning on top of a merged but unreleased version PR would skip
-      # those versions on npm and leave CHANGELOG entries for releases that
-      # never happened.
-      - name: Refuse while main carries unpublished versions
+      - name: Commit as the release App
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
         run: |
-          unpublished="$(node .github/scripts/unpublished-versions.mjs)"
-          echo "$unpublished"
-          if [ "$(jq '.releases | length' <<<"$unpublished")" != "0" ]; then
-            echo "::error::main already carries versions npm does not have, from a version PR that merged but has not released yet. Release starts by itself once main is green; if it failed, re-run it or start it from Soundcheck. Prepare the next release after that."
-            exit 1
-          fi
+          id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${id}+${APP_SLUG}[bot]@users.noreply.github.com"
 
-      - name: Compute changeset release plan
-        run: |
-          npx changeset status --output="$RUNNER_TEMP/status.json"
-          if [ "$(jq '[.releases[] | select(.type != "none")] | length' "$RUNNER_TEMP/status.json")" = "0" ]; then
-            echo "::error::No pending changesets on main, so there is nothing to release."
-            exit 1
-          fi
-
-      - name: Version packages with Changesets
+      # Versioned on the newest `main`, and again if a merge lands before the
+      # push: the push only ever fast-forwards, so a commit the version step
+      # did not see can never be dropped or reordered.
+      - name: Version, check and push to main
+        id: push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx changeset version
-
-      - name: Refresh root lockfile
-        run: npm install --package-lock-only --legacy-peer-deps
-
-      # Every harness's pin from `packs` (a new pack, an equivalence record,
-      # or "up to date"), written onto this branch so the version PR carries
-      # it. Before the consistency gate below, which then checks exactly what
-      # this PR pins.
-      - name: Collect the local runtime pins
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: local-harness-pin-*
-          path: ${{ runner.temp }}/pins
-
-      - name: Pin the local runtime packs
-        run: |
-          node mcpjam-inspector/scripts/local-harness-publication.mjs apply-pins \
-            --dir "$RUNNER_TEMP/pins" --summary "$RUNNER_TEMP/packs.md"
-
-      # release.yml runs this same gate in its preflight. Running it here too
-      # means an inconsistency stops the release before its versions are on
-      # `main`, rather than after, when fixing it takes another PR.
-      - name: Local harness release consistency
-        working-directory: mcpjam-inspector
-        env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          if jq -e '.releases[] | select(.name == "@mcpjam/inspector" and .type != "none")' "$RUNNER_TEMP/status.json" >/dev/null; then
-            node scripts/check-local-harness-release.mjs --assets --verify-attestations --version "$(jq -r .version package.json)"
-          fi
-
-      - name: Open or refresh the version PR
-        id: pr
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
           DEPLOY_BACKEND_PROD: ${{ inputs.deploy_backend_prod }}
           DEPLOY_WEBAPP: ${{ inputs.deploy_webapp }}
           SKIP_VERIFY: ${{ inputs.skip_verify }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SOURCE_SHA: ${{ github.sha }}
+          REQUESTED_BY: ${{ inputs.requested_by || github.actor }}
         run: |
-          pr="$(node .github/scripts/release-pr.mjs "$RUNNER_TEMP/status.json")"
-          branch="$(jq -r .branch <<<"$pr")"
-          title="$(jq -r .title <<<"$pr")"
-          body="$(jq -r .body <<<"$pr")"
-          body="$body"$'\n\n'"$(cat "$RUNNER_TEMP/packs.md")"
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main
+            git reset --quiet --hard origin/main
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$branch"
-          # Tracked files only, as the release patch always was (it came from
-          # `git diff`). `changeset version` also writes a CHANGELOG.md for
-          # every bumped package that lacks one, and only sdk's is kept.
-          git add -u
-          # A new equivalence record is an untracked file `-u` would miss.
-          git add mcpjam-inspector/scripts/local-harness-pack-equivalence
-          git status --short
-          git commit -m "$title"
-
-          existing="$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')"
-          # Why #prs gets pinged below: empty when a refresh changed nothing.
-          ping=""
-          # This PR now pins the packs users download, and the rulesets keep
-          # approvals across pushes. An approval covers the bytes it saw: when
-          # a regenerated PR's tree differs, dismiss them BEFORE the push, so
-          # no moment exists where new pins sit under an old approval.
-          if [ -n "$existing" ]; then
-            previous_tree=""
-            if git fetch --quiet origin "refs/heads/$branch" 2>/dev/null; then
-              previous_tree="$(git rev-parse 'FETCH_HEAD^{tree}')"
+            # Versioning on top of unreleased versions would skip them on npm
+            # and leave CHANGELOG entries for releases that never happened.
+            unpublished="$(node .github/scripts/unpublished-versions.mjs)"
+            if [ "$(jq '.releases | length' <<<"$unpublished")" != "0" ]; then
+              echo "$unpublished"
+              echo "::error::main already carries versions npm does not have. Finish that release first with Retry release in Soundcheck."
+              exit 1
             fi
-            if [ "$previous_tree" != "$(git rev-parse 'HEAD^{tree}')" ]; then
-              ping=regenerated
-              # Assigned first: a failed listing must stop the push (fail
-              # closed), and `for x in $(…)` would swallow that failure.
-              approvals="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$existing/reviews" --paginate --jq '.[] | select(.state == "APPROVED") | .id')"
-              for review in $approvals; do
-                gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$existing/reviews/$review/dismissals" \
-                  -f message="Regenerated: the version PR's contents changed, so it needs a fresh review." -f event=DISMISS >/dev/null
-              done
+
+            npx changeset status --output="$RUNNER_TEMP/status.json"
+            if [ "$(jq '[.releases[] | select(.type != "none")] | length' "$RUNNER_TEMP/status.json")" = "0" ]; then
+              echo "::error::No pending changesets on main, so there is nothing to release."
+              exit 1
             fi
-          fi
-          git push --force origin "HEAD:refs/heads/$branch"
 
-          if [ -n "$existing" ]; then
-            gh pr edit "$existing" --title "$title" --body "$body"
-            url="$(gh pr view "$existing" --json url --jq .url)"
-          else
-            url="$(gh pr create --base main --head "$branch" --title "$title" --body "$body")"
-            ping=opened
-          fi
-          echo "Version PR: $url" >> "$GITHUB_STEP_SUMMARY"
-          { echo "url=$url"; echo "title=$title"; echo "ping=$ping"; } >> "$GITHUB_OUTPUT"
+            npx changeset version
+            npm install --package-lock-only --legacy-peer-deps
 
-      # The GitHub app's post in #prs notifies only the requested reviewers,
-      # and the PR's author (the release token's owner) cannot approve it. So
-      # the whole channel hears that a release is waiting, and again when a
-      # regenerated PR needs a fresh review. The PR is already open by now, so
-      # a Slack problem never fails the run.
-      - name: Ping #prs
-        if: steps.pr.outputs.ping != ''
-        continue-on-error: true
+            # Tracked files only: `changeset version` also writes a CHANGELOG.md
+            # for every bumped package that lacks one, and only sdk's is kept.
+            git add -u
+            node .github/scripts/release-commit.mjs message "$RUNNER_TEMP/status.json" > "$RUNNER_TEMP/message.txt"
+            git commit --quiet --file "$RUNNER_TEMP/message.txt"
+            node .github/scripts/release-commit.mjs check HEAD^ HEAD
+
+            if git push origin HEAD:refs/heads/main; then
+              label="$(sed -n 's/^Release-Versions: //p' "$RUNNER_TEMP/message.txt")"
+              { echo "sha=$(git rev-parse HEAD)"; echo "label=$label"; } >> "$GITHUB_OUTPUT"
+              git show --stat HEAD
+              exit 0
+            fi
+            echo "::warning::main moved during attempt $attempt; versioning again on the new main."
+          done
+          echo "::error::main kept moving; start the release again."
+          exit 1
+
+      # Straight away, without waiting for staging: Release waits for Deploy
+      # Staging on this commit itself, beside its tests and builds.
+      # release-trigger.yml retries if `main` moves before this run starts.
+      - name: Start Release
+        uses: actions/github-script@v9
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_PRS_WEBHOOK_URL }}
-          PING: ${{ steps.pr.outputs.ping }}
-          PR_URL: ${{ steps.pr.outputs.url }}
-          PR_TITLE: ${{ steps.pr.outputs.title }}
-        run: |
-          set -uo pipefail
-          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
-            echo "::warning::SLACK_PRS_WEBHOOK_URL is not set, so #prs was not pinged about $PR_URL."
-            exit 0
-          fi
-          if [ "$PING" = "opened" ]; then
-            headline="A release is ready for review"
-          else
-            headline="The release PR was regenerated with new contents and needs a fresh review"
-          fi
-          versions="$(jq -r '.releases[] | select(.type != "none") | "• `\(.name)` \(.oldVersion) → *\(.newVersion)*"' "$RUNNER_TEMP/status.json")"
-          text="$(printf '<!channel> %s: <%s|#%s %s>\n%s\nMerging it is the release.' \
-            "$headline" "$PR_URL" "${PR_URL##*/}" "$PR_TITLE" "$versions")"
-          # `-f`: a 4xx/5xx from Slack must fail this step, not claim delivery.
-          jq -n --arg text "$text" '{text: $text}' \
-            | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
-                -d @- "$SLACK_WEBHOOK_URL"
+          SHA: ${{ steps.push.outputs.sha }}
+          LABEL: ${{ steps.push.outputs.label }}
+          DEPLOY_BACKEND_PROD: ${{ inputs.deploy_backend_prod }}
+          DEPLOY_WEBAPP: ${{ inputs.deploy_webapp }}
+          SKIP_VERIFY: ${{ inputs.skip_verify }}
+          REQUESTED_BY: ${{ inputs.requested_by || github.actor }}
+        with:
+          script: |
+            const env = process.env;
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: "release.yml",
+              ref: "main",
+              inputs: {
+                deploy_backend_prod: env.DEPLOY_BACKEND_PROD,
+                deploy_webapp: env.DEPLOY_WEBAPP,
+                skip_verify: env.SKIP_VERIFY,
+                versions: env.LABEL,
+                trigger_sha: env.SHA,
+                requested_by: env.REQUESTED_BY,
+              },
+            });
+            await core.summary
+              .addRaw(`Pushed the version commit for ${env.LABEL} (${env.SHA}) to main and started Release.`)
+              .write();

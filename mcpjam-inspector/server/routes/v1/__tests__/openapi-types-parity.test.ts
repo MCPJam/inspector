@@ -90,14 +90,17 @@ const PAIRS: Readonly<Record<string, string>> = {
   ChatTurn: "PlatformChatTurn",
   ChatSessionDetail: "PlatformChatSessionDetail",
   ChatSessionTrace: "PlatformChatSessionTrace",
+  ChatSessionTraceTurn: "PlatformChatSessionTraceTurn",
+  ChatSessionTraceEvent: "PlatformChatSessionTraceEvent",
   EvalRun: "PlatformEvalRun",
   EvalRunEnvironment: "PlatformEvalRunEnvironment",
+  EvalRunAccount: "PlatformEvalRunAccount",
+  EvalRunAccountIdentity: "PlatformEvalRunAccountIdentity",
   EvalRunCreated: "PlatformEvalRunCreated",
   EvalRunGroupCreated: "PlatformEvalRunGroupCreated",
   EvalSuiteCreated: "PlatformEvalSuiteCreated",
   EvalSuite: "PlatformEvalSuite",
   EvalSuiteSchedule: "PlatformEvalSuiteSchedule",
-  EvalSuiteComputerEnvironment: "PlatformEvalSuiteComputerEnvironment",
   EvalSuiteDetail: "PlatformEvalSuiteDetail",
   // The grading configuration, extracted out of `EvalSuiteDetail.settings`
   // into a named schema so this ratchet can reach it at all. It could not
@@ -138,14 +141,9 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalSuiteEnvironmentAttached: "PlatformEvalSuiteEnvironmentAttached",
   ProjectEnvironmentCapabilities: "PlatformEnvironmentCapabilities",
   ProjectEnvironmentResolved: "PlatformEnvironmentResolved",
-  Plugin: "PlatformPlugin",
-  PluginVersion: "PlatformPluginVersion",
-  SandboxImage: "PlatformImage",
-  SandboxImageBuild: "PlatformImageBuild",
-  SandboxImageDeleted: "PlatformImageDeleted",
-  SandboxImageBuildStarted: "PlatformImageBuildStarted",
-  ComputerAttached: "PlatformComputerAttached",
-  ComputerReset: "PlatformComputerReset",
+  // Plugin and sandbox-image schemas are out of the spec until those features
+  // are on for everyone (see KNOWN_UNDOCUMENTED in openapi-drift.test.ts).
+  // Add their pairs back when their routes are documented again.
   StudyLink: "PlatformStudyLink",
   StudyServer: "PlatformStudyServer",
   StudySummary: "PlatformStudySummary",
@@ -249,11 +247,21 @@ const PAIRS: Readonly<Record<string, string>> = {
  * cost of an exemption is that the one axis it silences is the one nothing
  * will ever check again.
  *
- * EMPTY, and worth keeping that way. It held `EvalRun.insights` and
- * `JourneyRun.insights` while the envelope was undocumented; both came off in
- * the same change that documented it, which is what the note there promised.
+ * Entries are for fields of features that are not yet on for everyone, and
+ * come off in the change that documents the feature.
  */
-const FIELD_EXEMPTIONS: Readonly<Record<string, Readonly<string[]>>> = {};
+const FIELD_EXEMPTIONS: Readonly<Record<string, Readonly<string[]>>> = {
+  // Plugin pins and sandbox images are not on for everyone, so the public spec
+  // leaves these fields out while the SDK still types them for flagged-in
+  // organizations. Drop each entry when its feature is documented.
+  ProjectEnvironment: ["pluginVersionIds", "sandboxImageId"],
+  AdhocEnvironment: ["pluginVersionIds", "sandboxImageId"],
+  ProjectEnvironmentResolved: ["pluginVersions", "sandboxImageId"],
+  // Code evaluators and setup and cleanup scripts are behind the
+  // `eval-code-evaluators` flag, so the spec leaves them out the same way.
+  EvalSuiteSettings: ["codeEvaluators", "scripts", "grading"],
+  EvalSuiteSettingsV2: ["codeEvaluators", "scripts", "grading"],
+};
 // ── SDK type extraction ─────────────────────────────────────────────────────
 
 type SdkField = {
@@ -313,7 +321,8 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
   const source = ts.createSourceFile(
     TYPES_PATH,
     [TYPES_PATH, resolve(dirname(TYPES_PATH), "readiness-start-types.ts"),
-      resolve(dirname(TYPES_PATH), "widget-session-types.ts")]
+      resolve(dirname(TYPES_PATH), "widget-session-types.ts"),
+      resolve(dirname(TYPES_PATH), "eval-run-account-types.ts")]
       .map(path => readFileSync(path, "utf8"))
       .join("\n"),
     ts.ScriptTarget.Latest,

@@ -1,5 +1,5 @@
-// The local-harness pack pipeline's bot PR: one branch and one PR per
-// harness, force-updated, never duplicated — run against a real git repo with
+// The local-harness bot PR (pack pins, revocations): one branch and one PR
+// per bot branch, force-updated, never duplicated — run against a real git repo with
 // a fake `gh` on PATH that records what it was asked to do.
 import { strict as assert } from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -58,7 +58,7 @@ esac
 
 after(() => rmSync(root, { recursive: true, force: true }));
 
-const text = (title) => ({ branch: "bot/local-harness-pack-codex", title, body: "body" });
+const text = (title) => ({ branch: "bot/local-harness-pack-pins", title, body: "body" });
 
 test("refuses any branch that is not a pack bot branch", () => {
   writeFileSync(join(work, "pin.json"), '{"v":0}\n');
@@ -70,9 +70,23 @@ test("refuses any branch that is not a pack bot branch", () => {
 });
 
 test("does nothing when nothing is staged", () => {
+  writeFileSync(log, "");
   const result = run(text("pin codex pack 1.0.2"));
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /nothing staged/);
+  const calls = readFileSync(log, "utf8").trim().split("\n");
+  assert.ok(!calls.some((call) => call.startsWith("pr close") || call.startsWith("pr create")), calls.join("\n"));
+});
+
+test("closes an open PR once main already carries what it proposed", () => {
+  writeFileSync(log, "");
+  const result = run(text("pin codex pack 1.0.2"), { existing: "40" });
+  assert.equal(result.status, 0, result.stderr);
+  const calls = readFileSync(log, "utf8").trim().split("\n");
+  const disarm = calls.findIndex((call) => call.startsWith("pr merge 40 --disable-auto"));
+  const close = calls.findIndex((call) => call.startsWith("pr close 40"));
+  assert.ok(disarm >= 0 && close > disarm, calls.join("\n"));
+  assert.ok(!calls.some((call) => call.startsWith("pr create")));
 });
 
 test("a different pin force-updates the branch but never inherits the old PR's approval", () => {
@@ -80,7 +94,7 @@ test("a different pin force-updates the branch but never inherits the old PR's a
   git(work, "add", "pin.json");
   const first = run(text("pin codex pack 1.0.2"));
   assert.equal(first.status, 0, first.stderr);
-  assert.equal(git(origin, "log", "-1", "--format=%s", "bot/local-harness-pack-codex"), "pin codex pack 1.0.2");
+  assert.equal(git(origin, "log", "-1", "--format=%s", "bot/local-harness-pack-pins"), "pin codex pack 1.0.2");
 
   // A newer run starts again from main, not from the old bot commit.
   git(work, "switch", "-q", "main");
@@ -88,8 +102,8 @@ test("a different pin force-updates the branch but never inherits the old PR's a
   git(work, "add", "pin.json");
   const second = run(text("pin codex pack 1.0.3"), { existing: "41" });
   assert.equal(second.status, 0, second.stderr);
-  assert.equal(git(origin, "log", "-1", "--format=%s", "bot/local-harness-pack-codex"), "pin codex pack 1.0.3");
-  assert.equal(git(origin, "rev-list", "--count", "main..bot/local-harness-pack-codex"), "1");
+  assert.equal(git(origin, "log", "-1", "--format=%s", "bot/local-harness-pack-pins"), "pin codex pack 1.0.3");
+  assert.equal(git(origin, "rev-list", "--count", "main..bot/local-harness-pack-pins"), "1");
 
   const calls = readFileSync(log, "utf8").trim().split("\n");
   // The approved 1.0.2 PR is disarmed and closed before the push; 1.0.3 is a

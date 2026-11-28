@@ -1071,6 +1071,108 @@ describe("ServerDetailModal", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("keeps the draft when Connect points users to Save & Connect", async () => {
+    const user = userEvent.setup();
+    const onReconnect = vi.fn();
+    const onSubmit = vi.fn();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({ connectionStatus: "disconnected" })}
+        onReconnect={onReconnect}
+        onSubmit={onSubmit}
+      />
+    );
+
+    const url = screen.getByDisplayValue("https://example.com/mcp");
+    fireEvent.change(url, { target: { value: "https://example.com/mcp/v2" } });
+    await user.click(screen.getByRole("switch", { name: "Server connection" }));
+
+    expect(url).toHaveValue("https://example.com/mcp/v2");
+    expect(screen.getByText("Save your changes to connect.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save & Connect" })).toHaveFocus();
+    expect(onReconnect).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("focuses the save guidance when an invalid draft disables Save & Connect", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({ connectionStatus: "disconnected" })}
+        existingServerNames={["another-server"]}
+      />
+    );
+
+    fireEvent.change(screen.getByDisplayValue("test-server"), {
+      target: { value: "another-server" },
+    });
+    const save = screen.getByRole("button", { name: "Save & Connect" });
+    expect(save).toBeDisabled();
+    await user.click(screen.getByRole("switch", { name: "Server connection" }));
+
+    expect(screen.getByDisplayValue("another-server")).toBeInTheDocument();
+    expect(screen.getByText("Save your changes to connect.")).toHaveFocus();
+  });
+
+  it("returns a draft to Config and moves focus only when the switch is used", async () => {
+    const user = userEvent.setup();
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({ connectionStatus: "disconnected" })}
+      />
+    );
+
+    fireEvent.change(screen.getByDisplayValue("https://example.com/mcp"), {
+      target: { value: "https://example.com/mcp/v2" },
+    });
+    const overview = screen.getByRole("tab", { name: "Overview" });
+    const config = screen.getByRole("tab", { name: "Configuration" });
+    await user.click(overview);
+    expect(overview).toHaveAttribute("aria-selected", "true");
+
+    await user.click(screen.getByRole("switch", { name: "Server connection" }));
+    expect(config).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Save & Connect" })).toHaveFocus();
+    expect(screen.getByDisplayValue("https://example.com/mcp/v2")).toBeVisible();
+
+    await user.click(overview);
+    await user.click(config);
+    expect(config).toHaveFocus();
+    expect(screen.getByText("Save your changes to connect.")).toBeVisible();
+  });
+
+  it("disconnects without saving or dropping a draft", async () => {
+    const user = userEvent.setup();
+    const onDisconnect = vi.fn();
+    const props = { ...defaultProps, onDisconnect };
+    const { rerender } = render(<ServerDetailModal {...props} />);
+    const url = screen.getByDisplayValue("https://example.com/mcp");
+    fireEvent.change(url, { target: { value: "https://example.com/mcp/v2" } });
+    const connection = screen.getByRole("switch", { name: "Server connection" });
+
+    await user.click(connection);
+    expect(onDisconnect).toHaveBeenCalledExactlyOnceWith("test-server");
+    expect(defaultProps.onSubmit).not.toHaveBeenCalled();
+
+    rerender(
+      <ServerDetailModal
+        {...props}
+        server={createServer({ connectionStatus: "disconnected" })}
+      />
+    );
+    expect(connection).not.toBeChecked();
+    expect(url).toHaveValue("https://example.com/mcp/v2");
+    expect(screen.getByRole("button", { name: "Save & Connect" })).toBeEnabled();
+
+    await user.click(connection);
+    expect(screen.getByText("Save your changes to connect.")).toBeVisible();
+    fireEvent.change(url, { target: { value: "https://example.com/mcp" } });
+    expect(screen.queryByText("Save your changes to connect.")).toBeNull();
+  });
+
   it("does not submit when Enter is pressed in tools metadata", async () => {
     const onSubmit = vi.fn().mockResolvedValue({
       ok: true,

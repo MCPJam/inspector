@@ -119,6 +119,12 @@ export const SOURCE_TYPE_OPTIONS = [
       "Playground sessions shared to the workspace. Private sessions are never sent.",
   },
   {
+    id: "event" as const,
+    label: "Background triggers",
+    description:
+      "Agent runs that start when an MCP server sends an event. Until these runs have their own source, they are sent with Playground (shared).",
+  },
+  {
     id: "swarm" as const,
     label: "Swarms",
     description:

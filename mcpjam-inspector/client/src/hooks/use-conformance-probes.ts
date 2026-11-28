@@ -2,12 +2,14 @@
  * The tools an operator names as safe for the protocol suite to call, kept
  * per server.
  *
- * Three 2026-07-28 checks can only observe something on a tool call: the
- * logging check needs a tool that emits logs (the log level filtering advice
- * calls the same tool, at the operator's log level, unless it has its own),
- * the undeclared-capability check needs one that asks for input, and the
- * output-schema check needs one whose result it can grade. The SDK never picks
- * a tool on its own,
+ * Three checks can only observe something on a tool call: the logging check
+ * needs a tool that emits logs (the log level filtering advice calls the same
+ * tool, at the operator's log level, unless it has its own), the
+ * undeclared-capability check needs one that asks for input, and the
+ * output-schema check needs one whose result it can grade. The first two are
+ * 2026-07-28 checks; the output-schema check also runs on 2025-06-18 and
+ * 2025-11-25, which state the same rule. The SDK never picks a tool on its
+ * own,
  * because nothing a server advertises says whether calling a tool charges a
  * card or deletes a row. Without one, those checks report could-not-run.
  *
@@ -21,6 +23,7 @@
  */
 import { useCallback, useRef, useState } from "react";
 import {
+  taskCheckUsesInput,
   MCP_LOG_LEVELS,
   MCP_TASKS_TOOL_CHECK_IDS,
   isTasksToolCheck,
@@ -191,7 +194,13 @@ export function useConformanceProbeStore(): {
 
 /** Only selected inputs can block Run, including a default used by at least one check. */
 export function taskProbePartIsSelected(part: string, probes: ConformanceProbes, selected?: readonly string[]): boolean {
-  if (part === "tasksProbe") return MCP_TASKS_TOOL_CHECK_IDS.some(id => (!selected || selected.includes(id)) && !probes.tasksOverrides?.[id]);
+  if (part === "tasksProbe" || part === "tasksProbeAnswers") {
+    return MCP_TASKS_TOOL_CHECK_IDS.some(id =>
+      (!selected || selected.includes(id)) &&
+      !probes.tasksOverrides?.[id] &&
+      (part === "tasksProbe" || taskCheckUsesInput(id))
+    );
+  }
   const check = part.replace(/:answers$/, "");
   return !isTasksToolCheck(check) || !selected || selected.includes(check);
 }

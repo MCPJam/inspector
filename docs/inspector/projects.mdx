@@ -21,7 +21,7 @@ The combined org and project switcher sits at the top of the sidebar. The trigge
 1. **Click the switcher** at the top of the sidebar to open the context menu
 2. **Create a project** - Click **Create project** at the bottom of the list, give it a name, and choose which organization it belongs to
 3. **Add your servers** - Configure your MCP servers in the Connect tab
-4. **Auto-connect** - The **Auto-connect** switch in the Connect tab header (on by default) connects every project server for you in the Playground and debugger tabs. It is a personal setting for your browser — anyone can flip it, and it does not change the project
+4. **Auto-connect** - The **Auto-connect** switch in the Connect tab header (on by default) connects every project server for you in the Playground and debugger tabs. It is a personal setting for your browser. Anyone can flip it, and it does not change the project
 5. **Share with your team** - Click the share button and invite collaborators
 
 <Info>
@@ -32,9 +32,9 @@ When you switch projects, all servers disconnect automatically to give you a cle
 
 Opening the switcher lands on the **projects view** for your active organization. The organization name appears as a header row at the top of the list.
 
-- **Drill into the org list** — click the organization header row to replace the projects view with a list of all your organizations. Click any row to switch to that organization; the URL updates to a project in the new org and the sidebar reloads with its projects.
-- **Back** — click the **Organizations** back header to return to the projects view without switching.
-- **New organization** — appears at the bottom of the org list when you can create another.
+- **Drill into the org list**: click the organization header row to replace the projects view with a list of all your organizations. Click any row to switch to that organization; the URL updates to a project in the new org and the sidebar reloads with its projects.
+- **Back**: click the **Organizations** back header to return to the projects view without switching.
+- **New organization**: appears at the bottom of the org list when you can create another.
 - Organization settings are accessed through **Settings › Organization**, not from the switcher.
 
 If you were invited to a paid-seat organization but the seat hasn't been paid for yet, that organization appears greyed out in the list with a **Seat not paid yet** tooltip. You cannot open it until the org owner completes payment for your seat.
@@ -49,14 +49,14 @@ After completing an OAuth flow, you are returned to the organization you were in
 
 Click **Create project** at the bottom of the switcher's projects view. A dialog opens with:
 
-- **Name** — prefilled with a free name (e.g. "Project 3"). Edit it before confirming.
-- **Organization** — a dropdown to choose which organization the project belongs to. Organizations where you don't have permission to create projects, or where your seat is still pending, are not shown.
+- **Name**: prefilled with a free name (e.g. "Project 3"). Edit it before confirming.
+- **Organization**: a dropdown to choose which organization the project belongs to. Organizations where you don't have permission to create projects, or where your seat is still pending, are not shown.
 
 Click **Create** (or press Enter) to create the project and switch to it automatically.
 
 ### Deleting a project
 
-Hover over any project row in the switcher to reveal the **trash icon**. Clicking it opens a confirmation dialog showing the project name. Click **Delete** to confirm — this removes the project and all its servers permanently.
+Hover over any project row in the switcher to reveal the **trash icon**. Clicking it opens a confirmation dialog showing the project name. Click **Delete** to confirm. This removes the project and all its servers permanently.
 
 <Warning>
 Deleting a project is irreversible. All servers, sessions, and eval suites in the project are removed.
@@ -64,7 +64,7 @@ Deleting a project is irreversible. All servers, sessions, and eval suites in th
 
 ## Credits
 
-A **See credits** row in the sidebar footer shows your organization's credit usage. Clicking it opens the organization billing page where you can see the full breakdown, your plan, and reset timing. The row is only visible when you are signed in and belong to an organization. When your credit balance drops to 10% or below, the meter turns red and a **Low credits** label appears next to it.
+A **Credits** row in the sidebar footer shows your organization's credit usage. Clicking it opens the organization billing page where you can see the full breakdown, your plan, and reset timing. The row is only visible when you are signed in and belong to an organization.
 
 <iframe
   className="w-full aspect-video rounded-xl"
@@ -84,7 +84,7 @@ If you are a member (not an owner or admin) of an organization, you will see an 
 You will lose access to the organization immediately and be redirected to the Servers page. To rejoin, you need to be re-invited by an admin or owner.
 
 <Note>
-Owners cannot leave an organization — transfer ownership or delete the organization instead.
+Owners cannot leave an organization. Transfer ownership or delete the organization instead.
 </Note>
 ## Sharing Projects
 
@@ -104,7 +104,7 @@ When you save a server that has **environment variables** (stdio) or **custom HT
 
 ### Viewing a saved value
 
-Click the **eye icon** on a row to reveal that row's value. The eye toggles the value back to masked when you click it again. Only the row you click is uncovered — other rows stay masked.
+Click the **eye icon** on a row to reveal that row's value. The eye toggles the value back to masked when you click it again. Only the row you click is uncovered. Other rows stay masked.
 
 When you first expand the Environment Variables or Connection overrides section on a saved server, the inspector fetches the variable and header names so each row can show which keys are configured. No values are fetched at that point; a value only travels to the browser when you click its eye.
 
@@ -122,13 +122,13 @@ If you want to change the **authentication type** (for example, switching from B
 
 Two edits cause the backend to clear a server's stored credentials: changing an HTTP server's **origin**, or changing a stdio server's **command**.
 
-**HTTP servers — origin changes**
+**HTTP servers: origin changes**
 
 Editing the path portion of a server's URL (for example, `/mcp` to `/mcp/v2`) keeps all saved credentials intact.
 
-Changing the **origin** — the scheme, host, or port — clears every credential saved against that server: request headers, environment variables, the bearer token, and any OAuth access token, refresh token, and client secret. The edit form warns you before this happens and names both the old and new origin. You must check the acknowledgement box before Save becomes available.
+Changing the **origin** (the scheme, host, or port) clears every credential saved against that server: request headers, environment variables, the bearer token, and any OAuth access token, refresh token, and client secret. The edit form warns you before this happens and names both the old and new origin. You must check the acknowledgement box before Save becomes available.
 
-**Stdio servers — command changes**
+**Stdio servers: command changes**
 
 Changing the **command** (or its arguments) on a stdio server that has stored environment variables clears those variables. The edit form warns you before this happens and shows both the old and new invocation. You must check the acknowledgement box before Save becomes available.
 
@@ -167,17 +167,9 @@ Open **Project Settings** (gear icon in the header) to manage project-level conf
 
 The **Default Host Config** section sets the seed configuration applied to new scenarios, eval suites, and direct chat tabs when they are created. It controls the default model, system prompt, temperature, tool approval, connection settings, capabilities, and host context for anything new in the project.
 
-Editing the default host config does **not** change existing scenarios or eval suites — each owns its own config once created.
+Editing the default host config does **not** change existing scenarios or eval suites. Each owns its own config once created.
 
 The editor is only visible when you are signed in and have a saved project. Members without manage permissions see the editor in read-only mode.
-
-#### Personal computer
-
-When your deployment exposes computer-backed tools (such as **Bash**), a **Personal computer** toggle appears in the built-in tools section of the host config editor. Turning it on attaches a per-member cloud workstation — a persistent Linux sandbox — to the host.
-
-- **Computer-backed tools are disabled until a computer is attached.** The checkbox for tools like Bash is greyed out with a hint ("Requires a personal computer") until you turn the toggle on.
-- **Detaching the computer also removes computer-backed tool ids** from the config, so the saved config is always consistent.
-- The toggle is hidden until the deployment enables at least one computer-backed tool, so it won't appear as a dead control before launch.
 
 ## What's Next
 

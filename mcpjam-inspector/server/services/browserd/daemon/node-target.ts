@@ -281,6 +281,133 @@ export async function replaceTextInNode(
 }
 
 /**
+ * Put an origin-limited credential into ONE field, never wherever focus is.
+ *
+ * `Input.insertText` types into the browser's focus, and the origin check,
+ * the focus and the insert are separate round trips: a script on the page
+ * could move focus into another site's frame between them. Here the focus,
+ * the checks and the insert are one synchronous call, so no page script runs
+ * between them, and `execCommand("insertText")` edits only the field's own
+ * document. It fires the same `input` event typing does.
+ *
+ * IN AN ISOLATED WORLD of the checked frame, so `focus`, `select` and
+ * `execCommand` are the browser's own: a page cannot replace them to move the
+ * value. The call also asks the field's own document for its origin, so a
+ * node from any other frame is refused. Nothing typed is an error the caller
+ * reads as `not_typed`: refused before a value reached a field.
+ */
+/**
+ * The credential reached no field, and the call that said so is certain of
+ * it. The driver passes `code` through, which a caller reads as `not_typed`.
+ */
+export class SecretNotTypedError extends Error {
+  constructor(
+    readonly code: "target_not_found" | "unsupported_target",
+    detail: string,
+  ) {
+    super(detail);
+    this.name = "SecretNotTypedError";
+  }
+}
+
+const REFUSED_BEFORE_TYPING = new Set([
+  "wrong_origin",
+  "not_focused",
+  "not_inserted",
+]);
+
+export async function insertSecretInNode(
+  cdp: CdpLike,
+  backendNodeId: number,
+  text: string,
+  limit: {
+    /** The frame whose origin was checked; the session's own when absent. */
+    frameId?: string;
+    origins: readonly string[];
+  },
+  /** Asked immediately before the value lands. See `resolveRefNode`. */
+  guard: () => void,
+): Promise<void> {
+  const objectId = await isolatedObjectId(cdp, backendNodeId, limit.frameId);
+  if (!objectId) {
+    throw new SecretNotTypedError(
+      "target_not_found",
+      "the field could not be resolved; nothing was typed",
+    );
+  }
+  guard();
+  // A failed call is not caught here: whether the value went in is unknown,
+  // and the caller must not take it for a refusal.
+  const outcome = (await cdp.send("Runtime.callFunctionOn", {
+    objectId,
+    returnByValue: true,
+    arguments: [{ value: text }, { value: [...limit.origins] }],
+    functionDeclaration: `function (value, origins) {
+        const view = this.ownerDocument && this.ownerDocument.defaultView;
+        if (!view || !origins.includes(view.origin)) return "wrong_origin";
+        this.focus();
+        if (this.getRootNode().activeElement !== this) return "not_focused";
+        if (typeof this.select === "function") this.select();
+        else {
+          // A contenteditable field: select its contents, so the value replaces them.
+          const range = this.ownerDocument.createRange();
+          range.selectNodeContents(this);
+          const selection = view.getSelection();
+          if (selection) {
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+        }
+        if (this.getRootNode().activeElement !== this) return "not_focused";
+        return this.ownerDocument.execCommand("insertText", false, value)
+          ? "typed"
+          : "not_inserted";
+      }`,
+  })) as { result?: { value?: unknown } } | undefined;
+  const answer = outcome?.result?.value;
+  if (answer === "typed") return;
+  if (typeof answer === "string" && REFUSED_BEFORE_TYPING.has(answer)) {
+    throw new SecretNotTypedError(
+      "unsupported_target",
+      "the field did not take the credential in its own document; nothing was typed",
+    );
+  }
+  throw new Error(
+    "the credential's field answered nothing MCPJam could read, so it may have been typed",
+  );
+}
+
+/** The node, resolved in an isolated world of `frameId` (or the main frame). */
+async function isolatedObjectId(
+  cdp: CdpLike,
+  backendNodeId: number,
+  frameId: string | undefined,
+): Promise<string | undefined> {
+  try {
+    const frame =
+      frameId ??
+      (
+        (await cdp.send("Page.getFrameTree")) as {
+          frameTree?: { frame?: { id?: string } };
+        }
+      ).frameTree?.frame?.id;
+    if (!frame) return undefined;
+    const world = (await cdp.send("Page.createIsolatedWorld", {
+      frameId: frame,
+      worldName: "mcpjam-secret",
+    })) as { executionContextId?: number };
+    const resolved = (await cdp.send("DOM.resolveNode", {
+      backendNodeId,
+      executionContextId: world.executionContextId,
+    })) as { object?: { objectId?: string } };
+    return resolved.object?.objectId;
+  } catch {
+    // No world or no node: nothing is typed, which the caller reports.
+    return undefined;
+  }
+}
+
+/**
  * Choose an option in a `<select>`, by value or by visible label.
  *
  * Both, because a model reading an accessibility tree sees the LABEL and has
@@ -455,26 +582,24 @@ async function resolveObjectId(
  * children already answer in top-frame space and never reach here. Refuses
  * when a link is missing or the point falls outside a host's box.
  */
-export async function pointForRefAcrossFrames(
-  args: {
-    /** The session the element itself lives in. */
-    cdp: CdpLike;
-    backendNodeId: number;
-    label: string;
-    /** The element's own frame, and the chain up to the page. */
-    sessionFrameId: string;
-    frames: ReadonlyMap<
-      string,
-      {
-        hostBackendNodeId: number;
-        parentSessionFrameId?: string;
-        frameId: string;
-      }
-    >;
-    /** Resolve a session by its frame id; the page session for `undefined`. */
-    sessionFor: (sessionFrameId: string | undefined) => CdpLike | undefined;
-  },
-): Promise<ActPoint> {
+export async function pointForRefAcrossFrames(args: {
+  /** The session the element itself lives in. */
+  cdp: CdpLike;
+  backendNodeId: number;
+  label: string;
+  /** The element's own frame, and the chain up to the page. */
+  sessionFrameId: string;
+  frames: ReadonlyMap<
+    string,
+    {
+      hostBackendNodeId: number;
+      parentSessionFrameId?: string;
+      frameId: string;
+    }
+  >;
+  /** Resolve a session by its frame id; the page session for `undefined`. */
+  sessionFor: (sessionFrameId: string | undefined) => CdpLike | undefined;
+}): Promise<ActPoint> {
   const local = await pointForBackendNodeId(
     args.cdp,
     args.backendNodeId,
@@ -522,7 +647,10 @@ export async function pointForRefAcrossFrames(
           "frame first, then observe again",
       );
     }
-    point = { x: Math.round(point.x + host.x), y: Math.round(point.y + host.y) };
+    point = {
+      x: Math.round(point.x + host.x),
+      y: Math.round(point.y + host.y),
+    };
     current = frame.parentSessionFrameId;
   }
   // Hop limit hit before the top frame: a partially translated point would

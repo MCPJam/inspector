@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OrganizationBillingStatus } from "@/hooks/useOrganizationBilling";
 import {
   OrganizationCurrentPlanPanel,
@@ -100,5 +100,91 @@ describe("OrganizationCurrentPlanPanel: Enterprise without Stripe", () => {
     expect(getCurrentPlanRenewalLine(status, "", "", "")).toBe(
       "No active subscription",
     );
+  });
+});
+
+describe("OrganizationCurrentPlanPanel: plan set by MCPJam staff", () => {
+  // Midnight UTC after Dec 31, 2026: the exclusive end of a plan through Dec 31.
+  const END_OF_2026 = Date.UTC(2027, 0, 1);
+
+  function staffPlanStatus(expiresAt: number | null) {
+    return makeStatus({
+      plan: "free",
+      effectivePlan: "team",
+      source: "subscription",
+      catalogPlanId: "team",
+      priceModel: "flat",
+      billingInterval: "monthly",
+      hasCustomer: false,
+      staffPlan: { expiresAt },
+    });
+  }
+
+  function expectNoSubscriptionControls() {
+    expect(screen.queryByText("Limited functionality")).toBeNull();
+    expect(screen.queryByText(/Billing details are updating/)).toBeNull();
+    expect(screen.queryByText(/flat monthly rate/)).toBeNull();
+    expect(screen.queryByTestId("current-plan-renewal")).toBeNull();
+    expect(screen.queryByTestId("current-plan-legacy-badge")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Manage billing" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Change to / })).toBeNull();
+  }
+
+  it("names the staff tier with no detail line when the plan has no end", () => {
+    renderPanel(staffPlanStatus(null));
+    const panel = screen.getByTestId("current-plan-panel");
+    expect(screen.getByText("Team")).toBeInTheDocument();
+    expect(screen.queryByText("Free")).toBeNull();
+    expect(screen.queryByText(/^Through /)).toBeNull();
+    expectNoSubscriptionControls();
+    // The plan name is the only line under the badge row.
+    expect(panel.querySelectorAll("p")).toHaveLength(1);
+  });
+
+  it("shows the last day of a plan that ends", () => {
+    renderPanel(staffPlanStatus(END_OF_2026));
+    expect(screen.getByText("Team")).toBeInTheDocument();
+    expect(screen.getByText("Through Dec 31, 2026")).toBeInTheDocument();
+    expectNoSubscriptionControls();
+  });
+
+  describe("in other timezones", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it.each([
+      ["UTC+8", "Asia/Singapore", 1],
+      ["UTC-8", "America/Los_Angeles", 31],
+    ])("shows the same last day at %s", (_offset, timeZone, localDay) => {
+      vi.stubEnv("TZ", timeZone);
+      // The zone took effect: read locally, the last millisecond of the plan
+      // falls on a different day in each zone.
+      expect(new Date(END_OF_2026 - 1).getDate()).toBe(localDay);
+      renderPanel(staffPlanStatus(END_OF_2026));
+      expect(screen.getByText("Through Dec 31, 2026")).toBeInTheDocument();
+    });
+  });
+
+  it("keeps today's Free card when there is no staff plan", () => {
+    const freeStatus = makeStatus({
+      plan: "free",
+      effectivePlan: "free",
+      source: "free",
+    });
+    const { container: withoutField, unmount } = renderPanel(freeStatus);
+    expect(screen.getByText("Free")).toBeInTheDocument();
+    expect(screen.getByText("Limited functionality")).toBeInTheDocument();
+    const todayHtml = withoutField.innerHTML;
+    unmount();
+
+    for (const staffPlan of [null, undefined]) {
+      const { container, unmount: unmountVariant } = renderPanel({
+        ...freeStatus,
+        staffPlan,
+      });
+      expect(container.innerHTML).toBe(todayHtml);
+      unmountVariant();
+    }
   });
 });

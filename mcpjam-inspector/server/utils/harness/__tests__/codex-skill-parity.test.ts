@@ -19,156 +19,22 @@
  *   3. That a name MCPJam accepts is a name the adapters accept — the shared
  *      writer's validator THROWS mid-turn, which would fail the whole turn.
  *
- * HOW THE DRIVE WORKS on the `1.0.x` stable line. The canary adapters wrote
- * skills during `doStart` (so the old version of this file stopped `doStart`
- * at `spawn`); stable writes them at PROMPT time, inside `doPromptTurn`,
- * re-synced every turn. Reaching `doPromptTurn` requires a live session, so
- * each test runs a minimal fake bridge: a real WebSocket server standing in
- * for the in-sandbox bridge process, a `bridge-meta.json` read that reports it
- * ready, and a spawn that returns an inert process handle. The skill writes
- * land BEFORE the adapter sends its start message, so the fake bridge never
- * has to answer anything (beyond claude-code's `bridge-hello` greeting).
+ * The adapters are driven the way they run on a box (`promptWithSkills` in
+ * `server/test/support/fake-harness-bridge.ts`): skills are written at
+ * prompt time, so each test reaches `doPromptTurn` against a fake bridge.
  */
 import { describe, expect, it } from "vitest";
 import matter from "gray-matter";
-import { WebSocketServer } from "ws";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createCodexAppServer } from "../codex-appserver/index.js";
 import { boxSkillsFolder, planBoxSkills } from "../box-skills-writer";
 import { getHarnessAdapter } from "../registry";
 import type { RuntimeSkill } from "../runtime-skills";
-
-/** `$HOME` on the E2B harness box (see `e2b-sandbox-provider`). */
-const BOX_HOME = "/home/user";
-
-type Write = { path: string; content: string };
-
-type HarnessSkillPayload = Array<{
-  name: string;
-  description: string;
-  content: string;
-  files?: Array<{ path: string; content: string }>;
-}>;
-
-/**
- * Minimal fake of the sandbox session the harness drives — the same surface
- * MCPJam's `e2b-sandbox-provider` exposes. `bridge-meta.json` always reads as
- * "waiting" so `waitForBridgeReady` resolves on its first metadata poll, and
- * `getPortEndpoint` points the adapter's bridge WebSocket at the test server.
- */
-function fakeSandboxSession(bridgeType: "codex" | "claude-code", port: number) {
-  const writes: Write[] = [];
-  const commands: string[] = [];
-  const restricted = {
-    run: async ({ command }: { command: string }) => {
-      commands.push(command);
-      // The adapters resolve the box's real $HOME before choosing a skills root.
-      if (command.includes("$HOME")) {
-        return { exitCode: 0, stdout: BOX_HOME, stderr: "" };
-      }
-      return { exitCode: 0, stdout: "", stderr: "" };
-    },
-    readTextFile: async ({ path }: { path: string }) =>
-      path.endsWith("/bridge-meta.json")
-        ? JSON.stringify({ type: bridgeType, state: "waiting", port })
-        : null,
-    writeTextFile: async (write: Write) => {
-      writes.push(write);
-    },
-    // An inert bridge process: the real bridge is the test's WebSocket server,
-    // so the handle only has to satisfy stream readers and teardown.
-    spawn: async () => ({
-      stdout: new ReadableStream<Uint8Array>({ start() {} }),
-      stderr: new ReadableStream<Uint8Array>({ start() {} }),
-      kill: async () => {},
-      wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
-    }),
-  };
-  return {
-    writes,
-    commands,
-    session: {
-      id: "sandbox-1",
-      defaultWorkingDirectory: `${BOX_HOME}/work`,
-      ports: [port],
-      restricted: () => restricted,
-      getPortEndpoint: async () => ({ url: `ws://127.0.0.1:${port}` }),
-    },
-  };
-}
-
-/**
- * Drive the adapter's real `doStart` to a live session, then its real
- * `doPromptTurn` — the point where the stable adapters write skills — and
- * capture everything written to the box. The turn itself is never answered;
- * skills land before the start message goes out.
- */
-async function promptWithSkills(
-  harness: {
-    harnessId: string;
-    doStart: (opts: unknown) => Promise<{
-      doPromptTurn: (opts: unknown) => Promise<{ done: Promise<unknown> }>;
-      doDestroy: () => Promise<unknown>;
-    }>;
-  },
-  skills: HarnessSkillPayload
-): Promise<{ writes: Write[]; commands: string[]; error: unknown }> {
-  const bridgeType = harness.harnessId as "codex" | "claude-code";
-  const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
-  await new Promise((resolve) => wss.once("listening", resolve));
-  const port = (wss.address() as { port: number }).port;
-  wss.on("connection", (socket) => {
-    // claude-code's connect handshake waits for the bridge's greeting; codex
-    // opens the socket and moves on.
-    if (bridgeType === "claude-code") {
-      socket.send(JSON.stringify({ type: "bridge-hello" }));
-    }
-  });
-
-  const box = fakeSandboxSession(bridgeType, port);
-  let session:
-    | Awaited<ReturnType<(typeof harness)["doStart"]>>
-    | undefined;
-  let error: unknown;
-  try {
-    session = await harness.doStart({
-      sessionId: "session-1",
-      sessionWorkDir: `${BOX_HOME}/work`,
-      sandboxSession: box.session,
-      permissionMode: "allow-all",
-    });
-    const control = await session.doPromptTurn({
-      prompt: "hello",
-      tools: [],
-      skills,
-      emit: () => {},
-    });
-    // The fake bridge never finishes the turn; teardown rejects `done`.
-    control.done.catch(() => {});
-  } catch (err) {
-    error = err;
-  } finally {
-    try {
-      await session?.doDestroy();
-    } catch {
-      /* teardown only */
-    }
-    for (const client of wss.clients) client.terminate();
-    await new Promise((resolve) => wss.close(() => resolve(undefined)));
-  }
-  return { writes: box.writes, commands: box.commands, error };
-}
-
-/** Skill-content writes under a skills root, excluding the shared writer's own
- *  `.ai-sdk-harness-skills.json` sync manifest (an adapter implementation
- *  detail, not a delivered skill). */
-function skillWrites(writes: Write[], skillsBaseDir: string): Write[] {
-  return writes.filter(
-    (w) =>
-      w.path.startsWith(`${skillsBaseDir}/`) &&
-      !w.path.includes("/.ai-sdk-harness-skills.json")
-  );
-}
+import { BOX_HOME } from "../../../test/support/fake-skill-box";
+import {
+  promptWithSkills,
+  skillWrites,
+} from "../../../test/support/fake-harness-bridge";
 
 /** Writes are "expected to have happened" only if the whole turn setup ran. */
 function expectReachedPrompt(error: unknown): void {

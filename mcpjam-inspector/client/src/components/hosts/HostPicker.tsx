@@ -7,9 +7,11 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
+import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
 import { useConvexAuth } from "convex/react";
 import { track } from "@/lib/analytics";
 import { clientDisplayName } from "@/lib/client-display-name";
+import { pickableHosts } from "@/lib/web-accounts/clients";
 
 /**
  * Pure: place `priorityHostId` first if it exists in the list. The rest
@@ -80,7 +82,17 @@ export function HostPicker({
   triggerClassName,
 }: HostPickerProps) {
   const { isAuthenticated } = useConvexAuth();
-  const { hosts, isLoading } = useHostList({ isAuthenticated, projectId });
+  const { hosts: listedHosts, isLoading } = useHostList({
+    isAuthenticated,
+    projectId,
+  });
+  // The shared rule every client picker follows. A web client chosen while
+  // its flag was on stays listed, so the field still names it.
+  const webClientsEnabled = useWebClientsEnabled();
+  const hosts = useMemo(
+    () => pickableHosts(listedHosts, webClientsEnabled, [value]),
+    [listedHosts, webClientsEnabled, value],
+  );
 
   const orderedHosts = useMemo(
     () => orderHostsByPriority(hosts, priorityHostId),

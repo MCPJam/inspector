@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { toolsExecuteSchema, toolsListSchema } from "../web/auth.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { operationKeyMeta } from "@mcpjam/sdk/mocks";
 import { listTools } from "../../utils/route-handlers.js";
 import { runV1ServerOp } from "./adapter.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
@@ -49,11 +50,12 @@ tools.post("/projects/:projectId/servers/:serverId/tools/call", async (c) =>
         );
       }
       const startedAt = Date.now();
-      const result = await manager.executeTool(
-        body.serverId,
-        body.toolName,
-        body.parameters
-      );
+      // A mock reads the key from the request's `_meta`; any other server ignores it.
+      const result = body.operationKey
+        ? await manager.executeTool(body.serverId, body.toolName, body.parameters, {
+            metadata: operationKeyMeta(body.operationKey),
+          })
+        : await manager.executeTool(body.serverId, body.toolName, body.parameters);
       const durationMs = Math.max(0, Date.now() - startedAt);
       // Additive sibling on the MCP CallToolResult. `v1Resource` returns the
       // object verbatim, so agents can read latency without a second hop.

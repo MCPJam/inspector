@@ -44,6 +44,31 @@ export const NO_SERVERS_MESSAGE = "Add a server to run conformance checks.";
  */
 export function ConformancePreRun({ runButton }: { runButton: ReactNode }) {
   return (
+    <ConformanceEmptyPrompt
+      title="Run your first conformance check"
+      description="We assess protocol, apps, tasks, and OAuth on the server of your choice."
+    >
+      {runButton}
+    </ConformanceEmptyPrompt>
+  );
+}
+
+/**
+ * The page's empty state: the sample score card, a title, a line, and the
+ * actions. Overview shows it before the first run; History, for its own empty
+ * cases, so the two tabs read as one page.
+ */
+export function ConformanceEmptyPrompt({
+  title,
+  description,
+  children,
+}: {
+  title: ReactNode;
+  description: ReactNode;
+  /** The buttons under the text. */
+  children?: ReactNode;
+}) {
+  return (
     // `my-auto` rather than `justify-center`: it centers the prompt while
     // there is room and, unlike justify-center, never clips the top once
     // the page scrolls.
@@ -51,14 +76,13 @@ export function ConformancePreRun({ runButton }: { runButton: ReactNode }) {
       <div className="my-auto flex flex-col items-center gap-4">
         <ConformanceScorePreview />
         <div className="flex flex-col items-center gap-2 pt-6 text-center">
-          <h3 className="text-xl font-semibold tracking-tight">
-            Run your first conformance check
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            We assess protocol, apps, tasks, and OAuth on the server of your
-            choice.
-          </p>
-          <div className="flex pt-6">{runButton}</div>
+          <h3 className="text-xl font-semibold tracking-tight">{title}</h3>
+          <p className="text-sm text-muted-foreground">{description}</p>
+          {children ? (
+            <div className="flex flex-wrap justify-center gap-3 pt-6">
+              {children}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

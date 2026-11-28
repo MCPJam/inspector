@@ -20,7 +20,7 @@ import {
 } from "@mcpjam/design-system/popover";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { HostChipLogo } from "@/components/hosts/host-chip";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { SuiteEmptyCasesHero } from "./suite-detail-overview";
 import {
   ADDABLE_FIRST_RUN_CLIENTS,
@@ -645,7 +645,10 @@ function ConfirmRunStep({
             className="inline-flex items-center gap-1.5 rounded-full border border-primary/35 bg-primary/8 py-1 pl-2.5 pr-1 text-[12px]"
           >
             <HostChipLogo
-              logoSrc={resolveHostLogoByName(client.name)}
+              logoSrc={resolveHostLogo(
+                availableClients?.find((entry) => entry.id === client.id) ??
+                  client,
+              )}
               name={client.name}
               size="sm"
             />
@@ -687,7 +690,7 @@ function ConfirmRunStep({
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60"
                 >
                   <HostChipLogo
-                    logoSrc={resolveHostLogoByName(client.name)}
+                    logoSrc={resolveHostLogo(client)}
                     name={client.name}
                     size="sm"
                   />

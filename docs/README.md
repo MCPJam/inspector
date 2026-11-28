@@ -4,12 +4,17 @@ The public documentation at [docs.mcpjam.com](https://docs.mcpjam.com), built
 with [Mintlify](https://mintlify.com). Pages are `.mdx`; navigation lives in
 `docs.json`.
 
-> **Everything in this directory is PUBLISHED, including this file.** Mintlify
-> serves every `.md`/`.mdx` here at its path; `docs.json` controls navigation
-> and search, not reachability. A file with no nav entry is unlisted, not
-> private — the URL still resolves. Do not write anything here you would not
-> put on the marketing site: no unreleased product names, no feature-flag keys,
-> no customer names, no internal hostnames.
+> **Everything in this directory is published.** Mintlify serves every
+> `.md`/`.mdx` here at its path unless `.mintignore` excludes it; `docs.json`
+> controls navigation and search, not reachability. A file with no nav entry
+> still has a working URL. Do not write anything here you would not put on the
+> marketing site: no unreleased product names, no feature-flag keys, no
+> customer names, no internal hostnames, no references to the backend repo.
+>
+> Notes for MCPJam engineers (design docs, plans, runbooks, architecture) go in
+> [`internal-docs/`](../internal-docs) at the repo root, which Mintlify never
+> reads. The GitHub repo is public, so that folder is off the docs site, not
+> private.
 
 ## Local preview
 
@@ -37,36 +42,19 @@ baseline, where the reason is written down. Look there — not here — for whic
 surfaces are currently in that state: the baseline is version-controlled next
 to the routes, whereas naming them in this file would publish the answer.
 
-For a feature that IS live but only enabled for some accounts, use an
-availability `<Note>` at the top of the page — `inspector/plugins.mdx` and
-`inspector/skills.mdx` both carry one. Say what is
-gated and what the reader would see if it is not on for them.
+The same applies to a feature behind a feature flag that is on only for
+MCPJam staff or a few accounts. Document it when it is on for everyone the
+page is for.
 
-### `contributing/` is deliberately not in the nav
+Pages describe what a user can do and observe. How MCPJam is built (module
+paths, storage, design rationale, contributor steps) belongs in
+`internal-docs/`.
 
-Those nine pages are architecture notes — how the eval pipeline is put
-together, how the MCP client manager works, how OAuth flows through the app.
-They are written for someone changing MCPJam, not someone using it, so keeping
-them out of the nav keeps implementation detail out of a customer's search
-results and out of a support conversation.
+### Every page needs a nav entry
 
-Keeping them **unlisted is not keeping them private** — see the note at the
-top. They are still served, and they are written on that basis. That is fine
-for architecture prose and would not be fine for anything you actually need
-kept back; a genuine secret does not belong in this directory at all.
-
-They stay in this repo because they render nicely and are easy to link from a
-PR. If one becomes genuinely useful to a user, the fix is to rewrite it for
-that audience and add it to the nav — not to add it as-is.
-
-**Everything else with no nav entry is a bug**, not a policy — with one more
-exception, this file. `docs/README.md` is for whoever edits this directory, is
-published like everything else here (see the note at the top), and belongs in
-no customer's navigation. A page outside `contributing/` that no `docs.json`
-entry points at is _unlisted_: absent from navigation and search, so only
-someone who already has the URL will ever reach it. Four pages sat in that state — multi-server connections, tracing &
-debugging, the docs MCP server, and contributing a host preset — all current,
-all effectively invisible.
+A page that no `docs.json` entry points at is absent from navigation and
+search, so only someone who already has the URL will reach it. Add the nav
+entry in the same change as the page.
 
 ## The API reference is generated from a checked-in spec
 

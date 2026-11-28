@@ -242,8 +242,8 @@ A run reports one of three outcomes, and `passed` is `true` only for the first:
 
 Every skipped check carries a `skipReason`:
 
-- `not-applicable` — the check cannot apply here (no MCP Apps tools discovered, no UI resources listed). These never hold a run back.
-- `could-not-run` — the check applies but was never exercised (tools/list did not complete, connection failed). These make the run `incomplete`.
+- `not-applicable`: the check cannot apply here (no MCP Apps tools discovered, no UI resources listed). These never hold a run back.
+- `could-not-run`: the check applies but was never exercised (tools/list did not complete, connection failed). These make the run `incomplete`.
 
 An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
 

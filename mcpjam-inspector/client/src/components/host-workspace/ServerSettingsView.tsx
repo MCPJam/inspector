@@ -171,6 +171,7 @@ export function ServerSettingsView({
             actionPending={pending}
             actionResult={result}
             appActionsAvailable={!!host}
+            profile={launchProfile}
             onAction={(name, opener) => {
               if (pending) return;
               setPending(name);

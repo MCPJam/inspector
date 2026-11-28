@@ -15,8 +15,10 @@ import {
   useEvalHandlers,
 } from "../use-eval-handlers";
 import { API_ENDPOINTS } from "../constants";
+import type { EvalSuite } from "../types";
 import { createFetchResponse, createDeferred } from "@/test";
 import { setApiContext } from "@/lib/apis/web/context";
+import { launchReasonOf } from "@/lib/eval-launch-reason";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
 import {
   beginCaseLaunch,
@@ -203,6 +205,86 @@ describe("useEvalHandlers", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     setApiContext(null);
+  });
+
+  it.each(["duplicate", "delete"] as const)(
+    "opens Evaluate after suite %s",
+    async (action) => {
+      const suite: EvalSuite = {
+        _id: "suite-123",
+        createdBy: "user-1",
+        name: "Suite",
+        description: "",
+        configRevision: "revision-1",
+        environment: { servers: [] },
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const { result } = renderHook(() =>
+        useEvalHandlers({ ...defaultProps, selectedSuiteId: suite._id }),
+      );
+      if (action === "duplicate") {
+        mockMutations.duplicateSuiteMutation.mockResolvedValue({
+          _id: "suite-copy",
+        });
+        await act(async () => {
+          await result.current.handleDuplicateSuite(suite);
+        });
+      } else {
+        act(() => result.current.handleDelete(suite));
+        await act(async () => {
+          await result.current.confirmDelete();
+        });
+      }
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        action === "duplicate" ? "/evaluate/suite/suite-copy" : "/evaluate",
+      );
+    },
+  );
+
+  it("remembers whether a delete was asked with unsaved edits", () => {
+    const suite: EvalSuite = {
+      _id: "suite-1",
+      createdBy: "u",
+      name: "Suite 1",
+      description: "",
+      configRevision: "r",
+      environment: { servers: [] },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const { result } = renderHook(() => useEvalHandlers(defaultProps));
+    act(() => result.current.handleDelete(suite, { hasUnsavedEdits: true }));
+    expect(result.current.suiteToDeleteHasUnsavedEdits).toBe(true);
+    act(() => result.current.handleDelete(suite));
+    expect(result.current.suiteToDeleteHasUnsavedEdits).toBe(false);
+  });
+
+  it("stays on the suite and reports the error when its delete fails", async () => {
+    const suite: EvalSuite = {
+      _id: "suite-1",
+      createdBy: "u",
+      name: "Suite 1",
+      description: "",
+      configRevision: "r",
+      environment: { servers: [] },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    mockMutations.deleteSuiteMutation.mockRejectedValueOnce(new Error("boom"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result } = renderHook(() =>
+      useEvalHandlers({ ...defaultProps, selectedSuiteId: suite._id }),
+    );
+    act(() => result.current.handleDelete(suite));
+    let deleted = true;
+    await act(async () => {
+      deleted = await result.current.confirmDelete();
+    });
+    expect(deleted).toBe(false);
+    expect(mockNavigateApp).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   describe("handleRerun", () => {
@@ -401,6 +483,24 @@ describe("useEvalHandlers", () => {
         expect(mockNavigateApp).not.toHaveBeenCalled();
       },
     );
+
+    it("keeps a refusal's reason and rule on the error the run sheet catches", async () => {
+      mockAuthFetch.mockResolvedValue(createFetchResponse({
+        code: "VALIDATION_ERROR",
+        error: "Required code evaluators can't run in a local run.",
+        details: { code: "EVAL_CODE_EVALUATORS_UNAVAILABLE", reason: "EVAL_CODE_EVALUATORS_UNAVAILABLE", rule: "local_run" },
+      }, 400));
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+      let failure: unknown;
+      await act(async () => {
+        try {
+          await result.current.handleRerun({ _id: "suite-123", name: "Suite", environment: { servers: ["server-1"] } } as any, { stayOnPage: true });
+        } catch (error) {
+          failure = error;
+        }
+      });
+      expect(launchReasonOf(failure)).toEqual({ reason: "EVAL_CODE_EVALUATORS_UNAVAILABLE", rule: "local_run" });
+    });
 
     it("keeps a prepared launch idempotent across run retries", async () => {
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
@@ -980,7 +1080,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
+        "/evaluate/suite/suite-123/runs/run-replay?insights=1",
       );
     });
 
@@ -1040,7 +1140,7 @@ describe("useEvalHandlers", () => {
       });
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-123/runs/run-replay?insights=1",
+        "/evaluate/suite/suite-123/runs/run-replay?insights=1",
       );
     });
 
@@ -1658,7 +1758,7 @@ describe("useEvalHandlers", () => {
       });
     });
 
-    describe("with throwOnFailure (the Setup Run sheet)", () => {
+    describe("with throwOnFailure (the Set up run sheet)", () => {
       it("throws the launch failure instead of toasting it", async () => {
         mockAuthFetch.mockResolvedValue(
           createFetchResponse({ message: "Model unavailable" }, 500),
@@ -2931,7 +3031,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateApp).toHaveBeenCalledWith(
-        "/evals/runs/suite/suite-456/runs/run-new?insights=1",
+        "/evaluate/suite/suite-456/runs/run-new?insights=1",
       );
     });
   });
@@ -3717,4 +3817,14 @@ describe("formatEnsureServersReadyError", () => {
       "We couldn't connect to a required server. Try again to run this suite.",
     );
   });
+});
+
+it("preserves each actionable connection refusal", () => {
+  expect(formatEnsureServersReadyError({ readyServerNames: [], missingServerNames: [], reauthServerNames: [], failedServerNames: ["one", "two"], failedServerErrors: { one: "Ask an admin to allow local runs.", two: "Upload a fresh token." } }, "run this suite", [])).toBe("Ask an admin to allow local runs.\nUpload a fresh token.");
+});
+
+it("keeps actionable credential messages when another server has a raw failure", () => {
+  const text = formatEnsureServersReadyError({ readyServerNames: [], missingServerNames: [], reauthServerNames: [], failedServerNames: ["one", "two"], failedServerErrors: { one: "Upload a fresh token." } }, "run this suite", []);
+  expect(text).toContain("Upload a fresh token.");
+  expect(text).toContain("all required servers");
 });

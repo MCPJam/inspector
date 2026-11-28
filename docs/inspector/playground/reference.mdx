@@ -1,0 +1,140 @@
+---
+title: "Playground reference"
+sidebarTitle: "Reference"
+description: "The Playground layout, panes, views, widget debugging, model picker, chat input, the dialogs your server can open, workspace tools, and browser tools."
+icon: "joystick"
+hideFooterPagination: true
+---
+
+Look up a control or behavior here. For a guided start, see [Chat and inspect tool calls](/inspector/playground).
+
+## Layout
+
+The Playground has three areas. Drag a divider to resize a side rail.
+
+| Area | What it holds |
+| --- | --- |
+| **Left rail** | **Tools**: the tools from the servers in this chat, with a search box and **Run**. With several panes, it lists the selected pane's tools. **Sessions**: past conversations. An **Events** tab appears when MCP Events is available. |
+| **Center** | One pane per client, side by side, and the chat box below them. **Clear chat** starts a new conversation. |
+| **Right rail** | The JSON-RPC log. |
+
+## Panes
+
+Each pane is one client answering the same conversation. Signed out, a new session opens with **Claude**, **ChatGPT**, and **Cursor**. A project can start with other clients.
+
+- **Choose clients:** select the client chips in the chat box. Select or clear a client's checkbox to add or remove its pane, up to three. To show one client alone, hover its row and select **Only**.
+- **Pane settings** (settings icon on the pane): **Client**, **Model**, **Servers for this chat**, **Display**, **Move left**, **Move right**. When the project has environments, **Client** is called **Client or environment**, and a **Skills** section can also appear. **Display** sets the pane's size (**Fill**, **Phone** 430×932, **Tablet** 820×1180, or **Desktop** 1280×800) and its theme: **Match MCPJam**, **Saved client theme** (when the client has one), **Light**, or **Dark**.
+
+Use **Pane settings** when several clients are shown. With one client, the [single-client toolbar](#single-client-toolbar) has more options.
+
+## Single-client toolbar
+
+When only one client is shown, a toolbar above the conversation sets how that client renders widgets. It includes the display size (for example **Fill**), the locale (for example `en-US`), the time zone, the Content Security Policy mode (for example **Strict**), **Client Context**, **Host Capabilities**, and the light or dark theme.
+
+## Chat, Trace, and Raw
+
+Each pane has three views of its conversation:
+
+- **Chat**: messages, tool calls, and rendered widgets.
+- **Trace**: a timeline of each step (your message, model turns, tool calls) with its latency. **Prompt 1** summarizes total time and input and output tokens.
+- **Raw**: the JSON sent to the model: `system`, `tools` with their input schemas, and `messages`.
+
+## Tools rail
+
+Select a tool to see its **Description**, **Input Schema**, **Annotations**, and **Metadata**. If the tool takes input, fill in **Parameters**: one field per input, with required fields marked **required**. Optional fields start with **skip** selected; clear **skip** to include one. Enter objects and arrays as JSON. Then select **Run** to call the tool without a model. The result appears in the chat as **Invoked** followed by the tool name.
+
+## Widgets
+
+When a tool returns a widget, the pane renders it in the chat with a toolbar above it.
+
+| Icon | What it does |
+| --- | --- |
+| **Inline** | Shows the widget in the message. This is the default. |
+| **PiP** | Picture-in-picture display mode. |
+| **Fullscreen** | Fills the window. Select **Exit fullscreen** (×, at the right end of the top bar) to return. |
+| **Data** | The tool call's data. |
+| **Sandbox** | Blocked requests and the sandbox policy. A number on the icon counts blocked requests. |
+| **Edit input & output** | Opens the tool **INPUT** and **RESULT** as JSON. **Done editing** closes them. |
+| **Widget State** | ChatGPT Apps only: the state the widget saved. |
+| **Model Context** | MCP Apps only: the context the widget sent to the model, when it sent any. |
+
+### Sandbox panel
+
+The **Sandbox** panel has three tabs:
+
+- **Findings:** the blocked requests (or **No CSP violations recorded.**) and, when the widget declares one, its view domain and whether it is valid.
+- **Policy Diff:** the Content Security Policy at three points: **Requested** (from your server), **Effective** (applied by the client), and **Observed** (what the browser saw).
+- **Sandbox Stack:** how the widget is mounted: its view origin, sandbox attributes, permissions, and the CSP the client applied.
+
+Each blocked request shows its type (for example **CSP**), what was blocked (for example `eval`), why (for example `script-src does not allow this origin`), and an approximation of the browser's error message.
+
+## JSON-RPC log
+
+The right rail streams every message between the Playground, your servers, and the widgets, newest first: HTTP requests, `tools/call` requests and results, widget messages such as `ui/initialize` and `ui/notifications/tool-result`, and `csp-violation` events. Select an entry to see its payload.
+
+Use the search box to find text in any entry. The source filter shows **All**, or only **Server**, **OAuth**, **HTTP**, **Apps** (widget), **WebMCP**, or **Events** messages. When a search finds entries the source filter is hiding, a banner offers **Clear filter**. If logs exist but none match, the log reads **No matches in this view**.
+
+## Model picker
+
+Pick a model in **Pane settings** → **Model**. Models are split into **Free models** (shown as **MCPJam models** on some plans), provided by MCPJam, and **Your providers**. **Your providers** lists models from AI providers your organization added, so it needs a signed-in organization with at least one provider.
+
+Guests see higher-priced models greyed out with **Sign in to use this model**; they can't be selected. If a pane's current model is locked, the chat box shows a notice. With several panes it names the pane, in the form *‹Client› can't run ‹Model›. Sign in to use this model, or choose another model in Connect → Client.*
+
+## Chat input
+
+- **Servers:** select **+** to see the servers in this project, turn them on or off for the chat, or **Add server**.
+- **Attach files:** select **+** → **Attach files**, paste an image, or drag files onto the chat box. A pasted image without a name gets one such as `pasted-image-1.png`.
+- **Message history:** press **Up** in the chat box to recall your last message, **Up** again to go further back, and **Down** to go forward. Inside a multi-line message, the arrow keys move the cursor instead.
+- **Voice input:** select **Start voice input** to dictate. The text is added to the chat box.
+- **Context meter:** shows the token breakdown of the conversation. Before the first message it shows **MCP Tools (estimated)**; if a server or model can't count tokens it shows **Token count unavailable**.
+
+## Prompts
+
+Type `/` in the chat box to insert an MCP prompt from your servers. A selected prompt appears as a card above the input with its server, description, and arguments (required ones marked `*`), so you can review or remove it before sending.
+
+## Elicitation
+
+A server can pause a tool call to ask you for input. The Playground shows the request and resumes the call when you answer. This works for model tool calls and for tool calls from a widget.
+
+- **Form:** a dialog shows all the fields at once. **Accept** sends your answers, **Decline** refuses the request, and **Cancel** closes it without answering. Forms from a plugin extension appear in place of the chat box instead, one field at a time, with **Next**, **Continue** on the last field, and **Skip for now** on optional fields.
+- **URL:** the dialog shows the full URL as plain text with the host emphasized, and warns about unencrypted `http://` links, punycode hosts, embedded credentials, and bare IP addresses. Non-`http(s)` schemes are blocked. Select **Open in new tab**. If the tab doesn't open, your consent isn't sent.
+- **URL-required notice:** when a call fails with MCP error `-32042`, the server needs you to open one or more URLs first. The Playground shows them one at a time (for example **1 of 2**), each in the same consent dialog. Open them, then retry the call.
+
+## Workspace tools
+
+When you are signed in as a project member, the model also gets built-in tools for your project. With them it can list your saved servers, diagnose one, list and call its tools, read its prompts and resources, and start or read readiness runs. Guests don't get them.
+
+Whether a call pauses for your approval depends on what the tool does:
+
+- **Always pauses:** tools that change something, including `call_server_tool`, adding, updating, removing or connecting a project server, and tools that start a run.
+- **Follows Require tool approval:** read-only tools that open a connection to one of your saved servers, such as `diagnose_server` and `list_server_tools`. The client's saved setting counts. It is on by default.
+- **Never pauses:** read-only tools that only read your project in MCPJam, such as `list_project_servers`.
+
+## Browser
+
+Browser tools let the model open and read web pages on your computer. They are available in the MCPJam desktop app and when you run MCPJam with `npx`.
+
+### Turn on browser tools
+
+The first time you open Playground in the desktop app or with `npx`, a dialog asks **Let agents use your browser?**
+
+- **Allow browser access** grants permission on this device and turns on browser tools for your clients. The dialog stays open until setup finishes.
+- **Not now** closes the dialog. It doesn't appear again on this installation; turn browser tools on later from the client's **Browser** tab.
+
+If permission was granted earlier but setup didn't finish, the dialog appears once more as **Finish enabling browser tools**, with **Finish setup**. If setup fails, the error stays in the dialog and the button changes to **Retry setup**.
+
+Each client turns browser tools on or off in its **Browser** tab. See [Browser settings](/inspector/clients/reference#browser-tab). Browser tools follow the chat's **Require tool approval** setting: with it off, the model uses the browser without asking before each call.
+
+### What browser tools can reach and send
+
+- Page text, screenshots, and tool results used in the chat can be sent to the model provider you selected. Signed-in websites and local-network services can contain sensitive information.
+- Websites, local development servers, and other apps on your network stay reachable. MCPJam's own internal addresses and local files are blocked.
+- Exports can include page contents, tool inputs and results, and screenshots. Review them before you share them.
+- In the desktop app, website sign-ins are kept in a separate profile for each account and project. **Clear inspection site data** signs out of that profile and deletes its website storage. Neither it nor **Delete old shared profile** deletes saved transcripts, screenshots, or exports. When you run MCPJam with `npx`, the browser keeps no sign-ins after it closes.
+- In the desktop app, website downloads ask where to save in a save dialog, are limited to 1 GiB, and never open automatically. With `npx`, website downloads are off.
+- Camera, microphone, location, device access, and clipboard reads stay blocked. You can still paste and pick files yourself.
+- Browser profiles are stored as files under your user account on your computer. Profile data, screenshots, and transcripts may not be encrypted.
+
+## Sessions
+
+The **Sessions** tab in the left rail lists saved conversations in the project. Open one to continue it.

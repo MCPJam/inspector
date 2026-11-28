@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ChevronDown, Play, Plus } from "lucide-react";
+import { ChevronDown, Compass, Play, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Breadcrumb,
@@ -55,6 +55,7 @@ export function EvalsHeader({
   landingView,
   onLandingViewChange,
   onEvaluateClick,
+  onStartTour,
   isDetail: isDetailProp,
 }: {
   onCreateSuite?: () => void;
@@ -69,6 +70,8 @@ export function EvalsHeader({
   landingView?: EvalLandingView;
   onLandingViewChange?: (view: EvalLandingView) => void;
   onEvaluateClick?: () => void;
+  /** Replays the Evaluate tour from the landing header. */
+  onStartTour?: () => void;
   /** When set, forces detail chrome even if the last crumb has not loaded. */
   isDetail?: boolean;
 }) {
@@ -180,7 +183,8 @@ export function EvalsHeader({
             }
           : undefined
       }
-      actions={
+      actions={withTourButton(
+        onStartTour,
         landingView != null && onSetupRun && onCreateSuite ? (
           <div className="inline-flex shrink-0 items-center">
             <Button
@@ -235,8 +239,32 @@ export function EvalsHeader({
             <Plus className="h-4 w-4" aria-hidden />
             Create suite
           </Button>
-        ) : null
-      }
+        ) : null,
+      )}
     />
+  );
+}
+
+/** Puts "Take the tour" beside the landing actions when a replay is wired. */
+function withTourButton(
+  onStartTour: (() => void) | undefined,
+  actions: ReactNode,
+): ReactNode {
+  if (!onStartTour) return actions;
+  return (
+    <div className="flex shrink-0 items-center gap-2">
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        className="gap-1.5"
+        onClick={onStartTour}
+        data-testid="evaluate-tour-replay"
+      >
+        <Compass className="h-4 w-4" aria-hidden />
+        Take the tour
+      </Button>
+      {actions}
+    </div>
   );
 }

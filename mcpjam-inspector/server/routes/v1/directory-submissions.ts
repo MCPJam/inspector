@@ -10,6 +10,8 @@
  * Bodies are `strictObject`, like the readiness routes: an unknown key is a
  * 400, never a silent forward.
  */
+import { refuseMockServer } from "../../utils/mock-servers.js";
+
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
@@ -30,11 +32,16 @@ import {
   startHostedReadinessRun,
   toReadinessRunDto,
 } from "../shared/readiness-runs.js";
+import {
+  reviewerAccountForRun,
+  reviewerAuthorizerFor,
+  runnableReviewerAttemptId,
+} from "../shared/reviewer-attempts.js";
 import { readinessAnalyticsActor } from "./readiness.js";
 import { readJsonObjectBody } from "./adapter.js";
 import { createConvexClient } from "./convex-client.js";
 import { requireConvexIdShape, requireProjectIdArg } from "./convex-id-param.js";
-import { translateConvexWriteError } from "./convex-errors.js";
+import { convexErrorData, translateConvexWriteError } from "./convex-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { redactForLog } from "./redact-log-message.js";
 import {
@@ -75,6 +82,8 @@ const fn = {
 };
 
 const idempotencyKey = z.string().trim().min(1).max(200).optional();
+const optionalId = z.string().trim().min(1).max(100).optional();
+const VERSION_NOT_FOUND = "Plugin version not found";
 
 const createSchema = z.strictObject({
   flowId: z.string().trim().min(1).max(100),
@@ -87,12 +96,26 @@ const answerValue = z.union([z.string(), z.number(), z.boolean(), z.null()])
   .or(z.array(z.string()))
   .or(z.array(z.record(z.string(), z.string())));
 
+const checkIds = z.array(z.string().trim().min(1).max(120)).max(200);
+
 const updateSchema = z.strictObject({
   expectedRevision: z.number().int().min(1),
   /** `null` removes the answer. */
   answers: z.record(z.string().min(1).max(100), answerValue).optional(),
   confirm: z.array(z.string().min(1).max(100)).max(200).optional(),
   title: z.string().max(200).optional(),
+  /** A plugin flow's stored plugin, replaced whole. `null` clears it. */
+  plugin: z
+    .strictObject({ pluginId: optionalId, pluginVersionId: optionalId })
+    .nullable()
+    .optional(),
+  /** Which attempt at the directory this rehearses. `null` clears it. */
+  attempt: z.number().int().min(1).nullable().optional(),
+  /** Which checks fail a run. The backend checks the ids; `null` clears it. */
+  checkGate: z
+    .strictObject({ failOn: checkIds.optional(), warnOnly: checkIds.optional() })
+    .nullable()
+    .optional(),
   idempotencyKey,
 });
 
@@ -100,6 +123,12 @@ const startSchema = z.strictObject({
   idempotencyKey,
   /** The one field that can spend. Off unless sent, as on the readiness starts. */
   includeLlmObservations: z.boolean().optional(),
+  /** The stored plugin version a ChatGPT plugin submission's run grades. */
+  pluginVersionId: optionalId,
+  /** A running reviewer sign-in attempt of this submission, for the run to work on. */
+  reviewerAttemptId: z.string().trim().min(1).max(100).optional(),
+  /** The saved test plan revision to run; naming it authorizes its calls. */
+  testPlanRevision: z.number().int().min(1).optional(),
 });
 
 function idParam(value: string | undefined, param: string, notFound: string) {
@@ -109,14 +138,14 @@ function idParam(value: string | undefined, param: string, notFound: string) {
   });
 }
 
-function scopeOf(c: Context) {
+export function scopeOf(c: Context) {
   return {
     projectId: requireProjectIdArg(c.req.param("projectId"), SCOPE),
     submissionId: idParam(c.req.param("submissionId"), "submissionId", NOT_FOUND),
   };
 }
 
-async function readSubmission(
+export async function readSubmission(
   convex: ConvexHttpClient,
   projectId: string,
   submissionId: string,
@@ -135,7 +164,7 @@ async function readSubmission(
   return row;
 }
 
-function flowOf(row: Submission): DirectoryFlow {
+export function flowOf(row: Submission): DirectoryFlow {
   const flow = getDirectoryFlow(row.flowId);
   if (!flow) {
     throw new WebRouteError(
@@ -150,6 +179,69 @@ function flowOf(row: Submission): DirectoryFlow {
 async function viewOf(convex: ConvexHttpClient, row: Submission) {
   const flow = flowOf(row);
   return toSubmissionView(flow, row, await latestResults(convex, row));
+}
+
+/**
+ * The plugin and attempt a write sets, each id checked before Convex sees it.
+ * The backend checks that the plugin is in the project and the version ready.
+ */
+function subjectChange({ plugin, attempt }: z.infer<typeof updateSchema>) {
+  const named = plugin && {
+    ...(plugin.pluginId
+      ? {
+          pluginId: idParam(
+            plugin.pluginId,
+            "plugin.pluginId",
+            "Plugin not found",
+          ),
+        }
+      : {}),
+    ...(plugin.pluginVersionId
+      ? {
+          pluginVersionId: idParam(
+            plugin.pluginVersionId,
+            "plugin.pluginVersionId",
+            VERSION_NOT_FOUND,
+          ),
+        }
+      : {}),
+  };
+  return {
+    ...(plugin !== undefined ? { plugin: named } : {}),
+    ...(attempt !== undefined ? { attempt } : {}),
+  };
+}
+
+function refuseRun(message: string): WebRouteError {
+  return new WebRouteError(
+    400,
+    ErrorCode.VALIDATION_ERROR,
+    `pluginVersionId: ${message}`,
+  );
+}
+
+/**
+ * What a run grades beside the saved server. ChatGPT reviews a plugin as a
+ * package, so its run grades a stored version of it: the one the caller
+ * names, never one read off the submission. The shapes without a package are
+ * not offered for a plugin submission.
+ */
+function packageOf(
+  flow: DirectoryFlow,
+  pluginVersionId: string | undefined,
+): { submissionMode?: "mcp-uploaded-skills"; pluginVersionId?: string } {
+  if (flow.directory !== "openai") {
+    if (pluginVersionId === undefined) return {};
+    throw refuseRun(
+      "Only a ChatGPT plugin submission grades a plugin version. Leave it out.",
+    );
+  }
+  if (pluginVersionId === undefined) {
+    throw refuseRun(
+      "A ChatGPT plugin submission's run grades a stored version of its plugin. Send the version to grade.",
+    );
+  }
+  return { submissionMode: "mcp-uploaded-skills", pluginVersionId };
 }
 
 directorySubmissions.get("/directory-flows", (c) =>
@@ -250,6 +342,8 @@ directorySubmissions.patch(ONE, async (c) => {
       submissionId,
       expectedRevision: body.expectedRevision,
       ...change,
+      ...subjectChange(body),
+      ...(body.checkGate !== undefined ? { checkGate: body.checkGate } : {}),
       ...(body.title !== undefined ? { title: body.title } : {}),
       ...(label ? { actorLabel: label } : {}),
       setVia: writeChannel(c),
@@ -288,9 +382,25 @@ directorySubmissions.delete(ONE, async (c) => {
 });
 
 /**
+ * Why a run did not start. A `NOT_FOUND` from the backend here names what is
+ * missing, such as the submission's saved test plan, to a caller who has just
+ * read the submission, so its words are kept: the generic translation would
+ * answer "Readiness run not found" about a run that was never created.
+ */
+function startRefusal(error: unknown): WebRouteError {
+  const data = convexErrorData(error);
+  if (data?.code === "NOT_FOUND" && typeof data.message === "string" && data.message.trim()) {
+    return new WebRouteError(404, ErrorCode.NOT_FOUND, data.message);
+  }
+  return translateConvexWriteError(error, { resource: "Readiness run" });
+}
+
+/**
  * Grade the submission's saved server with its answers frozen at this
- * revision. The server is authorized exactly as the readiness start does, and
- * the directory comes from the submission's flow, never the body.
+ * revision, and for a ChatGPT plugin the stored version the body names. A
+ * `testPlanRevision` adds that plan's calls, and must be the current one. The
+ * server is authorized exactly as the readiness start does, and the directory
+ * comes from the submission's flow, never the body.
  */
 directorySubmissions.post(`${ONE}/runs`, async (c) => {
   const { projectId, submissionId } = scopeOf(c);
@@ -300,29 +410,54 @@ directorySubmissions.post(`${ONE}/runs`, async (c) => {
   const convex = createConvexClient(convexAuthToken);
   const row = await readSubmission(convex, projectId, submissionId);
   const flow = flowOf(row);
-  if (!row.serverId) {
+  const graded = packageOf(
+    flow,
+    body.pluginVersionId === undefined
+      ? undefined
+      : idParam(body.pluginVersionId, "pluginVersionId", VERSION_NOT_FOUND),
+  );
+  const serverId = row.serverId;
+  if (!serverId) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
       "This submission has no saved server to grade. Create a submission for a saved server, then start its run.",
     );
   }
+  const reviewerAttemptId =
+    body.reviewerAttemptId &&
+    (await runnableReviewerAttemptId(convex, { projectId, submissionId }, body.reviewerAttemptId, (error) =>
+      readRefusal(error, "Reviewer attempt"),
+    ));
+  const authorized = await authorizeServer(c, convexAuthToken, projectId, serverId);
+  refuseMockServer(
+    authorized,
+    "Directory submissions do not take mock servers. A mock is served only to you, so a directory cannot reach it. Submit the server the mock is based on.",
+  );
   const receipt = await startHostedReadinessRun({
     convex,
     projectId,
-    serverId: row.serverId,
+    serverId,
     publisher: flow.directory,
     idempotencyKey: key,
     includeLlmObservations: body.includeLlmObservations === true,
     submissionId,
-    authorized: await authorizeServer(c, convexAuthToken, projectId, row.serverId),
+    ...graded,
+    ...(reviewerAttemptId ? { reviewerAttemptId } : {}),
+    testPlanRevision: body.testPlanRevision,
+    authorized,
+    reviewer: await reviewerAccountForRun(convex, submissionId, (connectionId) =>
+      authorizeServer(c, convexAuthToken, projectId, serverId, { connectionId }),
+    ),
+    ...(reviewerAttemptId
+      ? { authorizeReviewer: await reviewerAuthorizerFor(c, convexAuthToken, projectId, serverId) }
+      : {}),
     analyticsActor: readinessAnalyticsActor(c, projectId),
-    translateError: (error) =>
-      translateConvexWriteError(error, { resource: "Readiness run" }),
+    translateError: startRefusal,
   });
   captureServerEvent(c, "directory_readiness_run_started_server", {
     readiness_kind: flow.directory,
-    submission_mode: null,
+    submission_mode: graded.submissionMode ?? null,
     flow_id: flow.id,
     include_llm_observations: body.includeLlmObservations === true,
     deduped: receipt.deduped,
@@ -348,11 +483,13 @@ directorySubmissions.get(`${ONE}/results`, async (c) => {
     run: results.run ? toReadinessRunDto(results.run, { projectId, reportUrl }) : null,
     steps,
     counts: sumCounts(steps),
+    // Read with the results, so a caller judges them under the gate as it is.
+    checkGate: row.checkGate ?? null,
   });
 });
 
-/** The run `runId` names, if it graded this submission and completed. */
-async function readCompleteRun(
+/** The run `runId` names, if it graded this submission. */
+export async function readSubmissionRun(
   convex: ConvexHttpClient,
   row: Submission,
   runId: string,
@@ -368,6 +505,16 @@ async function readCompleteRun(
   if (!run || run.submissionId !== row.id) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, RUN_NOT_FOUND);
   }
+  return run;
+}
+
+/** The run `runId` names, if it graded this submission and completed. */
+async function readCompleteRun(
+  convex: ConvexHttpClient,
+  row: Submission,
+  runId: string,
+): Promise<RunRow> {
+  const run = await readSubmissionRun(convex, row, runId);
   if (run.status !== "completed") {
     throw new WebRouteError(
       409,

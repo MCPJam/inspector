@@ -261,7 +261,7 @@ describe("PerCaseIterationsControl", () => {
   });
 
   it("names the count a DEFAULT, never a minimum", () => {
-    // A case at 7 resolves to 7 under a floor of 3 and to 3 under a default of
+    // A case at 2 resolves to 3 under a floor of 3 and to 2 under a default of
     // 3. The word is the only thing telling a reader which rule they are
     // editing.
     render(

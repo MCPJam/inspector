@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The per-turn promote surface. Covered here because it is the one promote
@@ -36,16 +36,49 @@ vi.mock("@/hooks/useViews", () => ({
   }),
 }));
 
+const mockTrack = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/analytics", () => ({ track: mockTrack }));
+
+const projectHosts = vi.hoisted(() => ({
+  value: [{ hostId: "host-first" }] as Array<{ hostId: string }>,
+}));
 vi.mock("@/hooks/useClients", () => ({
-  useHostList: () => ({ hosts: [{ hostId: "host-first" }] }),
+  useHostList: () => ({ hosts: projectHosts.value, isLoading: false }),
 }));
 
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-picker" />,
 }));
-vi.mock("@/components/evals/client-attachments-editor", () => ({
-  ClientAttachmentsEditor: () => (
-    <div data-testid="client-attachments-editor" />
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: ({
+    isOpen,
+    onCreated,
+  }: {
+    isOpen: boolean;
+    onCreated: (hostId: string) => void;
+  }) =>
+    isOpen ? (
+      <button type="button" onClick={() => onCreated("host-new")}>
+        Finish creating client
+      </button>
+    ) : null,
+}));
+vi.mock("@/components/hosts/client-multi-select", () => ({
+  ClientMultiSelect: ({
+    value,
+    onChange,
+  }: {
+    value: string[];
+    onChange: (ids: string[]) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="client-multi-select"
+      data-host={value.join(",")}
+      onClick={() => onChange([])}
+    >
+      Clear clients
+    </button>
   ),
 }));
 
@@ -106,7 +139,10 @@ vi.mock("@mcpjam/design-system/select", async () => {
 
 import { SaveAsTestCaseAction } from "../save-as-test-case-action";
 
-async function promoteToExistingSuite() {
+async function promoteToExistingSuite({
+  toolCalls = false,
+  location,
+}: { toolCalls?: boolean; location?: "playground" | "chat" } = {}) {
   const user = userEvent.setup();
   render(
     <SaveAsTestCaseAction
@@ -114,6 +150,7 @@ async function promoteToExistingSuite() {
       promptIndex={2}
       promptPreview="draw a dog"
       projectId="proj-1"
+      location={location}
     />,
   );
 
@@ -123,10 +160,126 @@ async function promoteToExistingSuite() {
   await user.click(
     await screen.findByRole("button", { name: "Excalidraw suite" }),
   );
-  await user.click(screen.getByRole("button", { name: "Save" }));
+  if (toolCalls) await user.click(screen.getByRole("switch"));
+  await user.click(screen.getByRole("button", { name: "Save as test case" }));
 }
 
 describe("SaveAsTestCaseAction", () => {
+  it("counts saves from the Chat tab under its own location", async () => {
+    await promoteToExistingSuite({ location: "chat" });
+    await waitFor(() =>
+      expect(mockTrack).toHaveBeenCalledWith(
+        "playground_test_case_saved",
+        expect.objectContaining({ location: "chat" }),
+      ),
+    );
+  });
+
+  it("asks the backend to keep tool calls only when the switch is on", async () => {
+    await promoteToExistingSuite({ toolCalls: true });
+    await waitFor(() =>
+      expect(saveAction).toHaveBeenCalledWith(
+        expect.objectContaining({ assertToolCalls: true }),
+      ),
+    );
+  });
+
+  beforeEach(() => {
+    projectHosts.value = [{ hostId: "host-first" }];
+  });
+
+  it("keeps a cleared client selection empty and disables saving", async () => {
+    const user = userEvent.setup();
+    render(
+      <SaveAsTestCaseAction
+        chatSessionId="chat-session-1"
+        promptIndex={2}
+        promptPreview="draw a dog"
+        projectId="proj-1"
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save this prompt as a test case" }),
+    );
+    await user.click(screen.getByRole("radio", { name: "New suite" }));
+    expect(screen.getByTestId("client-multi-select")).toHaveAttribute(
+      "data-host",
+      "host-first",
+    );
+    await user.click(screen.getByRole("button", { name: "Clear clients" }));
+    expect(screen.getByTestId("client-multi-select")).toHaveAttribute(
+      "data-host",
+      "",
+    );
+    expect(
+      screen.getByRole("button", { name: "Save as test case" }),
+    ).toBeDisabled();
+  });
+
+  it("names a new suite after the prompt's server", async () => {
+    const user = userEvent.setup();
+    render(
+      <SaveAsTestCaseAction
+        chatSessionId="chat-session-1"
+        promptIndex={2}
+        promptPreview="draw a dog"
+        projectId="proj-1"
+        serverNames={["Linear"]}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save this prompt as a test case" }),
+    );
+    await user.click(screen.getByRole("radio", { name: "New suite" }));
+    expect(screen.getByDisplayValue("Linear")).toBeInTheDocument();
+  });
+
+  it("names a Chat tab suite with no server after the tab", async () => {
+    const user = userEvent.setup();
+    render(
+      <SaveAsTestCaseAction
+        chatSessionId="chat-session-1"
+        promptIndex={2}
+        promptPreview="draw a dog"
+        projectId="proj-1"
+        location="chat"
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save this prompt as a test case" }),
+    );
+    await user.click(screen.getByRole("radio", { name: "New suite" }));
+    expect(screen.getByDisplayValue("Chat suite")).toBeInTheDocument();
+  });
+
+  it("creates and attaches a client when the project has none", async () => {
+    projectHosts.value = [];
+    const user = userEvent.setup();
+    render(
+      <SaveAsTestCaseAction
+        chatSessionId="chat-session-1"
+        promptIndex={2}
+        promptPreview="draw a dog"
+        projectId="proj-1"
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save this prompt as a test case" }),
+    );
+    await user.click(screen.getByRole("radio", { name: "New suite" }));
+    await user.click(screen.getByRole("button", { name: "Create a client" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Finish creating client",
+        hidden: true,
+      }),
+    );
+    expect(screen.getByTestId("client-multi-select")).toHaveAttribute(
+      "data-host",
+      "host-new",
+    );
+  });
+
   it("navigates to the case it just created", async () => {
     saveAction.mockResolvedValue({
       suiteId: "suite-1",
@@ -147,6 +300,13 @@ describe("SaveAsTestCaseAction", () => {
         }),
       ),
     );
+    expect(saveAction.mock.calls[0][0]).not.toHaveProperty("assertToolCalls");
+    expect(mockTrack).toHaveBeenCalledWith("playground_test_case_saved", {
+      location: "playground",
+      source: "message_menu",
+      new_suite: false,
+      assert_tool_calls: false,
+    });
     await waitFor(() =>
       expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/test-edit/suite-1/case-1"),
     );

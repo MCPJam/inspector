@@ -105,6 +105,23 @@ describe("changedClientSettings", () => {
     ).toEqual(["client.name", "model", "temperature"]);
   });
 
+  it("reports a structured content rule change as a model-visible results change", () => {
+    const flags = { directContent: { image: false } };
+    expect(
+      changedClientSettings({
+        savedName: "Client",
+        draftName: "Client",
+        savedConfig: config({ modelVisibleMcpToolResults: flags }),
+        draftConfig: config({
+          modelVisibleMcpToolResults: {
+            ...flags,
+            structuredContent: "preferred",
+          },
+        }),
+      }),
+    ).toEqual(["model_visible_tool_results"]);
+  });
+
   it("emits nothing when no setting changed", () => {
     const saved = config();
     expect(

@@ -1,7 +1,4 @@
-import {
-  convexGetEnvironmentSecretSelection,
-  convexListProjectSecretBindings,
-} from "../../computers/convex-secrets-client.js";
+import { environmentSelectsSecretDelivery } from "../environment-secret-delivery.js";
 
 /** Local processes cannot receive E2B egress-injected secrets. Check only
  * selected, caller-visible metadata; no secret values are fetched here. */
@@ -17,16 +14,11 @@ export async function assertLocalSecretDelivery(args: {
     );
   }
   if (!args.environmentId) return;
-  const [bindings, selected] = await Promise.all([
-    convexListProjectSecretBindings(args.bearer, { projectId: args.projectId }),
-    convexGetEnvironmentSecretSelection(args.bearer, {
-      projectId: args.projectId,
-      environmentId: args.environmentId,
-    }),
-  ]);
   if (
-    bindings.some((binding) =>
-      binding.delivery === "brokered" && selected.includes(binding.secretId),
+    await environmentSelectsSecretDelivery(
+      args.bearer,
+      { projectId: args.projectId, environmentId: args.environmentId },
+      "brokered",
     )
   ) {
     throw new Error(

@@ -63,7 +63,7 @@ describe("Case run setup", () => {
     rerender(
       <CaseRunSetup {...props} onStart={onStart} onOpenChange={onOpenChange} />,
     );
-    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Set up run" })).toBeVisible();
     expect(
       screen.getByRole("spinbutton", { name: "Iterations per case" }),
     ).toBeVisible();
@@ -107,7 +107,7 @@ it("shows the suite-style controls and preserves provider-qualified model select
       onModelsChange={onModelsChange}
     />,
   );
-  expect(screen.getByText("Where it runs")).toBeVisible();
+  expect(screen.getByText("Clients and models")).toBeVisible();
   expect(screen.getByRole("columnheader", { name: "Client" })).toBeVisible();
   expect(screen.getByRole("columnheader", { name: "Models" })).toBeVisible();
   await userEvent

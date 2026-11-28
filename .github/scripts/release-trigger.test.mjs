@@ -4,7 +4,6 @@ import {
   decideRelease,
   releaseLabel,
   releaseRunName,
-  REQUIRED_CHECKS,
 } from "./release-trigger.mjs";
 
 const unpublished = [
@@ -14,7 +13,7 @@ const unpublished = [
 const ready = {
   headSha: "abc",
   mainSha: "abc",
-  greenChecks: REQUIRED_CHECKS,
+  stagingGreen: true,
   unpublished,
   releaseRuns: [],
 };
@@ -31,15 +30,10 @@ test("leaves a commit that is no longer the tip to the newer one", () => {
   assert.equal(decideRelease({ ...ready, mainSha: "def" }).dispatch, false);
 });
 
-test("waits for every required check", () => {
-  for (const missing of REQUIRED_CHECKS) {
-    const decision = decideRelease({
-      ...ready,
-      greenChecks: REQUIRED_CHECKS.filter((w) => w !== missing),
-    });
-    assert.equal(decision.dispatch, false);
-    assert.match(decision.reason, new RegExp(missing.replace(".", "\\.")));
-  }
+test("waits for staging to pass on the commit", () => {
+  const decision = decideRelease({ ...ready, stagingGreen: false });
+  assert.equal(decision.dispatch, false);
+  assert.match(decision.reason, /Deploy Staging/);
 });
 
 test("does nothing when everything is already on npm", () => {
@@ -85,14 +79,14 @@ test("labels a packages-only release by package", () => {
   assert.equal(releaseRunName(label), "Release @mcpjam/sdk 8.18.0");
 });
 
-test("skip_verify releases without waiting for any check", () => {
-  const decision = decideRelease({ ...ready, greenChecks: [], skipVerify: true });
+test("skip_verify releases without waiting for staging", () => {
+  const decision = decideRelease({ ...ready, stagingGreen: false, skipVerify: true });
   assert.equal(decision.dispatch, true);
   assert.match(decision.reason, /skip_verify/);
 });
 
 test("skip_verify still ships only the tip, only once, and only what npm lacks", () => {
-  const base = { ...ready, greenChecks: [], skipVerify: true };
+  const base = { ...ready, stagingGreen: false, skipVerify: true };
   assert.equal(decideRelease({ ...base, mainSha: "def" }).dispatch, false);
   assert.equal(decideRelease({ ...base, unpublished: [] }).dispatch, false);
   const releaseRuns = [{ status: "in_progress", conclusion: null, displayTitle: "Release 3.12.3" }];

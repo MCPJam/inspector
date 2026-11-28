@@ -123,10 +123,12 @@ vi.mock("../harness-session-state.js", async (original) => ({
   releaseHarnessSessionState: async () => {},
 }));
 vi.mock("../harness-model-broker.js", () => ({
+  revokeHarnessModelBroker: async () => {},
+}));
+vi.mock("../harness-box-reservation.js", () => ({
   reserveHarnessBox: async () => ({ ok: true }),
   renewHarnessBoxReservation: async () => ({ ok: true }),
   releaseHarnessBoxReservation: async () => ({ ok: true }),
-  revokeHarnessModelBroker: async () => {},
 }));
 vi.mock("../local/evidence.js", () => ({
   localHarnessEvidence: async () => ({

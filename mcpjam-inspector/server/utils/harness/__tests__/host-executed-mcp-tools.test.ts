@@ -10,7 +10,6 @@ import { buildToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import { scrubMetaAndStructuredContentFromToolResult } from "@mcpjam/sdk";
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import {
-  harnessMcpToolName,
   projectSelectedMcpServersAsHostTools,
 } from "../host-executed-mcp-tools";
 import {
@@ -59,17 +58,39 @@ describe("projectSelectedMcpServersAsHostTools", () => {
       selectedServerIds: ["consumer", "installed"],
       serverDisplayNames: { consumer: "Bits Upload Consumer QA", installed: "Bits & Bolts" },
     });
-    expect(Object.keys(projected.tools)).toEqual(["mcp__consumer__cad.library", "mcp__installed__cad.library"]);
+    // Dots are invalid in Claude tool names, so the wire name uses `_` and the
+    // registry keeps the real server and tool.
+    expect(Object.keys(projected.tools)).toEqual(["mcp__consumer__cad_library", "mcp__installed__cad_library"]);
+    expect(projected.toolRegistry.get("mcp__consumer__cad_library")).toEqual({ serverId: "consumer", toolName: "cad.library" });
+    expect(projected.toolRegistry.get("mcp__installed__cad_library")).toEqual({ serverId: "installed", toolName: "cad.library" });
     const catalog = buildHostToolCatalog(Object.entries(projected.tools).map(([name, value]) => ({ name, description: (value as FakeTool).description })));
     expect(catalog.descriptors.map(({ name, description }) => ({ name, description }))).toEqual([
-      { name: "consumer__cad.library", description: 'MCP server: "Bits Upload Consumer QA".\nd' },
-      { name: "installed__cad.library", description: 'MCP server: "Bits & Bolts".\nd' },
+      { name: "consumer__cad_library", description: 'MCP server: "Bits Upload Consumer QA".\nd' },
+      { name: "installed__cad_library", description: 'MCP server: "Bits & Bolts".\nd' },
     ]);
-    expect(catalog.aliasToCanonical.get("consumer__cad.library")).toBe("mcp__consumer__cad.library");
-    await (projected.tools["mcp__consumer__cad.library"] as FakeTool).execute({}, {});
+    expect(catalog.aliasToCanonical.get("consumer__cad_library")).toBe("mcp__consumer__cad_library");
+    await (projected.tools["mcp__consumer__cad_library"] as FakeTool).execute({}, {});
     expect(consumer.execute).toHaveBeenCalledOnce();
     expect(installed.execute).not.toHaveBeenCalled();
     expect(consumer.description).toBe("d");
+  });
+
+  it("keeps both tools of a colliding pair callable under distinct registered names", async () => {
+    const dotted = tool({ which: "dotted" });
+    const underscored = tool({ which: "underscored" });
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager: fakeManager({ shop: { "a.b": dotted, a_b: underscored } }),
+      selectedServerIds: ["shop"],
+    });
+    const names = Object.keys(projected.tools);
+    expect(names).toHaveLength(2);
+    for (const name of names) expect(name).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
+    const byTool = new Map([...projected.toolRegistry].map(([wire, id]) => [id.toolName, wire]));
+    expect(byTool.get("a_b")).toBe("mcp__shop__a_b");
+    expect(byTool.get("a.b")).toBe("mcp__shop__a_b_2");
+    await (projected.tools[byTool.get("a.b")!] as FakeTool).execute({}, {});
+    expect(dotted.execute).toHaveBeenCalledOnce();
+    expect(underscored.execute).not.toHaveBeenCalled();
   });
 
   it("normalizes display-only labels", async () => {
@@ -143,15 +164,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
     const codex = getHarnessAdapter("codex");
     for (const name of Object.keys(projected.tools)) {
       const attribution = codex.parseToolName(name, projected.keyToServerId);
-      expect(attribution.serverId).toBeDefined();
-      expect(name).toBe(
-        harnessMcpToolName(
-          Object.entries(projected.keyToServerId).find(
-            ([, serverId]) => serverId === attribution.serverId
-          )![0],
-          attribution.toolName
-        )
-      );
+      expect(attribution).toMatchObject(projected.toolRegistry.get(name)!);
     }
     expect(
       codex.parseToolName(
@@ -228,7 +241,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
         manager,
         selectedServerIds: [],
       })
-    ).resolves.toEqual({ tools: {}, keyToServerId: {} });
+    ).resolves.toEqual({ tools: {}, keyToServerId: {}, toolRegistry: new Map() });
     expect(manager.getToolsForAiSdk).not.toHaveBeenCalled();
   });
 
@@ -288,6 +301,42 @@ describe("projectSelectedMcpServersAsHostTools", () => {
       expect(late.execute).not.toHaveBeenCalled();
       expect(result._meta["mcpjam/policyBlock"]!.reason).toBe("unknownAtLaunch");
     });
+  });
+
+  it("holds the v1 API's read_only exclusions on host-executed tools", async () => {
+    const { toolModeHarnessPolicy } = await import(
+      "../../../routes/v1/chat-session-host-target.js"
+    );
+    const remove = tool();
+    const search = tool("found");
+    const manager = fakeManager({ srv: { delete_item: remove, search } });
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["srv"],
+      toolPolicy: toolModeHarnessPolicy(
+        ["srv"],
+        [
+          {
+            serverId: "srv",
+            tools: [
+              { name: "delete_item" },
+              { name: "search", annotations: { readOnlyHint: true } },
+            ],
+          },
+        ],
+        ["delete_item"],
+      ),
+    });
+    const blocked = (await (
+      projected.tools["mcp__srv__delete_item"] as FakeTool
+    ).execute({}, {})) as { content: Array<{ text: string }> };
+    expect(remove.execute).not.toHaveBeenCalled();
+    expect(blocked.content[0]!.text).toBe(
+      "Call blocked by tool policy: readOnlyModeUnclassified",
+    );
+    await expect(
+      (projected.tools["mcp__srv__search"] as FakeTool).execute({}, {}),
+    ).resolves.toBe("found");
   });
 
   describe("the plugin executor wraps each call like the emulated engine's", () => {
@@ -1003,17 +1052,6 @@ describe("host-derived tool-construction options reach the SDK conversion", () =
     expect(manager.getToolsForAiSdk.mock.calls[0]![1]).toBe(
       manager.getToolsForAiSdk.mock.calls[1]![1]
     );
-  });
-});
-
-describe("harnessMcpToolName", () => {
-  it("is the same scheme parseHarnessToolName reverses", () => {
-    const name = harnessMcpToolName("weather", "get_forecast");
-    expect(name).toBe("mcp__weather__get_forecast");
-    expect(parseHarnessToolName(name, { weather: "srv-1" })).toEqual({
-      serverId: "srv-1",
-      toolName: "get_forecast",
-    });
   });
 });
 

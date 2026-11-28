@@ -3,6 +3,7 @@ import type {
   JourneySessionRow,
   SwarmOverview,
 } from "../../client/src/lib/swarm-api";
+import type { UsageBreakdown } from "../../client/src/hooks/useUsageInsights";
 import { FIXED_TIME, PROJECT_ID } from "./app-data";
 import { memberFixture } from "./product-data";
 import type { AppFixture } from "./app-network";
@@ -19,6 +20,7 @@ const overview: SwarmOverview = {
       journeyName: "Plan a weather-safe walk",
       journeyArchived: false,
       personaName: "Weekend traveler",
+      serverNames: ["Weather Tools"],
       createdAt: FIXED_TIME - 3600000,
       status: "completed",
       summary: { total: 3, succeeded: 3, failed: 0, rateLimited: 0 },
@@ -94,11 +96,52 @@ const sessions: JourneySessionRow[] = [
     results: [{ criterionId: "city-check", passed: index !== 2 }],
   },
 }));
+const usageBreakdown: UsageBreakdown = {
+  themes: [],
+  userBreakdown: [],
+  deviceBreakdown: [],
+  languageBreakdown: [],
+  modelBreakdown: [],
+  outcomeBreakdown: [],
+  frictionBreakdown: [],
+  behaviorTagBreakdown: [],
+  goalFacets: [],
+  labeledOutcomeCount: 3,
+  outcomeFeedbackCalibration: [],
+  totalSessions: 3,
+  sankey: {
+    nodes: (
+      [
+        ["goal", journeyId, "Plan a weather-safe walk", 3],
+        ["behavior", "weather", "Looked up the forecast", 3],
+        ["outcome", "resolved", "Goal reached", 2],
+        ["outcome", "unresolved", "Goal missed", 1],
+        ["sentiment", "positive", "Pleased", 2],
+        ["sentiment", "negative", "Frustrated", 1],
+      ] as const
+    ).map(([stage, key, label, count]) => ({
+      id: `${stage}:${key}`,
+      stage,
+      key,
+      label,
+      count,
+      clickable: true,
+    })),
+    links: [
+      { source: `goal:${journeyId}`, target: "behavior:weather", count: 3 },
+      { source: "behavior:weather", target: "outcome:resolved", count: 2 },
+      { source: "behavior:weather", target: "outcome:unresolved", count: 1 },
+      { source: "outcome:resolved", target: "sentiment:positive", count: 2 },
+      { source: "outcome:unresolved", target: "sentiment:negative", count: 1 },
+    ],
+    foldedGoalCount: 0,
+  },
+};
 export const swarmFixture: AppFixture = {
   ...memberFixture,
   responses: {
     ...memberFixture.responses,
-    "/api/web/flags": { flags: { "sandboxes-enabled": true } },
+    "/api/web/flags": { flags: {} },
   },
   queries: {
     ...memberFixture.queries,
@@ -158,6 +201,9 @@ export const swarmFixture: AppFixture = {
     ],
     "journeyRuns:listRunningPersonaRefIds": [],
     "journeyRuns:getSwarmOverview": overview,
+    "chatSessionStageDerivation:getSwarmRunStageFunnel": null,
+    "swarmWaveInsights:getJourneyRunInsightsEnvelope": null,
+    "chatSessions:getSwarmUsageBreakdown": usageBreakdown,
     "serverAttachments:listServerAttachments": [],
     "journeyRuns:listJourneyRuns": {
       page: [run],

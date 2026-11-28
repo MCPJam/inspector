@@ -62,11 +62,31 @@ vi.mock("@/hooks/useProjects", () => ({
   useProjectMembers: (...args: unknown[]) => useProjectMembersMock(...args),
 }));
 
+vi.mock("@/hooks/useClients", () => ({
+  useHostList: () => ({ hosts: [], isLoading: false }),
+}));
+
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => ({ hostedCatalog: [] }),
+}));
+
 vi.mock("../use-chat-history", () => ({
   useChatHistory: useChatHistoryMock,
 }));
 
+vi.mock("../use-multi-model-group-actions", () => ({
+  useMultiModelGroupActions: () => ({
+    rename: vi.fn(),
+    pin: vi.fn(),
+    unpin: vi.fn(),
+    archive: vi.fn(),
+    unarchive: vi.fn(),
+  }),
+}));
+
 vi.mock("../ChatHistoryRow", () => ({
+  formatChatHistoryModelLabel: (session: ChatHistorySession) =>
+    session.modelId ?? null,
   ChatHistoryRow: (props: Record<string, unknown>) => {
     const snapshot = { ...props } as Record<string, unknown>;
     delete snapshot.key;
@@ -95,6 +115,11 @@ vi.mock("@mcpjam/design-system/tooltip", () => ({
   TooltipContent: () => null,
 }));
 
+// One timestamp for every stub: a test that builds the same stub twice (once
+// to render, once to assert) must get equal objects, whichever millisecond
+// each call lands on.
+const STUB_NOW = Date.now();
+
 function sessionStub(
   id: string,
   overrides: Partial<ChatHistorySession> = {},
@@ -107,8 +132,8 @@ function sessionStub(
     directVisibility: "private",
     messageCount: 1,
     version: 1,
-    startedAt: Date.now(),
-    lastActivityAt: Date.now(),
+    startedAt: STUB_NOW,
+    lastActivityAt: STUB_NOW,
     isPinned: false,
     manualUnread: false,
     isUnread: false,
@@ -702,5 +727,97 @@ describe("ChatHistoryRail", () => {
     );
 
     await waitFor(() => expect(order).toEqual(["complete", "settled"]));
+  });
+
+  describe("multi-model sessions", () => {
+    const column = (id: string, position: number) =>
+      sessionStub(id, {
+        multiModel: {
+          groupId: "g1",
+          position,
+          columnKind: "model",
+          compareId: `cmp-${id}`,
+        },
+      });
+
+    function renderWithGroup(onSelectThread = vi.fn()) {
+      archiveManySessionIdsMock.mockResolvedValue(undefined);
+      useChatHistoryMock.mockImplementation(() => ({
+        personal: [column("a", 0), sessionStub("solo")],
+        multiModelSiblings: [column("b", 1)],
+        project: [],
+        loading: false,
+        error: null,
+        isReactive: false,
+        refetch: refetchMock,
+        actions: {
+          rename: vi.fn(),
+          archive: vi.fn(),
+          unarchive: vi.fn(),
+          share: vi.fn(),
+          unshare: vi.fn(),
+          pin: vi.fn(),
+          unpin: vi.fn(),
+          archiveManySessionIds: archiveManySessionIdsMock,
+          archiveAllActive: vi.fn(),
+        },
+      }));
+      render(
+        <ChatHistoryRail
+          activeSessionId={null}
+          isAuthenticated
+          isStreaming={false}
+          projectId="project-1"
+          onSelectThread={onSelectThread}
+          onNewChat={vi.fn()}
+        />,
+      );
+      return onSelectThread;
+    }
+
+    it("asks for sibling columns only while the flag is on", () => {
+      renderWithGroup();
+      expect(useChatHistoryMock).toHaveBeenCalledWith(
+        expect.objectContaining({ includeMultiModelSiblings: true }),
+      );
+      useFeatureFlagEnabledMock.mockReturnValue(false);
+      useChatHistoryMock.mockClear();
+      renderWithGroup();
+      expect(useChatHistoryMock).toHaveBeenCalledWith(
+        expect.objectContaining({ includeMultiModelSiblings: false }),
+      );
+    });
+
+    it("opens a group with its siblings and archives every column", async () => {
+      const onSelectThread = renderWithGroup();
+      expect(
+        screen.getByTestId("chat-history-multi-model-group"),
+      ).toBeInTheDocument();
+      const lead = chatHistoryRowPropsSpy.mock.calls
+        .map(([props]) => props)
+        .find((props) => props.archiveLabel === "Archive multi-model session");
+      expect(lead?.hideShare).toBe(true);
+      (lead?.onSelect as (session: ChatHistorySession) => void)(column("a", 0));
+      expect(onSelectThread).toHaveBeenCalledWith(
+        column("a", 0),
+        expect.arrayContaining([
+          expect.objectContaining({ _id: "a" }),
+          expect.objectContaining({ _id: "b" }),
+        ]),
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /archive all sessions in sessions/i,
+        }),
+      );
+      await waitFor(() =>
+        expect(archiveManySessionIdsMock).toHaveBeenCalledWith([
+          "a",
+          "solo",
+          "b",
+        ]),
+      );
+    });
   });
 });

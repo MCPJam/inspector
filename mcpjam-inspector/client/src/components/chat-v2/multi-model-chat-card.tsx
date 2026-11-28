@@ -19,7 +19,10 @@ import {
   formatErrorMessage,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { useChatSession } from "@/hooks/use-chat-session";
-import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
+import {
+  getChatComposerInteractivity,
+  useCompareStopRequest,
+} from "@/hooks/use-chat-stop-controls";
 import type { ModelDefinition } from "@/shared/types";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import { gateMcpToolResultImageRenderingByModelVisibility } from "@/lib/client-config-v2";
@@ -35,6 +38,8 @@ import {
   CompareCardEffort,
   type CompareCardEffortProps,
 } from "@/components/chat-v2/compare-card-effort";
+import { useLatestTurnCost } from "@/components/chat-v2/compare-cost";
+import { useCompareCardStatus } from "@/components/chat-v2/compare-card-status";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 
@@ -133,6 +138,14 @@ export function MultiModelChatCard({
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
   const lastBroadcastRequestIdRef = useRef<number | null>(null);
+  // The broadcast this card's latest prompt answers. A follow-up sent to this
+  // card alone, or a reset thread, answers none, so it never ranks on cost.
+  const [broadcastId, setBroadcastId] = useState<number>();
+  // A hosted send resolves server ids before it streams. Until the new
+  // broadcast's stream starts, the card's numbers are the previous turn's, so
+  // it reports itself running rather than rank them under the new broadcast.
+  const [awaitingBroadcastStream, setAwaitingBroadcastStream] =
+    useState(false);
   const onSummaryChangeRef = useRef(onSummaryChange);
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
   const lastAddColumnVersionRef = useRef(0);
@@ -167,6 +180,7 @@ export function MultiModelChatCard({
     addToolApprovalResponse,
     startChatWithMessages,
     harnessStartupPhase,
+    consumeTurnAborted,
   } = useChatSession({
     pickedModelSelection: selection,
     selectionIntent: "picked",
@@ -188,6 +202,8 @@ export function MultiModelChatCard({
     onReset: () => {
       setWidgetStateQueue([]);
       setModelContextQueue([]);
+      setBroadcastId(undefined);
+      setAwaitingBroadcastStream(false);
     },
   });
 
@@ -227,22 +243,38 @@ export function MultiModelChatCard({
     });
 
   const latestTurn = liveTraceEnvelope?.turns?.at(-1);
+  const latestTurnCost = useLatestTurnCost(liveTraceEnvelope);
+  useEffect(() => {
+    if (awaitingBroadcastStream && (isStreaming || error)) {
+      setAwaitingBroadcastStream(false);
+    }
+  }, [awaitingBroadcastStream, error, isStreaming]);
+  const cardStatus = useCompareCardStatus({
+    failed: Boolean(error),
+    isStreaming,
+    isBusy: awaitingBroadcastStream,
+    isThreadEmpty,
+    consumeTurnAborted,
+  });
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
       modelId: compareId,
       durationMs: latestTurn?.durationMs ?? null,
       tokens: latestTurn?.usage?.totalTokens ?? 0,
       toolCount: latestTurn?.actualToolCalls?.length ?? 0,
-      status: error
-        ? "error"
-        : isStreaming
-        ? "running"
-        : isThreadEmpty
-        ? "idle"
-        : "ready",
+      broadcastId,
+      ...(latestTurnCost ? { cost: latestTurnCost } : {}),
+      status: cardStatus,
       hasMessages: !isThreadEmpty,
     }),
-    [compareId, error, isStreaming, isThreadEmpty, latestTurn]
+    [
+      broadcastId,
+      cardStatus,
+      compareId,
+      isThreadEmpty,
+      latestTurn,
+      latestTurnCost,
+    ],
   );
 
   useEffect(() => {
@@ -368,6 +400,8 @@ export function MultiModelChatCard({
     }
 
     lastBroadcastRequestIdRef.current = broadcastRequest.id;
+    setBroadcastId(broadcastRequest.id);
+    setAwaitingBroadcastStream(true);
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -394,16 +428,12 @@ export function MultiModelChatCard({
     outgoingSenderMetadata,
   ]);
 
-  useEffect(() => {
-    if (stopRequestId <= 0) {
-      return;
-    }
-
-    stop();
-  }, [stop, stopRequestId]);
+  useCompareStopRequest(stopRequestId, stop);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
+      setBroadcastId(undefined);
+      setAwaitingBroadcastStream(false);
       sendMessage({
         text,
         metadata: outgoingSenderMetadata,

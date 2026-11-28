@@ -1,8 +1,6 @@
 import { effectiveHarnessId } from "@/shared/harness-descriptors";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useConvexAuth, useQueries } from "convex/react";
-import { Loader2 } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import { findProjectByAnyId } from "@/state/app-types";
 import { useServerActionsOptional } from "@/state/server-actions-context";
@@ -15,10 +13,9 @@ import {
   useHostedOrgModelConfig,
 } from "@/hooks/use-hosted-org-model-config";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
-import { ASK_ORG_ADMIN, MANAGE_AI_PROVIDERS } from "@/lib/org-keys-refusal";
 import {
   CHOOSE_ORG_JUDGE_MODEL,
-  orgKeyProblemsOf,
+  orgConfigProblemsOf,
   hostsForPreflight,
   type PreflightHost,
   preflightJudgeOf,
@@ -28,13 +25,10 @@ import {
   type PreflightSelection,
 } from "./suite-run-preflight-org-keys";
 import { useOrgHarnessKeys } from "./use-org-harness-keys";
-import { AccountPreflightNotices, useSuiteAccountPreflight, type AccountPreflight } from "./suite-run-account-preflight";
-import { ORG_KEY_MISSING_MESSAGE } from "@/shared/org-key-surfaces";
+import { useSuiteAccountPreflight, type AccountPreflight } from "./suite-run-account-preflight";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
-import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { convexErrMessage } from "@/lib/convex-error";
 import { getMcpServerDisplayName } from "@/lib/mcp-server-display-name";
-import { getProviderDisplayName } from "@/lib/provider-registry";
 import {
   classifyModelIdProvider,
   isRuntimeAccountModel,
@@ -66,11 +60,12 @@ export type RunPreflight = {
    * dependency that cannot run on its providers (an MCPJam-provided or
    * personal target model, a hosted judge, a judge nobody chose, a harness
    * client's model that is not an organization model on the harness's own
-   * vendor, a Cursor client without a ready org key). The run cannot start;
+   * vendor, a Cursor client without a ready org key). With or without the
+   * policy, an Azure model saved without a deployment. The run cannot start;
    * the backend refuses the same launch.
    * Absent when there are none.
    */
-  orgKeyProblems?: string[];
+  orgConfigProblems?: string[];
 } & AccountPreflight;
 
 export type RunPreflightState = RunPreflight & {
@@ -81,7 +76,7 @@ export type RunPreflightState = RunPreflight & {
     environmentIds: readonly string[],
   ) => string | null;
   /** Organization-key problems for only the environments picked in the sheet. */
-  orgKeyProblemsForEnvironments?: (
+  orgConfigProblemsForEnvironments?: (
     environmentIds: readonly string[],
   ) => string[];
   serverName: (ref: string) => string;
@@ -134,7 +129,7 @@ export function runPreflight(input: {
   if (orgConfig && orgRequiresOwnKeys(orgConfig)) {
     // Under the policy the organization's own connections are the only
     // source; "is the provider enabled" is subsumed by these problems.
-    const problems = orgKeyProblemsOf(orgConfig, input.models, input.judge);
+    const problems = orgConfigProblemsOf(orgConfig, input.models, input.judge);
     return {
       disconnected,
       removed,
@@ -143,7 +138,7 @@ export function runPreflight(input: {
         ? { refusalByEnvironment: input.refusalByEnvironment }
         : {}),
       disabledProviders: [],
-      ...(problems.length > 0 ? { orgKeyProblems: problems } : {}),
+      ...(problems.length > 0 ? { orgConfigProblems: problems } : {}),
     };
   }
   const disabledProviders = new Set<string>();
@@ -163,6 +158,7 @@ export function runPreflight(input: {
     )
       disabledProviders.add(provider);
   }
+  const problems = orgConfigProblemsOf(orgConfig, input.models, input.judge);
   return {
     disconnected,
     removed,
@@ -171,6 +167,7 @@ export function runPreflight(input: {
       ? { refusalByEnvironment: input.refusalByEnvironment }
       : {}),
     disabledProviders: [...disabledProviders],
+    ...(problems.length > 0 ? { orgConfigProblems: problems } : {}),
   };
 }
 
@@ -266,13 +263,14 @@ export function preflightTargets({
       cell.modelId ? cell.modelSelection : host?.modelSelection,
       model,
     );
+    const harness = effectiveHarnessId(client);
     return [
       {
         model,
         provider: provider.provider,
         ...(selection ? { selection } : {}),
         ...(host?.selectionKnown === false ? { selectionKnown: false } : {}),
-        ...(client?.harness ? { harness: client.harness } : {}),
+        ...(harness ? { harness } : {}),
       },
     ];
   });
@@ -340,7 +338,7 @@ export function readEnvironmentResolutions(
         );
       else if (typeof code !== "string" || !code.startsWith("ENV_"))
         console.warn(
-          "[Setup Run] Could not preflight an environment; the launch will check it.",
+          "[Set up run] Could not preflight an environment; the launch will check it.",
           resolved,
         );
       continue;
@@ -524,14 +522,12 @@ export function useSuiteRunPreflight({
       : {
           outOfCreditsReasonForEnvironments: (environmentIds) =>
             creditsReasonFor(modelsForEnvironments(environmentIds)),
-          orgKeyProblemsForEnvironments: (environmentIds) =>
-            visibleOrgConfig && orgRequiresOwnKeys(visibleOrgConfig)
-              ? orgKeyProblemsOf(
-                  visibleOrgConfig,
-                  modelsForEnvironments(environmentIds),
-                  preflightJudgeOf(suite),
-                )
-              : [],
+          orgConfigProblemsForEnvironments: (environmentIds) =>
+            orgConfigProblemsOf(
+              visibleOrgConfig,
+              modelsForEnvironments(environmentIds),
+              preflightJudgeOf(suite),
+            ),
         }),
     serverName: (ref) =>
       getMcpServerDisplayName(ref, { remoteServers: projectServers }),
@@ -560,7 +556,7 @@ export function scopePreflightToEnvironments<
   T extends RunPreflight &
     Pick<
       RunPreflightState,
-      "outOfCreditsReasonForEnvironments" | "orgKeyProblemsForEnvironments"
+      "outOfCreditsReasonForEnvironments" | "orgConfigProblemsForEnvironments"
     >,
 >(preflight: T, selectedEnvironmentIds: readonly string[]): T {
   const credits = preflight.outOfCreditsReasonForEnvironments
@@ -570,19 +566,19 @@ export function scopePreflightToEnvironments<
         ),
       }
     : {};
-  const orgKeyProblems = preflight.orgKeyProblemsForEnvironments
+  const orgConfigProblems = preflight.orgConfigProblemsForEnvironments
     ? {
-        orgKeyProblems: preflight.orgKeyProblemsForEnvironments(
+        orgConfigProblems: preflight.orgConfigProblemsForEnvironments(
           selectedEnvironmentIds,
         ),
       }
     : {};
   const byEnvironment = preflight.refusalByEnvironment;
-  if (!byEnvironment) return { ...preflight, ...credits, ...orgKeyProblems };
+  if (!byEnvironment) return { ...preflight, ...credits, ...orgConfigProblems };
   return {
     ...preflight,
     ...credits,
-    ...orgKeyProblems,
+    ...orgConfigProblems,
     refused: [
       ...new Set(
         selectedEnvironmentIds.flatMap((id) =>
@@ -631,167 +627,6 @@ export function hasBlockingPreflight(preflight?: RunPreflight): boolean {
   return Boolean(
     preflight?.removed.length ||
     preflight?.refused.length ||
-    preflight?.orgKeyProblems?.length || preflight?.accountProblems?.length,
-  );
-}
-
-export function RunPreflightNotices({
-  preflight,
-  disabled = false,
-  onEditSettings,
-  onConnectingChange,
-}: {
-  preflight: RunPreflightState;
-  disabled?: boolean;
-  /** Where an environment's launch refusal is fixed. */
-  onEditSettings?: () => void;
-  /** Start must wait: a launch connects the same server again. */
-  onConnectingChange?: (connecting: boolean) => void;
-}) {
-  const [connecting, setConnecting] = useState<string | null>(null);
-  // Kept with its server, so it goes away once that server connects, from
-  // here or anywhere else.
-  const [failure, setFailure] = useState<{
-    ref: string;
-    message: string;
-  } | null>(null);
-  const { disconnected, removed, refused, disabledProviders, serverName } =
-    preflight;
-  const orgKeyProblems = preflight.orgKeyProblems ?? [];
-  // A missing Cursor key's sentence already says who adds it, and where.
-  const modelProblem = orgKeyProblems.some(
-    (message) => message !== ORG_KEY_MISSING_MESSAGE,
-  );
-  if (
-    !disconnected.length &&
-    !removed.length &&
-    !refused.length &&
-    !disabledProviders.length &&
-    !orgKeyProblems.length && !preflight.accountProblems?.length
-  )
-    return null;
-  const openServers = (
-    <Button
-      variant="link"
-      size="sm"
-      className="h-auto p-0 text-xs"
-      onClick={() => navigateApp(routePaths.servers)}
-    >
-      Open Servers
-    </Button>
-  );
-  const connect = async (ref: string) => {
-    if (!preflight.connect) return;
-    setConnecting(ref);
-    onConnectingChange?.(true);
-    setFailure(null);
-    try {
-      const message = await preflight.connect(ref);
-      setFailure(message ? { ref, message } : null);
-    } catch (error) {
-      console.warn("[Setup Run] Connect failed.", error);
-      setFailure({ ref, message: `${serverName(ref)} didn't connect.` });
-    } finally {
-      setConnecting(null);
-      onConnectingChange?.(false);
-    }
-  };
-  return (
-    <section
-      aria-label="Before you run"
-      className="space-y-2 rounded-lg border border-warning/45 bg-warning/10 p-3 text-xs"
-    >
-      <AccountPreflightNotices {...{ preflight, disabled, onEditSettings }} />
-      {orgKeyProblems.length > 0 && (
-        <div className="space-y-1" data-testid="preflight-org-key-problems">
-          {orgKeyProblems.map((message) => (
-            <p key={`org-keys:${message}`} className="text-destructive">
-              {message}
-            </p>
-          ))}
-          {preflight.manageModels ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={disabled}
-              onClick={preflight.manageModels}
-            >
-              {MANAGE_AI_PROVIDERS}
-            </Button>
-          ) : modelProblem ? (
-            <p className="text-muted-foreground">
-              {ASK_ORG_ADMIN} if no organization model fits.
-            </p>
-          ) : null}
-        </div>
-      )}
-      {refused.map((message) => (
-        <p key={`refused:${message}`} className="text-destructive">
-          {message}{" "}
-          {onEditSettings && (
-            <Button
-              variant="link"
-              size="sm"
-              className="h-auto p-0 text-xs"
-              onClick={onEditSettings}
-            >
-              Open suite settings
-            </Button>
-          )}
-        </p>
-      ))}
-      {removed.map((ref) => (
-        <p key={`removed:${ref}`} className="text-destructive">
-          {serverName(ref)} is no longer in this project, so this suite can't
-          run. Re-add it, or point the suite at another server. {openServers}
-        </p>
-      ))}
-      {disconnected.map((ref) => (
-        <div key={`disconnected:${ref}`} className="flex items-center gap-2">
-          <p className="min-w-0 flex-1">
-            {serverName(ref)} isn't connected. Start tries to connect it.
-          </p>
-          {preflight.connect ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={disabled || connecting !== null}
-              aria-label={`Connect ${serverName(ref)}`}
-              onClick={() => void connect(ref)}
-            >
-              {connecting === ref && (
-                <Loader2 className="size-3 animate-spin" aria-hidden />
-              )}
-              Connect
-            </Button>
-          ) : (
-            openServers
-          )}
-        </div>
-      ))}
-      {failure && disconnected.includes(failure.ref) && (
-        <p role="alert" className="text-destructive">
-          {failure.message} {openServers}
-        </p>
-      )}
-      {disabledProviders.map((provider) => (
-        <div key={`provider:${provider}`} className="flex items-center gap-2">
-          <p className="min-w-0 flex-1">
-            {getProviderDisplayName(provider)} isn't enabled in your
-            organization's AI providers, so its models will fail to run.
-          </p>
-          {preflight.manageModels && (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={disabled}
-              onClick={preflight.manageModels}
-            >
-              Manage models
-            </Button>
-          )}
-        </div>
-      ))}
-    </section>
+    preflight?.orgConfigProblems?.length || preflight?.accountProblems?.length,
   );
 }

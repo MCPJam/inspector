@@ -14,7 +14,9 @@ import { Hono } from "hono";
 import "../../../types/hono";
 import { logger } from "../../../utils/logger";
 import { getRequestLogger } from "../../../utils/request-logger";
+import { reportRouteFailure } from "../../../utils/route-error-report.js";
 import { classifyWidgetError } from "../../../utils/error-classify";
+import { ErrorCode, WebRouteError } from "../../web/errors.js";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { injectOpenAICompat } from "../../../utils/widget-helpers";
 import {
@@ -61,6 +63,14 @@ const ACCEPTED_WIDGET_MIMETYPES = new Set<string>([
   MCP_APPS_MIMETYPE,
   ...LEGACY_WIDGET_MIMETYPES,
 ]);
+
+function isPolicyValidationError(error: unknown): error is WebRouteError {
+  return (
+    error instanceof WebRouteError &&
+    error.status === 400 &&
+    error.code === ErrorCode.VALIDATION_ERROR
+  );
+}
 
 /**
  * CSP mode types - matches client-side CspMode type
@@ -116,6 +126,7 @@ interface WidgetContentRequest {
 
 // Serve widget content with CSP metadata (SEP-1865)
 apps.post("/widget-content", async (c) => {
+  let failureHop: "user_server_hop" | "mcpjam_internal" = "mcpjam_internal";
   try {
     const body = (await c.req.json()) as Partial<WidgetContentRequest>;
     const {
@@ -165,9 +176,11 @@ apps.post("/widget-content", async (c) => {
     const mcpClientManager = c.mcpClientManager;
 
     // REUSE existing mcpClientManager.readResource (same as resources.ts)
+    failureHop = "user_server_hop";
     const resourceResult = await mcpClientManager.readResource(serverId, {
       uri: resolvedResourceUri,
     });
+    failureHop = "mcpjam_internal";
 
     // Extract HTML from resource contents
     const contents = resourceResult?.contents || [];
@@ -385,14 +398,23 @@ apps.post("/widget-content", async (c) => {
       metadataSources,
     });
   } catch (error) {
+    const policyValidationError = isPolicyValidationError(error);
     getRequestLogger(c, "routes.apps.mcp-apps").event(
       "widget.resource.failed",
       {
         widgetType: "mcp_apps",
-        errorCode: classifyWidgetError(error),
+        errorCode: policyValidationError
+          ? "validation_error"
+          : classifyWidgetError(error),
       },
     );
-    logger.error("[MCP Apps] Error fetching resource", error);
+    reportRouteFailure("[MCP Apps] Error fetching resource", error, {
+      source: "apps.mcp-apps.widget-content",
+      hop: policyValidationError ? "user_server_hop" : failureHop,
+    });
+    if (policyValidationError) {
+      return c.json({ error: error.message, code: error.code }, 400);
+    }
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,

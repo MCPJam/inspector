@@ -67,7 +67,7 @@ describe("preflight for a client-inherited organization model", () => {
     (resolution) => {
       const { plan, result } = preflightFor(resolution);
       expect(plan.models[0]?.selectionKnown).toBe(false);
-      expect(result.orgKeyProblems).toBeUndefined();
+      expect(result.orgConfigProblems).toBeUndefined();
     },
   );
 
@@ -85,7 +85,7 @@ describe("preflight for a client-inherited organization model", () => {
     });
     expect(plan.models[0]?.selection).toEqual(selection);
     expect(plan.models[0]?.selectionKnown).not.toBe(false);
-    expect(result.orgKeyProblems).toBeUndefined();
+    expect(result.orgConfigProblems).toBeUndefined();
   });
 
   it("blocks a resolved hosted selection of the same model", () => {
@@ -95,7 +95,7 @@ describe("preflight for a client-inherited organization model", () => {
       effectiveModelId: modelId,
       effectiveModelSelection: { modelId, source: "hosted" },
     });
-    expect(result.orgKeyProblems?.[0]).toMatch(/is an MCPJam-provided model/);
+    expect(result.orgConfigProblems?.[0]).toMatch(/is an MCPJam-provided model/);
   });
 
   it("names a known legacy selection as missing an organization connection", () => {
@@ -105,10 +105,10 @@ describe("preflight for a client-inherited organization model", () => {
       effectiveModelId: modelId,
       effectiveModelSelection: null,
     });
-    expect(result.orgKeyProblems?.[0]).toMatch(
+    expect(result.orgConfigProblems?.[0]).toMatch(
       /isn't saved with an organization provider connection/,
     );
-    expect(result.orgKeyProblems?.[0]).not.toMatch(/personal or local/);
+    expect(result.orgConfigProblems?.[0]).not.toMatch(/personal or local/);
   });
 
   it("does not carry a stale resolution onto the client's new model", () => {
@@ -121,7 +121,7 @@ describe("preflight for a client-inherited organization model", () => {
         source: "hosted",
       },
     });
-    expect(result.orgKeyProblems).toBeUndefined();
+    expect(result.orgConfigProblems).toBeUndefined();
   });
 
   it("still checks an explicit cell override while the client is unresolved", () => {
@@ -132,6 +132,6 @@ describe("preflight for a client-inherited organization model", () => {
         modelSelection: { modelId, source: "hosted" },
       },
     ]);
-    expect(result.orgKeyProblems?.[0]).toMatch(/is an MCPJam-provided model/);
+    expect(result.orgConfigProblems?.[0]).toMatch(/is an MCPJam-provided model/);
   });
 });

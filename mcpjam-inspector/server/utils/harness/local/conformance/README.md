@@ -21,6 +21,9 @@ isolated `HOME`, not a test runner's shared one.
 | `run-native-turn.ts` | `no-launcher` | a pack without the loopback launcher is REFUSED — the exposure probe, not the launcher, is what enforces the guarantee |
 | `run-lifecycle.ts` | `abort` | aborting mid-turn takes the vendor CLI down with the bridge, and removes the session state |
 | `run-lifecycle.ts` | `orphan-a` / `orphan-b` | a tree orphaned by a crashed Inspector is reclaimed by the janitor on the next start |
+| `run-runtime-conformance.ts` | `<harnessId>` | any other local runtime, by its credential: `run-gateway-turn.ts` or `run-login-lifecycle.ts` (CI's runtime legs run this) |
+| `run-gateway-turn.ts` | `<harnessId>` | a gateway runtime: a turn through the loopback gateway with no key in any supervised process, a host tool, detach and resume, loopback only, nothing left after Stop |
+| `run-login-lifecycle.ts` | `<harnessId>` | a runtime on its vendor's login, started with a login the vendor refuses: every adapter command translates, the CLI checks the login and opens no browser, the login is in no file, loopback only, nothing left after Stop |
 | `timing-decomp.mts` | — | cost decomposition: bare bridge spawn, digest, session ready |
 | `probe-timing.mts` | — | the exposure probe stays inside its budget on a machine with link-local addresses |
 | `group-settle.mts` | — | the group-member snapshot settles a tree whose root exited first (takes an optional node path; defaults to the running one) |

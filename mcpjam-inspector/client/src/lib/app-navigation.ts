@@ -53,6 +53,7 @@ export const ORGANIZATION_ROUTE_SECTIONS = [
   "sharing",
   "audit-log",
   "data-management",
+  "security",
   "api-keys",
   "plans",
   "integrations",
@@ -79,6 +80,7 @@ export function parseOrganizationSection(
     segment === "sharing" ||
     segment === "audit-log" ||
     segment === "data-management" ||
+    segment === "security" ||
     segment === "integrations"
   )
     return segment;
@@ -100,6 +102,7 @@ export const routePaths = {
   hostCompare: "/host-compare",
   /** Chrome-less host-compare for vanity domains (caniuse.dev) — no sidebar/nav, bypasses NUX. */
   embedHostCompare: "/embed/host-compare",
+  caniuseCompare: "/compare",
   /** Chrome-less conformance-score runner for score.mcpjam.com. */
   embedScore: "/embed/score",
   /** Chrome-less Connector Bench runner. `/<runId>` resumes an in-flight run. */
@@ -151,11 +154,11 @@ export const routePaths = {
   callback: "/callback",
   billing: "/billing",
   evals: "/evals",
-  /** Legacy Runs mode, available behind evaluate-enabled. */
+  /** Saved Runs bookmarks redirect to Evaluate. */
   evalsRuns: "/evals/runs",
   /** Redeem-based read-only share of an eval run. */
   evalsShared: "/evals/shared",
-  /** Public Evaluate; legacy Evaluate lives at /evals. */
+  /** Public Evaluate; /evals is retained for saved bookmarks. */
   evaluate: "/evaluate",
   organizations: "/organizations",
 } as const;
@@ -488,6 +491,7 @@ export function buildOrganizationPath(
     section === "sharing" ||
     section === "audit-log" ||
     section === "data-management" ||
+    section === "security" ||
     section === "integrations"
   )
     return `/organizations/${orgId}/${section}`;
@@ -533,6 +537,19 @@ export function buildEvaluatePath(route: EvalRoute): string {
   return buildEvalRoutePath(routePaths.evaluate, route);
 }
 
+/** The query key Evaluate reads to open a suite's run review on arrival. */
+export const EVAL_RUN_PARAM = "run";
+
+/**
+ * Evaluate, told to open `suiteId`'s run review as its Run does; starting
+ * the run then opens its run page. The page drops the key once it opens.
+ */
+export function buildEvaluateSuiteRunPath(suiteId: string): string {
+  return `${routePaths.evaluate}?${new URLSearchParams({
+    [EVAL_RUN_PARAM]: suiteId,
+  })}`;
+}
+
 /** Retired Evaluate URLs preserve artifact context; commits open the plain run table. */
 export function legacyEvalPathToEvaluatePath(
   pathname: string,
@@ -570,7 +587,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
     case "create":
       return `${prefix}/create`;
     case "eval-server":
-      // The first-run preview is Evaluate (New) only. /evals has no home
+      // The first-run preview is only available at /evaluate. /evals has no home
       // for it, so degrade to that prefix's list the same way commit-detail
       // degrades on /evaluate.
       if (prefix !== routePaths.evaluate) return prefix;
@@ -947,6 +964,13 @@ export function buildConformanceRunServerPath(serverName: string): string {
   return `${routePaths.conformance}?${new URLSearchParams({
     [CONFORMANCE_RUN_PARAM]: serverName,
   })}`;
+}
+
+/** The query key that opens the Conformance setup steps on arrival. */
+export const CONFORMANCE_SETUP_PARAM = "setup";
+
+export function buildConformanceSetupPath(): string {
+  return `${routePaths.conformance}?${CONFORMANCE_SETUP_PARAM}=1`;
 }
 
 export function buildConformanceSharePath(token: string): string {

@@ -68,6 +68,7 @@ export interface ToolDiscoveryState {
 export type ProgressiveDiscoveryEnabled = "auto" | true | false;
 
 export interface ProgressiveDiscoveryOptions {
+  runUnloadedToolCalls?: boolean;
   enabled?: ProgressiveDiscoveryEnabled;
   thresholdPct?: number;
   maxToolTokens?: number;
@@ -76,6 +77,7 @@ export interface ProgressiveDiscoveryOptions {
 }
 
 export interface ProgressiveToolPlan {
+  runUnloadedToolCalls?: boolean;
   enabled: boolean;
   /** Reasons the policy fired, for logging / payload. */
   reasons: string[];
@@ -319,6 +321,7 @@ export function decideProgressivePlan(
   if (requested === false) {
     return {
       enabled: false,
+      runUnloadedToolCalls: input.options?.runUnloadedToolCalls,
       reasons: ["forced_off"],
       policy,
       catalog: input.catalog,
@@ -329,6 +332,7 @@ export function decideProgressivePlan(
   if (requested === true) {
     return {
       enabled: true,
+      runUnloadedToolCalls: input.options?.runUnloadedToolCalls,
       reasons: ["forced_on"],
       policy,
       catalog: input.catalog,
@@ -359,6 +363,7 @@ export function decideProgressivePlan(
 
   return {
     enabled: trip,
+    runUnloadedToolCalls: input.options?.runUnloadedToolCalls,
     reasons: trip ? reasons : ["below_thresholds"],
     policy,
     catalog: input.catalog,
@@ -565,30 +570,6 @@ export function resolveActiveToolNames(
   return [...names];
 }
 
-export function shouldForceInitialToolSearch(
-  plan: ProgressiveToolPlan | undefined,
-  state: ToolDiscoveryState | undefined,
-  stepIndex: number,
-): boolean {
-  if (plan?.enabled !== true || state === undefined || stepIndex !== 0) {
-    return false;
-  }
-
-  const knownToolIds = new Set(plan.catalog.map((entry) => entry.toolId));
-  const hasKnownToolId = (ids: ReadonlySet<string>) => {
-    for (const id of ids) {
-      if (knownToolIds.has(id)) return true;
-    }
-    return false;
-  };
-
-  return (
-    !hasKnownToolId(state.loadedToolIds) &&
-    !hasKnownToolId(state.newlyLoadedToolIds) &&
-    !hasKnownToolId(state.pendingApprovalToolIds)
-  );
-}
-
 /**
  * Wrap a tools map so that out-of-subset tools throw a structured "not
  * loaded" error when invoked, while in-subset tools (meta-tools, loaded,
@@ -651,51 +632,38 @@ export function gateToolsToActiveSubset<T extends Record<string, unknown>>(
   return result as T;
 }
 
-/**
- * Hydrate `state.loadedToolIds` from `load_mcp_tools` calls in a prior
- * message history. Without this, every new request starts from an empty
- * loaded set and a multi-turn flow that depended on a previously loaded
- * tool would regress to meta-tools only — the model's history references
- * a tool the orchestrator no longer considers "loaded".
- *
- * We read directly from the tool-call inputs (`names`, or the legacy
- * `toolIds` older chats carry) rather than the tool-result payloads. The
- * input is the model's intent; using it means tools the model attempted to
- * load are restored even if a prior result was an error or got scrubbed.
- * Entries absent from the current catalog are dropped silently (the server
- * may have disconnected since).
- */
+/** Restore only successful load receipts, including partial successes. */
 export function hydrateDiscoveryStateFromHistory(
   state: ToolDiscoveryState,
   messages: ReadonlyArray<unknown>,
   catalog: ReadonlyArray<ToolCatalogEntry>,
 ): number {
-  let added = 0;
-  for (const msg of messages) {
-    if (!msg || typeof msg !== "object") continue;
-    const role = (msg as { role?: unknown }).role;
-    if (role !== "assistant") continue;
-    const content = (msg as { content?: unknown }).content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (!part || typeof part !== "object") continue;
-      const partType = (part as { type?: unknown }).type;
-      if (partType !== "tool-call") continue;
-      const toolName = (part as { toolName?: unknown }).toolName;
-      if (toolName !== META_TOOL_LOAD) continue;
-      const input = (part as { input?: unknown; args?: unknown }).input
-        ?? (part as { args?: unknown }).args;
-      if (!input || typeof input !== "object") continue;
-      for (const value of readLoadRequest(input)) {
-        const id = resolveLoadTarget(catalog, value);
-        if (!id) continue;
-        if (state.loadedToolIds.has(id)) continue;
-        state.loadedToolIds.add(id);
-        added += 1;
+  const before = state.loadedToolIds.size;
+  const requests = new Map<string, Set<string | undefined>>();
+  for (const message of messages) {
+    if (!message || typeof message !== "object" || !("role" in message) ||
+        !("content" in message) || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part?.toolName !== META_TOOL_LOAD || typeof part.toolCallId !== "string") continue;
+      if (message.role === "assistant" && part.type === "tool-call") {
+        requests.set(part.toolCallId, new Set(readLoadRequest(part.input ?? part.args)
+          .map(name => resolveLoadTarget(catalog, name))));
+        continue;
+      }
+      if (message.role !== "tool" || part.type !== "tool-result") continue;
+      const requested = requests.get(part.toolCallId);
+      requests.delete(part.toolCallId);
+      const result = part.output === undefined ? part.result
+        : part.output?.type === "json" ? part.output.value : undefined;
+      if (!requested || result?.isError || !Array.isArray(result?.loaded)) continue;
+      for (const loaded of result.loaded) {
+        if (typeof loaded?.name !== "string") continue;
+        const id = resolveLoadTarget(catalog, loaded.name);
+        if (id && requested.has(id)) state.loadedToolIds.add(id);
       }
     }
   }
-  return added;
+  return state.loadedToolIds.size - before;
 }
 
 /**
@@ -748,4 +716,29 @@ export function commitNewlyLoaded(state: ToolDiscoveryState): number {
   }
   state.newlyLoadedToolIds.clear();
   return promoted;
+}
+
+/** @deprecated Legacy first-step policy for callers that explicitly opt into forcing search. */
+export function shouldForceInitialToolSearch(
+  plan: ProgressiveToolPlan | undefined,
+  state: ToolDiscoveryState | undefined,
+  stepIndex: number,
+): boolean {
+  if (plan?.enabled !== true || state === undefined || stepIndex !== 0) {
+    return false;
+  }
+
+  const knownToolIds = new Set(plan.catalog.map((entry) => entry.toolId));
+  const hasKnownToolId = (ids: ReadonlySet<string>) => {
+    for (const id of ids) {
+      if (knownToolIds.has(id)) return true;
+    }
+    return false;
+  };
+
+  return (
+    !hasKnownToolId(state.loadedToolIds) &&
+    !hasKnownToolId(state.newlyLoadedToolIds) &&
+    !hasKnownToolId(state.pendingApprovalToolIds)
+  );
 }

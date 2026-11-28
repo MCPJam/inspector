@@ -1,0 +1,30 @@
+---
+title: "Tasks"
+description: "Start a background MCP task, follow its status, and inspect its result in Inspector."
+icon: "list-todo"
+---
+
+MCP tasks let a server return a task ID before a long-running operation finishes. Use the **Tasks** tab to follow the operation, provide input if it pauses, and inspect the final result.
+
+## Before you begin
+
+- [Connect a server](/inspector/connecting-servers) that advertises the MCP 2025-11-25 task utility or the Tasks extension (SEP-2663) on the negotiated [protocol version](/inspector/protocol-versions).
+- Choose a tool on that server that can return a task.
+- Use the hosted Inspector for a public HTTPS server or the local Inspector for STDIO and servers running on your machine. The hosted app polls for task status. Use the local Inspector to see live progress notifications or respond to legacy elicitation requests over the connection.
+
+## Start a background task
+
+1. Open **Inspect** → **Tools** and select your server.
+2. Pick a tool that supports background execution and enter its arguments. For the 2025-11-25 task utility, enable **Task** or **Execute as task** if the tool offers a choice. Tools marked **Task required** run as tasks automatically. For the Tasks extension, enable **Allow task response** when shown, so the server can respond with a task.
+3. Run the tool, then open **Inspect** → **Tasks** and select the new task. Match its task ID if several are listed.
+
+## Follow the task and read its result
+
+- **Working.** Keep automatic refresh on to poll for status updates, or click **Refresh tasks** to check on demand. A local connection can also show live progress when the server sends progress notifications.
+- **Input required.** Open the pending request and answer it when Inspector offers a form. The Tasks extension exposes pending input on the task itself. On the 2025-11-25 task utility, the server sends a separate elicitation request over the live connection.
+- **Completed or failed.** Select the task and inspect **Task Result** for the server's response and any error details.
+- **Cancel.** Choose **Cancel Task** on an active task to ask the server to stop it. Cancellation is cooperative. Refresh to see whether the server cancelled, completed, or removed the task.
+
+If you see **Tasks not supported**, check that both the server and your connection support the same task protocol. If the task list is empty, check that you selected the server that created the task and that the tool call returned a task ID.
+
+To check the full lifecycle automatically, use [Conformance](/conformance/overview) or [MCP Tasks conformance in the CLI](/cli/tasks-conformance). To drive a task from a terminal, see [MCP Tasks in the CLI](/cli/tasks).

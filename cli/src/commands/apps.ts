@@ -218,7 +218,7 @@ export function registerAppsCommands(program: Command): void {
       ...config,
       __suppressTelemetry: true,
     });
-    captureConformanceRunEvent();
+    captureConformanceRunEvent("apps", "single");
     const result = await test.run();
 
     const outputResult = reporter
@@ -685,7 +685,7 @@ export function registerAppsCommands(program: Command): void {
         // The CLI counts the run itself, under its own opt-outs.
         __suppressTelemetry: true,
       });
-      captureConformanceRunEvent();
+      captureConformanceRunEvent("apps", "suite");
       const result = await suite.run();
 
       const outputResult = reporter

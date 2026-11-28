@@ -6,15 +6,15 @@ icon: "arrow-up-right"
 
 SDK 3.0 makes code-first evals **enforce what they declare**. Three assertions the SDK accepted but never actually evaluated locally now gate every iteration, and two metrics stop returning a number that was not what their name promised.
 
-Most upgrades need no code changes. The exception is deliberate: a test that declared `expectedToolCalls` and never had them checked can start failing. That is the bug being fixed — the same run was already failing in the MCPJam dashboard, which recomputed the match server-side.
+Most upgrades need no code changes. The exception is deliberate: a test that declared `expectedToolCalls` and never had them checked can start failing. That is the bug being fixed: the same run was already failing in the MCPJam dashboard, which recomputed the match server-side.
 
 ## Why this changed
 
 Before 3.0, `expectedToolCalls` was upload metadata. The local verdict came from your `test` function alone; the platform then re-derived the tool-call match from the case snapshot. The two could disagree, and when they did the SDK was the one telling you what you wanted to hear:
 
 ```typescript
-// SDK 2.x — both of these were true at once
-test.accuracy(); // 1.0  — every iteration "passed" locally
+// SDK 2.x, both of these were true at once
+test.accuracy(); // 1.0, every iteration "passed" locally
 // …while the run for those same iterations showed FAILED in MCPJam,
 // because the expected tool call was never made.
 ```
@@ -53,7 +53,7 @@ const test = new EvalTest({
     ```
   </Accordion>
   <Accordion title="It was only ever documentation">
-    Remove `expectedToolCalls`. A test with no expectations behaves exactly as it did in 2.x — your `test` function is the whole verdict.
+    Remove `expectedToolCalls`. A test with no expectations behaves exactly as it did in 2.x; your `test` function is the whole verdict.
   </Accordion>
 </AccordionGroup>
 
@@ -63,19 +63,19 @@ const test = new EvalTest({
 
 ### `precision()` and `recall()` return real values
 
-In 2.x, `precision()`, `recall()` and `truePositiveRate()` all did `return this.accuracy()` — three names for the pass rate. They now compute genuine micro-averaged values from the tool-call matches, and **throw** when no test in the run declared `expectedToolCalls`, because there is nothing to compute them from.
+In 2.x, `precision()`, `recall()` and `truePositiveRate()` all did `return this.accuracy()`; three names for the pass rate. They now compute genuine micro-averaged values from the tool-call matches, and **throw** when no test in the run declared `expectedToolCalls`, because there is nothing to compute them from.
 
 ```typescript
 // 2.x: precision() === recall() === accuracy(), always
 // 3.0: real values, or a thrown error if there are no expectations
-test.accuracy(); // unchanged — the pass rate
+test.accuracy(); // unchanged: the pass rate
 ```
 
 If you were reading `precision()` as a stand-in for accuracy, call [`accuracy()`](/sdk/reference/eval-test#accuracy) directly.
 
 ### `falsePositiveRate()` is deprecated
 
-It returned `failures / iterations` — the failure rate, not a false-positive rate. Use [`unexpectedToolCallRate()`](/sdk/reference/eval-test#unexpectedtoolcallrate), the fraction of expectation-bearing iterations that made a call nobody asked for. `falsePositiveRate()` still returns the legacy value for runs without expectations, so existing dashboards do not move.
+It returned `failures / iterations`, the failure rate, not a false-positive rate. Use [`unexpectedToolCallRate()`](/sdk/reference/eval-test#unexpectedtoolcallrate), the fraction of expectation-bearing iterations that made a call nobody asked for. `falsePositiveRate()` still returns the legacy value for runs without expectations, so existing dashboards do not move.
 
 ## New in 3.0
 
@@ -98,10 +98,10 @@ const test = new EvalTest({
 });
 ```
 
-An iteration passes only if every predicate passes — independently of `failOnToolError`. See the [predicate gate](/sdk/reference/eval-reporting#predicate-gate) for the full list of types.
+An iteration passes only if every predicate passes, independently of `failOnToolError`. See the [predicate gate](/sdk/reference/eval-reporting#predicate-gate) for the full list of types.
 
 <Warning>
-  The three widget predicates (`widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors`) read render observations that only a hosted run captures, and they fail closed. `EvalTest` rejects them **at construction** rather than failing every iteration with a confusing reason — move those cases to a hosted suite.
+  The three widget predicates (`widgetRendered`, `widgetRenderLatencyUnder`, `widgetNoConsoleErrors`) read render observations that only a hosted run captures, and they fail closed. `EvalTest` rejects them **at construction** rather than failing every iteration with a confusing reason; move those cases to a hosted suite.
 </Warning>
 
 ### `matchOptions`
@@ -132,7 +132,7 @@ Full option table in the [`EvalTest` reference](/sdk/reference/eval-test#matchop
     `falsePositiveRate()` → `unexpectedToolCallRate()`. If you read `precision()` or `recall()` expecting the pass rate, switch to `accuracy()`.
   </Step>
   <Step title="Optional: adopt predicates">
-    Anything your `test` function asserts about the transcript — a tool was called, the reply contains a phrase, no tool errored — is expressible as a predicate, which makes it visible in the dashboard instead of hidden inside a boolean.
+    Anything your `test` function asserts about the transcript (a tool was called, the reply contains a phrase, no tool errored) is expressible as a predicate, which makes it visible in the dashboard instead of hidden inside a boolean.
   </Step>
 </Steps>
 

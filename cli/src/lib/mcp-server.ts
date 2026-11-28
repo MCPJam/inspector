@@ -18,16 +18,23 @@ import {
 import { z } from "zod";
 import {
   authChallengeHint,
-  normalizeCliError,
   usageError,
 } from "./output.js";
 import { redactForTelemetry } from "./redaction.js";
 import { summarizeServerDoctorTarget } from "./server-doctor.js";
 import { listToolsWithMetadata } from "./server-ops.js";
+import { createToolRunner, type OnToolCalled } from "./mcp-tool-runner.js";
+import { registerEvalTools, type ResolveEvalToolClient } from "./mcp-eval-tools.js";
 
 export interface McpJamMcpServerOptions {
   version: string;
   defaultTimeoutMs?: number;
+  /** Told about each finished tool call, with no arguments or results. */
+  onToolCalled?: OnToolCalled;
+  /** Also serve MCPJam's eval tools and their skill (`mcpjam mcp --evals`). */
+  evals?: boolean;
+  /** Replaces the CLI's own sign-in for the eval tools; for tests. */
+  resolveEvalClient?: ResolveEvalToolClient;
 }
 
 export interface McpJamMcpServerHandle {
@@ -66,6 +73,10 @@ const SERVER_INSTRUCTIONS = `This is the MCPJam CLI running locally as an MCP se
 Typical flow: connect_server (stdio command or HTTP url) -> list_tools / call_tool / list_resources / read_resource / list_prompts / get_prompt -> get_notifications to see what the target emitted -> disconnect_server. Connections stay open between calls, so notifications, list_changed events, and session state are observable across calls.
 
 For one-shot triage without managing a connection, use server_doctor (full diagnostic sweep, stdio or HTTP) or probe_server (HTTP-only reachability/auth probe). Tool results are JSON payloads about the target server; call_tool returns the target's raw CallToolResult, so check its "isError" field to detect tool-level failures. No MCPJam account is required.`;
+
+// The hosted MCP server's permalink lines, and where eval runs go from here.
+const EVAL_TOOLS_INSTRUCTIONS = `The eval tools (list_eval_suites, create_eval_suite, run_eval_suite, get_eval_run and the rest) are the hosted MCPJam MCP server's own. They use your MCPJam sign-in (mcpjam cloud login, or MCPJAM_API_KEY in this server's env) and run evals on the MCPJam server the CLI is signed in to, which can reach only HTTP servers saved in your project.
+Tool results may include a \`permalinks\` array; the text output repeats each one as a \`Label: https://…\` line. Those URLs carry the project they belong to. An MCPJam app URL built from an id alone has no project in it, so it opens whichever project the reader last selected rather than the one described.`;
 
 const targetConfigFields = {
   url: z
@@ -232,54 +243,11 @@ function withToolResultAuthChallenge(result: unknown): unknown {
   };
 }
 
-function toToolResult(payload: unknown) {
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(payload, null, 2),
-      },
-    ],
-  };
-}
-
-function toToolError(error: unknown) {
-  const normalized = normalizeCliError(error);
-  return {
-    isError: true,
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(
-          {
-            error: {
-              code: normalized.code,
-              message: normalized.message,
-              ...(normalized.details === undefined
-                ? {}
-                : { details: normalized.details }),
-            },
-          },
-          null,
-          2,
-        ),
-      },
-    ],
-  };
-}
-
-async function runTool(operation: () => Promise<unknown>) {
-  try {
-    return toToolResult(await operation());
-  } catch (error) {
-    return toToolError(error);
-  }
-}
-
 export function createMcpJamMcpServer(
   options: McpJamMcpServerOptions,
 ): McpJamMcpServerHandle {
   const defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
+  const runTool = createToolRunner(options.onToolCalled);
   const manager = new MCPClientManager(
     {},
     {
@@ -365,14 +333,22 @@ export function createMcpJamMcpServer(
         tools: {},
         extensions: SKILLS_EXTENSION_CAPABILITY,
       },
-      instructions: SERVER_INSTRUCTIONS,
+      instructions: options.evals
+        ? `${SERVER_INSTRUCTIONS.replace("No MCPJam account is required.", "Server debugging needs no MCPJam account.")}\n\n${EVAL_TOOLS_INSTRUCTIONS}`
+        : SERVER_INSTRUCTIONS,
     },
   );
 
   // Serve the skills that teach THIS surface — `mcp-inspector` interprets the
   // probe/doctor/OAuth output of the tools registered below, so an agent gets
   // the interpretation rules in the same connection as the tools.
-  registerSkillsSurface(server);
+  registerSkillsSurface(server, { evals: options.evals === true });
+  if (options.evals) {
+    registerEvalTools(server, {
+      onToolCalled: options.onToolCalled,
+      resolveClient: options.resolveEvalClient,
+    });
+  }
 
   server.registerTool(
     "connect_server",
@@ -392,7 +368,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: false, openWorldHint: true },
     },
     async (input) =>
-      runTool(async () => {
+      runTool("connect_server", async () => {
         const { config } = buildTargetConfig(input, defaultTimeoutMs);
         const requestedName = input.name?.trim();
         if (requestedName && manager.hasServer(requestedName)) {
@@ -439,7 +415,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: false, openWorldHint: true },
     },
     async ({ server: name }) =>
-      runTool(async () => {
+      runTool("disconnect_server", async () => {
         if (!manager.hasServer(name)) {
           throw usageError(`Unknown server "${name}".`);
         }
@@ -463,7 +439,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async () =>
-      runTool(async () => ({
+      runTool("list_servers", async () => ({
         servers: manager.listServers().map(describeServer),
       })),
   );
@@ -480,7 +456,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ server: name }) =>
-      runTool(async () => {
+      runTool("server_info", async () => {
         requireConnected(name);
         return {
           server: name,
@@ -501,7 +477,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name }) =>
-      runTool(async () => {
+      runTool("ping_server", async () => {
         requireConnected(name);
         const startedAt = Date.now();
         await manager.pingServer(name);
@@ -526,7 +502,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, cursor }) =>
-      runTool(async () => {
+      runTool("list_tools", async () => {
         requireConnected(name);
         return listToolsWithMetadata(manager, { serverId: name, cursor });
       }),
@@ -549,7 +525,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: false, openWorldHint: true },
     },
     async ({ server: name, tool, arguments: args }) =>
-      runTool(async () => {
+      runTool("call_tool", async () => {
         requireConnected(name);
         return withToolResultAuthChallenge(
           await manager.executeTool(name, tool, args ?? {}),
@@ -574,7 +550,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, cursor, templates }) =>
-      runTool(async () => {
+      runTool("list_resources", async () => {
         requireConnected(name);
         // Presence, not truthiness: `""` is a valid continuation cursor.
         const params = cursor !== undefined ? { cursor } : undefined;
@@ -596,7 +572,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, uri }) =>
-      runTool(async () => {
+      runTool("read_resource", async () => {
         requireConnected(name);
         return manager.readResource(name, { uri });
       }),
@@ -620,7 +596,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name }) =>
-      runTool(async () => {
+      runTool("list_skills", async () => {
         requireConnected(name);
         return listServerSkillCatalog(manager, name);
       }),
@@ -643,7 +619,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, uri }) =>
-      runTool(async () => {
+      runTool("get_skill", async () => {
         requireConnected(name);
         try {
           return { skill: await getVerifiedServerSkill(manager, { serverId: name, uri }) };
@@ -672,7 +648,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, skillUri, resourceUri }) =>
-      runTool(async () => {
+      runTool("read_skill_file", async () => {
         requireConnected(name);
         try {
           // Re-fetch the owning skill rather than trusting the caller: the
@@ -708,7 +684,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, cursor }) =>
-      runTool(async () => {
+      runTool("list_prompts", async () => {
         requireConnected(name);
         // Presence, not truthiness: `""` is a valid continuation cursor.
         return manager.listPrompts(
@@ -735,7 +711,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ server: name, prompt, arguments: args }) =>
-      runTool(async () => {
+      runTool("get_prompt", async () => {
         requireConnected(name);
         return manager.getPrompt(name, {
           name: prompt,
@@ -767,7 +743,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: false, openWorldHint: false },
     },
     async ({ server: name, method, clear }) =>
-      runTool(async () => {
+      runTool("get_notifications", async () => {
         const matches = notifications.filter(
           (entry) =>
             (!name || entry.server === name) &&
@@ -799,9 +775,10 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async (input) =>
-      runTool(async () => {
+      runTool("server_doctor", async () => {
         const { config, target } = buildTargetConfig(input, defaultTimeoutMs);
         const result = await runServerDoctor({
+          __suppressTelemetry: true,
           config,
           target: summarizeServerDoctorTarget(target, config),
           timeout: input.timeoutMs ?? defaultTimeoutMs,
@@ -836,7 +813,7 @@ export function createMcpJamMcpServer(
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ url, accessToken, headers, timeoutMs }) =>
-      runTool(async () => {
+      runTool("probe_server", async () => {
         assertHttpUrl(url);
         const result = await probeMcpServer({
           url,

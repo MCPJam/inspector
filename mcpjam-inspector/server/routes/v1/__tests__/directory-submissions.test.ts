@@ -539,6 +539,8 @@ describe("v1 directory submissions", () => {
       ["confirming an unknown field", { expectedRevision: 3, confirm: ["listing.nope"] }],
       ["an unknown key", { expectedRevision: 3, actorLabel: "me" }],
       ["no expected revision", { answers: { "listing.name": "x" } }],
+      ["a gate list it does not know", { expectedRevision: 3, checkGate: { skip: ["a"] } }],
+      ["a blank check id in the gate", { expectedRevision: 3, checkGate: { failOn: [" "] } }],
     ])("refuses %s before anything is written", async (_label, body) => {
       const res = await request("PATCH", `${BASE}/${SUBMISSION}`, { body });
       expect(res.status).toBe(400);
@@ -618,6 +620,21 @@ describe("v1 directory submissions", () => {
       );
     });
 
+    it("forwards a gate on its own, and null to clear it", async () => {
+      const gate = { failOn: ["claude.a"], warnOnly: ["claude.submission.listing-fields"] };
+      for (const checkGate of [gate, null]) {
+        const res = await request("PATCH", `${BASE}/${SUBMISSION}`, {
+          body: { expectedRevision: 3, checkGate },
+        });
+        expect(res.status).toBe(200);
+      }
+      const sent = convexMutationMock.mock.calls.map(([, args]) => args);
+      expect(sent).toEqual([
+        { submissionId: SUBMISSION, expectedRevision: 3, checkGate: gate, setVia: "api" },
+        { submissionId: SUBMISSION, expectedRevision: 3, checkGate: null, setVia: "api" },
+      ]);
+    });
+
     it("marks a replayed write", async () => {
       mutations["directorySubmissions:updateDirectorySubmission"] = () => ({
         ...ROW,
@@ -666,6 +683,25 @@ describe("v1 directory submissions", () => {
       });
     });
 
+    it("audit: invalidates package findings after the selected plugin version changes", async () => {
+      queries["directorySubmissions:getDirectorySubmission"] = () => ({
+        ...ROW, directory: "openai", flowId: "chatgpt-plugin", flowVersion: CHATGPT_PLUGIN_FLOW.version,
+        pluginVersionId: "version_b", lastRunId: RUN,
+      });
+      queries["claudeReadinessRuns:listReadinessRuns"] = () => [{ ...COMPLETE_RUN, readinessKind: "openai" }];
+      queries["directoryReadinessRunInputs:getReadinessRunInputs"] = () => ({
+        runId: RUN, pluginVersionId: "version_a", answers: ROW.answers,
+      });
+      stubReport({ findings: [{ ...finding("openai.package.manifest", "satisfied"), lane: "plugin-package" }] });
+      const response = await request("GET", `${BASE}/${SUBMISSION}/results`);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      const placed = body.steps.flatMap((step: { findings: { finding: {id: string}; evidenceStatus: string }[] }) => step.findings)
+        .find((entry: { finding: { id: string } }) => entry.finding.id === "openai.package.manifest");
+      expect(placed).toBeDefined();
+      expect(placed.evidenceStatus).toBe("stale");
+    });
+
     it("places the latest complete run's findings, stale where a frozen answer changed", async () => {
       const fetchMock = stubReport({
         findings: [
@@ -688,6 +724,8 @@ describe("v1 directory submissions", () => {
       expect(byId["claude.submission.urls"].evidenceStatus).toBe("established");
       expect(body.counts.blockers).toBe(1);
       expect(body.counts.notChecked).toBe(1);
+      // No gate saved: the directory's own.
+      expect(body.checkGate).toBeNull();
       // Frozen inputs read under the caller's own bearer, for this run.
       const inputsCall = convexQueryMock.mock.calls.find(
         ([ref]) => nameOf(ref) === "directoryReadinessRunInputs:getReadinessRunInputs",
@@ -698,6 +736,18 @@ describe("v1 directory submissions", () => {
       const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, any];
       expect(String(url)).toContain(`/internal/v1/claude-readiness/runs/report?runId=${RUN}`);
       expect(init.headers["x-inspector-service-token"]).toBe("service-token");
+    });
+
+    it("answers with the gate the submission has now", async () => {
+      const checkGate = { warnOnly: ["claude.submission.listing-fields"] };
+      queries["directorySubmissions:getDirectorySubmission"] = () => ({
+        ...ROW,
+        lastRunId: RUN,
+        checkGate,
+      });
+      stubReport({ findings: [finding("claude.submission.listing-fields", "violated")] });
+      const res = await request("GET", `${BASE}/${SUBMISSION}/results`);
+      expect(((await res.json()) as { checkGate: unknown }).checkGate).toEqual(checkGate);
     });
 
     it("marks nothing stale when the run's frozen answers are gone", async () => {
@@ -764,6 +814,24 @@ describe("v1 directory submissions", () => {
       });
     });
 
+    it("refuses a mock server by name before a run is requested", async () => {
+      authorizeServerMock.mockResolvedValue({
+        authorized: true,
+        serverConfig: { transportType: "http", url: "https://placeholder.invalid/mcp", mock: { mockId: "m1" } },
+      });
+      const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { idempotencyKey: "r1" },
+      });
+      expect(res.status).toBe(422);
+      expect(((await res.json()) as { message: string }).message).toContain(
+        "Directory submissions do not take mock servers",
+      );
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ submissionId: SUBMISSION }),
+      );
+    });
+
     it("grades the submission's own server and forwards the submission", async () => {
       const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
         body: { idempotencyKey: "r1" },
@@ -810,6 +878,55 @@ describe("v1 directory submissions", () => {
       });
       expect(clash.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("forwards the test plan revision the start names, and only when named", async () => {
+      await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { testPlanRevision: 2 },
+      });
+      await request("POST", `${BASE}/${SUBMISSION}/runs`, { body: {} });
+      const zero = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { testPlanRevision: 0 },
+      });
+      expect(zero.status).toBe(400);
+      const starts = convexMutationMock.mock.calls
+        .filter(([ref]) => nameOf(ref) === "claudeReadinessRuns:requestReadinessRun")
+        .map(([, args]) => args as Record<string, unknown>);
+      expect(starts).toHaveLength(2);
+      expect(starts[0]).toMatchObject({ submissionId: SUBMISSION, testPlanRevision: 2 });
+      expect(starts[1]).not.toHaveProperty("testPlanRevision");
+    });
+
+    it("answers a stale test plan revision with the current one", async () => {
+      mutations["claudeReadinessRuns:requestReadinessRun"] = () => {
+        throw new ConvexError({
+          code: "CONFLICT",
+          message:
+            "The test plan changed since you read it. Read revision 3, then try again.",
+          currentRevision: 3,
+        });
+      };
+      const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { testPlanRevision: 2 },
+      });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as Record<string, any>;
+      expect(body.details.currentRevision).toBe(3);
+      expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
+    });
+
+    it("says a start that names a test plan revision found no saved plan, not that the run is missing", async () => {
+      const message =
+        "This submission has no saved test plan. Save one, then start the run with its revision.";
+      mutations["claudeReadinessRuns:requestReadinessRun"] = () => {
+        throw new ConvexError({ code: "NOT_FOUND", message });
+      };
+      const res = await request("POST", `${BASE}/${SUBMISSION}/runs`, {
+        body: { testPlanRevision: 1 },
+      });
+      expect(res.status).toBe(404);
+      expect(((await res.json()) as Record<string, any>).message).toBe(message);
+      expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
     });
 
     it("refuses a run the backend says does not match the submission", async () => {

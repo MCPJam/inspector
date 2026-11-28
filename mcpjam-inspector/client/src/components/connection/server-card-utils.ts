@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import { Check, Loader2, Wifi, X } from "lucide-react";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ConnectionStatus } from "@/state/app-types";
+import { mockIdFromPlaceholderUrl, mockRouteAddress } from "@/shared/mock-address";
 
 interface ConnectionStatusMeta {
   label: string;
@@ -103,9 +104,20 @@ export const UNKNOWN_CONNECTION_STATUS = {
   indicatorClassName: "bg-transparent",
 } as const;
 
+/**
+ * A mock's saved address is a placeholder that resolves nowhere; what a person
+ * can copy is the route an outside client dials on this Inspector, the same
+ * address the authoring routes return as the mock's address.
+ */
+const mockDialAddress = (url: string | URL): string | undefined => {
+  const mockId = mockIdFromPlaceholderUrl(url);
+  if (!mockId || typeof window === "undefined") return undefined;
+  return mockRouteAddress(window.location.origin, mockId);
+};
+
 export const getServerCommandDisplay = (config: MCPServerConfig): string => {
   if (config.url) {
-    return config.url.toString();
+    return mockDialAddress(config.url) ?? config.url.toString();
   }
 
   const command = config.command ?? "";

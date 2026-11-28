@@ -44,7 +44,6 @@ import {
   ConformancePreRun,
   ConformanceTabPanel,
   NO_SERVERS_MESSAGE,
-  RUN_LABEL,
   type ConformanceView,
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
@@ -56,6 +55,11 @@ import {
   type SuiteState,
 } from "@/hooks/use-conformance-run";
 import { ConformanceRunHeader } from "./ConformanceRunHeader";
+import { useConformanceRunCompleted } from "./use-conformance-run-completed";
+import {
+  ConformanceRunButton,
+  ConformanceRunRequestContext,
+} from "./conformance-run-request";
 import {
   PersistConformanceRun,
   type ConformancePersistConfig,
@@ -308,6 +312,8 @@ export function ConformanceContent({
     skipOAuth,
   } = snapshot;
 
+  useConformanceRunCompleted(isRunning, pooledScore);
+
   const protocolChecks = useMemo(
     () => protocolCatalog(snapshot.resolvedProtocolVersion ?? versionPin),
     [snapshot.resolvedProtocolVersion, versionPin],
@@ -467,25 +473,20 @@ export function ConformanceContent({
 
   const tasksUpdateCheck = useTasksUpdateCheckEnabled();
 
+  const runRequest = {
+    run: () => {
+      // Not Run again: this one is on the page's tabs, so Back returns there.
+      onRunFrom?.(view);
+      (onRequestRun ?? handleRun)();
+    },
+    disabled: isRunning || isConnecting || runDisabled,
+  };
   const runButton = (
-    <Button
-      size="sm"
-      onClick={() => {
-        // Not Run again: this one is on the page's tabs, so Back returns there.
-        onRunFrom?.(view);
-        (onRequestRun ?? handleRun)();
-      }}
-      disabled={isRunning || isConnecting || runDisabled}
-    >
-      {isRunning || isConnecting ? (
-        <>
-          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-          {isConnecting ? "Connecting..." : "Running..."}
-        </>
-      ) : (
-        RUN_LABEL
-      )}
-    </Button>
+    <ConformanceRunButton
+      request={runRequest}
+      running={isRunning}
+      connecting={isConnecting}
+    />
   );
   // `!isConnected` hides the alert in the render before the effect above
   // resets the failure.
@@ -544,8 +545,10 @@ export function ConformanceContent({
 
       <ConformanceTabPanel view={view}>
         {view === "history" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
-            {history}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-6">
+            <ConformanceRunRequestContext.Provider value={runRequest}>
+              {history}
+            </ConformanceRunRequestContext.Provider>
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">

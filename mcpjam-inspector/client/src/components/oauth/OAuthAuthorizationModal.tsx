@@ -1,113 +1,67 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { OAUTH_POPUP_MARKER_TTL_MS } from "@/lib/oauth/popup-handoff-marker";
 import {
-  dismissOAuthCallbackHint,
-  showOAuthCallbackHint,
-} from "@/lib/oauth/callback-hint";
+  useOAuthPopupHandoff,
+  type OAuthCallbackMessage,
+} from "@/lib/oauth/popup-handoff";
 
 interface OAuthAuthorizationModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   authorizationUrl: string;
-  onAuthorizationComplete?: () => void;
+  /** The popup's answer: a code or a provider error, its `state` checked. */
+  onCallback?: (message: OAuthCallbackMessage) => void;
+  /** Bump while a sign-in is pending to open its popup again. */
+  reopenRequest?: number;
 }
 
 export const OAuthAuthorizationModal = ({
   open,
   onOpenChange,
   authorizationUrl,
-  onAuthorizationComplete,
+  onCallback,
+  reopenRequest = 0,
 }: OAuthAuthorizationModalProps) => {
-  const popupRef = useRef<Window | null>(null);
   const hasOpenedRef = useRef(false);
+  const {
+    start: startHandoff,
+    reopen: reopenHandoff,
+    cancel: cancelHandoff,
+  } = useOAuthPopupHandoff();
+  const latestRef = useRef({ onOpenChange, onCallback });
+  latestRef.current = { onOpenChange, onCallback };
+  const seenReopenRequestRef = useRef(reopenRequest);
 
-  const openAuthorizationPopup = () => {
-    const width = 600;
-    const height = 700;
-    const left = window.screenX + (window.outerWidth - width) / 2;
-    const top = window.screenY + (window.outerHeight - height) / 2;
-
-    // Use unique window name each time to prevent reusing old popup with stale auth code
-    const uniqueWindowName = `oauth_authorization_${Date.now()}`;
-    popupRef.current = window.open(
-      authorizationUrl,
-      uniqueWindowName,
-      `width=${width},height=${height},left=${left},top=${top},toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes`,
-    );
-
-    if (!popupRef.current) {
-      onOpenChange(false);
-      hasOpenedRef.current = false;
-      return () => {};
-    }
-
-    // Monitor popup closure. A code closes the modal first, which clears this
-    // interval, so a close seen here means the sign-in never came back.
-    const checkPopupClosed = setInterval(() => {
-      if (popupRef.current?.closed) {
-        clearInterval(checkPopupClosed);
-        onOpenChange(false);
-        hasOpenedRef.current = false;
-        showOAuthCallbackHint("try again");
-      }
-    }, 500);
-
-    return () => {
-      clearInterval(checkPopupClosed);
-    };
-  };
-
-  // Listen for OAuth callback messages from popup
-  useEffect(() => {
-    // Method 1: Listen via window.postMessage (standard approach)
-    const handleMessage = (event: MessageEvent) => {
-      // Verify origin matches our app
-      if (event.origin !== window.location.origin) {
-        return;
-      }
-
-      // Check if this is an OAuth callback message
-      if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-        dismissOAuthCallbackHint();
-        // Notify parent component
-        onAuthorizationComplete?.();
-        // Close our "modal" state
-        onOpenChange(false);
-        hasOpenedRef.current = false;
-      }
-    };
-
-    // Method 2: Listen via BroadcastChannel (fallback for COOP-protected OAuth servers)
-    let channel: BroadcastChannel | null = null;
-    try {
-      channel = new BroadcastChannel("oauth_callback_channel");
-      channel.onmessage = (event) => {
-        if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-          // A COOP page can read as closed early; its code still comes here.
-          dismissOAuthCallbackHint();
-          // Notify parent component
-          onAuthorizationComplete?.();
-          // Close our "modal" state
-          onOpenChange(false);
-          hasOpenedRef.current = false;
-        }
-      };
-    } catch (error) {
-      console.warn("[OAuth Popup] BroadcastChannel not supported:", error);
-    }
-
-    window.addEventListener("message", handleMessage);
-    return () => {
-      window.removeEventListener("message", handleMessage);
-      channel?.close();
-    };
-  }, [onOpenChange, onAuthorizationComplete]);
+  const close = useCallback(() => {
+    latestRef.current.onOpenChange(false);
+    hasOpenedRef.current = false;
+  }, []);
 
   // Open popup when modal opens
   useEffect(() => {
     if (open && !hasOpenedRef.current) {
       hasOpenedRef.current = true;
-      let cleanup: (() => void) | undefined;
       let cancelled = false;
+
+      // The handoff outlives the modal's open state: a COOP provider page
+      // makes the popup read as closed while the user is still signing in.
+      const openAuthorizationPopup = () => {
+        const started = startHandoff({
+          authorizationUrl,
+          flow: "debugger",
+          deadlineMs: OAUTH_POPUP_MARKER_TTL_MS,
+          retryLabel: "try again",
+          onResult: (message) => {
+            latestRef.current.onCallback?.(message);
+            close();
+          },
+          onExpire: close,
+        });
+        if (!started.popup) {
+          started.cancel();
+          close();
+        }
+      };
 
       const openExternal = window.electronAPI?.app?.openExternal;
       if (window.isElectron && openExternal) {
@@ -115,37 +69,40 @@ export const OAuthAuthorizationModal = ({
           try {
             await openExternal(authorizationUrl);
             if (cancelled) return;
-            onOpenChange(false);
-            hasOpenedRef.current = false;
+            close();
           } catch (error) {
             console.error(
               "[OAuth Popup] Failed to open system browser:",
               error,
             );
             if (cancelled) return;
-            cleanup = openAuthorizationPopup();
+            openAuthorizationPopup();
           }
         })();
 
         return () => {
           cancelled = true;
-          cleanup?.();
         };
       }
 
-      cleanup = openAuthorizationPopup();
-
-      return () => {
-        cancelled = true;
-        cleanup?.();
-      };
+      openAuthorizationPopup();
+      return;
     }
 
     // Reset flag when modal closes
     if (!open) {
       hasOpenedRef.current = false;
     }
-  }, [open, authorizationUrl, onOpenChange]);
+  }, [open, authorizationUrl, startHandoff, close]);
+
+  useEffect(() => {
+    if (reopenRequest === seenReopenRequestRef.current) return;
+    seenReopenRequestRef.current = reopenRequest;
+    if (!reopenHandoff()) {
+      cancelHandoff();
+      close();
+    }
+  }, [reopenRequest, reopenHandoff, cancelHandoff, close]);
 
   // This component doesn't render anything - it just manages the popup
   return null;

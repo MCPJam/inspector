@@ -34,6 +34,7 @@ import {
   type RuntimeOperationKey,
 } from "../runtime-lifecycle.js";
 import { computeTreeDigest } from "../runtime-identity.js";
+import { parkLocalTurn, resetApprovalParkForTests } from "../approval-park.js";
 import { setRuntimeProbeForTests } from "../runtime-probe.js";
 import { localPackTarget } from "../targets.js";
 import * as packDigests from "../pack-digests.generated.js";
@@ -622,6 +623,31 @@ describe("the acknowledgement contract", () => {
     await expect(
       installRuntimePack({ harnessId: "claude-code" }),
     ).resolves.toMatchObject({ state: "ready" });
+  });
+
+  it("ends this harness's idle kept runtimes when an install starts", async () => {
+    // A kept runtime holds its pack reserved; an install that may replace that
+    // pack must not find it held by a runtime nobody is using.
+    const kept = (sessionId: string, harnessId: string) => {
+      const end = vi.fn(async (_reason: string) => {});
+      parkLocalTurn({
+        sessionId, generation: "gen-1", userId: "u1", projectId: "p1", harnessId,
+        runtimeDigest: "sha256:kept", stateVersion: 1, fingerprint: "config", resources: {}, end,
+        isAlive: () => true, holdModelTraffic: () => {},
+      });
+      return end;
+    };
+    try {
+      const ours = kept("kept-claude", "claude-code");
+      const other = kept("kept-codex", "codex");
+      const started = await startRuntimeInstall({ harnessId: "claude-code" });
+      expect(started.kind).toBe("started");
+      await vi.waitFor(() => expect(ours).toHaveBeenCalledWith("runtime-update"));
+      expect(other).not.toHaveBeenCalled();
+      await installRuntimePack({ harnessId: "claude-code" });
+    } finally {
+      resetApprovalParkForTests();
+    }
   });
 
   it("joins rather than starting a second extraction", async () => {

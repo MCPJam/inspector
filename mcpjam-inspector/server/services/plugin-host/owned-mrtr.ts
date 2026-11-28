@@ -10,6 +10,7 @@ import {
   OPENAI_ELICITATION_EXTENSION,
   resumeInputRequiredOperation,
   selectElicitationFormSchema,
+  type InputResponses,
   type MCPClientManager,
   type MrtrInputCollector,
 } from "@mcpjam/sdk";
@@ -46,7 +47,9 @@ import {
   type PluginToolCallParams,
   type TrustedInvocationOwner,
 } from "./invocation.js";
-import { pluginFormSources } from "./form-sources.js";
+import { pluginFormSources, type PluginFormSource } from "./form-sources.js";
+import type { PluginFormOwnerRef } from "./form-source-control.js";
+import type { PluginInstanceIdentity } from "./instances.js";
 
 /**
  * Forms turned off while an operation's form was pending: its answer is never
@@ -146,6 +149,11 @@ export function createOwnedPluginMrtr(deps: {
   /** The client's CURRENT Forms toggle, as of the latest `assertCurrent`
    * (one fresh admission read). Absent counts as on. */
   formsEnabled?: () => boolean;
+  /** The verified identity the form's sources are bound to. */
+  identity: PluginInstanceIdentity;
+  /** The owner's stored row. With it, sources are stored and any replica
+   * can restore them; without it they stay in this process. */
+  ownerRef?: PluginFormOwnerRef;
 }) {
   const formsOff = () => deps.formsEnabled?.() === false;
   const formSchema = (params: Record<string, unknown> | undefined) =>
@@ -165,13 +173,17 @@ export function createOwnedPluginMrtr(deps: {
   let operation: Operation | undefined;
   let captured: PluginInvocationSuspension | undefined;
   const readCaptured = (): PluginInvocationSuspension | undefined => captured;
-  const bindSources = (op: Operation, pending: PluginInvocationSuspension) => {
+  const bindSources = async (
+    op: Operation,
+    pending: PluginInvocationSuspension,
+  ) => {
     const requests = pending.pending
       .inputRequests as import("../../../shared/mrtr-continuation.js").MrtrInputRequestDisplay[];
     const bound: ReturnType<typeof pluginFormSources.bind>[] = [];
     try {
-      const displays = requests.map((request) => {
-        const lease = pluginFormSources.bind({
+      const displays = [];
+      for (const request of requests) {
+        const source: PluginFormSource = {
           owner: op.authorization.owner,
           ...deps.sourceBinding,
           invocationId: op.invocationId,
@@ -188,10 +200,18 @@ export function createOwnedPluginMrtr(deps: {
           fileResources,
           ...(uploadTarget() ? { uploadTarget: uploadTarget() } : {}),
           expiresAt: pending.pending.expiresAt as number,
-        });
+        };
+        const lease = deps.ownerRef
+          ? await pluginFormSources.bindStored(
+              source,
+              deps.identity,
+              deps.ownerRef,
+              op.signal,
+            )
+          : pluginFormSources.bind(source, deps.identity.subject);
         bound.push(lease);
-        return { ...request, pluginFormSourceToken: lease.token };
-      });
+        displays.push({ ...request, pluginFormSourceToken: lease.token });
+      }
       return new PluginInvocationSuspension({
         ...pending.pending,
         inputRequests: displays,
@@ -341,7 +361,7 @@ export function createOwnedPluginMrtr(deps: {
               "Form cancelled: Forms is turned off for this client",
             );
           }
-          return bindSources(
+          return await bindSources(
             { authorization, invocationId, params, signal },
             suspended,
           );
@@ -363,8 +383,20 @@ export function createOwnedPluginMrtr(deps: {
       params: PluginToolCallParams,
       submission: PluginContinuationSubmission,
       signal: AbortSignal,
+      pending?: PluginInvocationSuspension,
     ) {
       const op: Operation = { authorization, invocationId, params, signal };
+      // The round's sources, as the receipt recorded them. Whichever replica
+      // serves this leg restores each one from its token.
+      const shown = new Map(
+        (
+          (pending?.pending.inputRequests ?? []) as {
+            key?: unknown;
+            requestedSchema?: unknown;
+            pluginFormSourceToken?: unknown;
+          }[]
+        ).map((request) => [request.key, request]),
+      );
       const current = manager();
       await deps.assertCurrent();
       const formsDisabled = async () =>
@@ -449,21 +481,39 @@ export function createOwnedPluginMrtr(deps: {
             origin: ResolvedInvocationContext["origin"];
           }[] = [];
           const sources: AbortSignal[] = [];
-          const mapped = Object.fromEntries(
-            Object.entries(state.pendingInputRequests).map(([key, request]) => {
+          const answers = [];
+          for (const [key, request] of Object.entries(
+            state.pendingInputRequests,
+          )) {
+            const answer = await (async () => {
               const requestedSchema = formSchema(
                 (request as { params?: Record<string, unknown> }).params,
               );
-              const original = pluginFormSources.find(
-                authorization.owner,
-                invocationId,
-                {
-                  kind: "mrtr",
-                  id: submission.continuationId,
-                  round: submission.round,
-                  inputRequestKey: key,
-                },
-              );
+              const parent = {
+                kind: "mrtr" as const,
+                id: submission.continuationId,
+                round: submission.round,
+                inputRequestKey: key,
+              };
+              const display = shown.get(key);
+              const original =
+                typeof display?.pluginFormSourceToken === "string"
+                  ? {
+                      token: display.pluginFormSourceToken,
+                      ...(await pluginFormSources.restore(
+                        display.pluginFormSourceToken,
+                        deps.identity,
+                        parent,
+                        signal,
+                        display.requestedSchema,
+                      )),
+                    }
+                  : pluginFormSources.find(
+                      authorization.owner,
+                      deps.identity.subject,
+                      invocationId,
+                      parent,
+                    );
               sources.push(original.signal);
               if (
                 original.source.hostRevision !==
@@ -476,7 +526,7 @@ export function createOwnedPluginMrtr(deps: {
               const answer = openAILegacyFormSchemas.result.parse(
                 responses[key],
               );
-              if (answer.action !== "accept") return [key, answer];
+              if (answer.action !== "accept") return answer;
               if (
                 !answer.content ||
                 !validatePluginFormContent(
@@ -487,7 +537,7 @@ export function createOwnedPluginMrtr(deps: {
                 throw new PluginInvocationError(
                   "CONTINUATION_FORM_UNSUPPORTED",
                 );
-              if (!original.source.uploadTarget) return [key, answer];
+              if (!original.source.uploadTarget) return answer;
               if (uploadTarget() !== original.source.uploadTarget)
                 throw new PluginInvocationError("FORM_FILE_UNAVAILABLE");
               const delivery = pluginFormFileGrants.prepareDelivery(
@@ -497,9 +547,11 @@ export function createOwnedPluginMrtr(deps: {
               );
               assertUploadAllowed(original.source.origin, delivery.hasUploads);
               deliveries.push({ delivery, origin: original.source.origin });
-              return [key, { ...answer, content: delivery.content }];
-            }),
-          );
+              return { ...answer, content: delivery.content };
+            })();
+            answers.push([key, answer] as const);
+          }
+          const mapped = Object.fromEntries(answers) as InputResponses;
           return {
             responses: mapped,
             commit: async () => {
@@ -556,7 +608,7 @@ export function createOwnedPluginMrtr(deps: {
       }
       if (result.outcome === "input_required") {
         try {
-          return bindSources(
+          return await bindSources(
             { authorization, invocationId, params, signal },
             new PluginInvocationSuspension({
               status: "input_required",

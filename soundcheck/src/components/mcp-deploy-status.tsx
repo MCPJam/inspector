@@ -34,6 +34,7 @@ import {
 import { formatRelativeTime, shortSha, truncate } from "@/lib/format";
 import { HeroStat, Sha, Tile, TileAction } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
+import { McpPromoteButton } from "@/components/mcp-promote-button";
 
 const INSPECTOR = { owner: "MCPJam", repo: "inspector" };
 const MCP_STAGING_WORKFLOW = "deploy-mcp-staging.yml";
@@ -133,6 +134,7 @@ export async function McpDeployStatus() {
             </>
           }
         />
+        <McpPromoteButton />
       </Tile>
     );
   }
@@ -237,6 +239,7 @@ export async function McpDeployStatus() {
           </li>
         )}
       </ul>
+      <McpPromoteButton />
     </Tile>
   );
 }

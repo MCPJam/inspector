@@ -120,12 +120,22 @@ export function directoryTestCaseDigest(
 
 export interface SummarizeDirectoryToolTestsInput {
   plan: DirectoryTestPlan;
-  /** The tools the server lists now: a result from another schema is stale. */
-  tools: readonly DirectoryTestPlanTool[];
+  /**
+   * The tools the server lists now: a result from another schema is stale.
+   * Leave it out to grade the calls as they were made, when the listing they
+   * were made against is not at hand: a stored catalog normalizes schemas
+   * and annotations, so its tools would make every result read as stale.
+   */
+  tools?: readonly DirectoryTestPlanTool[];
   /** Ledger records; a later record for a case replaces an earlier one. */
   calls: readonly DirectoryTestCallRecord[];
-  /** The reviewer account tests run as now: a result from another is stale. */
-  account?: string;
+  /**
+   * The reviewer account tests run as now, or `null` when they run with no
+   * account because the server needs no sign-in. A result made as another
+   * account, or with an account when there is none now and the reverse, is
+   * stale. Leave it out to compare no accounts.
+   */
+  account?: string | null;
   /** Existing fixtures the lookup did not find. */
   missingFixtures?: readonly string[];
   /** Why the sweep stopped before every case ran. */
@@ -141,7 +151,8 @@ export function summarizeDirectoryToolTests(
 ): DirectoryToolTestResult[] {
   const { plan } = input;
   const latest = new Map(input.calls.map((call) => [call.callKey, call]));
-  const listed = new Map(input.tools.map((tool) => [tool.name, tool]));
+  const listed =
+    input.tools && new Map(input.tools.map((tool) => [tool.name, tool]));
   const entries = new Map(plan.tools.map((entry) => [entry.tool, entry]));
   const graded = new Map<string, DirectoryTestCaseResult>();
   const byTool = new Map<string, DirectoryTestCaseResult[]>();
@@ -150,11 +161,9 @@ export function summarizeDirectoryToolTests(
     const ran = record && record.phase !== "planned";
     const verdict = ran
       ? ranVerdict(testCase, record, input.account, {
-          digest: directoryTestCaseDigest(
-            plan,
-            testCase,
-            listed.get(testCase.tool)
-          ),
+          digest:
+            listed &&
+            directoryTestCaseDigest(plan, testCase, listed.get(testCase.tool)),
           effect: entries.get(testCase.tool)?.effect ?? "destructive",
         })
       : notRunVerdict(testCase, input, graded);
@@ -177,8 +186,9 @@ type Verdict = Pick<DirectoryTestCaseResult, "status" | "reason">;
 function ranVerdict(
   testCase: DirectoryTestCase,
   record: DirectoryTestCallRecord,
-  account: string | undefined,
-  now: { digest: string; effect: DirectoryToolEffect }
+  account: string | null | undefined,
+  /** `digest` is absent when the tools now are not known. */
+  now: { digest: string | undefined; effect: DirectoryToolEffect }
 ): Verdict {
   // An unfinished write outranks any later edit: data may have changed.
   if (
@@ -187,14 +197,18 @@ function ranVerdict(
   ) {
     return { status: "ambiguous", reason: caseWords("ambiguous") };
   }
-  if (
-    account !== undefined &&
-    record.account !== undefined &&
-    record.account !== account
-  ) {
-    return { status: "stale", reason: caseWords("staleAccount") };
+  // A record without an account was made with none.
+  const ranAs = record.account ?? null;
+  if (account !== undefined && ranAs !== account) {
+    const words =
+      ranAs === null
+        ? "staleNoAccount"
+        : account === null
+          ? "staleSignedIn"
+          : "staleAccount";
+    return { status: "stale", reason: caseWords(words) };
   }
-  if (record.inputDigest !== now.digest) {
+  if (now.digest !== undefined && record.inputDigest !== now.digest) {
     return { status: "stale", reason: caseWords("staleInputs") };
   }
   if (record.phase === "started")
@@ -230,7 +244,9 @@ function notRunVerdict(
 ): Verdict {
   if (!testCase.arguments)
     return { status: "blocked", reason: caseWords("notDrafted") };
-  for (const { fixture } of directoryFixtureReferences(testCase.arguments)) {
+  for (const { fixture, value } of directoryFixtureReferences(
+    testCase.arguments
+  )) {
     if (input.missingFixtures?.includes(fixture)) {
       return {
         status: "blocked",
@@ -240,14 +256,21 @@ function notRunVerdict(
     const creator = input.plan.cases.find((other) =>
       other.creates?.includes(fixture)
     )?.id;
-    const status =
-      creator === undefined ? undefined : graded.get(creator)?.status;
+    const made = creator === undefined ? undefined : graded.get(creator);
+    const status = made?.status;
     if (status !== undefined && status !== "passed" && status !== "untested") {
       const words = { fixture, creator, status };
       return {
         status: "blocked",
         reason: caseWords("fixtureNotCreated", words),
       };
+    }
+    // Created, but the result did not hold the value this case needs.
+    const captured = made?.call?.captured ?? {};
+    const named = Object.hasOwn(captured, fixture) ? captured[fixture] : {};
+    if (status === "passed" && !Object.hasOwn(named ?? {}, value)) {
+      const words = { fixture, creator, value };
+      return { status: "blocked", reason: caseWords("notCaptured", words) };
     }
   }
   const { stopped } = input;

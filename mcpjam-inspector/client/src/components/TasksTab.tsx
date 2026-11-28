@@ -341,12 +341,13 @@ function TaskPanel({
 
   // Subscribe to task-related elicitations via SSE
   // Per MCP Tasks spec (2025-11-25): when a task is in input_required status,
-  // the server sends elicitations with relatedTaskId in the metadata
+  // the server sends elicitations with relatedTaskId in the metadata.
+  // The stream lives under `/api/mcp`, which a hosted server answers with 410.
   const {
     elicitation: taskElicitation,
     isResponding: elicitationResponding,
     respond: respondToElicitation,
-  } = useTaskElicitation(isActive && !taskTarget);
+  } = useTaskElicitation(isActive && !taskTarget && !hosted);
 
   // Convert hook elicitation to DialogElicitation format for the dialog
   const legacyDialogElicitation: DialogElicitation | null = taskElicitation
@@ -1807,8 +1808,7 @@ function TaskPanel({
                 <p className="mt-1 text-[11px] text-muted-foreground">
                   {unanswerableInputCount} pending request
                   {unanswerableInputCount === 1 ? "" : "s"} this UI cannot
-                  answer — visible in the raw request JSON
-                  below.
+                  answer — visible in the raw request JSON below.
                 </p>
               )}
             </div>

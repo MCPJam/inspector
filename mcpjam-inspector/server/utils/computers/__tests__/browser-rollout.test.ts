@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-const state = vi.hoisted(() => ({ hosted: false, local: true, cloud: false }));
+const state = vi.hoisted(() => ({ hosted: false, cloud: false }));
 const evaluate = vi.hoisted(() => vi.fn());
 vi.mock("../../../config.js", () => ({
   get HOSTED_MODE() {
     return state.hosted;
   },
 }));
-vi.mock("../../analytics.js", () => ({ evaluateBrowserRollout: evaluate }));
+vi.mock("../../analytics.js", () => ({
+  evaluateHostedBrowserRollout: evaluate,
+}));
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: async (token: string) =>
     token.startsWith("guest-")
@@ -25,13 +27,8 @@ vi.mock("../../../services/authkit-jwt.js", () => ({
 beforeEach(() => {
   vi.resetModules();
   state.hosted = false;
-  state.local = true;
   state.cloud = false;
-  evaluate
-    .mockReset()
-    .mockImplementation(async (key: string) =>
-      key === "local-browser-enabled" ? state.local : state.cloud,
-    );
+  evaluate.mockReset().mockImplementation(async () => state.cloud);
 });
 
 async function request(
@@ -50,20 +47,17 @@ async function request(
 
 describe("Browser rollout admission", () => {
   it.each(["member", "guest-a"])(
-    "allows %s locally without the Computers flag",
+    "allows %s locally without asking a flag",
     async (token) => {
       expect((await request(token)).enabled).toBe(true);
-      expect(evaluate).toHaveBeenCalledWith(
-        "local-browser-enabled",
-        token === "member" ? "user-1" : token,
-      );
+      expect(evaluate).not.toHaveBeenCalled();
     },
   );
   it("requires the hosted flag for a member in cloud", async () => {
     expect((await request("member", false)).enabled).toBe(false);
-    expect(evaluate).toHaveBeenCalledWith("hosted-browser-enabled", "user-1");
+    expect(evaluate).toHaveBeenCalledWith("user-1");
   });
-  it("never admits a guest to hosted Browser even if both flags are on", async () => {
+  it("never admits a guest to hosted Browser even if the flag is on", async () => {
     state.cloud = true;
     expect((await request("guest-a", false)).enabled).toBe(false);
     expect(evaluate).not.toHaveBeenCalled();

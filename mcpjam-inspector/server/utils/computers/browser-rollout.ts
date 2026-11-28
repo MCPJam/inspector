@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { HOSTED_MODE } from "../../config.js";
 import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
 import { verifyAuthKitToken } from "../../services/authkit-jwt.js";
-import { evaluateBrowserRollout } from "../analytics.js";
+import { evaluateHostedBrowserRollout } from "../analytics.js";
 import { isLocalhostRequest } from "../localhost-check.js";
 import { validateLocalProjectKey } from "./local-machine.js";
 
@@ -12,19 +12,17 @@ const rolloutCache = new Map<
   string,
   { until: number; value: Promise<boolean> }
 >();
+/** The local Browser is on for every actor; only the cloud one is a rollout. */
 export async function rolloutEnabled(
   local: boolean,
   actorId: string,
 ): Promise<boolean> {
-  const key = `${local}:${actorId}`;
-  const cached = rolloutCache.get(key);
+  if (local) return true;
+  const cached = rolloutCache.get(actorId);
   if (cached && cached.until > Date.now()) return cached.value;
   if (rolloutCache.size >= 512) rolloutCache.clear();
-  const value = evaluateBrowserRollout(
-    local ? "local-browser-enabled" : "hosted-browser-enabled",
-    actorId,
-  );
-  rolloutCache.set(key, { until: Date.now() + 10_000, value });
+  const value = evaluateHostedBrowserRollout(actorId);
+  rolloutCache.set(actorId, { until: Date.now() + 10_000, value });
   return value;
 }
 

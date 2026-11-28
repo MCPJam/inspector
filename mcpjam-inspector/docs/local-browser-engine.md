@@ -65,11 +65,10 @@ control of Chromium and its **signed-in websites**; it never authorizes Bash.
 ## Location and Browser permission
 
 The Browser panel owns **This machine / Cloud**, grant/revoke, and Chromium
-installation in both layouts. Node-local and Electron default to This machine within the local Browser
-cohort, otherwise Cloud. Hosted and environment mode select Cloud. Browser selection is stored separately from Computer
-selection. Local candidacy uses `local-browser-enabled` and
-`engines.local.browserAvailable`; neither Bash availability nor
-`local-computer-enabled` enables or disables Browser.
+installation in both layouts. Node-local and Electron default to This machine when it is available,
+otherwise Cloud. Hosted and environment mode select Cloud. Browser selection is stored separately from Computer
+selection. Local candidacy uses `engines.local.browserAvailable`; neither Bash
+availability nor `local-computer-enabled` enables or disables Browser.
 
 A new explicit Browser grant is required after upgrading from the shared-grant
 implementation. The server stores only its hash in

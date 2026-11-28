@@ -1,6 +1,7 @@
 import type { ModelMessage } from "ai";
 import type { EvalTraceBlobV1, EvalTraceSpan } from "./eval-trace";
 import type { ResolvedModelRequestPayload } from "./model-request-payload";
+import type { EventAtTurn } from "./event-at-turn";
 
 export type LiveChatTraceUsage = {
   inputTokens?: number;
@@ -101,6 +102,35 @@ export type LiveChatTraceRequestPayloadEntry = {
   payload: ResolvedModelRequestPayload;
 };
 
+/** A turn an MCP event started: the event, and when the turn itself started. */
+export type LiveChatTraceTurnEvent = {
+  promptIndex: number;
+  turnStartedAtMs?: number;
+  event: EventAtTurn;
+};
+
+/** `turnEvents` for an envelope: each turn that carries an event, in prompt order. */
+export function liveChatTraceTurnEvents(
+  turns: ReadonlyArray<
+    | { promptIndex: number; startedAtMs?: number; event?: EventAtTurn }
+    | undefined
+  >,
+): LiveChatTraceTurnEvent[] {
+  const turnEvents: LiveChatTraceTurnEvent[] = [];
+  for (const turn of turns) {
+    if (!turn?.event) continue;
+    turnEvents.push({
+      promptIndex: turn.promptIndex,
+      ...(typeof turn.startedAtMs === "number" &&
+      Number.isFinite(turn.startedAtMs)
+        ? { turnStartedAtMs: turn.startedAtMs }
+        : {}),
+      event: turn.event,
+    });
+  }
+  return turnEvents.sort((left, right) => left.promptIndex - right.promptIndex);
+}
+
 export type LiveChatTraceEnvelope = EvalTraceBlobV1 & {
   /** Messages combine turns whose original segment boundaries can differ. */
   projectedMessages?: true;
@@ -108,6 +138,8 @@ export type LiveChatTraceEnvelope = EvalTraceBlobV1 & {
   actualToolCalls?: LiveChatTraceToolCall[];
   events?: LiveChatTraceEvent[];
   turns?: LiveChatTraceTurnSummary[];
+  /** The turns an MCP event started; absent when none did. */
+  turnEvents?: LiveChatTraceTurnEvent[];
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];
   /**
    * Wall-clock bounds for the merged timeline (first turn_start through last span offset).
@@ -125,6 +157,8 @@ export type LiveChatTraceEvent =
       startedAtMs: number;
       engine?: "emulated" | "harness";
       harness?: string;
+      /** The MCP event that started this turn, as its trace records it. */
+      event?: EventAtTurn;
     }
   | {
       type: "text_delta";

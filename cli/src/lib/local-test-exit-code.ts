@@ -3,6 +3,7 @@ import type {
   SuiteFileRunErrorCategory,
   SuiteFileRunResult,
 } from "@mcpjam/sdk";
+import { recordCommandOutcome } from "./command-outcome.js";
 import { worstOf } from "./eval-run-exit-code.js";
 
 /**
@@ -102,4 +103,23 @@ export function localTestExitCodeForResult(
   }
   if (observed.artifactWriteFailed) codes.push(LOCAL_TEST_EXIT.setup);
   return worstOf(codes);
+}
+
+/**
+ * Telemetry for a finished local run. Only a failed verdict is a check
+ * result; credential, setup and not-established exits are errors, even when
+ * the verdict passed (a report that could not be written, for example).
+ */
+export function recordLocalTestOutcome(exitCode: number): void {
+  if (exitCode === LOCAL_TEST_EXIT.passed || exitCode === LOCAL_TEST_EXIT.failed) {
+    return;
+  }
+  recordCommandOutcome(
+    "error",
+    exitCode === LOCAL_TEST_EXIT.credentials
+      ? "AUTH_FAILED"
+      : exitCode === LOCAL_TEST_EXIT.usage
+        ? "USAGE_ERROR"
+        : undefined,
+  );
 }

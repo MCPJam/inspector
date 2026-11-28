@@ -384,16 +384,10 @@ describe("web chat-v2 — environment-backed scenario", () => {
       "env-server-2",
     ]);
 
+    // The emulated engine takes its skills through `prepareChatV2`'s plan; a
+    // harness plan is sent to a harness turn only.
     const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
-    expect(handlerArgs.runtimeSkillsOverride).toEqual([
-      {
-        skillId: "sk_env",
-        name: "release-notes",
-        description: "Write release notes",
-        content: "env skill body",
-        aggregateHash: "agg_env",
-      },
-    ]);
+    expect(handlerArgs.skillPlan).toBeUndefined();
   });
 
   it("treats an ABSENT skills array as authoritative-empty, not project-wide fallback", async () => {
@@ -418,7 +412,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
     // the manager shows the id as the name.
     expect(args.selectedServers).toEqual(["env-server-1"]);
     const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
-    expect(handlerArgs.runtimeSkillsOverride).toEqual([]);
+    expect(handlerArgs.skillPlan).toBeUndefined();
   });
 
   it("runs a host-backed study on the study's shared Library, live on its servers", async () => {
@@ -458,12 +452,7 @@ describe("web chat-v2 — environment-backed scenario", () => {
       args.skills.delivered.map((ref: { ref: string }) => ref.ref),
     ).toEqual(["onboarding"]);
     const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
-    expect(
-      handlerArgs.runtimeSkillsOverride.map(
-        (skill: { name: string }) => skill.name,
-      ),
-    ).toEqual(["onboarding"]);
-    expect(handlerArgs.liveTurn).toBe(true);
+    expect(handlerArgs.skillPlan).toBeUndefined();
   });
 
   it("keeps a host-backed study's turn when its Library can't be read", async () => {
@@ -477,13 +466,10 @@ describe("web chat-v2 — environment-backed scenario", () => {
     expect(response.status).toBe(200);
 
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
-    // Still live: only the Library's skills are lost.
+    // Still live: only the Library's skills are lost. A harness would leave
+    // its box as it is and still offer the servers' own skills
+    // (`live-turn-skills.test.ts`).
     expect(args.skills).toMatchObject({ agent: { kind: "live" }, delivered: [] });
-    // A harness would leave its box as it is, and still offer the servers'
-    // own skills.
-    const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
-    expect(handlerArgs.runtimeSkillsOverride).toBeUndefined();
-    expect(handlerArgs.liveTurn).toBe(true);
   });
 
   it("delivers a study's captured server skills to MCPJam's agent and records them", async () => {
@@ -533,9 +519,8 @@ describe("web chat-v2 — environment-backed scenario", () => {
     ).toEqual(["release-notes", "linear/search"]);
     const persistArgs = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
     expect(persistArgs.turnTrace.skillsAtTurn).toEqual([SERVER_PROVENANCE]);
-    // Captured with the study: a harness lists no connected server's own.
-    const handlerArgs = handleMCPJamFreeChatModelMock.mock.calls.at(-1)![0];
-    expect(handlerArgs).not.toHaveProperty("liveTurn");
+    // Captured with the study, so the plan is not live.
+    expect(args.skills.agent).toEqual({ kind: "environment" });
   });
 
   it("stops the turn on a present-but-malformed payload instead of falling back", async () => {

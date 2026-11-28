@@ -23,7 +23,7 @@ describe("createCiSuiteNavigation", () => {
     });
     nav.toSuiteOverview("s2", "runs");
     expect(navigateSpy).toHaveBeenCalledWith(
-      "/evals/runs/suite/s2?fromCommit=abc123",
+      "/evaluate/suite/s2?fromCommit=abc123",
       { replace: undefined },
     );
   });
@@ -35,7 +35,7 @@ describe("createCiSuiteNavigation", () => {
     });
     nav.toSuiteOverview("s2", "test-cases");
     expect(navigateSpy).toHaveBeenCalledWith(
-      "/evals/runs/suite/s2?view=test-cases",
+      "/evaluate/suite/s2?view=test-cases",
       { replace: undefined },
     );
   });
@@ -49,10 +49,10 @@ describe("createPlaygroundSuiteNavigation", () => {
       .mockImplementation(() => undefined);
   });
 
-  it("toSuiteOverview navigates to /evals/suite/:id", () => {
+  it("toSuiteOverview navigates to /evaluate/suite/:id", () => {
     const nav = createPlaygroundSuiteNavigation();
     nav.toSuiteOverview("suite-1", "runs");
-    expect(navigateSpy).toHaveBeenCalledWith("/evals/suite/suite-1", {
+    expect(navigateSpy).toHaveBeenCalledWith("/evaluate/suite/suite-1", {
       replace: undefined,
     });
   });
@@ -80,7 +80,7 @@ describe("navigatePlaygroundEvalsRoute", () => {
 
   it("navigates to the playground evals list path", () => {
     navigatePlaygroundEvalsRoute({ type: "list" });
-    expect(navigateSpy).toHaveBeenCalledWith("/evals", { replace: undefined });
+    expect(navigateSpy).toHaveBeenCalledWith("/evaluate", { replace: undefined });
   });
 
   it("passes the replace option through to navigateApp", () => {
@@ -89,7 +89,7 @@ describe("navigatePlaygroundEvalsRoute", () => {
       { replace: true },
     );
     expect(navigateSpy).toHaveBeenCalledWith(
-      "/evals/suite/s1/runs/r1",
+      "/evaluate/suite/s1/runs/r1",
       { replace: true },
     );
   });

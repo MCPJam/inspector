@@ -12,6 +12,7 @@ import type {
   ToolDiscoveryState,
 } from "@mcpjam/sdk";
 import { isAbortError } from "@/shared/abort-errors";
+import type { EventAtTurn } from "@/shared/event-at-turn";
 import type { PersistChatOutcome } from "../../utils/chat-ingestion.js";
 import { writePersistReceipt } from "../../utils/chat-ingestion.js";
 import {
@@ -144,6 +145,7 @@ export function streamDirectChatWithLiveTrace(options: {
   onLiveTextDelta?: RunDirectChatTurnOptions["onLiveTextDelta"];
   onEngineError?: RunDirectChatTurnOptions["onEngineError"];
   transformStepMessages?: RunDirectChatTurnOptions["transformStepMessages"];
+  priceStepCall?: RunDirectChatTurnOptions["priceStepCall"];
   onPersistError?: RunDirectChatTurnOptions["onPersistError"];
   onStreamComplete?: () => void | Promise<void>;
   formatError?: (error: unknown) => string;
@@ -165,6 +167,8 @@ export function streamDirectChatWithLiveTrace(options: {
   settleSuspendedHistoryToolCall?: SettleSuspendedToolCall;
   shouldPauseAfterStep?: () => boolean;
   suspendedToolCallIds?: () => ReadonlySet<string>;
+  /** The MCP event that started this turn, echoed on `turn_start`. */
+  eventAtTurn?: EventAtTurn;
 }): Response {
   const {
     provider,
@@ -182,6 +186,7 @@ export function streamDirectChatWithLiveTrace(options: {
     settleSuspendedHistoryToolCall,
     shouldPauseAfterStep,
     suspendedToolCallIds,
+    eventAtTurn,
     ...turnOptions
   } = options;
   // `runDirectChatTurn` awaits `onPersist` but discards its return value, so
@@ -246,7 +251,7 @@ export function streamDirectChatWithLiveTrace(options: {
         settleSuspendedToolCall: settleSuspendedHistoryToolCall,
       });
       if (!shouldRunModel) return;
-      const traceEvents = buildDirectChatTraceCallbacks(writer);
+      const traceEvents = buildDirectChatTraceCallbacks(writer, eventAtTurn);
       handle = runDirectChatTurn({
         ...turnOptions,
         // Logical provider for span metadata (OTel gen_ai.provider.name).

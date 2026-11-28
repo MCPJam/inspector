@@ -21,7 +21,15 @@ describe("hosted-tab-policy", () => {
     // falls through to Servers — the same silent failure the allow-list used
     // to cause.
     const segments = new Set(listAppSurfaceNavSegments());
-    for (const alias of ["chat", "connect", "hosts", "user-testing", "ci-evals"]) {
+    for (const alias of [
+      "chat",
+      "app-builder",
+      "chat-v2",
+      "connect",
+      "hosts",
+      "user-testing",
+      "ci-evals",
+    ]) {
       expect(segments.has(normalizeHostedHashTab(alias)), alias).toBe(true);
     }
   });

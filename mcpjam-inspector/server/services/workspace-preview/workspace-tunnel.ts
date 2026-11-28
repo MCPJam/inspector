@@ -31,6 +31,7 @@ import {
   PREVIEW_TUNNEL_STATE,
   PREVIEW_TUNNEL_VERSION,
 } from "./tunnel-sidecar.js";
+import type { AuthHeaderSource } from "../../utils/run-bearer.js";
 
 export type WorkspacePreviewErrorCode =
   | "private_workspace"
@@ -283,7 +284,7 @@ export type PreviewWorkspaceSource =
  * the conversation's box. Resolved on first use, like the Bash tool does it.
  */
 export function personalComputerWorkspace(args: {
-  authHeader: string;
+  authHeader: AuthHeaderSource;
   projectId: string;
   executionScope?: Parameters<typeof ensureComputerReady>[0]["executionScope"];
 }): () => Promise<PreviewWorkspace | undefined> {

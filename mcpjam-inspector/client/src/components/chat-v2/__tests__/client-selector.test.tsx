@@ -1,15 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ClientSelector } from "../chat-input/client-selector";
 import type { HostListItem } from "@/hooks/useClients";
+import { pickableHosts } from "@/lib/web-accounts/clients";
+import type { ClientSelectorData } from "../chat-input/client-selector";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: navigateMock,
   routePaths: { hosts: "/clients" },
 }));
-const mockResolveHostLogoByName = vi.hoisted(() => vi.fn());
+const mockResolveHostLogo = vi.hoisted(() => vi.fn());
+const flags = vi.hoisted(() => ({ webClients: false }));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "web-clients-enabled" ? flags.webClients : undefined,
+}));
+// The picker lists clients through the shared rule, spied on so a test can
+// tell it isn't keeping a copy of its own.
+vi.mock("@/lib/web-accounts/clients", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/web-accounts/clients")>();
+  return { ...actual, pickableHosts: vi.fn(actual.pickableHosts) };
+});
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
@@ -17,7 +32,7 @@ vi.mock("@/components/hosts/CreateHostDialog", () => ({
 }));
 
 vi.mock("@/lib/host-logo", () => ({
-  resolveHostLogoByName: mockResolveHostLogoByName,
+  resolveHostLogo: mockResolveHostLogo,
 }));
 
 const hosts: HostListItem[] = [
@@ -69,8 +84,8 @@ function renderClientSelector({
 
 describe("ClientSelector", () => {
   beforeEach(() => {
-    mockResolveHostLogoByName.mockReset();
-    mockResolveHostLogoByName.mockReturnValue("/mcp.svg");
+    mockResolveHostLogo.mockReset();
+    mockResolveHostLogo.mockReturnValue("/mcp.svg");
   });
 
   it("keeps Add host reachable by constraining the host list height", async () => {
@@ -471,12 +486,21 @@ describe("ClientSelector", () => {
       modalThemeMode: "light",
     });
 
-    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Goose", "dark");
+    expect(mockResolveHostLogo).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Goose" }),
+      "dark",
+    );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
 
-    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Goose", "light");
-    expect(mockResolveHostLogoByName).toHaveBeenCalledWith("Cline", "light");
+    expect(mockResolveHostLogo).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Goose" }),
+      "light",
+    );
+    expect(mockResolveHostLogo).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Cline" }),
+      "light",
+    );
   });
 });
 
@@ -545,7 +569,7 @@ describe("ClientSelector with environment panes", () => {
   }
 
   beforeEach(() => {
-    mockResolveHostLogoByName.mockReturnValue("/mcp.svg");
+    mockResolveHostLogo.mockReturnValue("/mcp.svg");
   });
 
   it("shows two environment panes and no client that has no pane", async () => {
@@ -605,5 +629,158 @@ describe("ClientSelector with environment panes", () => {
     expect(calls.onPickSingleClient).toHaveBeenCalledWith("host-2");
     expect(calls.onSelectedHostIdsChange).not.toHaveBeenCalled();
     expect(calls.onMultiHostEnabledChange).toHaveBeenLastCalledWith(false);
+  });
+});
+
+// The Playground mounts its composer in one subtree for a single chat and in
+// another for Compare, so the first ticked client remounts the selector.
+function RemountingPlayground() {
+  const [selectedHostIds, setSelectedHostIds] = useState(["host-0"]);
+  const comparing = selectedHostIds.length > 1;
+  const selector: ClientSelectorData = {
+    hosts,
+    projectId: "project-1",
+    cloudProjectId: null,
+    currentHostId: "host-0",
+    selectedHostIds,
+    onHostChange: vi.fn(),
+    onSelectedHostIdsChange: setSelectedHostIds,
+    onMultiHostEnabledChange: vi.fn(),
+    onPromoteLead: vi.fn(),
+    enableMultiHost: true,
+  };
+  return comparing ? (
+    <section data-testid="compare-layout">
+      <ClientSelector {...selector} />
+    </section>
+  ) : (
+    <main data-testid="single-layout">
+      <ClientSelector {...selector} />
+    </main>
+  );
+}
+
+it("stays open when the first ticked client remounts it into Compare", async () => {
+  render(<RemountingPlayground />);
+  const user = userEvent.setup();
+  await user.click(screen.getByTestId("client-selector-trigger"));
+  await user.click(screen.getByTestId("client-row-compare-host-1"));
+
+  expect(screen.getByTestId("compare-layout")).toBeInTheDocument();
+  expect(screen.getByPlaceholderText("Search clients")).toBeInTheDocument();
+
+  await user.click(screen.getByTestId("client-row-compare-host-2"));
+  expect(screen.getByTestId("client-row-compare-host-2")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+});
+
+it("opens closed after unmounting closed", async () => {
+  const { unmount } = renderClientSelector();
+  unmount();
+  renderClientSelector();
+  expect(
+    screen.queryByPlaceholderText("Search clients"),
+  ).not.toBeInTheDocument();
+});
+
+describe("ClientSelector web clients", () => {
+  const withWebClient: HostListItem[] = [
+    ...hosts.slice(0, 2),
+    {
+      ...hosts[1],
+      hostId: "host-web",
+      name: "Claude web",
+      runtime: "claude-web",
+    },
+  ];
+  const open = async ({
+    currentHostId = "host-0",
+    selectedHostIds = ["host-0"],
+    onHostChange = vi.fn(),
+    onSelectedHostIdsChange = vi.fn(),
+  }: {
+    currentHostId?: string;
+    selectedHostIds?: string[];
+    onHostChange?: (hostId: string) => void;
+    onSelectedHostIdsChange?: (ids: string[]) => void;
+  } = {}) => {
+    render(
+      <ClientSelector
+        hosts={withWebClient}
+        projectId="project-1"
+        currentHostId={currentHostId}
+        selectedHostIds={selectedHostIds}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />,
+    );
+    await userEvent.click(screen.getByTestId("client-selector-trigger"));
+  };
+
+  beforeEach(() => {
+    mockResolveHostLogo.mockReturnValue("/mcp.svg");
+    vi.mocked(pickableHosts).mockClear();
+  });
+
+  it("lists Claude web while its flag is on", async () => {
+    flags.webClients = true;
+    await open();
+    expect(screen.getByTestId("client-row-host-web")).toHaveTextContent(
+      "Claude web",
+    );
+  });
+
+  it("leaves Claude web out while its flag is off", async () => {
+    flags.webClients = false;
+    await open();
+    expect(screen.queryByTestId("client-row-host-web")).toBeNull();
+    expect(screen.getByTestId("client-row-host-1")).toBeInTheDocument();
+  });
+
+  it("lists its clients through the shared pickableHosts rule", async () => {
+    flags.webClients = false;
+    await open();
+    expect(pickableHosts).toHaveBeenCalledWith(
+      withWebClient,
+      false,
+      expect.anything(),
+    );
+  });
+
+  it("keeps the Claude web client a chat runs, by name, while its flag is off", async () => {
+    flags.webClients = false;
+    const onHostChange = vi.fn();
+    await open({
+      currentHostId: "host-web",
+      selectedHostIds: [],
+      onHostChange,
+    });
+    expect(screen.getByTestId("client-selector-trigger")).toHaveAccessibleName(
+      "Client: Claude web",
+    );
+    expect(screen.getByTestId("client-row-host-web")).toHaveTextContent(
+      "Claude web",
+    );
+    await userEvent.click(screen.getByTestId("client-row-host-1"));
+    expect(onHostChange).toHaveBeenCalledWith("host-1");
+  });
+
+  it("lets a compared Claude web client be dropped while its flag is off", async () => {
+    flags.webClients = false;
+    const onSelectedHostIdsChange = vi.fn();
+    await open({
+      currentHostId: "host-0",
+      selectedHostIds: ["host-0", "host-web"],
+      onSelectedHostIdsChange,
+    });
+    const toggle = screen.getByTestId("client-row-compare-host-web");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(toggle);
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-0"]);
   });
 });

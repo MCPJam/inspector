@@ -16,6 +16,7 @@ const loops = vi.hoisted(() => {
   return { started, stopped, releases, handle };
 });
 const { events } = vi.hoisted(() => ({ events: vi.fn() }));
+const doorbell = vi.hoisted(() => ({ intervalMs: null as number | null }));
 
 vi.mock("../scheduled-evals-worker", () => ({
   isScheduledEvalsWorkerEnabled: () => true,
@@ -31,6 +32,10 @@ vi.mock("../bench-worker", () => ({
 }));
 vi.mock("../production-checks-worker", () => ({
   startProductionChecksWorker: () => loops.handle("production-checks"),
+}));
+vi.mock("../local-doorbell-worker", () => ({
+  localDoorbellIntervalMs: () => doorbell.intervalMs,
+  startLocalDoorbell: () => loops.handle("local-doorbell"),
 }));
 vi.mock("../../utils/request-logger", () => ({
   getSystemLogger: () => ({ event: events }),
@@ -50,6 +55,7 @@ beforeEach(() => {
   loops.stopped.length = 0;
   loops.releases.length = 0;
   events.mockClear();
+  doorbell.intervalMs = null;
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -73,6 +79,21 @@ describe("startBackgroundWorkers", () => {
     for (const release of loops.releases) release();
     await stopping;
     expect(finished).toBe(true);
+  });
+
+  it("rings the local doorbell only when its interval is set", async () => {
+    startBackgroundWorkers();
+    expect(loops.started).not.toContain("local-doorbell");
+
+    loops.started.length = 0;
+    doorbell.intervalMs = 3000;
+    const workers = startBackgroundWorkers();
+    expect(loops.started).toEqual([...ALL_LOOPS, "local-doorbell"]);
+
+    const stopping = workers.stop();
+    expect(loops.stopped).toContain("local-doorbell");
+    for (const release of loops.releases) release();
+    await stopping;
   });
 
   it("starts no loop on a web replica, the flagless production one included", async () => {

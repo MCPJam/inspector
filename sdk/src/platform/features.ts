@@ -53,6 +53,7 @@ export const PLATFORM_FEATURE_KEYS = [
   "unified-share-evals",
   "github-checks",
   "scheduled-evals",
+  "web-clients",
 ] as const;
 
 export type PlatformFeatureKey = (typeof PLATFORM_FEATURE_KEYS)[number];
@@ -84,6 +85,7 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "unified-share-evals": "Eval run sharing",
   "github-checks": "GitHub checks",
   "scheduled-evals": "Scheduled evals",
+  "web-clients": "Claude web and ChatGPT web",
 };
 
 /**
@@ -123,6 +125,16 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   create_directory_submission: "directory-readiness",
   update_directory_submission: "directory-readiness",
   start_directory_submission_run: "directory-readiness",
+  // A reviewer sign-in starts a run, as a submission's run does.
+  create_reviewer_attempt: "directory-readiness",
+  create_reviewer_handoff: "directory-readiness",
+  resume_reviewer_attempt: "directory-readiness",
+  record_directory_submission_status: "directory-readiness",
+  record_directory_submission_snapshot: "directory-readiness",
+  import_directory_finding: "directory-readiness",
+  save_directory_submission_test_plan: "directory-readiness",
+  set_directory_submission_evals: "directory-readiness",
+  import_directory_submission_test_cases: "directory-readiness",
   // Resuming runs a run again under the gate it started under: `conformance`
   // for a server's run, `directory-readiness` for a submission's. The backend
   // checks which one the run needs.
@@ -251,7 +263,21 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_directory_submissions: null,
   get_directory_submission: null,
   get_directory_submission_results: null,
+  get_directory_submission_test_plan: null,
+  draft_directory_submission_test_plan: null,
+  get_directory_submission_tool_tests: null,
+  get_directory_submission_evals: null,
+  export_directory_submission_test_cases: null,
   delete_directory_submission: null,
+  // Reading and stopping a reviewer sign-in stay open, as on the backend.
+  list_reviewer_attempts: null,
+  get_reviewer_attempt: null,
+  cancel_reviewer_attempt: null,
+  get_directory_submission_handoff: null,
+  list_directory_submission_findings: null,
+  get_directory_submission_finding: null,
+  export_directory_submission: null,
+  list_directory_submission_events: null,
   list_personas: null,
   get_persona: null,
   delete_persona: null,
@@ -309,6 +335,18 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_server_revisions: null,
   get_server_revision: null,
   diff_server_revisions: null,
+  // Mock servers answer to the `mock-servers-enabled` flag, which the backend
+  // checks on every call; it is not an organization feature key.
+  create_mock_server: null,
+  update_mock_server: null,
+  get_mock_server: null,
+  patch_mock_server: null,
+  refresh_mock_server: null,
+  open_mock_run: null,
+  reset_mock_run: null,
+  close_mock_run: null,
+  get_mock_forwarding_policy: null,
+  set_mock_forwarding_policy: null,
   // Not hidden by `multi-account-connections`: a first account needs no
   // feature, and the backend refuses a second one where the feature is off.
   list_server_accounts: null,
@@ -342,6 +380,9 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   backtest_eval_run: null,
   backtest_eval_run_judge: null,
   request_eval_run_judge: null,
+  request_eval_run_insights: null,
+  cancel_eval_run_insights: null,
+  build_eval_run_findings: null,
   get_eval_run_steps: null,
   create_tunnel: null,
   close_tunnel: null,

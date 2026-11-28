@@ -192,6 +192,11 @@ export type ScorecardProvenance =
    * shows exactly the questions it was asked.
    */
   | "rubricCheck"
+  /**
+   * One custom judge's grade, read like a rubric check from the iteration's
+   * own score rows (`customJudgeIterationRows`).
+   */
+  | "customJudge"
   | "builtin";
 
 /** How a row finds its result on a trial. See `joinTrialResults`. */
@@ -215,7 +220,7 @@ export type ScorecardJoin =
   | { kind: "predicate"; criterionId: string }
   | {
       kind: "judge";
-      slot: "goalCompletion" | "rubricChecks";
+      slot: "goalCompletion" | "rubricChecks" | "customJudges";
       scorerId: string;
     };
 
@@ -326,6 +331,14 @@ export type ScorecardRow = {
   judge?: JudgeFacts;
   /** Rubric-check rows only: the question's key, and whether it is a criterion. */
   rubricCheck?: { key: string; criterion: boolean };
+  /**
+   * Custom-judge rows: the library evaluator the judge was added from, and
+   * its output format, both read from the saved verdict.
+   */
+  customJudge?: {
+    evaluatorId?: string;
+    outputKind?: "score" | "passfail";
+  };
   /**
    * The EXPECTED line, for a row whose configuration is neither a predicate
    * nor the route question it belongs to. See `expectationOf`.
@@ -708,7 +721,7 @@ function resolveRoute(input: CaseScorecardInput): RouteState {
  * fail that assertion. Falling back keeps the page readable — one wrong field
  * beats a blank page — exactly as the suite model does.
  */
-function safeResolveMatchOptions(
+export function safeResolveMatchOptions(
   suiteDefaults: EvalMatchOptions | undefined,
   caseOverride: EvalMatchOptions | undefined,
 ): EvalMatchOptions {

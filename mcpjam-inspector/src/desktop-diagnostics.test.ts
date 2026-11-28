@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDesktopDiagnostics } from "./desktop-diagnostics";
+import { normalize } from "@sentry/core";
+import {
+  createDesktopDiagnostics,
+  withSentryDepth,
+} from "./desktop-diagnostics";
 import { parseDesktopActivity } from "../shared/desktop-diagnostics";
 const exit = {
   type: "Utility",
@@ -166,5 +170,56 @@ describe("proxy diagnostics", () => {
     d.nativeEvent(event);
     expect(event.contexts).not.toHaveProperty("desktop_diagnostics");
     expect(event.tags).not.toHaveProperty("desktop_run_id");
+  });
+  it("keeps activity entries when Sentry normalizes the event context", () => {
+    const d = setup();
+    d.record({ kind: "auth", phase: "state", auth: "guest" });
+    // Sentry's default event depth is 3: contexts > desktop_diagnostics > activity.
+    const contexts = normalize({ desktop_diagnostics: d.snapshot() }, 3) as {
+      desktop_diagnostics: { activity: unknown[] };
+    };
+    expect(contexts.desktop_diagnostics.activity[0]).toMatchObject({
+      kind: "auth",
+      auth: "guest",
+    });
+    // The hint never shows up in the copied or serialized snapshot.
+    expect(Object.keys(d.snapshot())).not.toContain(
+      "__sentry_override_normalization_depth__",
+    );
+    const summary = normalize(
+      {
+        desktop_diagnostics: withSentryDepth({ after: [{ kind: "connect" }] }),
+      },
+      3,
+    ) as { desktop_diagnostics: { after: unknown[] } };
+    expect(summary.desktop_diagnostics.after[0]).toEqual({ kind: "connect" });
+  });
+});
+
+describe("startup stage", () => {
+  it("keeps the renderer's latest startup stage and forgets it on reload", () => {
+    const d = setup();
+    d.record({ kind: "startup", phase: "state", stage: "app_load/auth_pending" });
+    d.record({
+      kind: "startup",
+      phase: "state",
+      stage: "app_load/session_refresh_failed",
+    });
+    expect(d.snapshot().startup_stage).toBe("app_load/session_refresh_failed");
+    d.rendererGone();
+    expect(d.snapshot().startup_stage).toBe("unknown");
+  });
+
+  it("accepts only known stages over IPC", () => {
+    expect(
+      parseDesktopActivity({ kind: "startup", phase: "state", stage: "ready" }),
+    ).toEqual({ kind: "startup", phase: "state", stage: "ready" });
+    expect(
+      parseDesktopActivity({
+        kind: "startup",
+        phase: "state",
+        stage: "https://secret.example",
+      }),
+    ).toBeNull();
   });
 });

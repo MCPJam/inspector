@@ -29,6 +29,7 @@
 
 import {
   fetchDiscoveryJson,
+  findDiscoveryDocument,
   readBoundedText,
   resolveMcpHeaders,
   traceRedirects,
@@ -49,6 +50,11 @@ import {
   discoverOpenAIAuthMetadata,
   readMetaWwwAuthenticate,
 } from "./auth-discovery.js";
+import {
+  authorizationServerMetadataUrls,
+  type AuthorizationServerMetadataCandidate,
+  type AuthorizationServerMetadataForm,
+} from "../oauth/metadata-candidates.js";
 export {
   discoverOpenAIAuthMetadata,
   readMetaWwwAuthenticate,
@@ -68,6 +74,10 @@ export interface OpenAIDiscoveryOptions extends DirectoryDiscoveryOptions {
 }
 
 const DEFAULT_MAX_AUTHORIZATION_SERVERS = 5;
+
+/** RFC 8414 path insertion, then OpenID Connect path appending. */
+const OPENAI_AUTHORIZATION_SERVER_METADATA_FORMS: readonly AuthorizationServerMetadataForm[] =
+  ["oauth-insert", "oidc-append"];
 
 export interface OpenAIEndpointEvidence {
   /** The endpoint URL exactly as entered — not canonicalized. */
@@ -204,9 +214,12 @@ export async function fetchAuthorizationServers(
   const out: OpenAIAuthorizationServerEvidence[] = [];
 
   for (const issuer of issuers.slice(0, limit)) {
-    let base: URL;
+    let candidates: AuthorizationServerMetadataCandidate[];
     try {
-      base = new URL(issuer);
+      candidates = authorizationServerMetadataUrls(
+        issuer,
+        OPENAI_AUTHORIZATION_SERVER_METADATA_FORMS,
+      );
     } catch {
       out.push({
         issuer,
@@ -215,26 +228,21 @@ export async function fetchAuthorizationServers(
       });
       continue;
     }
-    const path = base.pathname.replace(/\/$/, "");
-    const candidates = [
-      `${base.origin}/.well-known/oauth-authorization-server${path}`,
-      `${base.origin}${path}/.well-known/openid-configuration`,
-    ];
 
-    let lastError: string | undefined;
-    let recorded = false;
-    for (const url of candidates) {
-      const result = await fetchDiscoveryJson(url, options);
-      if (result.status >= 200 && result.status < 300 && result.document) {
-        out.push({ issuer, metadataUrl: url, document: result.document });
-        recorded = true;
-        break;
-      }
-      lastError = result.error ?? `${url} answered ${result.status}`;
-    }
-    if (!recorded) {
-      out.push({ issuer, metadataUrl: candidates[0], fetchError: lastError });
-    }
+    const lookup = await findDiscoveryDocument(candidates, options);
+    out.push(
+      lookup.found
+        ? {
+            issuer,
+            metadataUrl: lookup.candidate.url,
+            document: lookup.document,
+          }
+        : {
+            issuer,
+            metadataUrl: candidates[0].url,
+            fetchError: lookup.lastError,
+          },
+    );
   }
 
   return out;

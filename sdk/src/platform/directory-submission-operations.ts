@@ -9,6 +9,7 @@
 import { z } from "zod";
 import { canonicalDigest } from "../contract/canonical.js";
 import type { DirectoryFlow, PlacedStep } from "../directory-readiness/flows/types.js";
+import { directoryVerdict, type DirectoryVerdict } from "../directory-readiness/flows/verdict.js";
 import type {
   PlatformDirectoryFlowSummary,
   PlatformDirectorySubmissionDeleted,
@@ -16,45 +17,35 @@ import type {
   PlatformDirectorySubmissionSummary,
   PlatformDirectorySubmissionView,
 } from "./directory-submission-types.js";
-import type { PlatformOperation, PlatformOperationContext } from "./operations.js";
 import {
-  PROJECT_SELECTOR_DESCRIPTION,
+  GATED_BETA,
+  OPEN_BETA,
+  SUBMISSION_PERMALINK,
+  id,
+  project,
+  resolveScope,
+  submissionInput,
+  type Op,
+  type ProjectResult,
+} from "./directory-submission-operation-support.js";
+import {
   resolveLiveServer,
-  resolveProjectOrThrow,
   resolveSavedServer,
   serverScopedInput,
-  toSelectedProjectInfo,
   toServerInfo,
   type ServerResult,
 } from "./operation-support.js";
 import { noPermalink } from "./permalinks.js";
 import { operationInputError, resolutionError } from "./resource-selectors.js";
-import type { SelectedProjectInfo } from "./show-servers.js";
 import type { PlatformReadinessRunReceipt } from "./types.js";
-
-/** Writes and runs are gated on the beta; reads and the delete stay open. */
-const GATED_BETA =
-  "In beta: an organization outside the directory readiness beta is refused, and the error names the feature.";
-const OPEN_BETA = "Directory readiness is in beta; this stays open to every organization.";
 
 const FLOW_PERMALINK = noPermalink(
   "no-addressable-resource",
   "A flow is a directory's submission form as product data, not a resource in anyone's project."
 );
-const SUBMISSION_PERMALINK = noPermalink(
-  "route-not-addressable",
-  "No app route opens one submission yet: the Readiness page is behind a client flag and does not select a submission from its URL. Owed: `readiness?submission=:submissionId`."
-);
 
-const id = () => z.string().trim().min(1);
-const project = id().optional().describe(PROJECT_SELECTOR_DESCRIPTION);
 const flowId = id().max(100);
 const idempotencyKey = id().max(200).optional();
-
-const submissionInput = z.object({
-  project,
-  submission: id().describe("The submission's id, from list_directory_submissions."),
-});
 
 const flowInput = z.object({
   flow: flowId.describe("The flow's id, such as `claude-connector`, from list_directory_flows."),
@@ -80,6 +71,8 @@ const answerValue = z
   .union([z.string(), z.number(), z.boolean(), z.null(), z.array(z.string())])
   .or(z.array(z.record(z.string(), z.string())));
 
+const checkIds = z.array(id().max(120)).max(200);
+
 const updateInput = submissionInput.extend({
   answers: z.record(z.string().min(1).max(100), answerValue).optional().describe(
     "Values by field key from get_directory_flow, such as `listing.oneLiner`. `null` removes an answer."
@@ -88,6 +81,24 @@ const updateInput = submissionInput.extend({
     "Declarations to confirm as true, by field key, under the wording the flow shows now."
   ),
   title: z.string().max(200).optional(),
+  plugin: z
+    .object({ pluginId: id().optional(), pluginVersionId: id().optional() })
+    .nullable()
+    .optional()
+    .describe(
+      "A ChatGPT plugin submission's plugin, stored in the project: `pluginVersionId` names the version to submit and brings its plugin (a plugin's `activeVersionId`, shown on the project's Plugins page). Replaces the plugin whole; `null` clears it."
+    ),
+  attempt: z.number().int().min(1).nullable().optional().describe(
+    "Which attempt at the directory this rehearses: 1 for a first submission, one more per resubmission. `null` clears it."
+  ),
+  // Strict: a misspelled list is refused, not dropped from the gate.
+  checkGate: z
+    .strictObject({ failOn: checkIds.optional(), warnOnly: checkIds.optional() })
+    .nullable()
+    .optional()
+    .describe(
+      "Which checks fail a run, by finding id. By default the directory's blocking checks do: `failOn` adds a check, `warnOnly` takes one out, and `failOn` wins. Replaces the whole gate; `null` restores the default."
+    ),
   expectedRevision: z.number().int().min(1).optional().describe(
     "The `revision` you read. Omitted, the operation reads the current one first."
   ),
@@ -103,6 +114,12 @@ const startInput = submissionInput.extend({
   idempotencyKey: idempotencyKey.describe(
     "Replay guard. A retry with the same key returns the run it already started."
   ),
+  pluginVersionId: id().optional().describe(
+    "Required for a ChatGPT plugin submission, refused for any other: the stored plugin version whose package the run grades with the saved server, such as the submission's `pluginVersionId`. Never read from the submission."
+  ),
+  testPlanRevision: z.number().int().min(1).optional().describe(
+    "Make the calls of the submission's saved test plan at this `revision`, from get_directory_submission_test_plan. Naming it authorizes every call in the plan, so it must be the current revision: a stale one is refused with 409 naming the current one, never replaced. Omit it and the run makes no test plan calls."
+  ),
 });
 
 const resultsInput = submissionInput.extend({
@@ -117,8 +134,6 @@ export type UpdateDirectorySubmissionInput = z.infer<typeof updateInput>;
 export type StartDirectorySubmissionRunInput = z.infer<typeof startInput>;
 export type GetDirectorySubmissionResultsInput = z.infer<typeof resultsInput>;
 
-type Op<TInput, TOutput> = PlatformOperation<TInput, TOutput>;
-type ProjectResult = { project: SelectedProjectInfo };
 export type ListDirectoryFlowsResult = { flows: PlatformDirectoryFlowSummary[] };
 export type CreateDirectorySubmissionResult = ServerResult & {
   submission: PlatformDirectorySubmissionView;
@@ -136,6 +151,8 @@ export type StartDirectorySubmissionRunResult = ProjectResult & {
 };
 export type GetDirectorySubmissionResultsResult = ProjectResult & {
   submissionId: string;
+  /** The run judged under the submission's `checkGate`. */
+  verdict: DirectoryVerdict;
 } & PlatformDirectorySubmissionResults;
 
 /**
@@ -153,16 +170,6 @@ function withoutFindingDetails<T extends { steps: PlacedStep[] }>(value: T): T {
     }),
   }));
   return { ...value, steps };
-}
-
-/** The project the input names, and the submission in it when there is one. */
-async function resolveScope(
-  input: { project?: string; submission?: string },
-  { client, signal, onScopeResolved }: PlatformOperationContext
-) {
-  const { project } = await resolveProjectOrThrow({ client, signal, onScopeResolved }, input.project);
-  const scope = { projectId: project.id, submissionId: input.submission ?? "" };
-  return { client, signal, project, scope, info: toSelectedProjectInfo(project) };
 }
 
 export const listDirectoryFlowsOperation: Op<Record<string, never>, ListDirectoryFlowsResult> = {
@@ -258,23 +265,34 @@ export const getDirectorySubmissionOperation: Op<DirectorySubmissionScopedInput,
 export const updateDirectorySubmissionOperation: Op<UpdateDirectorySubmissionInput, DirectorySubmissionResult> = {
   name: "update_directory_submission",
   title: "Save answers to a directory submission",
-  description: `Save answers to a directory submission. \`answers\` maps a field key from get_directory_flow to its value, and \`null\` removes an answer. \`confirm\` lists declarations (data handling, acknowledgments) to record as true under the wording the portal shows now: confirm one only when the person you work for says it is true. Each answer you write records you as its author, the channel and the time. Send the \`revision\` you read as \`expectedRevision\`: the write is refused with 409 only when a field you touch changed since, and the refusal names those \`conflictingKeys\` and carries the submission as it is now. To retry a call whose answer you did not get, send the same change with the same \`expectedRevision\` (or \`idempotencyKey\`): it is answered from the first write (\`replayed: true\`), not refused. ${GATED_BETA}`,
+  description: `Save answers to a directory submission. \`answers\` maps a field key from get_directory_flow to its value, and \`null\` removes an answer. \`confirm\` lists declarations (data handling, acknowledgments) to record as true under the wording the portal shows now: confirm one only when the person you work for says it is true. On a ChatGPT plugin submission, \`plugin\` names the stored plugin and version being submitted; \`attempt\` says which submission this is. Each answer you write records you as its author, the channel and the time. Send the \`revision\` you read as \`expectedRevision\`: the write is refused with 409 only when a field you touch changed since, and the refusal names those \`conflictingKeys\` and carries the submission as it is now. To retry a call whose answer you did not get, send the same change with the same \`expectedRevision\` (or \`idempotencyKey\`): it is answered from the first write (\`replayed: true\`), not refused. \`checkGate\` chooses which checks fail a run, as get_directory_submission_results judges it; it is guarded like an answer. ${GATED_BETA}`,
   readOnly: false,
   risk: "none",
   permalink: SUBMISSION_PERMALINK,
   inputSchema: updateInput,
   async execute(input, context) {
+    const { answers, confirm, title, plugin, attempt, checkGate } = input;
     // Here, not in the schema: the CLI calls `execute` without parsing.
-    if (!input.answers && !input.confirm && input.title === undefined) {
-      throw operationInputError("Nothing to save. Pass answers, confirm or title.");
+    if (
+      !answers &&
+      !confirm &&
+      [title, plugin, attempt, checkGate].every((value) => value === undefined)
+    ) {
+      throw operationInputError(
+        "Nothing to save. Pass answers, confirm, title, plugin, attempt or checkGate."
+      );
     }
     const { client, signal, scope, info } = await resolveScope(input, context);
     const body = {
       expectedRevision:
         input.expectedRevision ?? (await client.getDirectorySubmission(scope, { signal })).revision,
-      ...(input.answers ? { answers: input.answers } : {}),
-      ...(input.confirm ? { confirm: input.confirm } : {}),
-      ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(answers ? { answers } : {}),
+      ...(confirm ? { confirm } : {}),
+      ...(title !== undefined ? { title } : {}),
+      // `null` is a change: it clears.
+      ...(plugin !== undefined ? { plugin } : {}),
+      ...(attempt !== undefined ? { attempt } : {}),
+      ...(checkGate !== undefined ? { checkGate } : {}),
     };
     // Derived rather than random, so an identical retry of a call whose
     // answer was lost carries the same key, and the backend answers it from
@@ -306,16 +324,16 @@ export const deleteDirectorySubmissionOperation: Op<DirectorySubmissionScopedInp
 export const startDirectorySubmissionRunOperation: Op<StartDirectorySubmissionRunInput, StartDirectorySubmissionRunResult> = {
   name: "start_directory_submission_run",
   title: "Run a directory submission's checks",
-  description: `Grade a directory submission: its saved server against the directory's rules, and its answers against the portal's. Starts a durable run and returns a receipt, not a verdict; poll get_readiness_run with \`run.runId\` until it finishes, then read get_directory_submission_results. The run grades the answers as saved when it starts; later edits do not change it, and the results mark a finding whose answers changed since as \`stale\`. \`includeLlmObservations\` adds an optional model pass, included with MCPJam, so no customer credits are consumed; it is subject to MCPJam's daily analysis budget. ${GATED_BETA}`,
+  description: `Grade a directory submission: its saved server against the directory's rules, and its answers against the portal's. A ChatGPT plugin submission also grades the package of the stored plugin version you name as \`pluginVersionId\`. With \`testPlanRevision\`, the run also makes the calls of that saved test plan; read what they showed with get_directory_submission_tool_tests. Starts a durable run and returns a receipt, not a verdict; poll get_readiness_run with \`run.runId\` until it finishes, then read get_directory_submission_results. The run grades the answers as saved when it starts; later edits do not change it, and the results mark a finding whose answers changed since as \`stale\`. \`includeLlmObservations\` adds an optional model pass, included with MCPJam, so no customer credits are consumed; it is subject to MCPJam's daily analysis budget. ${GATED_BETA}`,
   readOnly: false,
   risk: "none",
   permalink: SUBMISSION_PERMALINK,
   inputSchema: startInput,
   async execute(input, context) {
     const { client, signal, scope, info } = await resolveScope(input, context);
-    const { includeLlmObservations, idempotencyKey } = input;
+    const { includeLlmObservations, idempotencyKey, pluginVersionId, testPlanRevision } = input;
     const run = await client.startDirectorySubmissionRun(
-      { ...scope, includeLlmObservations, idempotencyKey },
+      { ...scope, includeLlmObservations, idempotencyKey, pluginVersionId, testPlanRevision },
       { signal }
     );
     return { project: info, submissionId: input.submission, run };
@@ -325,13 +343,18 @@ export const startDirectorySubmissionRunOperation: Op<StartDirectorySubmissionRu
 export const getDirectorySubmissionResultsOperation: Op<GetDirectorySubmissionResultsInput, GetDirectorySubmissionResultsResult> = {
   name: "get_directory_submission_results",
   title: "Get a directory submission's results",
-  description: `Read a directory submission's results grouped by the portal's steps: each step's field issues, and the findings placed under the field they read with an evidence status (\`established\`; \`stale\` when an answer the check read changed since the run; \`inconclusive\`, \`not-tested\` or \`blocked\`), plus totals in \`counts\`. Reads the latest complete run, or \`run\` when given; \`run\` is null before one completes. Each finding's raw \`details\` is left out. ${OPEN_BETA}`,
+  description: `Read a directory submission's results grouped by the portal's steps: each step's field issues, and the findings placed under the field they read with an evidence status (\`established\`; \`stale\` when an answer the check read changed since the run; \`inconclusive\`, \`not-tested\` or \`blocked\`), plus totals in \`counts\`. Reads the latest complete run, or \`run\` when given; \`run\` is null before one completes. Each finding's raw \`details\` is left out. \`verdict\` judges the run under the submission's \`checkGate\`: \`ready\`, \`not-ready\` (the gated checks that failed, in \`failing\`) or \`incomplete\` (gated checks with no current result, in \`undetermined\`), with the gate it applied and the checks a hosted run cannot check (\`notCheckedOnPath\`, the reasons in \`notCheckedReasons\`). ${OPEN_BETA}`,
   readOnly: true,
   permalink: SUBMISSION_PERMALINK,
   inputSchema: resultsInput,
   async execute(input, context) {
     const { client, signal, scope, info } = await resolveScope(input, context);
     const results = await client.getDirectorySubmissionResults({ ...scope, runId: input.run }, { signal });
-    return { project: info, submissionId: input.submission, ...withoutFindingDetails(results) };
+    // Judged before the details go: they say which checks a hosted run can
+    // never reach. Every submission run is a hosted run.
+    const findings = results.steps.flatMap((step) => step.findings);
+    const checkGate = results.checkGate ?? undefined;
+    const verdict = directoryVerdict(findings, { checkGate, path: "hosted" });
+    return { project: info, submissionId: input.submission, ...withoutFindingDetails(results), verdict };
   },
 };

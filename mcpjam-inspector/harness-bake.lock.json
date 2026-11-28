@@ -14,7 +14,7 @@
     {
       "harnessId": "claude-code",
       "bootstrapDir": ".harness-bootstrap/claude-code",
-      "identity": "203dafd6164862b1",
+      "identity": "12934e6899e2a8c5",
       "runtimeVersion": "2.1.290"
     },
     {
@@ -32,13 +32,13 @@
     {
       "harnessId": "copilot-cli",
       "bootstrapDir": ".harness-bootstrap/copilot-cli",
-      "identity": "9cb0959e3752f327",
+      "identity": "792a4bb82fc5e41e",
       "runtimeVersion": "1.0.92"
     },
     {
       "harnessId": "copilot-cli",
       "bootstrapDir": ".harness-bootstrap/copilot-cli",
-      "identity": "7017d08a526dff54",
+      "identity": "c54724a397e20b89",
       "runtimeVersion": "1.0.92"
     },
     {

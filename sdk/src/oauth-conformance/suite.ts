@@ -75,7 +75,8 @@ export class OAuthConformanceSuite {
   }
 
   async run(): Promise<OAuthConformanceSuiteResult> {
-    if (!this.config.__suppressTelemetry) void captureConformanceRun("sdk");
+    if (!this.config.__suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "oauth", mode: "suite" });
     const startedAt = Date.now();
     const results: Array<ConformanceResult & { label: string }> = [];
 

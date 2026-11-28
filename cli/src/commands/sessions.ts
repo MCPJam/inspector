@@ -362,7 +362,7 @@ export function registerSessionsCommands(program: Command): void {
       sessions
         .command("trace")
         .description(
-          "Print a session's per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript. Returns the LATEST turn by default — page older turns with --after-turn, or use --no-spans for cheap summaries."
+          "Print a session's per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript. A turn an MCP event started also prints its event. Returns the LATEST turn by default — page older turns with --after-turn, or use --no-spans for cheap summaries."
         )
         .requiredOption("--session <sessionId>", "The session to trace")
         .option("--turn <turnId>", "Return exactly this turn")

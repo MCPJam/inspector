@@ -33,6 +33,7 @@ import type {
   Transport,
   TransportSendOptions,
 } from "@modelcontextprotocol/client";
+import { CatalogListenCapture } from "./events-catalog-listen.js";
 
 /** Private, stripped before send. Never reaches the server. */
 export const EVENTS_STREAM_KEY_META = "io.mcpjam/events-stream-key" as const;
@@ -44,6 +45,7 @@ export interface EventsStreamRegistration {
 
 /** Per-connection registry of in-flight `events/stream` requests we opened. */
 export class EventsStreamTap {
+  readonly catalog = new CatalogListenCapture();
   private readonly registrations = new Map<string, EventsStreamRegistration>();
 
   register(streamKey: string, registration: EventsStreamRegistration): () => void {
@@ -97,7 +99,10 @@ export function wrapTransportForEventStreams(
     onmessage?: (message: JSONRPCMessage, extra?: MessageExtraInfo) => void;
 
     constructor(private readonly inner: Transport) {
-      this.inner.onmessage = (message, extra) => this.onmessage?.(message, extra);
+      this.inner.onmessage = (message, extra) => {
+        tap.catalog.receive(message);
+        this.onmessage?.(message, extra);
+      };
       this.inner.onclose = () => this.onclose?.();
       this.inner.onerror = (error: Error) => this.onerror?.(error);
     }
@@ -109,6 +114,7 @@ export function wrapTransportForEventStreams(
     }
 
     async send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
+      tap.catalog.send(message);
       const ours = tap.take(message);
       if (!ours) {
         await this.inner.send(message, options);

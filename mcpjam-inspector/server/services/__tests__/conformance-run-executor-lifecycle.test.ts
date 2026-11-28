@@ -27,7 +27,7 @@ import type {
 const SERVER = { url: "https://connector.example.com/mcp" };
 const SAVED: ConformanceRunSettings = {
   source: "saved",
-  selection: { protocol: ["tools-list"], tasks: ["tasks-wire-resolvable"] },
+  selection: { protocol: ["tools-list"], tasks: ["tasks-invalid-task-id-rejected"] },
   probes: {},
   runTimeoutSeconds: 45,
 };
@@ -112,7 +112,7 @@ describe("executePersistedConformanceRun with saved settings", () => {
       selection: SAVED.selection,
       protocol: { checkIds: ["tools-list"] },
       apps: {},
-      tasks: { checkIds: ["tasks-wire-resolvable"] },
+      tasks: { checkIds: ["tasks-invalid-task-id-rejected"] },
     } as ConformanceSuiteConfigs;
     runConformanceMock.mockResolvedValue({
       outcome: "passed",

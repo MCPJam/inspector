@@ -4,22 +4,21 @@ import { activeRunUrl, dailyReleaseDecision } from "./daily-release.mjs";
 
 const ready = {
   activeRun: null,
-  versionPr: null,
   unpublished: [],
   releases: [{ name: "@mcpjam/inspector", type: "patch" }],
 };
 
-test("prepares a full production release when Inspector has pending changes", () => {
+test("reminds #prs when Inspector has pending changes", () => {
   assert.equal(dailyReleaseDecision(ready).dispatch, true);
 });
 
-test("does not overlap active release work or replace a version PR awaiting review", () => {
-  for (const key of ["activeRun", "versionPr"]) {
-    const url = `https://github.com/MCPJam/inspector/${key}`;
-    const decision = dailyReleaseDecision({ ...ready, [key]: url });
-    assert.equal(decision.dispatch, false);
-    assert.ok(decision.reason.includes(url));
-  }
+test("stays quiet while release work is running", () => {
+  const url = "https://github.com/MCPJam/inspector/actions/runs/1";
+  const decision = dailyReleaseDecision({ ...ready, activeRun: url });
+  assert.equal(decision.dispatch, false);
+  const match = decision.reason.match(/https:\/\/\S+/);
+  assert.ok(match);
+  assert.equal(new URL(match[0]).href, new URL(url).href);
 });
 
 test("leaves unpublished versions for the existing release to complete", () => {

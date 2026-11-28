@@ -3,6 +3,8 @@ import { ErrorCard } from "@/components/ui/error-card";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import { useAction, useQuery } from "convex/react";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
+import { hostedCustomJudgeScorerIds } from "@/components/evaluate/case-scorecard/custom-judge-iteration-rows";
+import { useEvaluatorLibraryEnabled } from "./evaluator-library/evaluator-library-flag";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import {
@@ -37,6 +39,7 @@ import {
   parseScoreIntegrity,
 } from "./scores-list";
 import { TraceViewer } from "./trace-viewer";
+import { iterationCostContext } from "./trace-cost/iteration-model-calls";
 import type { TraceDetailPlacement } from "./use-trace-detail-direction";
 import type { HostSnapshot } from "@/lib/host-snapshot";
 import {
@@ -271,6 +274,7 @@ export function IterationDetails({
   traceDetailPlacement,
   activeTab,
   onTabChange,
+  executionEngine,
 }: {
   iteration: EvalIteration;
   /** undefined preserves ambient styling for existing chat callers. */
@@ -333,7 +337,10 @@ export function IterationDetails({
   /** Controls the tab; the reset on iteration change then stays off. */
   activeTab?: IterationReportMode;
   onTabChange?: (mode: IterationReportMode) => void;
+  /** The run's engine, when the host has the run; `harness:<id>` lists unmatched calls. */
+  executionEngine?: string;
 }) {
+  const evaluatorLibraryEnabled = useEvaluatorLibraryEnabled();
   // The Scores list prints the same judge number the review panel hides.
   // Own the flag here so hiding starts on first paint (before the panel's
   // read lands) and so a trial switch cannot leave the previous trial's
@@ -1083,7 +1090,12 @@ export function IterationDetails({
   // render evidence the score rows do not, and an SDK run that predates
   // scoring has predicates and no scores at all.
   const scoresSection = (() => {
-    const scores = parseIterationScores(iteration.metadata);
+    const hidden = evaluatorLibraryEnabled
+      ? null
+      : hostedCustomJudgeScorerIds(iteration.metadata);
+    const scores = parseIterationScores(iteration.metadata)?.filter(
+      ({ scorerId }) => !hidden?.has(scorerId),
+    );
     const integrity = parseScoreIntegrity(iteration.metadata);
     // Rendered when there are scores OR when the backend flagged a downgrade.
     // An integrity-invalid iteration whose rows were ALL quarantined has
@@ -1225,6 +1237,7 @@ export function IterationDetails({
               iterationResult={iteration.result}
               expectedToolCalls={expectedToolCalls}
               actualToolCalls={actualToolCalls}
+              iterationCost={iterationCostContext(iteration, executionEngine)}
             />
         )}
       </div>

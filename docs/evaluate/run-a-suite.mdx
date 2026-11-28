@@ -1,0 +1,332 @@
+---
+title: "Run a suite"
+description: "Start a run of a suite or a single case, cancel it, and fix whatever keeps Run disabled."
+icon: "play"
+---
+
+A run executes every case in a suite once per iteration, on each client and model pair you pick. A run of 3 cases at 2 iterations on 2 pairs produces 12 iterations.
+
+## What a run needs
+
+| Need | Where it comes from |
+|---|---|
+| Cases | At least one saved case. Generated drafts don't run until you add them to the suite. |
+| Servers | The run connects each client's server group, set in **Suite settings** under **Where it runs**. A client with no server group would connect no servers, so the run won't start. |
+| Clients and models | The pairs saved on the suite. You can change them for one run in the **Set up run** sheet. |
+| Model access | MCPJam credits, or a model from your own provider. See [What a run can access](/evaluate/what-a-run-can-access). |
+| Eval iterations | Your organization's eval iteration allowance. Every iteration counts against it. |
+| MCPJam identity | CLI and SDK runs need an MCPJam login or an `sk_` API key, even when the model runs on your own provider key. See [eval identity](/cli/local-evals#eval-identity-and-local-data). |
+
+A suite saved without clients, such as one created by the SDK, shows a **Servers** picker in the sheet instead. Pick the server group the run should use; the suite itself is not changed.
+
+## Start a run
+
+<Warning>
+  Every iteration calls a real model and a real server. Hosted runs spend your organization's MCPJam credits or its provider keys, local and SDK runs spend the provider key you export, and the model's tool calls reach your server with the credentials it is given. A run's size is cases × iterations per case × client/model pairs; the **Set up run** sheet shows that total before you start.
+</Warning>
+
+<Tabs>
+  <Tab title="Inspector">
+    <Steps>
+      <Step title="Open the suite">
+        In the Evaluate tab, open **Suites** and pick a suite, then click **Run**. You can also click **Run** on **Overview** and choose the suite from the list. The Set up run sheet opens with the suite name in its title.
+      </Step>
+      <Step title="Set the iteration count">
+        **Iterations per case** takes 1 to 10. It starts at the count you last used for this suite, or the suite's default, and never below the suite's minimum.
+      </Step>
+      <Step title="Check the clients and models">
+        **Where it runs** lists each client with its models. Adding or removing one here changes this run only.
+      </Step>
+      <Step title="Start">
+        The footer multiplies it out, for example "3 cases × 2 repetitions × 2 client:model combos", with the total number of iterations. Click **Start run**.
+      </Step>
+    </Steps>
+
+    {/* Screenshot: Set up run · Weather suite sheet with Iterations per case at 2, the Where it runs table with two clients, and the footer reading 3 cases × 2 repetitions × 2 client:model combos = 12 iterations */}
+
+    **Suite settings** in the sheet closes it and opens the suite's saved clients, models and server groups.
+  </Tab>
+  <Tab title="CLI">
+    `mcpjam cloud eval run` runs a suite saved in your project. `--wait` polls until the run finishes and exits on its verdict; `--out` writes the report.
+
+    ```bash Hosted run
+    npm i -g @mcpjam/cli
+    mcpjam cloud login   # in CI: export MCPJAM_API_KEY=sk_...
+
+    mcpjam cloud eval run \
+      --suite "My eval suite" \
+      --project "My project" \
+      --iterations 3 \
+      --wait \
+      --out eval-report.json
+    ```
+
+    See [`cloud eval run`](/cli/reference#cloud-eval-run) for target selection and exit codes.
+
+    `--file` runs a suite file from your repository instead. It uploads the file as a suite in your project and runs it there, judge included; the file's servers must be saved in the project.
+
+    ```bash Suite file run
+    mcpjam cloud eval run \
+      --file .mcpjam/evals/notes.yaml \
+      --wait \
+      --reporter junit-xml \
+      --out reports/notes.xml
+    ```
+
+    `mcpjam test` runs a suite file on your machine, but without the judge, so it can check assertions only and refuses a file whose judge is Required. See [Local evals](/cli/local-evals).
+
+    <Accordion title="Example suite file">
+      ```yaml .mcpjam/evals/notes.yaml
+      schemaVersion: "2"
+      mode: agentWorkflow
+      reportingMode: standard
+      suite:
+        id: s_notes_example
+        name: Notes server
+      target:
+        servers:
+          - name: notes
+      defaults:
+        judge:
+          enabled: true
+          role: required
+        model: anthropic/claude-haiku-4.5
+        iterations: 1
+        passThreshold: 1
+        validity: {}
+      cases:
+        - id: c_reads_a_note
+          title: tells the user what note 7 says
+          steps:
+            - id: s1
+              kind: prompt
+              prompt: What does note 7 say?
+          expectedOutput: The reply tells the user what note 7 says, using the note's actual text.
+        - id: c_summarizes_without_deleting
+          title: summarizes note 7 without deleting it
+          steps:
+            - id: s1
+              kind: prompt
+              prompt: Summarize note 7.
+            - id: a1
+              kind: assert
+              assertion:
+                type: toolNeverCalled
+                toolName: delete_note
+          expectedOutput: A short, accurate summary of note 7.
+      ```
+    </Accordion>
+  </Tab>
+  <Tab title="SDK">
+    The SDK runs cases you write in TypeScript, on your machine. `iterations` sets the runs per case and `concurrency` how many of one case's iterations run at once (default `5`); `timeoutMs` bounds each iteration.
+
+    ```bash
+    npm install @mcpjam/sdk
+    npm install -D vitest
+    ```
+
+    ```ts evals/notes.test.ts
+    import { afterAll, beforeAll, expect, test } from "vitest";
+    import { EvalSuite, EvalTest, HostRunner, MCPClientManager, judge } from "@mcpjam/sdk";
+
+    const manager = new MCPClientManager({
+      notes: { command: "node", args: ["./notes-server.js"] },
+    });
+    let agent: HostRunner;
+
+    beforeAll(async () => {
+      await manager.connectToServer("notes");
+      agent = new HostRunner({
+        tools: await manager.getTools(),
+        model: "anthropic/claude-sonnet-5",
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        mcpClientManager: manager,
+      });
+    });
+
+    afterAll(async () => {
+      await manager.disconnectAllServers();
+    });
+
+    // Grades the finished run against what the user should get
+    const outcome = (id: string, criterion: string) =>
+      judge({
+        id,
+        model: "anthropic/claude-sonnet-5",
+        apiKey: process.env.ANTHROPIC_API_KEY!,
+        rubric: [criterion],
+        role: "required",
+      });
+
+    test("notes suite", async () => {
+      const suite = new EvalSuite({ name: "Notes server" });
+      suite.add(new EvalTest({
+        id: "c_reads_a_note",
+        name: "tells the user what note 7 says",
+        execute: async (a) => {
+          await a.run("What does note 7 say?");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("answers-with-the-note", "The reply tells the user what note 7 says, using the note's actual text.")],
+        },
+      }));
+      suite.add(new EvalTest({
+        id: "c_summarizes_without_deleting",
+        name: "summarizes note 7 without deleting it",
+        predicates: [{ type: "toolNeverCalled", toolName: "delete_note" }],
+        execute: async (a) => {
+          await a.run("Summarize note 7.");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("summarizes-the-note", "A short, accurate summary of note 7.")],
+        },
+      }));
+
+      const result = await suite.run(agent, {
+        iterations: 3,
+        concurrency: 2,
+        timeoutMs: 60_000,
+      });
+
+      expect(result.aggregate.accuracy).toBeGreaterThanOrEqual(0.9);
+    }, 600_000);
+    ```
+
+    ```bash Run it
+    export ANTHROPIC_API_KEY=sk-ant-...
+    export MCPJAM_API_KEY=sk_...
+    npx vitest run evals/notes.test.ts
+    ```
+
+    <Note>
+      SDK runs need an MCPJam identity: `MCPJAM_API_KEY` or a saved `mcpjam cloud login`. With the key set, results upload and create a suite managed in code; set `mcpjam: { enabled: false }` on the suite to keep them local. See [Save results to MCPJam](/sdk/concepts/saving-results).
+    </Note>
+
+    The [`EvalSuite` reference](/sdk/reference/eval-suite#run) lists every run option.
+  </Tab>
+</Tabs>
+
+### Run one case
+
+<Tabs>
+  <Tab title="Inspector">
+    Open the case and click **Run** in the case editor. Pick the iterations and the clients and models in the "Set up run" sheet, then click **Run test case**. Unsaved edits are saved first; a new case has to be saved once before it can run.
+
+    Guests get a simpler sheet: the iteration count and one client with its models, with no **Suite settings** button.
+  </Tab>
+  <Tab title="CLI">
+    ```bash Hosted case
+    mcpjam cloud eval cases run \
+      --suite "My eval suite" \
+      --case "tells the user what note 7 says" \
+      --iterations 3
+    ```
+
+    The case runs as a full run; read it with `mcpjam cloud eval iterations`.
+
+    ```bash Suite file case
+    mcpjam cloud eval run --file .mcpjam/evals/notes.yaml --case c_reads_a_note --wait
+    ```
+
+    `--case` takes a case id or title and can be repeated.
+  </Tab>
+  <Tab title="SDK">
+    Run one `EvalTest` on its own. Add this to `evals/notes.test.ts` above; it reuses `agent` and `outcome`:
+
+    ```ts evals/notes.test.ts
+    test("reads a note", async () => {
+      const readsANote = new EvalTest({
+        id: "c_reads_a_note",
+        name: "tells the user what note 7 says",
+        execute: async (a) => {
+          await a.run("What does note 7 say?");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("answers-with-the-note", "The reply tells the user what note 7 says, using the note's actual text.")],
+        },
+      });
+
+      const run = await readsANote.run(agent, { iterations: 5, concurrency: 1 });
+
+      expect(run.successes).toBe(run.iterations);
+    }, 600_000);
+    ```
+
+    ```bash
+    npx vitest run evals/notes.test.ts -t "reads a note"
+    ```
+  </Tab>
+</Tabs>
+
+### Run again
+
+<Tabs>
+  <Tab title="Inspector">
+    Click **Run again** on the run page. It opens the same sheet, so you can change the iterations and models first.
+  </Tab>
+  <Tab title="CLI">
+    `cloud eval rerun --failed` starts a new run of only the cases that did not pass. Because it ran only what failed, it never becomes the suite's latest run or a comparison baseline.
+
+    ```bash
+    # Start a run and keep its ID
+    RUN_ID=$(mcpjam cloud eval run --suite "My eval suite" --project "My project" --wait --format json | jq -r '.runs[0].id')
+
+    # List the cases that would rerun, and why, without starting anything
+    mcpjam cloud eval rerun "$RUN_ID" --failed --dry-run --project "My project"
+
+    # Rerun them and exit on the new run's verdict
+    mcpjam cloud eval rerun "$RUN_ID" --failed --wait --project "My project"
+    ```
+
+    To repeat the whole suite, run `mcpjam cloud eval run` again.
+  </Tab>
+</Tabs>
+
+## Cancel a run
+
+While a run is pending, running or grading, **Cancel run** replaces **Run again** on the run page. It stops every client and model pair of that launch, including one whose iterations have finished but whose judge is still grading. On the suite page, **Cancel run** stops every run of the suite that is still going.
+
+Iterations that had not finished are recorded as cancelled, not failed. The run page counts them under **Cancelled** and leaves them out of the pass and fail counts, so a stopped run does not read as a broken server. `mcpjam cloud eval run --wait` exits `5` for a cancelled run, the code for a run with no valid verdict.
+
+The CLI has no command to cancel a hosted run. A local `mcpjam test` run stops on `Ctrl-C`: it keeps the completed evidence, writes the report and exits `5`.
+
+## Why Run is disabled
+
+Hover the disabled button to see the reason. The suite page's **Run** and the sheet's **Start run** check different things.
+
+| Message | Cause | Fix |
+|---|---|---|
+| "Add a test case first." | The suite has no saved cases. | Add a case. If generated drafts are waiting, the message says so; add them to the suite. |
+| "A suite or replay is already in progress." | A run of this suite is still going. | Wait, or click **Cancel run**. |
+| "Finish the in-progress test case run first." | A single-case run is still going. | Wait for it to finish. |
+| "Configure suite servers before running the full suite." | A suite with no clients has no servers to connect. | Give the suite a server group in **Suite settings**. |
+| "Eval iteration limit reached. Resets …" | Your organization has used its eval iterations for this period. | Wait for the reset shown, or move to a plan with a larger allowance. |
+| "Choose at least one client and model." | Every client or model was removed in the sheet, or a client has no model. | Add a client and pick a model under **Where it runs**. |
+| "A selected client has no server group, so its run would connect no servers." | A client in the run has no server group. | Pick a server group for it in **Suite settings**. |
+| "Pick a server group to run this suite." | The suite has no clients and no group is picked. | Pick one in **Servers**. |
+| "Out of MCPJam credits · resets in …" | Every model in the run uses MCPJam credits and your organization has none left. | Switch to a model from your own provider, or wait for the reset. |
+| "Fix the setup problem above before running." | The sheet found a problem it can't work around, such as a server that is no longer in the project. | Follow the notice above: re-add the server or point the suite at another one. |
+| "Save the test case before running." | The case is a new, unsaved draft. | Click **Save** in the case editor. |
+
+A server that is in the project but not connected does not block the run. The sheet names it ("… isn't connected. Start tries to connect it.") and offers **Connect** if you want to connect it first.
+
+## Time and retry limits
+
+**Suite settings** caps how long a run may take with **Per-turn timeout**, **Per-tool-call timeout**, **Per-iteration timeout** and **Whole-run timeout**, and sets **Model call retries**. An empty field inherits the platform default. An iteration that runs out of time fails alone; the others keep going. Defaults, ranges and API fields are in the [suite settings reference](/evaluate/reference/suite-settings#time-and-retry-limits).
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Read results" icon="chart-column" href="/evaluate/read-results">
+    Find where a run broke.
+  </Card>
+  <Card title="What a run can access" icon="shield" href="/evaluate/what-a-run-can-access">
+    Servers, models and data sent out.
+  </Card>
+  <Card title="Run evals in CI" icon="git-pull-request" href="/evaluate/run-evals-in-ci">
+    Run a suite from your pipeline.
+  </Card>
+</CardGroup>

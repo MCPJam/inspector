@@ -109,7 +109,15 @@ beforeEach(() => {
   state.queried = [];
 });
 
-describe("the Runs as you line", () => {
+function expectRunsAs(...names: string[]) {
+  const line = screen.getByTestId("suite-runs-as");
+  expect(line).toHaveTextContent(/^Runs as/);
+  expect(line).not.toHaveTextContent("you");
+  for (const name of names) expect(within(line).getByText(name)).toBeVisible();
+  return line;
+}
+
+describe("the Runs as line", () => {
   it("names each server with the accounts its runs use", () => {
     render(
       <RunsAsLine
@@ -130,9 +138,7 @@ describe("the Runs as you line", () => {
         ]}
       />,
     );
-    expect(screen.getByTestId("suite-runs-as")).toHaveTextContent(
-      "Runs as you · Asana Dummy, Live · Linear Work",
-    );
+    expectRunsAs("Dummy", "Live", "Asana", "Work", "Linear");
   });
 
   it("flags an account that needs reconnecting, and says nothing with no entries", () => {
@@ -147,14 +153,12 @@ describe("the Runs as you line", () => {
         ]}
       />,
     );
-    expect(screen.getByTestId("suite-runs-as")).toHaveTextContent(
-      "Runs as you · Asana Dummy Needs reconnect",
-    );
+    expectRunsAs("Dummy", "Asana", "Needs reconnect");
     rerender(<RunsAsLine entries={[]} />);
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("reads the suite's saved choice beside Setup Run", () => {
+  it("reads the suite's saved choice beside Set up run", () => {
     state.view = {
       servers: [
         {
@@ -167,22 +171,37 @@ describe("the Runs as you line", () => {
       scheduleOwners: [],
     } satisfies SuiteAccountsView;
     render(<SuiteRunsAsLine suite={suite} projectId="project" />);
-    expect(screen.getByTestId("suite-runs-as")).toHaveTextContent(
-      "Runs as you · Asana Dummy",
-    );
+    expectRunsAs("Dummy", "Asana");
   });
 
-  it("asks for nothing while the rollout flag is off", () => {
+  it("shows a saved shared choice while account editing is off", () => {
     state.flag = false;
+    state.view = {
+      servers: [{
+        serverId: "srv-asana", mode: "shared", managed: true,
+        accounts: [live, dummy], chosen: null, suiteConnectionId: "conn-dummy",
+      }],
+      scheduleOwners: [],
+    } satisfies SuiteAccountsView;
+    render(<SuiteRunsAsLine suite={suite} projectId="project" />);
+    expectRunsAs("Dummy", "Asana");
+  });
+
+  it("says nothing for a server with only one account", () => {
+    state.view = {
+      servers: [
+        { serverId: "srv-asana", mode: "accounts", accounts: [live], chosen: null },
+      ],
+      scheduleOwners: [],
+    } satisfies SuiteAccountsView;
     const { container } = render(
       <SuiteRunsAsLine suite={suite} projectId="project" />,
     );
     expect(container).toBeEmptyDOMElement();
-    expect(state.queried).toEqual([]);
   });
 });
 
-describe("the Setup Run account checks", () => {
+describe("the Set up run account checks", () => {
   it("names an account that needs reconnecting and keeps Start run off", async () => {
     renderSheet({
       ...emptyPreflight,
@@ -241,9 +260,7 @@ describe("the Setup Run account checks", () => {
         },
       ],
     });
-    expect(screen.getByTestId("suite-runs-as")).toHaveTextContent(
-      "Runs as you · Asana Dummy",
-    );
+    expectRunsAs("Dummy", "Asana");
     expect(screen.getByRole("button", { name: "Start run" })).toBeEnabled();
   });
 
@@ -281,20 +298,20 @@ describe("the Setup Run account checks", () => {
   });
 });
 
-describe("the Setup Run account checks, kept to what the run connects", () => {
+describe("the Set up run account checks, kept to what the run connects", () => {
   // Asana runs on its default; the Linear account chosen needs reconnecting.
   const twoServers = {
     servers: [
       {
         serverId: "srv-asana",
         mode: "accounts",
-        accounts: [live],
+        accounts: [live, dummy],
         chosen: null,
       },
       {
         serverId: "srv-linear",
         mode: "accounts",
-        accounts: [{ ...dummy, needsReauth: true }],
+        accounts: [live, { ...dummy, needsReauth: true }],
         chosen: ["conn-dummy"],
       },
     ],

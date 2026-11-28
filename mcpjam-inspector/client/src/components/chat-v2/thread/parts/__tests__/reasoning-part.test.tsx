@@ -69,10 +69,10 @@ describe("ReasoningPart", () => {
   });
 
   it("shimmers the label while reasoning streams", () => {
-    // The collapsed default only works if a still-running turn is visibly
-    // distinguishable from a hung one; that was the actual complaint. The
-    // motion lives on the label itself, so assert the class is actually on
-    // the text node and not merely somewhere in the header.
+    // A still-running turn must be visibly distinguishable from a hung one,
+    // even when the reader has closed the block. The motion lives on the
+    // label itself, so assert the class is actually on the text node and not
+    // merely somewhere in the header.
     render(
       <ReasoningPart
         text="Working through the request"
@@ -114,23 +114,12 @@ describe("ReasoningPart", () => {
     );
   });
 
-  it("stays open while more reasoning streams in after the reader expands it", () => {
-    // New text must not reset a panel the reader opened.
+  it("opens while reasoning streams and stays open once it is done", () => {
+    // A closed block that only shimmers read as a stall: the thinking itself
+    // shows while it streams, and stays for the reader once it is done.
     const { rerender } = render(
       <ReasoningPart
         text="First thought"
-        state="streaming"
-        displayMode="collapsed"
-      />,
-    );
-
-    const toggle = screen.getByRole("button", { name: /thinking/i });
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-
-    rerender(
-      <ReasoningPart
-        text="First thought and then a second one"
         state="streaming"
         displayMode="collapsed"
       />,
@@ -140,9 +129,115 @@ describe("ReasoningPart", () => {
       "aria-expanded",
       "true",
     );
+    expect(screen.getByText("First thought")).toBeInTheDocument();
+
+    // More text streams in: still open, showing all of it.
+    rerender(
+      <ReasoningPart
+        text="First thought and then a second one"
+        state="streaming"
+        displayMode="collapsed"
+      />,
+    );
     expect(
       screen.getByText("First thought and then a second one"),
     ).toBeInTheDocument();
+
+    rerender(
+      <ReasoningPart
+        text="First thought and then a second one"
+        state="done"
+        displayMode="collapsed"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /reasoning/i })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(
+      screen.getByText("First thought and then a second one"),
+    ).toBeInTheDocument();
+  });
+
+  it("starts closed for reasoning that is already done", () => {
+    // A reloaded chat or a finished turn: nothing is streaming.
+    render(
+      <ReasoningPart
+        text="Earlier reasoning"
+        state="done"
+        displayMode="collapsed"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /reasoning/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("keeps a block the reader closed while it streams closed", () => {
+    const { rerender } = render(
+      <ReasoningPart
+        text="First thought"
+        state="streaming"
+        displayMode="collapsed"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /thinking/i }));
+
+    // New text must not reopen a panel the reader closed.
+    rerender(
+      <ReasoningPart
+        text="First thought and then a second one"
+        state="streaming"
+        displayMode="collapsed"
+      />,
+    );
+    expect(screen.getByRole("button", { name: /thinking/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
+    // Nor finishing.
+    rerender(
+      <ReasoningPart
+        text="First thought and then a second one"
+        state="done"
+        displayMode="collapsed"
+      />,
+    );
+    expect(screen.getByRole("button", { name: /reasoning/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("closes a finished block only when the reader closes it", () => {
+    const { rerender } = render(
+      <ReasoningPart
+        text="First thought"
+        state="streaming"
+        displayMode="collapsed"
+      />,
+    );
+    rerender(
+      <ReasoningPart
+        text="First thought, finished"
+        state="done"
+        displayMode="collapsed"
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: /reasoning/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.queryByText("First thought, finished"),
+    ).not.toBeInTheDocument();
   });
 
   it("still resets when the display mode itself changes", () => {

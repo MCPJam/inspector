@@ -334,6 +334,7 @@ export function pluginModelAppRoutes(ports: {
         bearer,
         { hostId: record.owner.hostId, serverId: record.owner.owner.serverId },
         record.owner,
+        { ownerRef: { kind: "model-app", token: body.instanceToken } },
       );
       return await invokePluginRequest(c, {
     receiptOnly: authorization.receiptOnly,

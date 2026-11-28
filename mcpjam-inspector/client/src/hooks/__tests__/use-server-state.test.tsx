@@ -5,6 +5,7 @@ import { flushSync } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import type { AppState, AppAction, ServerWithName } from "@/state/app-types";
+import { appReducer } from "@/state/app-reducer";
 import {
   buildElectronMcpCallbackUrl,
   shouldRetryOAuthConnectionFailure,
@@ -475,6 +476,48 @@ describe("useServerState CLI config import", () => {
     vi.mocked(authFetch).mockResolvedValue({
       json: async () => ({}),
     } as Response);
+  });
+
+  it("deletes the row from the eager mapping when the snapshot doesn't list it yet", async () => {
+    vi.clearAllMocks();
+    mockUseDbUserReady.mockReset();
+    mockUseDbUserReady.mockReturnValue(true);
+    mockConvexQuery.mockResolvedValue([]);
+    vi.mocked(authFetch).mockReset();
+    vi.mocked(authFetch).mockResolvedValue({
+      json: async () => ({}),
+    } as Response);
+    mockDeleteServer.mockReset();
+    mockDeleteServer.mockResolvedValue(undefined);
+    tryResolveProjectServerMock.mockReturnValue({
+      projectId: "proj_cloud",
+      serverId: "srv_just_saved",
+    });
+    const appState = createCloudCliAppState();
+    const { result } = renderHook(() =>
+      useServerState({
+        appState,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+        logger: createTestLogger(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleRemoveServer("acme");
+    });
+
+    expect(mockDeleteServer).toHaveBeenCalledWith({
+      serverId: "srv_just_saved",
+    });
   });
 
   it("does not ask for sign-in when there is no CLI server payload", async () => {
@@ -1009,7 +1052,8 @@ describe("useServerState CLI config import", () => {
     await waitFor(() => {
       expect(injectHostedServerMapping).toHaveBeenCalledWith(
         "cli-http",
-        "srv_own"
+        "srv_own",
+        "proj_cloud",
       );
     });
     expect(logger.warn).not.toHaveBeenCalledWith(
@@ -1159,7 +1203,8 @@ describe("useServerState CLI config import", () => {
     );
     expect(injectHostedServerMapping).toHaveBeenCalledWith(
       "cli-http",
-      "srv_new"
+      "srv_new",
+      "proj_cloud",
     );
   });
 });
@@ -3131,6 +3176,64 @@ describe("useServerState OAuth callback failures", () => {
     ).toBe(false);
   });
 
+  describe("removing a server while its save is in flight", () => {
+    const acme = { name: "Acme", type: "http", url: "https://mcp.acme.dev" };
+    const saves: Array<(serverId: string) => void> = [];
+    const render = () => {
+      saves.length = 0;
+      mockDeleteServer.mockReset();
+      mockDeleteServer.mockResolvedValue(undefined);
+      mockCreateServerIfMissing.mockImplementation(
+        () => new Promise<string>((resolve) => saves.push(resolve))
+      );
+      tryResolveProjectServerMock.mockReturnValue(null);
+      const appState = createCloudCliAppState();
+      return renderUseServerState(vi.fn(), appState, {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+      }).result;
+    };
+    const connect = (result: ReturnType<typeof render>) => {
+      let pending!: Promise<void>;
+      act(() => {
+        pending = result.current.handleConnect(acme as any);
+      });
+      return pending;
+    };
+
+    it("deletes the row the save creates", async () => {
+      const result = render();
+      const first = connect(result);
+      await waitFor(() => expect(saves).toHaveLength(1));
+      await act(async () => result.current.handleRemoveServer("Acme"));
+      await act(async () => {
+        saves[0]("srv_acme");
+        await first;
+      });
+      expect(mockDeleteServer).toHaveBeenCalledWith({ serverId: "srv_acme" });
+    });
+
+    it("keeps the row when a same-name connect started after the removal", async () => {
+      const result = render();
+      const first = connect(result);
+      await waitFor(() => expect(saves).toHaveLength(1));
+      await act(async () => result.current.handleRemoveServer("Acme"));
+      connect(result);
+      await waitFor(() => expect(saves).toHaveLength(2));
+      await act(async () => {
+        saves[0]("srv_acme");
+        await first;
+      });
+      expect(mockDeleteServer).not.toHaveBeenCalledWith({
+        serverId: "srv_acme",
+      });
+    });
+  });
+
   it("applies project connection defaults on local reconnect", async () => {
     const { reconnectServer } = await import("@/state/mcp-api");
     const { ensureAuthorizedForReconnect } = await import(
@@ -4771,6 +4874,174 @@ describe("syncServerToConvex name-collision recovery", () => {
     url: "https://example.com/mcp",
   };
 
+  it.each([false, true])(
+    "saves a published plugin ID to the active project's row (save-only=%s)",
+    async (saveOnly) => {
+      const appState = createAppState();
+      appState.projects.default.sharedProjectId = "project_default";
+      const { result } = renderUseServerState(vi.fn(), appState, {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+        activeProjectServersFlat: [
+          siblingRow,
+          { ...siblingRow, _id: "srv_demo", projectId: "project_default" },
+        ],
+      });
+
+      await act(async () => {
+        const outcome = await result.current.handleUpdate(
+          "demo-server",
+          {
+            name: "demo-server",
+            type: "http",
+            url: "https://example.com/mcp",
+            publishedPluginId: "plugin_parts",
+          },
+          saveOnly,
+        );
+        expect(outcome.ok).toBe(true);
+      });
+
+      expect(mockUpdateServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "srv_demo",
+          projectId: "project_default",
+          publishedPluginId: "plugin_parts",
+        }),
+      );
+      expect(mockUpdateServer).not.toHaveBeenCalledWith(
+        expect.objectContaining({ serverId: "srv_sibling" }),
+      );
+      expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+      if (!saveOnly) {
+        expect(injectHostedServerMapping).toHaveBeenCalledWith(
+          "demo-server",
+          "srv_demo",
+          "project_default",
+        );
+      }
+    },
+  );
+
+  it("refuses a published plugin ID edit when only a sibling project owns the name", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const { result } = renderUseServerState(vi.fn(), appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      activeProjectServersFlat: [siblingRow],
+    });
+
+    await act(async () => {
+      const outcome = await result.current.handleUpdate("demo-server", {
+        name: "Renamed",
+        type: "http",
+        url: "https://example.com/mcp",
+        publishedPluginId: "plugin_parts",
+      });
+      expect(outcome).toEqual({ ok: false, serverName: "demo-server" });
+    });
+
+    expect(mockUpdateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(mockDeleteServer).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("does not confirm or publish a rename when configuration saving rejects (save-only=%s)", async (saveOnly) => {
+    mockHostedMode.mockReturnValue(true);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const row = { ...siblingRow, _id: "srv_demo", projectId: "project_default" };
+    mockUpdateServer.mockRejectedValueOnce(new Error("Save rejected"));
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false,
+      activeProjectServersFlat: [row],
+    });
+    let outcome: ServerUpdateResult | undefined;
+    await act(async () => {
+      try {
+        outcome = await result.current.handleUpdate("demo-server", {
+          name: "Renamed", type: "http", url: "https://example.com/mcp", useOAuth: false,
+        }, saveOnly);
+      } catch (error) {
+        expect(error).toEqual(new Error("Save rejected"));
+      }
+    });
+    if (!saveOnly) expect(outcome).toEqual({ ok: false, serverName: "demo-server" });
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" }));
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "UPSERT_SERVER", name: "Renamed" }));
+    expect(toastSuccess).not.toHaveBeenCalledWith("Server configuration updated");
+  });
+
+  it("confirms a saved rename even when the subsequent connection fails", async () => {
+    mockHostedMode.mockReturnValue(true);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    mockUpdateServer.mockResolvedValueOnce("srv_demo");
+    testConnectionMock.mockResolvedValueOnce({ success: false, error: "MCP unavailable" });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false,
+      activeProjectServersFlat: [{ ...siblingRow, _id: "srv_demo", projectId: "project_default" }],
+    });
+    let outcome: ServerUpdateResult | undefined;
+    await act(async () => {
+      outcome = await result.current.handleUpdate("demo-server", {
+        name: "Renamed", type: "http", url: "https://example.com/mcp", useOAuth: false,
+      });
+    });
+    expect(mockUpdateServer).toHaveBeenCalledWith(expect.objectContaining({ serverId: "srv_demo", name: "Renamed" }));
+    expect(outcome).toEqual({ ok: true, serverName: "Renamed" });
+    expect(dispatch).toHaveBeenCalledWith({ type: "REMOVE_SERVER", name: "demo-server" });
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "CONNECT_FAILURE", name: "Renamed" }));
+  });
+
+  it("reports imported configuration saves independently of connection success", async () => {
+    const onConfigSaved = vi.fn();
+    testConnectionMock.mockResolvedValueOnce({ success: false, error: "MCP unavailable" });
+    const { result } = renderUseServerState(vi.fn());
+    await act(async () => {
+      await result.current.handleConnect({ name: "Imported", type: "http", url: "https://example.com/mcp", useOAuth: false }, { onConfigSaved });
+    });
+    expect(onConfigSaved).toHaveBeenCalledTimes(1);
+    mockHostedMode.mockReturnValue(true);
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    mockCreateServerIfMissing.mockRejectedValueOnce(new Error("Save rejected"));
+    const hosted = renderUseServerState(vi.fn(), appState, { isAuthenticated: true, hasSignedInUser: true, useLocalFallback: false });
+    onConfigSaved.mockClear();
+    await act(async () => {
+      await hosted.result.current.handleConnect({ name: "Imported", type: "http", url: "https://example.com/mcp", useOAuth: false }, { onConfigSaved });
+    });
+    expect(onConfigSaved).not.toHaveBeenCalled();
+  });
+
+  it("replaces the old local project member on a full reconnect rename", async () => {
+    const dispatch = vi.fn();
+    const initial = createAppState();
+    const { result } = renderUseServerState(dispatch, initial);
+    await act(async () => {
+      await result.current.handleUpdate("demo-server", { name: "Renamed", type: "http", url: "https://example.com/mcp", useOAuth: false });
+    });
+    const final = dispatch.mock.calls.reduce((state, [action]) => appReducer(state, action), initial);
+    expect(final.projects.default.servers).toHaveProperty("Renamed");
+    expect(final.projects.default.servers).not.toHaveProperty("demo-server");
+  });
+
+  it("retains every local imported server when independent saves share the same render snapshot", async () => {
+    const dispatch = vi.fn();
+    const initial = createAppState();
+    const { result } = renderUseServerState(dispatch, initial);
+    await act(async () => {
+      await Promise.all(["X", "Y"].map((name) => result.current.handleConnect({ name, type: "http", url: "https://example.com/mcp", useOAuth: false })));
+    });
+    const final = dispatch.mock.calls.reduce((state, [action]) => appReducer(state, action), initial);
+    expect(Object.keys(final.projects.default.servers)).toEqual(["demo-server", "X", "Y"]);
+  });
+
   it("handleUpdate reports the refusal instead of toasting a save that never happened", async () => {
     const appState = createAppState();
     appState.projects.default.sharedProjectId = "project_default";
@@ -4983,7 +5254,7 @@ describe("syncServerToConvex name-collision recovery", () => {
         hasSignedInUser: true,
         useLocalFallback: false,
         effectiveProjects: appState.projects,
-        activeProjectServersFlat: [savedRow],
+        activeProjectServersFlat: [siblingRow, savedRow],
       });
       return { dispatch, ...rendered };
     }
@@ -5919,13 +6190,11 @@ describe("useServerState XAA identity pair — shared save semantics across all 
       const action = dispatch.mock.calls
         .map(([a]) => a)
         .find(
-          (a): a is Extract<AppAction, { type: "UPDATE_PROJECT" }> =>
-            a.type === "UPDATE_PROJECT"
+          (a): a is Extract<AppAction, { type: "UPDATE_PROJECT_SERVER" }> =>
+            a.type === "UPDATE_PROJECT_SERVER"
         );
       expect(action).toBeDefined();
-      return (action!.updates.servers as Record<string, ServerWithName>)[
-        "xaa-server"
-      ];
+      return action!.server;
     };
 
     await act(async () => {
@@ -6599,3 +6868,4 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
     expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 });
+

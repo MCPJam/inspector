@@ -19,10 +19,14 @@ function makeSuite(overrides: Partial<EvalSuite> = {}): EvalSuite {
   } as EvalSuite;
 }
 
-function renderDialogs(suiteToDelete: EvalSuite | null) {
+function renderDialogs(
+  suiteToDelete: EvalSuite | null,
+  suiteToDeleteHasUnsavedEdits?: boolean,
+) {
   return render(
     <ConfirmationDialogs
       suiteToDelete={suiteToDelete}
+      suiteToDeleteHasUnsavedEdits={suiteToDeleteHasUnsavedEdits}
       setSuiteToDelete={vi.fn()}
       deletingSuiteId={null}
       onConfirmDeleteSuite={vi.fn()}
@@ -81,5 +85,19 @@ describe("ConfirmationDialogs — deleting a CI-owned suite", () => {
     expect(
       screen.getByText(/Are you sure you want to delete the test suite/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe("ConfirmationDialogs — deleting with unsaved settings", () => {
+  it("says the unsaved changes go with the suite", () => {
+    renderDialogs(makeSuite(), true);
+    expect(
+      screen.getByText(/unsaved settings changes will be lost/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about unsaved changes when there are none", () => {
+    renderDialogs(makeSuite());
+    expect(screen.queryByText(/unsaved settings changes/i)).toBeNull();
   });
 });

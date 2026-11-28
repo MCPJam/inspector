@@ -22,6 +22,10 @@ import {
   toHttpConfig,
 } from "../../../../routes/web/auth.js";
 import { buildHostConnectionPins } from "../../../../services/host-connection-pins.js";
+import {
+  HOSTED_APP_HANDLERS,
+  qualifyHarnessHostCapabilities,
+} from "@/shared/harness-host-capabilities";
 import { harnessConnectionProfile } from "../../harness-connection-profile.js";
 import {
   sealHarnessSessionEnvelope,
@@ -97,11 +101,14 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
+/** With the elicitation handler a Playground turn registers for a client that
+ * declares elicitation, so the SDK advertises it as that turn does. */
 async function connect(
   config: Parameters<MCPClientManager["connectToServer"]>[1],
 ) {
   const manager = new MCPClientManager();
   cleanups.push(() => manager.disconnectAllServers());
+  manager.setElicitationCallback(async () => ({ action: "decline" }));
   await manager.connectToServer("server", config);
   return manager;
 }
@@ -123,35 +130,42 @@ async function turnConnection(profile: Profile, url: string) {
 
 const cursorCli = () => seedHostTemplate("cursor-cli");
 const declared = (harness: string) =>
-  qualifiedForwardingRuntime(getHarnessAdapter(harness))
-    ?.nativeVersionNegotiation;
+  qualifiedForwardingRuntime(getHarnessAdapter(harness))?.nativeClient;
+
+/** A Playground turn's admission: the template's host promises, and the live
+ * elicitation handler a client declaring elicitation gets there. */
+const turnFacts = (profile: Profile, harness: string) => ({
+  serverIds: ["server"],
+  respectToolVisibility: profile.respectToolVisibility,
+  modelVisibleMcpToolResults: profile.modelVisibleMcpToolResults,
+  hostCapabilities: qualifyHarnessHostCapabilities(profile, HOSTED_APP_HANDLERS),
+  elicitationRuntimeVersion: getHarnessAdapter(harness).pinnedRuntimeVersion,
+  nativeClient: declared(harness),
+});
 
 function admission(
   manager: MCPClientManager,
   profile: Profile,
   harness: string,
 ) {
-  return forwardingAdmission({
-    manager,
-    serverIds: ["server"],
-    respectToolVisibility: profile.respectToolVisibility,
-    modelVisibleMcpToolResults: profile.modelVisibleMcpToolResults,
-    nativeVersionNegotiation: declared(harness),
-  });
+  return forwardingAdmission({ manager, ...turnFacts(profile, harness) });
 }
 
 describe("Cursor CLI client protocol negotiation", () => {
-  it("T1: on a both-era server it stays on 2025-11-25 and pass-through is admitted", async () => {
+  it("T1: on a both-era server it stays on 2025-11-25, and the elicitation it declares keeps pass-through off", async () => {
     const fixture = await serve("both");
     const manager = await turnConnection(cursorCli(), fixture.url);
     expect(manager.getInitializationInfo("server")?.protocolVersion).toBe(
       "2025-11-25",
     );
     expect(fixture.wire).not.toContain("POST server/discover");
-    expect(admission(manager, cursorCli(), "cursor")).toEqual({
-      delivery: "native",
-      gaps: [],
-    });
+    // The turn hands elicitation to its handler only for Claude Code's
+    // profile; on pass-through Cursor CLI would decline the server's form
+    // itself, where MCPJam's connection asks the member.
+    expect(admission(manager, cursorCli(), "cursor").gaps.sort()).toEqual([
+      "capability-overrides",
+      "client-capabilities",
+    ]);
   });
 
   it("T2: the signed proxy's connection, rebuilt from the sealed profile, negotiates 2025-11-25", async () => {
@@ -223,15 +237,11 @@ describe("Cursor CLI client protocol negotiation", () => {
       "POST initialize 2025-11-25",
       "POST server/discover",
     ]);
-    // The remaining gap: native forwarding is qualified on 2025 only.
+    // Native forwarding is qualified on 2025 only, and elicitation is routed
+    // only from a 2025-11-25 connection.
     expect(
-      nativeForwardingGaps({
-        manager,
-        serverIds: ["server"],
-        respectToolVisibility: false,
-        nativeVersionNegotiation: declared("cursor"),
-      }),
-    ).toEqual(["unqualified-protocol"]);
+      nativeForwardingGaps({ manager, ...turnFacts(cursorCli(), "cursor") }).sort(),
+    ).toEqual(["capability-overrides", "client-capabilities", "unqualified-protocol"]);
   });
 
   it("T4: a generic refusal of initialize ends the connection, as it does for the CLI", async () => {
@@ -243,9 +253,9 @@ describe("Cursor CLI client protocol negotiation", () => {
   });
 
   it.each(["claude-code", "codex"])(
-    "T5: %s declares no negotiation of its own, so any protocol setting stays a pin",
+    "T5: %s does not negotiate legacy-first, so that setting and a revision it does not pin stay pins",
     async (harness) => {
-      expect(declared(harness)).toBeUndefined();
+      expect(declared(harness)?.versionNegotiation).toBeUndefined();
       const gaps = async (mcpProfile: Profile["mcpProfile"]) => {
         const profile = { ...cursorCli(), mcpProfile };
         const manager = await turnConnection(

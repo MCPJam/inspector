@@ -35,6 +35,7 @@ import { logger } from "../../logger.js";
 import { verifyPackManifestSignature, type PackSigningKey, PACK_SIGNING_KEYS } from "./pack-signing-key.js";
 import { runtimeInstallRoot } from "./runtime-root.js";
 import { installerFetch } from "./runtime-fetch.js";
+import { invalidateLocalTurnParks } from "./approval-park.js";
 
 export const REVOCATION_SCHEMA = "mcpjam.local-harness-revocations/1";
 
@@ -222,6 +223,14 @@ export async function refreshRevocations(options: {
         lastFailureAt = 0;
       } else {
         lastFailureAt = Date.now();
+      }
+      // A runtime kept between turns on a pack this list withdraws ends now,
+      // not at its next turn or idle timeout.
+      if (outcome.state === "updated") {
+        const list = outcome.list;
+        void invalidateLocalTurnParks("runtime-update", {
+          which: (kept) => revocationFor(list, kept.harnessId, kept.runtimeDigest) !== null,
+        });
       }
       return outcome;
     })

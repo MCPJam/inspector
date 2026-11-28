@@ -8,6 +8,13 @@ import {
   readOAuthCallbackParams,
   resetOAuthCallbackInboxForTests,
 } from "@/lib/oauth-callback-inbox";
+import {
+  hashOAuthState,
+  OAUTH_POPUP_MARKER_TTL_MS,
+  oauthCallbackChannelName,
+  readOAuthPopupMarker,
+  writeOAuthPopupMarker,
+} from "@/lib/oauth/popup-handoff-marker";
 
 describe("OAuthDebugCallback", () => {
   beforeEach(() => {
@@ -138,6 +145,149 @@ describe("OAuthDebugCallback", () => {
       expect(postMessage.mock.calls[0][0].iss).toBe(
         "https://auth.example.com",
       );
+    });
+  });
+
+  // A COOP provider page clears `window.opener` and `window.name`, so the
+  // callback can't tell a web popup from a desktop return by looking at them.
+  // The opening tab's marker decides.
+  describe("routing without an opener", () => {
+    const originalLocation = window.location;
+    const replace = vi.fn();
+    const sent: Array<{ name: string; message: unknown }> = [];
+
+    class FakeBroadcastChannel {
+      constructor(readonly name: string) {}
+      postMessage(message: unknown) {
+        sent.push({ name: this.name, message });
+      }
+      close() {}
+    }
+
+    function arrive(search: string) {
+      window.history.replaceState({}, "", `/oauth/callback/debug?${search}`);
+      captureOAuthCallbackFromUrl();
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: { ...originalLocation, replace },
+      });
+      render(<OAuthDebugCallback />);
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      sent.length = 0;
+      vi.stubGlobal("BroadcastChannel", FakeBroadcastChannel);
+      vi.spyOn(window, "close").mockImplementation(() => undefined);
+      Object.defineProperty(window, "opener", {
+        configurable: true,
+        value: null,
+      });
+    });
+
+    afterEach(() => {
+      cleanup();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+      replace.mockReset();
+      localStorage.clear();
+      window.isElectron = false;
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: originalLocation,
+      });
+    });
+
+    it("sends the code on the flow's own channel when a marker matches", () => {
+      writeOAuthPopupMarker("test-state", "conformance");
+
+      arrive("code=test-code&state=test-state&iss=https%3A%2F%2Fauth.example.com");
+
+      expect(sent).toEqual([
+        {
+          name: oauthCallbackChannelName(hashOAuthState("test-state")),
+          message: expect.objectContaining({
+            type: "OAUTH_CALLBACK",
+            code: "test-code",
+            state: "test-state",
+            iss: "https://auth.example.com",
+          }),
+        },
+      ]);
+      expect(replace).not.toHaveBeenCalled();
+      expect(readOAuthPopupMarker("test-state")).toBeNull();
+      expect(readOAuthCallbackParams()).toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(window.close).toHaveBeenCalledTimes(1);
+    });
+
+    it("sends a provider error the same way, so a denied sign-in doesn't hang", () => {
+      writeOAuthPopupMarker("test-state", "debugger");
+
+      arrive(
+        "error=access_denied&error_description=The+user+denied+access&state=test-state",
+      );
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0].message).toEqual(
+        expect.objectContaining({
+          state: "test-state",
+          error: "access_denied",
+          errorDescription: "The user denied access",
+          code: undefined,
+        }),
+      );
+      expect(replace).not.toHaveBeenCalled();
+    });
+
+    it("hands off to the desktop app when no marker exists", () => {
+      arrive("code=test-code&state=test-state");
+
+      const deepLink =
+        "mcpjam://oauth/callback?flow=debug&code=test-code&state=test-state";
+      expect(replace).toHaveBeenCalledWith(deepLink);
+      expect(sent).toEqual([]);
+      expect(screen.getByRole("link", { name: "click here" })).toHaveProperty(
+        "href",
+        deepLink,
+      );
+    });
+
+    it("hands off to the desktop app when the marker expired", () => {
+      writeOAuthPopupMarker(
+        "test-state",
+        "debugger",
+        Date.now() - OAUTH_POPUP_MARKER_TTL_MS - 1,
+      );
+
+      arrive("code=test-code&state=test-state");
+
+      expect(replace).toHaveBeenCalledTimes(1);
+      expect(sent).toEqual([]);
+      expect(readOAuthPopupMarker("test-state")).toBeNull();
+    });
+
+    it("hands off to the desktop app when the marker is for another state", () => {
+      writeOAuthPopupMarker("another-state", "debugger");
+
+      arrive("code=test-code&state=test-state");
+
+      expect(replace).toHaveBeenCalledTimes(1);
+      expect(sent).toEqual([]);
+      expect(readOAuthPopupMarker("another-state")).not.toBeNull();
+    });
+
+    it("leaves an Electron window's callback on screen, as before", () => {
+      window.isElectron = true;
+
+      arrive("code=test-code&state=test-state");
+
+      expect(replace).not.toHaveBeenCalled();
+      expect(sent).toEqual([]);
     });
   });
 });

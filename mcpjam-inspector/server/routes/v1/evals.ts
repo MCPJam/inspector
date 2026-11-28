@@ -1,5 +1,10 @@
 import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
-import { loadSuiteConnectionIdSets } from "../../services/evals/suite-account-choices.js";
+import {
+  loadEvalRunAccountPlan,
+  loadSuiteConnectionIdSets,
+  openEvalAccountGroups,
+} from "../../services/evals/suite-account-choices.js";
+import type { ConnectionIdSets } from "../../utils/oauth-account-sets.js";
 import {
   captureToolSnapshotForEvalAuthoring,
   requireConvexHttpUrl,
@@ -13,6 +18,9 @@ import {
   suiteJudgeSettingsSchema,
   caseJudgeSettingsSchema,
   judgeRubricSchema,
+  codeEvaluatorsSchema,
+  suiteGradingSchema,
+  suiteScriptsSchema,
   suppressedSuiteStandardCheckIdsSchema,
 } from "@mcpjam/sdk/contract";
 /**
@@ -47,6 +55,13 @@ import {
   toSuspectedConditionProjection,
 } from "./eval-friction-projection.js";
 import { toExecutionProjection } from "./eval-execution-projection.js";
+import { toCodeGradingProjection } from "./eval-code-grading-projection.js";
+import {
+  accountSelectionsForRead,
+  accountSelectionsForStorage,
+  runAccountsSchema,
+  toRunAccountsProjection,
+} from "./eval-run-accounts.js";
 import {
   buildEvalRunDecisionSummaryResponse,
   decisionSummaryPageIsComplete,
@@ -60,7 +75,6 @@ import {
   toRunCompareDto,
   type RunCompareBaseline,
 } from "./eval-compare-projection.js";
-import { ConvexHttpClient } from "convex/browser";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 import { type RequestedModelSelection } from "@mcpjam/sdk";
 import {
@@ -150,7 +164,9 @@ import type {
   SuiteGatePolicyV1,
   SuiteGateReportV1,
 } from "@mcpjam/sdk/contract";
-import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
+import { checkEvalHarnessStaticAdmission, harnessOfHostConfig } from "../../services/evals/harness-admission.js";
+import { explainEvalHarnessRefusal } from "../../services/evals/explain-harness-refusal.js";
+import { shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
 import { rerunPreviewRefusal } from "../../services/evals/rerun-refusal.js";
 import {
@@ -182,6 +198,7 @@ import {
   prepareEvalRun,
   authorEvalSuite,
   createConvexClients,
+  evalLaunchWritesSuite,
   resolveServerIdsOrThrow,
   type PreparedEvalRun,
   type RunEvalsRequest,
@@ -229,14 +246,23 @@ import {
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import {
+  assertSuiteWritableViaApi,
+  declaredSuiteIdOf,
+  fileSyncArg,
+  fileSyncBodyShape,
+  isCiOwnedSuiteDoc,
+} from "./ci-owned-suite.js";
+import {
   translateConvexWriteError as translateConvexError,
   translateImportIneligibleError,
 } from "./convex-errors.js";
 import {
+  ConvexHttpStatusError,
   classifyConvexReadError,
-  convexReadFetch,
   translateConvexReadError,
+  translateConvexStatusError,
 } from "./convex-read-errors.js";
+import { createConvexClient } from "./convex-client.js";
 import {
   requireConvexIdParam,
   requireConvexIdShape,
@@ -669,6 +695,7 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
     // Inline tests are optional on the public surface: a bare `suiteId`
     // rerun is the simplest possible call.
     tests: z.array(publicInlineTestSchema).max(MAX_V1_TESTS).default([]),
+    accounts: runAccountsSchema.optional(),
     hosts: z
       .array(
         z.object({
@@ -838,6 +865,10 @@ const syncFileOwnedSuiteSchema = z
       .safeExtend({ model: judgeModelIdSchema.optional() })
       .nullable()
       .optional(),
+    // EFTW-90: `null` clears, as for `judge`.
+    codeEvaluators: codeEvaluatorsSchema.nullable().optional(),
+    scripts: suiteScriptsSchema.nullable().optional(),
+    grading: suiteGradingSchema.nullable().optional(),
     declaredSuiteId: opaqueIdSchema,
     name: z.string().trim().min(1).max(200),
     description: z.string().optional(),
@@ -1141,28 +1172,18 @@ function releaseRunGroupSlotRef(slot: RunGroupSlot): void {
  */
 export const MAX_RUN_GROUP_TARGETS = 10;
 
-// ── Convex read client ───────────────────────────────────────────────
-
-function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
-  const convexUrl = process.env.CONVEX_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration",
-    );
-  }
-  const client = new ConvexHttpClient(convexUrl, { fetch: convexReadFetch });
-  client.setAuth(convexAuthToken);
-  return client;
-}
-
 /**
  * Convex throws generic Errors from queries; the common authorization
  * failures ("not found", "unauthorized", "Not a member") all mean the same
  * thing to a v1 caller: this run/suite is not visible to you.
+ *
+ * Never a `ConvexHttpStatusError`: that answer came from Convex's HTTP layer
+ * before the function ran, so it cannot be a refusal, and its body ("401
+ * Unauthorized", "404 Not Found") would otherwise read as one. The read
+ * translator answers it from its status instead.
  */
 function isConvexNotVisibleError(error: unknown): boolean {
+  if (error instanceof ConvexHttpStatusError) return false;
   const message = error instanceof Error ? error.message : String(error);
   return /not found|unauthorized|not a member/i.test(message);
 }
@@ -1189,6 +1210,16 @@ function scopedEvalReadOptions(
     redactedIsRefusal: phase === "preflight",
   } as const;
 }
+
+/**
+ * For a catch that answers through the write translator or rethrows: a
+ * status error there still reads by its status. See
+ * `translateConvexStatusError`.
+ */
+const EVAL_RUN_STATUS_READ = {
+  scope: "v1.evals",
+  notFoundMessage: "Eval run not found",
+} as const;
 
 /**
  * Every id parameter on this surface is a Convex document id, so each one is
@@ -1281,7 +1312,7 @@ async function readSuiteInProject(
   });
   let suite: SuiteDoc | null;
   try {
-    suite = await createConvexReadClient(convexAuthToken).query(
+    suite = await createConvexClient(convexAuthToken).query(
       "testSuites:getTestSuite" as any,
       { suiteId },
     );
@@ -1316,7 +1347,7 @@ async function describeAttachedEnvironments(
   let rows: Array<Record<string, unknown>> = [];
   try {
     rows =
-      ((await createConvexReadClient(convexAuthToken).query(
+      ((await createConvexClient(convexAuthToken).query(
         "projectEnvironments:listEnvironments" as any,
         { projectId, includeArchived: true },
       )) as Array<Record<string, unknown>> | null) ?? [];
@@ -1379,7 +1410,7 @@ async function assertEphemeralEnvironmentLaunchable(
     notFoundMessage: "Environment not found",
   });
   requireProjectIdShape(projectId);
-  const convex = createConvexReadClient(convexAuthToken);
+  const convex = createConvexClient(convexAuthToken);
   let row: {
     environmentId?: string;
     projectId?: string;
@@ -1570,7 +1601,7 @@ export async function fetchSuiteRunServerSelection(
       notFoundMessage: "Host not found",
     });
   }
-  const convex = createConvexReadClient(convexAuthToken);
+  const convex = createConvexClient(convexAuthToken);
   let selection: {
     serverIds?: unknown;
     serverNames?: unknown;
@@ -1845,6 +1876,9 @@ function toRunDto(run: RunDoc) {
           },
         }
       : {}),
+    // Which account the run used on each server, as the API key's owner may
+    // see it. Omitted when the run recorded none. See `toRunAccountsProjection`.
+    ...toRunAccountsProjection(run.accountsAtRun),
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
     ...(run.client
@@ -2117,6 +2151,7 @@ function toIterationDto(
     // the contract crosses this boundary. OMITTED on rows written before the
     // record existed (and on a malformed one) — "not recorded", never a guess.
     ...toExecutionProjection(iteration.execution),
+    ...toCodeGradingProjection(iteration.metadata),
   };
 }
 
@@ -2152,7 +2187,7 @@ function toStepResultDto(step: EvalStepReplay) {
     stepId: step.stepId,
     stepIndex: step.stepIndex,
     kind: step.kind,
-    status: step.status,
+    status: step.status === "not_applicable" ? "skipped" : step.status,
     reason: step.reason ?? null,
     ...(evidence && Object.keys(evidence).length > 0 ? { evidence } : {}),
   };
@@ -2289,7 +2324,9 @@ function toPublicCaseImportClaim(
 
 function toCaseDto(testCase: CaseDoc, vocabulary: EvalVocabulary = 1) {
   const importClaim = toPublicCaseImportClaim(testCase.import);
+  const accounts = accountSelectionsForRead(testCase.accounts);
   return {
+    ...(accounts ? { accounts } : {}),
     id: String(testCase._id),
     // The EFFECTIVE declared identity — what the case answers to in a suite
     // file, an import, or a CLI argument — so a caller can read back the id it
@@ -2398,27 +2435,6 @@ type SuiteDoc = Record<string, any>;
  */
 const PUBLIC_UNWRITABLE_JUDGE_SLOTS = ["groundedness", "rubricChecks"] as const;
 
-/**
- * Whether the platform will refuse configuration writes to this suite.
- *
- * MIRRORS the backend's `isCiOwnedSuite`, deliberately and with the same two
- * clauses — a committed suite file's `declaredSuiteId`, or `source: 'sdk'` from
- * ingest. This copy is DESCRIPTIVE ONLY: Convex is the guard, and no route here
- * refuses anything on the strength of this predicate. Its whole job is to let
- * the DTO say so before the caller finds out from a 409.
- *
- * NOT `lastSdkRunAt`. CI reporting a result into a UI-authored suite does not
- * make that suite CI-owned, and saying otherwise here would advertise a lock
- * the platform does not apply.
- */
-function isCiOwnedSuiteDoc(suite: SuiteDoc): boolean {
-  const declared = suite.declaredSuiteId;
-  return (
-    (typeof declared === "string" && declared.length > 0) ||
-    suite.source === "sdk"
-  );
-}
-
 function toSuiteDetailDto(
   suite: SuiteDoc,
   execConfig: any,
@@ -2427,7 +2443,9 @@ function toSuiteDetailDto(
 ) {
   const goal =
     suite.judgePolicy?.effective ?? suite.judgeConfig?.goalCompletion;
+  const accounts = accountSelectionsForRead(suite.accounts);
   return {
+    ...(accounts ? { accounts } : {}),
     id: String(suite._id),
     ...(typeof suite.declaredSuiteId === "string"
       ? { declaredId: suite.declaredSuiteId }
@@ -2441,10 +2459,12 @@ function toSuiteDetailDto(
      * without the whole answer the first sign that a suite is read-only was a
      * 409 on a write the caller had no way to know would be refused.
      *
-     * A CI-owned suite still RUNS from here. What it refuses is configuration:
-     * name, settings, environments, schedule, models, skills, host config and
-     * cases. Send `declaredSuiteId` to write as the file, or duplicate the
-     * suite for an editable copy.
+     * A CI-owned suite still RUNS from here as configured; a launch that would
+     * write it is refused (`evalLaunchWritesSuite`). What it refuses is
+     * configuration: name, settings, environments, schedule, models, skills,
+     * host config and cases. Its suite file writes as itself by sending
+     * `declaredSuiteId` on the routes that take it; an SDK-created suite has
+     * no file. Either can be duplicated in the app for an editable copy.
      */
     managedBy: isCiOwnedSuiteDoc(suite) ? "ci" : "app",
     name: suite.name ?? null,
@@ -2650,6 +2670,10 @@ function toSuiteDetailDto(
       // Live quality-gate policy. `null` when the suite has none — that is
       // `not_configured` at evaluate time, not an absent feature.
       qualityGate: toQualityGateDto(suite.gatePolicy),
+      // EFTW-90, as stored (the platform normalized them on write).
+      codeEvaluators: suite.codeEvaluators ?? [],
+      scripts: suite.scripts ?? null,
+      grading: suite.grading ?? null,
     },
     schedule: {
       enabled: suite.schedule?.enabled === true,
@@ -2711,6 +2735,7 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
     clientCapabilities: dto.clientCapabilities,
     hostContext: dto.hostContext,
     ...opt("progressiveToolDiscovery"),
+    ...opt("runUnloadedToolCalls"),
     ...opt("requireNativeToolDiscovery"),
     ...opt("respectToolVisibility"),
     ...opt("modelVisibleMcpToolResults"),
@@ -3086,62 +3111,6 @@ const publicCaseBodyShape = {
 const publicCaseImportSchema = evalSuiteFileCaseImportSchema;
 
 /**
- * The suite-file sync marker, on every write route a `mcpjam cloud eval run
- * --file` sync makes.
- *
- * A CI-owned suite (one with a `declaredSuiteId`, or created by SDK ingest) is
- * read-only from the app AND from this API — the platform refuses the write.
- * The file's own sync is the exception, and this is how it says so: by naming
- * the declared id, which only something holding the file can know. The platform
- * allows the write iff the id is the suite's own.
- *
- * NOT A CAPABILITY, and no route-level check. Naming an id you do not own gets
- * you nothing, and the guard is Convex's — a second copy of the ownership rule
- * here would be a copy that can disagree with the one that decides.
- *
- * ============================================================================
- * IT RIDES THE QUERY STRING, NOT THE BODY
- * ============================================================================
- *
- * Every body on these routes is `.strict()`, here and on every Inspector that
- * predates this change. A strict object REFUSES an unknown key, so a body field
- * is a 400 against an older deployment — the same reason the launcher rides a
- * header rather than the run-launch body.
- *
- * That matters far more here than it does for the launcher. A dropped launcher
- * costs a badge; a rejected `--file` sync costs the CLI's whole CI command,
- * against any self-hosted Inspector the user has not upgraded in lockstep with
- * their `@mcpjam/cli`. And the CLI sends this on EVERY file-sync write, so the
- * break would not be occasional. A query parameter is read by the deployments
- * that know it and ignored by the ones that do not, which is exactly the
- * degradation this needs: an Inspector with no lock has nothing to make an
- * exception to.
- *
- * The body shape below is kept so this server accepts either spelling. Nothing
- * has shipped sending the body form, but a route that refuses a marker it
- * understands would be its own compatibility break.
- */
-const fileSyncBodyShape = {
-  declaredSuiteId: z.string().min(1).max(128).optional(),
-} as const;
-
-/**
- * The `fileSync` mutation argument, or nothing.
- *
- * Nothing, rather than `fileSync: undefined`: a platform deployment that
- * predates the CI-owned lock does not know this argument and rejects the whole
- * call for an unknown field, so sending it unconditionally would break every
- * suite edit against an older backend.
- */
-function fileSyncArg(declaredSuiteId: string | undefined | null): {
-  fileSync?: { declaredSuiteId: string };
-} {
-  const trimmed =
-    typeof declaredSuiteId === "string" ? declaredSuiteId.trim() : "";
-  return trimmed.length > 0 ? { fileSync: { declaredSuiteId: trimmed } } : {};
-}
-
-/**
  * The vocabulary-2 case body: the same fields, with the legacy floor spelled
  * `legacyIterations` (alias `runs`) instead of `iterations`. Built from the
  * vocabulary-1 shape, never re-declared — see `eval-case-vocabulary-2.ts`.
@@ -3173,6 +3142,7 @@ const createCaseExtras = {
 
 /** What a PATCH adds to the case body, in either vocabulary. */
 const updateCaseExtras = {
+  accounts: runAccountsSchema.nullable().optional(),
   ...fileSyncBodyShape,
   /**
    * The converter's CLAIM about this case, or `null` to remove one.
@@ -3443,6 +3413,10 @@ const suiteSettingsShape = {
   // capability advertises it. See the top-level refine for the required
   // revision precondition and reason.
   qualityGate: z.union([suiteGatePolicySchema, z.null()]).optional(),
+  // EFTW-90. `null` clears; an omitted field is left alone.
+  codeEvaluators: codeEvaluatorsSchema.nullable().optional(),
+  scripts: suiteScriptsSchema.nullable().optional(),
+  grading: suiteGradingSchema.nullable().optional(),
 } as const;
 
 /**
@@ -3500,6 +3474,7 @@ const suiteSettingsSchemaV2 = z
  * here. Nothing else should import it — the route is the only writer.
  */
 const updateSuiteShape = {
+  accounts: runAccountsSchema.nullable().optional(),
   ...fileSyncBodyShape,
   name: z.string().min(1).optional(),
   description: z.string().optional(),
@@ -3892,8 +3867,8 @@ function buildCaseMutationArgs(
         : { goalCompletion: body.judge };
 
   // The case body is the `steps` contract. Project it onto the internal case
-  // fields. The derived kind (render-check ⇔ a single model-free `toolCall`
-  // step) is IMMUTABLE after create — updateTestCase doesn't accept caseType,
+  // fields. The derived model-free or prompt kind is immutable after
+  // create — updateTestCase doesn't accept caseType,
   // so reject a real change on update and never forward caseType there.
   if (body.steps !== undefined) {
     const steps = normalizeStepRolesForVocabulary(
@@ -3903,9 +3878,8 @@ function buildCaseMutationArgs(
     ) as TestStep[];
     args.steps = steps;
     const derived = stepsToInternalCaseFields(steps);
-    isModelFreeStepsCase = derived.caseType === "widget_probe";
-    const derivedKind =
-      derived.caseType === "widget_probe" ? "render-check" : "prompt";
+    isModelFreeStepsCase = isModelFree(steps);
+    const derivedKind = isModelFreeStepsCase ? "render-check" : "prompt";
     // Recognize the persisted kind from EITHER the legacy `caseType` OR the
     // shape of the stored `steps` (a model-free case is render-check), so
     // step-native render-checks without a `caseType` aren't misread as prompt.
@@ -4081,6 +4055,14 @@ function translateConvexWriteError(
       `This MCPJam deployment does not serve ${feature}.`,
     );
   }
+  // A failure Convex's HTTP layer answered before the mutation ran reads by
+  // its status: the shared translator below reads an expired token's
+  // "Unauthorized" as a refusal (404) and a proxy's 500 as our own.
+  const statusError = translateConvexStatusError(error, {
+    scope: "v1.evals",
+    notFoundMessage: "Resource not found",
+  });
+  if (statusError) return statusError;
   const data = (error as { data?: unknown } | null | undefined)?.data;
   if (data && typeof data === "object" && !Array.isArray(data)) {
     const code = (data as { code?: unknown }).code;
@@ -4155,7 +4137,7 @@ function translateConvexWriteError(
  * be able to echo what it just set without a second read.
  */
 async function resolveComputerEnvironment(
-  readClient: ReturnType<typeof createConvexReadClient>,
+  readClient: ReturnType<typeof createConvexClient>,
   projectId: string,
   selector: string,
 ): Promise<{ id: string; name: string }> {
@@ -4336,9 +4318,12 @@ async function launchEvalRun(params: {
   body: Record<string, unknown> & {
     tests: PublicInlineTest[];
     suiteId?: string;
+    caseIds?: string[];
+    accounts?: z.infer<typeof runAccountsSchema>;
     matchOptionsOverride?: MatchOptionsInput;
   };
   suiteRerun: boolean;
+  accountSource?: { runId?: string; caseIds?: string[] };
   environmentId: string | undefined;
   environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
   serverIds: string[];
@@ -4402,12 +4387,25 @@ async function launchEvalRun(params: {
         conformanceKnobsFromMcpProfile(params.hostConfig.mcpProfile),
       )
     : undefined;
-  // The key owner's saved accounts for this suite; an inline suite has none.
-  const connectionIdSets = await loadSuiteConnectionIdSets(
-    createConvexClients(convexAuthToken).convexClient,
-    { suiteId: body.suiteId },
-  );
-  const { manager } = await createAuthorizedManager(
+  if (body.accounts && !body.suiteId) {
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Save the suite before selecting run accounts.");
+  }
+  const runAccounts = body.accounts?.map(({ serverId, accountId }) => ({
+    serverId,
+    connectionId: accountId,
+  }));
+  const { convexClient } = createConvexClients(convexAuthToken);
+  const accountCaseIds = params.accountSource?.caseIds ?? body.caseIds;
+  const plan = body.suiteId
+    ? await loadEvalRunAccountPlan(convexClient, {
+        suiteId: body.suiteId,
+        ...(accountCaseIds?.length ? { caseIds: accountCaseIds } : {}),
+        ...(params.accountSource?.runId ? { sourceRunId: params.accountSource.runId } : {}),
+        serverIds,
+        ...(runAccounts ? { runAccounts } : {}),
+      })
+    : null;
+  const open = (connectionIdSets?: ConnectionIdSets) => createAuthorizedManager(
     params.callerContext,
     convexAuthToken,
     projectId,
@@ -4439,6 +4437,12 @@ async function launchEvalRun(params: {
         : {}),
     },
   );
+  const connectionIdSets = await loadSuiteConnectionIdSets(convexClient, { suiteId: body.suiteId, serverIds });
+  const groups = plan
+    ? await openEvalAccountGroups(plan, async (sets) => (await open(sets)).manager, connectionIdSets)
+    : undefined;
+  const manager = groups?.first ?? (await open(connectionIdSets)).manager;
+  const close = () => groups ? groups.close() : manager.disconnectAllServers();
 
   let prepared: PreparedEvalRun;
   try {
@@ -4473,6 +4477,9 @@ async function launchEvalRun(params: {
       // re-select the same environment unpinned.
       environmentId,
       projectId,
+      ...(groups && plan ? {
+        evalAccounts: { plan, requested: runAccounts, managerForCase: groups.forCase },
+      } : {}),
       suiteRerun,
       convexAuthToken,
       // STAMPED, and deliberately unchanged. Everything that reaches this
@@ -4486,7 +4493,7 @@ async function launchEvalRun(params: {
       ...(environmentLaunch ? { resolvedEnvironment: environmentLaunch } : {}),
     });
   } catch (error) {
-    await manager.disconnectAllServers().catch(() => {});
+    await close();
     throw error;
   }
 
@@ -4500,7 +4507,7 @@ async function launchEvalRun(params: {
     logContext: { projectId },
     cleanup: () => {
       onSettled();
-      return manager.disconnectAllServers();
+      return close();
     },
   });
 
@@ -4554,6 +4561,8 @@ async function resolveLaunchServers(params: {
   requestedServerNames: string[] | undefined;
   ephemeralEnvironment?: boolean;
 }): Promise<{
+  /** The suite the selection read, for callers that check more than scope. */
+  suite: SuiteDoc | undefined;
   environmentId: string | undefined;
   environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
   serverIds: string[];
@@ -4569,16 +4578,19 @@ async function resolveLaunchServers(params: {
   // `selectSuiteEnvironmentId` for the full rule. Inline-only runs (no suiteId)
   // have no attachments to consult, and the schema already forbids
   // `environmentId` without a `suiteId`.
-  const environmentId = suiteId
+  const suite = suiteId
+    ? await readSuiteInProject(
+        convexAuthToken,
+        projectId,
+        suiteId,
+        params.suiteReadPhase,
+      )
+    : undefined;
+  const environmentId = suite
     ? await selectSuiteEnvironmentId({
         convexAuthToken,
         projectId,
-        suite: await readSuiteInProject(
-          convexAuthToken,
-          projectId,
-          suiteId,
-          params.suiteReadPhase,
-        ),
+        suite,
         requestedEnvironmentId: params.requestedEnvironmentId,
         hasServerOverride: params.requestedServerIds.length > 0,
         serverField: "serverIds",
@@ -4599,7 +4611,7 @@ async function resolveLaunchServers(params: {
   let serverIds = params.requestedServerIds;
   let serverNames = params.requestedServerNames;
   if (environmentId) {
-    const convex = createConvexReadClient(convexAuthToken);
+    const convex = createConvexClient(convexAuthToken);
     try {
       environmentLaunch = await resolveEnvironmentForLaunch(convex, {
         serverSource: EVAL_LAUNCH_SERVER_SOURCE,
@@ -4625,7 +4637,7 @@ async function resolveLaunchServers(params: {
     serverNames = selection.serverNames;
   }
 
-  return { environmentId, environmentLaunch, serverIds, serverNames };
+  return { suite, environmentId, environmentLaunch, serverIds, serverNames };
 }
 
 /** A target in the caller's own words, for a per-target error message. */
@@ -4713,7 +4725,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   // same swap `runEphemeralConnection` does for the synchronous routes.
   const convexAuthToken = await getConvexBearerForRequest(c);
 
-  const { environmentId, environmentLaunch, serverIds, serverNames } =
+  const { suite, environmentId, environmentLaunch, serverIds, serverNames } =
     await resolveLaunchServers({
       convexAuthToken,
       projectId,
@@ -4727,11 +4739,24 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
         ? { ephemeralEnvironment: true }
         : {}),
     });
+  // A launch that writes the suite meets the same refusal as the case routes
+  // (PLB-238), before any server connects. It takes no marker: the run path
+  // writes without one, so the platform would refuse it anyway.
+  if (
+    suite &&
+    evalLaunchWritesSuite({
+      suiteRerun,
+      refreshSnapshot: body.refreshSnapshot,
+      environmentLaunch: Boolean(environmentId),
+    })
+  ) {
+    assertSuiteWritableViaApi(suite);
+  }
 
   // Resolve all inline attachments before authoring, including server picks.
   const hostAttachments = body.hosts?.length
     ? await resolveHostAttachments(
-        createConvexReadClient(convexAuthToken),
+        createConvexClient(convexAuthToken),
         projectId,
         {
           environment: {
@@ -4776,7 +4801,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   // `loadSuiteHostConfig` is never hostless — a suite with no attachment and no
   // config resolves to the default MCPJam host.
   const runHostConfig = await loadSuiteHostConfig(
-    createConvexReadClient(convexAuthToken),
+    createConvexClient(convexAuthToken),
     body.suiteId,
     body.namedHostId ?? environmentLaunch?.hostId,
   );
@@ -4881,6 +4906,7 @@ const evalRunGroupTargetSchema = z.union([
 const createEvalRunGroupSchema = z
   .object({
     suiteId: z.string().min(1),
+    accounts: runAccountsSchema.optional(),
     targets: z
       .array(evalRunGroupTargetSchema)
       .min(1)
@@ -5102,6 +5128,8 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     servers: Awaited<ReturnType<typeof resolveLaunchServers>>;
     hostConfig: Record<string, unknown>;
   }> = [];
+  // Whether each distinct harness runs on this machine, asked once per group.
+  const localVenues = new Map<string, Promise<boolean>>();
   for (const target of targets) {
     const servers = await resolveLaunchServers({
       convexAuthToken,
@@ -5125,7 +5153,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     // config carrying a harness would refuse a group of environments that
     // never referenced it.
     const hostConfig = await loadSuiteHostConfig(
-      createConvexReadClient(convexAuthToken),
+      createConvexClient(convexAuthToken),
       body.suiteId,
       // `ResolvedEnvironmentForLaunch.hostId` is the same host the run row will
       // freeze, so the dry run and the launch judge one configuration.
@@ -5137,20 +5165,36 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     // (and refuse one whose override fixes a host the harness can't run).
     const environmentModelOverride =
       servers.environmentLaunch?.modelId?.trim() || undefined;
+    // Judged in the venue this target's own launch will pick, so a harness
+    // that runs on this machine isn't refused as if it needed the cloud.
+    const harness = harnessOfHostConfig(hostConfig);
+    if (harness && !localVenues.has(harness)) {
+      localVenues.set(harness, shouldUseLocalHarness(harness, convexAuthToken, projectId, { scope: "unattended" }));
+    }
     const admission = checkEvalHarnessStaticAdmission({
       hostConfig: environmentModelOverride
         ? { ...hostConfig, modelId: environmentModelOverride }
         : hostConfig,
       serverIds: servers.serverIds,
+      localExecution: harness ? await localVenues.get(harness) : false,
     });
     if (!admission.ok) {
+      const reason = await explainEvalHarnessRefusal({ admission, bearer: convexAuthToken, projectId });
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        `${describeRunGroupTarget(target)}: ${admission.reason}`,
+        `${describeRunGroupTarget(target)}: ${reason}`,
         { reason: "HARNESS_UNAVAILABLE", harness: admission.harness },
       );
     }
+    await loadEvalRunAccountPlan(createConvexClients(convexAuthToken).convexClient, {
+      suiteId: body.suiteId,
+      ...(body.caseIds ? { caseIds: body.caseIds } : {}),
+      serverIds: servers.serverIds,
+      ...(body.accounts ? { runAccounts: body.accounts.map(({ serverId, accountId }) => ({
+        serverId, connectionId: accountId,
+      })) } : {}),
+    });
     resolved.push({ target, servers, hostConfig });
   }
 
@@ -5201,6 +5245,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         body: {
           suiteId: body.suiteId,
           tests: [],
+          ...(body.accounts ? { accounts: body.accounts } : {}),
           runGroupId,
           ...(body.iterationOverride !== undefined
             ? { iterationOverride: body.iterationOverride }
@@ -5508,6 +5553,11 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
       {
         projectId,
         ...(body.judge !== undefined ? { judge: body.judge } : {}),
+        ...(body.codeEvaluators !== undefined
+          ? { codeEvaluators: body.codeEvaluators }
+          : {}),
+        ...(body.scripts !== undefined ? { scripts: body.scripts } : {}),
+        ...(body.grading !== undefined ? { grading: body.grading } : {}),
         declaredSuiteId: body.declaredSuiteId,
         name: body.name,
         ...(body.description !== undefined
@@ -5561,7 +5611,7 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
 evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = evalIdParam(c, "runId", "Eval run");
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let run: RunDoc | null;
   try {
@@ -5668,7 +5718,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       "previewChars must be a number",
     );
   }
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   // Fetch the compare run FIRST so an unauthorized or cross-project caller
   // gets a 404 from the cheap read, before the action does any work.
@@ -5695,6 +5745,8 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
     if (isConvexNotVisibleError(error)) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
     }
+    // An undeployed action answers 422 whatever status carried the refusal.
+    if (isConvexFunctionMissing(error)) throw translateConvexWriteError(error);
     // Translated rather than rethrown. The action refuses a malformed
     // baseline selection with a structured `ConvexError` code, and a raw
     // rethrow would land on the v1 error boundary as a 500 + INTERNAL_ERROR
@@ -5703,7 +5755,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
     // codes to 400 and keeps the message; anything it does not recognize
     // still answers 500, which is the honest outcome for a code we do not
     // know about.
-    throw translateConvexWriteError(error);
+    throw (
+      translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ??
+      translateConvexWriteError(error)
+    );
   }
 
   const envelope = (result ?? {}) as Record<string, unknown>;
@@ -5780,64 +5835,8 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
   return v1Resource(c, toRunCompareDto(envelope.diff, baseline));
 });
 
-// POST /v1/projects/:projectId/eval-runs/:runId/insights
-// Request (or with force, regenerate) the run's insights — serverQuality
-// behind the common envelope. SPENDS the org's model budget; 202 receipt,
-// poll the detail's `insights` envelope rather than re-requesting. Same
-// Convex mutation the in-app button uses, so role/limit/billing checks are
-// identical.
-evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
-  const projectId = c.req.param("projectId");
-  const runId = evalIdParam(c, "runId", "Eval run");
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
-
-  let run: RunDoc | null;
-  try {
-    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
-  } catch (error) {
-    throw translateConvexReadError(
-      error,
-      scopedEvalReadOptions("Eval run not found"),
-    );
-  }
-  requireProjectMatch(run, projectId, "Eval run");
-
-  // This endpoint SPENDS, so the body is validated rather than coerced. A
-  // bodyless POST is the common case and stays valid; malformed JSON is a 400
-  // rather than a silently-empty body that bills anyway, and `force` must be
-  // a real boolean — `{"force":"false"}` is a truthy string, and treating it
-  // as consent would charge for a regeneration nobody asked for.
-  const raw = await c.req.text();
-  // Only an ACTUALLY empty body is bodyless. Whitespace is malformed JSON,
-  // and a literal `null` is a value the schema should reject — treating
-  // either as "no body" would bill for a request nobody wrote.
-  let body: unknown = {};
-  if (raw.length > 0) {
-    try {
-      body = JSON.parse(raw);
-    } catch {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "Request body must be valid JSON.",
-      );
-    }
-  }
-  const force = parseWithSchema(
-    z.object({ force: z.boolean().optional() }).strict(),
-    body,
-  ).force;
-
-  try {
-    await convex.mutation("serverQuality:requestServerQuality" as any, {
-      suiteRunId: runId,
-      ...(force === true ? { force: true } : {}),
-    });
-  } catch (error) {
-    throw translateConvexError(error, { resource: "Eval run insights" });
-  }
-  return v1Resource(c, { runId, projectId, status: "pending" }, 202);
-});
+// The run's insights routes (request, cancel, findings build) live in
+// `./eval-run-insights.ts`.
 
 // POST /v1/projects/:projectId/eval-runs/:runId/judge
 // Request (or with force, re-request) LLM-as-judge grading of a finished run.
@@ -5847,7 +5846,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
 evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = evalIdParam(c, "runId", "Eval run");
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let run: RunDoc | null;
   try {
@@ -5913,7 +5912,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = evalIdParam(c, "runId", "Eval run");
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
 
   let run: RunDoc | null;
   try {
@@ -6033,7 +6032,7 @@ async function readRerunPreview(
 ) {
   let preview: RunDoc | null;
   try {
-    preview = await createConvexReadClient(token).query(
+    preview = await createConvexClient(token).query(
       "testSuites:getRerunPreview" as any,
       { runId },
     );
@@ -6067,7 +6066,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
   // Same precedence as the run launch: the header wins over a body value.
   const idempotencyKey = headerIdempotencyKey ?? body.idempotencyKey;
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
 
   // Refused at the door, before a server is connected or a slot is taken. The
   // launch mutation makes the same decision again; this only spares the
@@ -6159,6 +6158,10 @@ evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
         ...(idempotencyKey ? { idempotencyKey } : {}),
       },
       suiteRerun: true,
+      accountSource: {
+        runId: sourceRun!.accountsAtRun?.some((entry: { cases?: unknown[] }) => entry.cases?.length) ? runId : undefined,
+        caseIds: preview.selectedCaseIds.length ? preview.selectedCaseIds : undefined,
+      },
       environmentId: servers.environmentId,
       environmentLaunch: servers.environmentLaunch,
       serverIds: servers.serverIds,
@@ -6298,7 +6301,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
     await readJsonObjectBody(c),
   );
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
 
   let run: RunDoc | null;
   try {
@@ -6347,7 +6350,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
 evals.get("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = evalIdParam(c, "runId", "Eval run");
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let run: RunDoc | null;
   try {
@@ -6373,7 +6376,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
     // and the write translator is the only thing that knows how to read the
     // backend's `kind: 'forbidden'` shape. Nothing is written on this path;
     // the name is about which error vocabulary it speaks, not about the verb.
-    throw translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS);
+    throw (
+      translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ??
+      translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS)
+    );
   }
 
   return v1Resource(c, { waiver: toGateWaiverDto(waiver) });
@@ -6396,7 +6402,7 @@ evals.delete(
       notFoundMessage: GATE_WAIVER_NOT_FOUND_FOR_RUN,
     });
     const token = await getConvexBearerForRequest(c);
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
 
     let run: RunDoc | null;
     try {
@@ -6481,7 +6487,7 @@ evals.get(
     // request that carried a cursor has already skipped rows, so whatever it gets
     // back cannot be the run's complete failure list however short it is.
     const cursor = c.req.query("cursor") ?? null;
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     let run: RunDoc | null;
     let page: { page: IterationDoc[]; isDone: boolean; continueCursor: string };
@@ -6541,7 +6547,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/iterations", async (c) => {
     200,
   );
   const cursor = c.req.query("cursor") ?? null;
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let run: RunDoc | null;
   let page: { page: IterationDoc[]; isDone: boolean; continueCursor: string };
@@ -6581,7 +6587,7 @@ evals.get(
     // Held rather than inlined: the same bearer authorizes the read AND names
     // the human in the audit row below (see services/eval-trace-access-audit).
     const convexAuthToken = await getConvexBearerForRequest(c);
-    const convex = createConvexReadClient(convexAuthToken);
+    const convex = createConvexClient(convexAuthToken);
 
     let trace: unknown;
     let scopeVerified = false;
@@ -6605,6 +6611,20 @@ evals.get(
       trace = await convex.action("testSuites:getTestIterationBlob" as any, {
         iterationId,
       });
+      // The iteration owns the execution snapshot. A blob may be read after
+      // the client switches profiles or a different Inspector release ships.
+      if (trace && typeof trace === "object" && !Array.isArray(trace)) {
+        const metadata = (iteration as IterationDoc).metadata;
+        trace = {
+          ...trace,
+          ...(typeof metadata?.runUnloadedToolCalls === "boolean"
+            ? { runUnloadedToolCalls: metadata.runUnloadedToolCalls }
+            : {}),
+          ...(typeof metadata?.engineVersion === "string"
+            ? { engineVersion: metadata.engineVersion }
+            : {}),
+        };
+      }
     } catch (error) {
       throw translateConvexReadError(error, {
         ...scopedEvalReadOptions("Eval iteration not found"),
@@ -6652,7 +6672,7 @@ evals.get(
     const runId = evalIdParam(c, "runId", "Eval run");
     const iterationId = evalIdParam(c, "iterationId", "Eval iteration");
     const convexAuthToken = await getConvexBearerForRequest(c);
-    const convex = createConvexReadClient(convexAuthToken);
+    const convex = createConvexClient(convexAuthToken);
 
     let iteration: IterationDoc | null;
     try {
@@ -6733,7 +6753,7 @@ evals.get(
         failure.kind !== "invalid-argument" &&
         failure.kind !== "redacted"
       ) {
-        throw error;
+        throw translateConvexStatusError(error, { scope: "v1.evals" }) ?? error;
       }
       // Counted, not silent: this is now the branch that hides a broken blob
       // loader, so it needs the same rate-alertable footprint the id gate has.
@@ -6783,7 +6803,7 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
     Math.max(Number(c.req.query("limit") ?? 25) || 25, 1),
     100,
   );
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let runs: RunDoc[];
   let suite: { projectId?: unknown } | null;
@@ -6872,7 +6892,7 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/revisions", async (c) => {
   });
   const limit = query.limit ?? 25;
   const cursor = query.cursor ?? null;
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let page: {
     page: Array<Record<string, any>>;
@@ -6994,7 +7014,7 @@ evals.get(
     // `null`, never `undefined`: Convex pagination requires an explicit null
     // first cursor, and `undefined` would be dropped from the args object.
     const cursor = query.cursor ?? null;
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     let page: {
       page: unknown[];
@@ -7127,7 +7147,7 @@ evals.get(
       scope: "v1.evals",
       notFoundMessage: RUN_ANALYTICS_NOT_FOUND,
     });
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     let document: unknown;
     let runSuiteId: string | undefined;
@@ -7250,7 +7270,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate", async (c) => {
     scope: "v1.evals",
     notFoundMessage: RUN_GATE_NOT_FOUND,
   });
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
   let scopeVerified = false;
@@ -7345,7 +7365,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
     scope: "v1.evals",
     notFoundMessage: RUN_ROUTE_FACTS_NOT_FOUND,
   });
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
   let runSuiteId: string | undefined;
@@ -7446,7 +7466,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
     scope: "v1.evals",
     notFoundMessage: RUN_SERVER_FACTS_NOT_FOUND,
   });
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
   let runSuiteId: string | undefined;
@@ -7671,7 +7691,7 @@ async function readBackDescriptionExperimentArms(
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
     try {
-      const current = (await createConvexReadClient(convexAuthToken).query(
+      const current = (await createConvexClient(convexAuthToken).query(
         "descriptionExperiments:getDescriptionExperiment" as any,
         { experimentId },
       )) as Record<string, unknown> | null;
@@ -7827,7 +7847,7 @@ evals.get(
   async (c) => {
     const projectId = c.req.param("projectId");
     const runId = evalIdParam(c, "runId", "Eval run");
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     let run: RunDoc | null;
     try {
@@ -7855,7 +7875,7 @@ evals.get(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw error;
+      throw translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ?? error;
     }
 
     const items = (Array.isArray(rows) ? rows : []).map((row) => {
@@ -7899,7 +7919,7 @@ evals.post(
       await readJsonObjectBody(c),
     );
     const token = await getConvexBearerForRequest(c);
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
 
     let run: RunDoc | null;
     try {
@@ -7936,9 +7956,12 @@ evals.post(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw translateConvexError(error, {
-        resource: "Eval description experiment",
-      });
+      throw (
+        translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ??
+        translateConvexError(error, {
+          resource: "Eval description experiment",
+        })
+      );
     }
 
     return v1Resource(c, toDescriptionExperimentDto(experiment ?? {}), 202);
@@ -7960,7 +7983,7 @@ evals.post(
       await readJsonObjectBody(c),
     );
     const token = await getConvexBearerForRequest(c);
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
     const { convexClient } = createConvexClients(token);
 
     let experiment: Record<string, unknown> | null;
@@ -8079,9 +8102,15 @@ evals.post(
           DESCRIPTION_EXPERIMENT_NOT_FOUND,
         );
       }
-      throw translateConvexError(error, {
-        resource: "Eval description experiment",
-      });
+      throw (
+        translateConvexStatusError(error, {
+          scope: "v1.evals",
+          notFoundMessage: DESCRIPTION_EXPERIMENT_NOT_FOUND,
+        }) ??
+        translateConvexError(error, {
+          resource: "Eval description experiment",
+        })
+      );
     }
 
     const sourceRunId = String(launching.sourceRunId ?? experiment.sourceRunId);
@@ -8146,6 +8175,9 @@ evals.post(
       ...(caseIds ? { caseIds } : {}),
       ...(iterationOverride !== undefined ? { iterationOverride } : {}),
     };
+    const accountSource = sourceRun?.accountsAtRun?.some((entry: { cases?: unknown[] }) => entry.cases?.length)
+      ? { runId: sourceRunId }
+      : undefined;
 
     let original: LaunchedEvalRun | undefined;
     try {
@@ -8161,6 +8193,7 @@ evals.post(
           idempotencyKey: `${experimentId}:original`,
         },
         suiteRerun: true,
+        accountSource,
         environmentId: servers.environmentId,
         environmentLaunch: servers.environmentLaunch,
         serverIds: servers.serverIds,
@@ -8193,6 +8226,7 @@ evals.post(
           toolDescriptionOverride: { experimentId },
         },
         suiteRerun: true,
+        accountSource,
         environmentId: servers.environmentId,
         environmentLaunch: servers.environmentLaunch,
         serverIds: servers.serverIds,
@@ -8331,7 +8365,7 @@ evals.get(
       "experimentId",
       "Eval description experiment",
     );
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     let document: unknown;
     try {
@@ -8424,7 +8458,7 @@ async function readSuiteDetail(
   vocabulary: EvalVocabulary,
   phase: EvalReadPhase,
 ) {
-  const convex = createConvexReadClient(convexAuthToken);
+  const convex = createConvexClient(convexAuthToken);
   let suite: SuiteDoc | null;
   try {
     suite = await convex.query("testSuites:getTestSuite" as any, { suiteId });
@@ -8471,7 +8505,7 @@ async function readSuiteDetail(
 
 /** Default execution models for a new case: the suite's configured model. */
 async function defaultCaseModels(
-  convex: ReturnType<typeof createConvexReadClient>,
+  convex: ReturnType<typeof createConvexClient>,
   suiteId: string,
 ): Promise<Array<{ model: string; provider: string }>> {
   try {
@@ -8513,7 +8547,7 @@ async function defaultCaseModels(
  * authorization only accepts IDs).
  */
 async function resolveProjectServerSelectors(
-  convex: ReturnType<typeof createConvexReadClient>,
+  convex: ReturnType<typeof createConvexClient>,
   projectId: string,
   selectors: string[],
 ): Promise<{ serverIds: string[]; serverNames: string[] }> {
@@ -8673,7 +8707,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const { convexClient } = createConvexClients(token);
 
   // Read first: project-scope guard + source for host/server-subset resolution.
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
   let suite: SuiteDoc | null;
   try {
     suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -8686,6 +8720,8 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  const declaredSuiteId = declaredSuiteIdOf(c, body);
+  assertSuiteWritableViaApi(suite!, { declaredSuiteId });
 
   // Precheck the one environment rejection a caller is likely to hit, before
   // any of the edits below commit — this handler applies several mutations in
@@ -8710,6 +8746,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   }
 
   const updateArgs: Record<string, unknown> = { suiteId };
+  if (body.accounts !== undefined) updateArgs.accounts = accountSelectionsForStorage(body.accounts);
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.description !== undefined) updateArgs.description = body.description;
   // An ENVIRONMENT suite's servers and image are its environments'. On a
@@ -8904,6 +8941,9 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       updateArgs,
       countFieldNames(vocabularyOf(c)),
     );
+    for (const key of ["codeEvaluators", "scripts", "grading"] as const) {
+      if (s[key] !== undefined) updateArgs[key] = s[key];
+    }
   }
 
   // ONE revision group for the whole request.
@@ -8940,7 +8980,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           ...revision,
           note: body.revisionNote,
         },
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -8954,7 +8994,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       await convexClient.mutation("testSuites:updateTestSuite" as any, {
         ...updateArgs,
         revision,
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -8981,7 +9021,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           body.hosts,
         ),
         revision,
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -9074,7 +9114,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       await convexClient.mutation("hostConfigsV2:setSuiteConfig" as any, {
         suiteId,
         input,
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -9094,7 +9134,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         suiteId,
         environmentIds: body.environmentIds,
         revision,
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -9152,7 +9192,15 @@ evals.post(
     // Scope check first: Convex enforces membership, and this makes a valid id
     // from another of the caller's projects read as NOT_FOUND rather than
     // leaking across the scope the path declares.
-    await readSuiteInProject(token, projectId, suiteId, "preflight");
+    const suite = await readSuiteInProject(
+      token,
+      projectId,
+      suiteId,
+      "preflight",
+    );
+    // No marker to stand aside for: `attachEnvironment` takes no `fileSync`,
+    // so a file sync cannot write here either.
+    assertSuiteWritableViaApi(suite);
 
     const { convexClient } = createConvexClients(token);
     let result: { attached?: boolean; environmentIds?: unknown };
@@ -9191,7 +9239,7 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = evalIdParam(c, "suiteId", "Eval suite");
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
   let suite: SuiteDoc | null;
   try {
     suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9204,12 +9252,15 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  // No CI-owned pre-check: deleting is lifecycle, not configuration, and the
+  // backend allows it on a CI-owned suite (`suite.delete` is not a locked
+  // action), so there is no refusal to move out of Convex.
   const { convexClient } = createConvexClients(token);
   try {
     await convexClient.mutation("testSuites:deleteTestSuite" as any, {
       suiteId,
       // Query param, for the same reason the case delete uses one.
-      ...fileSyncArg(c.req.query("declaredSuiteId")),
+      ...fileSyncArg(declaredSuiteIdOf(c)),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -9239,7 +9290,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
     );
   }
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
   let suite: SuiteDoc | null;
   try {
     suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9252,6 +9303,8 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  const declaredSuiteId = declaredSuiteIdOf(c, body);
+  assertSuiteWritableViaApi(suite!, { declaredSuiteId });
   // Enabling reuses the suite's saved interval when none is supplied (one-click
   // re-enable after a disable). Only require an interval when there's no saved
   // one to fall back to.
@@ -9300,7 +9353,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
       ...(scheduleEnvironmentId
         ? { environmentId: scheduleEnvironmentId }
         : {}),
-      ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+      ...fileSyncArg(declaredSuiteId),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -9321,7 +9374,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
 evals.get("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = evalIdParam(c, "suiteId", "Eval suite");
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
   let suite: SuiteDoc | null;
   let cases: CaseDoc[];
   let scopeVerified = false;
@@ -9349,7 +9402,7 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
 
 /** Load a case and assert it belongs to the given suite + project. */
 async function loadCaseInScope(
-  convex: ReturnType<typeof createConvexReadClient>,
+  convex: ReturnType<typeof createConvexClient>,
   projectId: string,
   suiteId: string,
   caseId: string,
@@ -9380,7 +9433,7 @@ evals.get(
     const projectId = c.req.param("projectId");
     const suiteId = evalIdParam(c, "suiteId", "Eval suite");
     const caseId = evalIdParam(c, "caseId", "Eval case");
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
     const testCase = await loadCaseInScope(
       convex,
       projectId,
@@ -9399,7 +9452,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const body = parseCreateCaseBody(c, await readJsonObjectBody(c));
   const title = assertCreatableCase(body);
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
   let suite: SuiteDoc | null;
   try {
     suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9412,6 +9465,8 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     );
   }
   requireProjectMatch(suite, projectId, "Eval suite");
+  const declaredSuiteId = declaredSuiteIdOf(c, body);
+  assertSuiteWritableViaApi(suite!, { declaredSuiteId });
   assertCasePolicyFieldsSupported(
     suite,
     body,
@@ -9441,7 +9496,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     result = await createEvalCasesInBatches(convexClient, {
       suiteId,
       cases: [item],
-      ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+      ...fileSyncArg(declaredSuiteId),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -9457,7 +9512,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     );
   }
   const created = await loadCaseInScope(
-    createConvexReadClient(token),
+    createConvexClient(token),
     projectId,
     suiteId,
     String(committed.testCaseId),
@@ -9489,7 +9544,7 @@ evals.post(
     );
 
     const token = await getConvexBearerForRequest(c);
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
     let suite: SuiteDoc | null;
     try {
       suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9502,6 +9557,8 @@ evals.post(
       );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
+    const declaredSuiteId = declaredSuiteIdOf(c, body);
+    assertSuiteWritableViaApi(suite!, { declaredSuiteId });
     // Checked for EVERY case before any of them is authored, like
     // `assertCreatableCase` above: rejecting case 42 after 41 siblings landed
     // leaves the caller reconciling a partial write it cannot retry cleanly.
@@ -9573,7 +9630,7 @@ evals.post(
           ? { duplicatePolicy: body.duplicatePolicy }
           : {}),
         ...(body.overrideReason ? { overrideReason: body.overrideReason } : {}),
-        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
+        ...fileSyncArg(declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -9626,21 +9683,29 @@ evals.patch(
     const body = parseUpdateCaseBody(c, await readJsonObjectBody(c));
     const token = await getConvexBearerForRequest(c);
     const existing = await loadCaseInScope(
-      createConvexReadClient(token),
+      createConvexClient(token),
       projectId,
       suiteId,
       caseId,
       "preflight",
     );
-    // The CASE was loaded above; the SUITE was not. Both create paths already
-    // read it for their scope guard, so a PATCH was the one door through which
-    // an inert `repetitions` could still reach storage.
-    //
-    // Read only when the body actually carries a policy field, so an ordinary
-    // title edit does not pay for a second round trip.
+    // The CASE was loaded above; the SUITE was not. It is read for the
+    // CI-owned pre-check, which needs it even for a file sync (a marker on an
+    // SDK-created suite can never succeed), and for the policy-field check
+    // (both create paths already read it for their scope guard, so a PATCH was
+    // the one door through which an inert `repetitions` could still reach
+    // storage).
+    const declaredSuiteId = declaredSuiteIdOf(c, body);
+    const suite = await readSuiteInProject(
+      token,
+      projectId,
+      suiteId,
+      "authorized",
+    );
+    assertSuiteWritableViaApi(suite, { declaredSuiteId });
     if (body.repetitions !== undefined || body.passThreshold !== undefined) {
       assertCasePolicyFieldsSupported(
-        await readSuiteInProject(token, projectId, suiteId, "authorized"),
+        suite,
         body,
         "",
         countFieldNames(vocabularyOf(c)),
@@ -9664,10 +9729,11 @@ evals.patch(
         {
           testCaseId: caseId,
           changeSource: "manual",
+          ...(body.accounts !== undefined ? {
+            accounts: accountSelectionsForStorage(body.accounts),
+          } : {}),
           ...args,
-          ...fileSyncArg(
-            c.req.query("declaredSuiteId") ?? body.declaredSuiteId,
-          ),
+          ...fileSyncArg(declaredSuiteId),
         },
       );
     } catch (error) {
@@ -9677,7 +9743,7 @@ evals.patch(
     // returns void so we never call toCaseDto on undefined (→ 500).
     if (!updated) {
       updated = await loadCaseInScope(
-        createConvexReadClient(token),
+        createConvexClient(token),
         projectId,
         suiteId,
         caseId,
@@ -9697,20 +9763,25 @@ evals.delete(
     const caseId = evalIdParam(c, "caseId", "Eval case");
     const token = await getConvexBearerForRequest(c);
     await loadCaseInScope(
-      createConvexReadClient(token),
+      createConvexClient(token),
       projectId,
       suiteId,
       caseId,
       "preflight",
     );
+    // A QUERY PARAM, not a body: this DELETE reads no body at all, and giving
+    // one route a body-carrying delete while its siblings have none is a shape
+    // callers get wrong.
+    const declaredSuiteId = declaredSuiteIdOf(c);
+    assertSuiteWritableViaApi(
+      await readSuiteInProject(token, projectId, suiteId, "authorized"),
+      { declaredSuiteId },
+    );
     const { convexClient } = createConvexClients(token);
     try {
       await convexClient.mutation("testSuites:deleteTestCase" as any, {
         testCaseId: caseId,
-        // A QUERY PARAM, not a body: this DELETE reads no body at all, and
-        // giving one route a body-carrying delete while its siblings have none
-        // is a shape callers get wrong.
-        ...fileSyncArg(c.req.query("declaredSuiteId")),
+        ...fileSyncArg(declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -9753,7 +9824,7 @@ evals.post(
     const idempotencyKey = readAnyIdempotencyKey(c) ?? body.idempotencyKey;
 
     // Project-scope guard.
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
     let suite: SuiteDoc | null;
     try {
       suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9766,6 +9837,9 @@ evals.post(
       );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
+    // Authoring takes no file-sync marker, so a CI-owned suite is refused
+    // here, before tool discovery connects its servers.
+    assertSuiteWritableViaApi(suite!);
 
     // Which environment (if any) this generation reads tools from — the same
     // attachment-authoritative rule the run route applies, evaluated BEFORE
@@ -9876,7 +9950,7 @@ evals.post(
     // dropped key means paying to author the same document twice.
     const idempotencyKey = readAnyIdempotencyKey(c) ?? body.idempotencyKey;
 
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
     let suite: SuiteDoc | null;
     try {
       suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9889,6 +9963,8 @@ evals.post(
       );
     }
     requireProjectMatch(suite, projectId, "Eval suite");
+    // Same refusal and reason as `cases/generate`.
+    assertSuiteWritableViaApi(suite!);
 
     const environmentId = await selectSuiteEnvironmentId({
       convexAuthToken: token,
@@ -9979,7 +10055,7 @@ evals.post(
 evals.get(
   "/projects/:projectId/eval-suites/:suiteId/authoring/:jobId",
   async (c) => {
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
     let job: Record<string, unknown> | null;
     try {
       job = await convex.query("evalAuthoringState:status" as any, {
@@ -10007,9 +10083,8 @@ evals.get(
 evals.post(
   "/projects/:projectId/eval-suites/:suiteId/authoring/:jobId/commit",
   async (c) => {
-    const { convexClient: convex } = createConvexClients(
-      await getConvexBearerForRequest(c),
-    );
+    const token = await getConvexBearerForRequest(c);
+    const { convexClient: convex } = createConvexClients(token);
     let job: Record<string, unknown> | null;
     try {
       job = await convex.query("evalAuthoringState:status" as any, {
@@ -10039,6 +10114,18 @@ evals.post(
     const commit = parseWithSchema(
       commitAuthoringJobSchema,
       await readJsonObjectBody(c),
+    );
+    // Defense in depth: the backend refuses a CI-owned suite when the job
+    // starts, and the status read above refuses one with a `declaredSuiteId`
+    // (not an SDK-owned one), so none reaches this line today. This keeps a
+    // later change to those checks from saving drafts into one.
+    assertSuiteWritableViaApi(
+      await readSuiteInProject(
+        token,
+        c.req.param("projectId"),
+        suiteId,
+        "authorized",
+      ),
     );
     return completeGeneratedAuthoringJob(c, convex, job, suiteId, commit);
   },
@@ -10092,7 +10179,7 @@ async function startAuthoringJobAndAwait(
   c: Context,
   args: {
     token: string;
-    readClient: ReturnType<typeof createConvexReadClient>;
+    readClient: ReturnType<typeof createConvexClient>;
     projectId: string;
     serverIds: string[];
     suiteId: string;

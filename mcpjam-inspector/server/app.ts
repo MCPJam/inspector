@@ -48,10 +48,16 @@ import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
 import { loadFeatureFlagFileAtBoot } from "./utils/feature-flag-source.js";
 import { MCPClientManager } from "@mcpjam/sdk";
+import {
+  applyInspectorUserAgent,
+  withDefaultUserAgent,
+} from "./utils/outbound-user-agent.js";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
+import { reportToolProgress } from "./services/chat-turn/tool-notifications.js";
 import { cacheEventLogger } from "./utils/cache-events.js";
+import { recordLocalObservation } from "./services/server-canvas/observation-recorders.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
 import { CORS_OPTIONS, HOSTED_MODE, ALLOWED_HOSTS, LOCAL_HARNESS_ENABLED } from "./config.js";
@@ -78,7 +84,13 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
+import { localHostAllowlistMiddleware } from "./middleware/local-host-allowlist.js";
 import { mountLocalSandboxViewHost } from "./middleware/local-sandbox-view-host.js";
+import {
+  createLocalConnectorRoutes,
+  mountInspectorWebConnectors,
+} from "./services/web-clients/inspector-endpoint.js";
+import { mountWebClientRuntime } from "./services/web-clients/runtime-mount.js";
 import {
   documentScriptNonce,
   securityHeadersMiddleware,
@@ -132,6 +144,7 @@ import {
 } from "./routes/web/webmcp-frames.js";
 import { createComputerUploadHandler } from "./routes/web/computer-upload.js";
 import { buildHealthMeta } from "./utils/health-payload.js";
+import { createWebReconnectRoutes } from "./services/web-clients/recovery/reconnect-route.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -216,11 +229,16 @@ export async function createHonoApp() {
     isProduction,
   });
 
+  applyInspectorUserAgent();
+
   // Create the MCPJam client manager instance and wire RPC logging to SSE bus
   const mcpClientManager = new MCPClientManager(
     {},
     {
+      baseFetch: withDefaultUserAgent(),
       retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+      // Observed server features, filed under each connection's own context.
+      featureObserver: (event) => recordLocalObservation(mcpClientManager, event),
       rpcLogger: ({ direction, message, serverId }) => {
         rpcLogBus.publish({
           serverId,
@@ -249,6 +267,8 @@ export async function createHonoApp() {
         total,
         message,
       }) => {
+        // The running chat tool call, if one owns this notification.
+        reportToolProgress({ serverId, progress, total, message });
         // Store progress for UI access using the real progressToken from the notification
         progressStore.publish({
           serverId,
@@ -279,6 +299,9 @@ export async function createHonoApp() {
   // Local App documents answer their own `localhost` subdomains before any
   // other middleware or route sees the request.
   mountLocalSandboxViewHost(app);
+  // Claude web and ChatGPT web reach the project's server here, before the
+  // global middleware too. Mirror of the mount in server/index.ts.
+  mountInspectorWebConnectors(app);
 
   // Middleware to inject the client manager into context
   app.use("*", async (c, next) => {
@@ -302,6 +325,9 @@ export async function createHonoApp() {
   // 1b. Indexing directive. Host-scoped, so it is its own middleware rather
   // than another line in the security headers — see indexing-headers.ts.
   app.use("*", indexingHeadersMiddleware);
+
+  // 1c. Host allowlist (blocks DNS rebinding), local mode only.
+  if (!HOSTED_MODE) app.use("*", localHostAllowlistMiddleware);
 
   // 2. Origin validation (blocks CSRF/DNS rebinding)
   app.use("*", originValidationMiddleware);
@@ -345,15 +371,23 @@ export async function createHonoApp() {
   app.use("/api/web/*", webBodyLimit());
 
   // API Routes
+  mountWebClientRuntime(app);
   if (!HOSTED_MODE) {
     app.route("/api/apps", appsRoutes);
     app.route("/api/mcp", mcpRoutes);
+    app.route(
+      "/api/web-clients/local-connectors",
+      createLocalConnectorRoutes(),
+    );
   } else {
     // Only the hosted-open paths (health + public model catalog) are mounted;
     // the rest of /api/mcp and /api/apps stays 410'd by applyHostedPartition.
     // Mirror of server/index.ts — both entries share mountHostedOpenRoutes.
     mountHostedOpenRoutes(app);
   }
+  // A person hands a web account back after signing it in, and its paused
+  // runs resume. Hosted only in effect: it needs the backend's service credential.
+  app.route("/api/web-clients/reconnect", createWebReconnectRoutes());
   // Construct after loadInspectorEnv() so hosted confidential CIMD observes
   // Inspector dotenv configuration and malformed configured keys fail startup.
   app.route("/api/web/xaa", createXaaWebRouter());

@@ -136,7 +136,9 @@ describe("an eval iteration", () => {
         outcome: "ok",
         runtime: "harness",
         harness_id: "cursor",
-        excluded_unsupported_harness_count: 3,
+        delivered_library_count: 1,
+        delivered_plugin_count: 1,
+        delivered_mcp_server_count: 1,
       },
       {
         ...NONE,
@@ -232,7 +234,7 @@ describe("a harness eval turn", () => {
       execution: { harness: "claude-code" },
       harnessTurnsReport: true,
     });
-    return { run, skills };
+    return { skills };
   }
   const base = {
     ...NONE,
@@ -242,13 +244,9 @@ describe("a harness eval turn", () => {
   };
 
   it("reports what its box writer wrote instead of the plan", async () => {
-    const { run, skills } = await harnessIteration();
+    const { skills } = await harnessIteration();
     expect(capture).not.toHaveBeenCalled();
-    const written = await writeTurnToBox(
-      "claude-code",
-      { pinnedHarnessSkills: run.pinnedHarnessSkills },
-      fakeSkillBox(),
-    );
+    const written = await writeTurnToBox("claude-code", skills, fakeSkillBox());
     reportBoxSkillsDelivered("eval", skills, written);
     expect(sent()).toEqual([
       {
@@ -282,6 +280,29 @@ describe("a harness eval turn", () => {
         delivered_library_count: 1,
         not_delivered_count: 1,
         failed_count: 1,
+      },
+    ]);
+  });
+
+  it("counts a server skill as delivered only when the turn's tools served it", async () => {
+    const { skills } = await harnessIteration();
+    expect(skills.serverSkillsVia).toBe("harness-tools");
+    const written = await writeTurnToBox("claude-code", skills, fakeSkillBox());
+    // Its name on the box would not count: nothing from a server is there.
+    expect(written.delivered.map(({ name }) => name)).not.toContain("search");
+    // A turn whose tools served nothing, as on a local eval.
+    reportBoxSkillsDelivered("eval", skills, {
+      delivered: written.delivered,
+      notDelivered: written.notDelivered,
+      failed: written.failed,
+    });
+    expect(sent()).toEqual([
+      {
+        ...base,
+        outcome: "ok",
+        delivered_library_count: 1,
+        delivered_plugin_count: 1,
+        not_delivered_count: 1,
       },
     ]);
   });

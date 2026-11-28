@@ -41,7 +41,8 @@ serverSkills.post("/list", async (c) =>
       // diagnostic output — which is most of what a debugger user needs.
       forwardLogMessages(body.serverId);
       return listServerSkillsCore(manager, body);
-    }
+    },
+    { observeFeatures: true }
   )
 );
 
@@ -52,7 +53,8 @@ serverSkills.post("/get", async (c) =>
     async (manager, body, forwardLogMessages) => {
       forwardLogMessages(body.serverId);
       return getServerSkillCore(manager, body);
-    }
+    },
+    { observeFeatures: true }
   )
 );
 
@@ -63,7 +65,8 @@ serverSkills.post("/read-file", async (c) =>
     async (manager, body, forwardLogMessages) => {
       forwardLogMessages(body.serverId);
       return readServerSkillFileCore(manager, body);
-    }
+    },
+    { observeFeatures: true }
   )
 );
 

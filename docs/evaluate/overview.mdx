@@ -1,0 +1,184 @@
+---
+title: "Overview"
+description: "Test that users get what they ask for from your MCP server, across clients, with a real agent and model in the loop."
+icon: "flask-conical"
+---
+
+An eval is an end-to-end test of your MCP server from the user's side. Given a user prompt, it sends the request through a real client, its agent harness and a model you pick, to your server and back, then checks whether the outcome you expected happened.
+
+<Frame caption="Stages are checked in order, and the first one that fails points at a likely owner.">
+  <img className="block dark:hidden" src="/images/evaluate/user-value-chain-light.svg" alt="Six stages, connection to user value, with a break marked at selection and the likely owner under each stage" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/user-value-chain-dark.svg" alt="Six stages, connection to user value, with a break marked at selection and the likely owner under each stage" width="760" />
+</Frame>
+
+<Note>
+Evals test what a user gets end to end. To call tools by hand, use the [Playground](/inspector/playground). To check your server against the MCP spec, use [Conformance](/conformance/overview).
+</Note>
+
+## What is an eval for an MCP server?
+
+Your server never meets a user directly. A user types into a client; the client's harness hands the prompt and your tools to a model; the model decides what to call; your server answers; the model writes the reply. An eval runs that whole path and asks one question: given this prompt, did the user get what they asked for?
+
+<Frame caption="MCPJam plays the client and its harness: it sends your prompt to the model, relays tool calls to your server, records every exchange as the trace, then grades it.">
+  <img className="block dark:hidden" src="/images/evaluate/run-flow-light.svg" alt="You start a run; MCPJam connects to your server, sends the prompt to the model, relays tool calls, saves the trace and grades it" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/run-flow-dark.svg" alt="You start a run; MCPJam connects to your server, sends the prompt to the model, relays tool calls, saves the trace and grades it" width="760" />
+</Frame>
+
+- **Case**: one user prompt, or a short conversation, plus the outcome you expect.
+  - Example: given "What does note 7 say?", the reply contains note 7's text.
+- **Client**: the MCP client configuration the run emulates, such as a desktop chat app or an IDE agent.
+- **Harness**: the agent loop that sends the prompt to the model, runs the tool calls the model asks for, and returns the results: MCPJam Harness, or a vendor's own, such as Claude Code's or Codex's (in limited rollout). See [the client environment](/evaluate/how-evals-work#where-a-case-runs-the-client-environment).
+- **Model**: any model you pick, from MCPJam or your own provider.
+- **Suite**: a group of cases, run on each client and model pair you choose, several times each.
+
+## What an eval checks
+
+The [user-value chain](/sdk/concepts/user-value-chain) breaks a request into six stages, from the client reaching your server to the user getting what they asked for. Together they define what a successful request looks like. MCPJam grades every iteration along the chain and reports the first stage that failed, which points at a likely owner: the connection, your tool catalog, the model's choice, or your server's answer.
+
+| Stage | The question it answers |
+|---|---|
+| Connection | Could the client reach the server and start a session? |
+| Discovery | Did the client receive usable tools and metadata? |
+| Selection | Did the model choose the right tool for the request? |
+| Tool call | Was the call made with usable arguments? |
+| Response | Did the server return data the model could use? |
+| User value | Was the user's actual request satisfied? |
+
+Which tool was called, and with what arguments, are stages on the way. The last stage is the point: was the user's request met.
+
+## When to use evals
+
+- **Verify value end to end**
+  - Check that real requests, through real clients and models, get users what they asked for.
+  - Unit tests stop at your server's edge; evals include the client, harness and model.
+- **Catch regressions before users do**
+  - Rerun the suite after you change a tool's name, description, schema or output.
+  - The run page counts cases regressed and fixed since the previous run.
+- **Compare clients and models**
+  - Run one suite across several client and model pairs.
+  - Results are broken out per pair, so a case that fails on one pair stands out.
+- **Gate releases**
+  - Run a suite in CI and fail the build when it doesn't pass.
+  - See [Run evals in CI](/evaluate/run-evals-in-ci).
+
+To discover which cases to write, use [Swarms](/swarms/overview) to explore goals with simulated users or [User Testing](/user-testing/overview) to see how real people approach the same tasks.
+
+## Where to run evals
+
+Pick the surface by where you want the suite to live.
+
+<Tabs>
+  <Tab title="Inspector">
+    Click **Run** on the **Evaluate** tab. The suite lives in your MCPJam project. [Run your first eval](/evaluate/run-your-first-eval) creates one from a connected server and runs it.
+  </Tab>
+  <Tab title="CLI">
+    Install the CLI and sign in. In CI, set `MCPJAM_API_KEY` to an `sk_` key instead of signing in.
+
+    ```bash Install and sign in
+    npm i -g @mcpjam/cli
+    mcpjam cloud login
+    ```
+
+    `mcpjam test <file>` runs a suite file in your repository, such as `.mcpjam/evals/example.yaml`, on your machine. Results stay on your machine. A local run checks assertions only; the judge that grades a case's expected outcome runs hosted. See [Local evals](/cli/local-evals).
+
+    ```bash Local run
+    export ANTHROPIC_API_KEY=sk-ant-...
+    mcpjam test .mcpjam/evals/example.yaml
+    ```
+
+    `mcpjam cloud eval run` runs a suite in your MCPJam project, judge included. `--file` uploads a suite file and runs it; its servers must be saved in the project. See [Evals in CI](/cli/ci#evals-in-ci).
+
+    ```bash Hosted run
+    # A suite saved in your project
+    mcpjam cloud eval run --suite "Notes server" --wait
+
+    # Or upload a suite file and run it
+    mcpjam cloud eval run --file .mcpjam/evals/example.yaml --wait
+    ```
+  </Tab>
+  <Tab title="SDK">
+    `EvalTest` and `EvalSuite` from `@mcpjam/sdk` keep the suite in your test code. Results go to your project when you set `MCPJAM_API_KEY` and name a suite. See [Saving results](/sdk/concepts/saving-results).
+
+    ```bash Install
+    npm install @mcpjam/sdk
+    ```
+
+    ```ts evals/notes.mts
+    import { EvalSuite, EvalTest, HostRunner, MCPClientManager, judge } from "@mcpjam/sdk";
+
+    const manager = new MCPClientManager({
+      notes: { command: "node", args: ["./notes-server.js"] },
+    });
+    await manager.connectToServer("notes");
+
+    const agent = new HostRunner({
+      tools: await manager.getTools(),
+      model: "anthropic/claude-haiku-4.5",
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      mcpClientManager: manager,
+    });
+
+    const suite = new EvalSuite({ name: "Notes server" });
+    suite.add(new EvalTest({
+      id: "c_reads_a_note",
+      name: "tells the user what note 7 says",
+      execute: async (a) => {
+        await a.run("What does note 7 say?");
+      },
+      evaluators: {
+        mode: "extend",
+        list: [
+          judge({
+            id: "answers-with-the-note",
+            model: "anthropic/claude-sonnet-5",
+            apiKey: process.env.ANTHROPIC_API_KEY!,
+            rubric: ["The reply tells the user what note 7 says, using the note's actual text."],
+            role: "required",
+          }),
+        ],
+      },
+    }));
+
+    await suite.run(agent, { iterations: 3 });
+    console.log(`Accuracy: ${(suite.accuracy() * 100).toFixed(1)}%`);
+    await manager.disconnectServer("notes");
+    ```
+
+    ```bash Run
+    export ANTHROPIC_API_KEY=sk-ant-...
+    npx tsx evals/notes.mts
+    ```
+  </Tab>
+</Tabs>
+
+Suites created from a suite file or the SDK carry a **CI** badge in the app; change them in code, not in the app.
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Run your first eval" icon="play" href="/evaluate/run-your-first-eval">
+    Generate cases from a connected server and run them.
+  </Card>
+  <Card title="How evals work" icon="workflow" href="/evaluate/how-evals-work">
+    Suites, cases, runs and iterations, and how a verdict is reached.
+  </Card>
+  <Card title="Write a case" icon="pencil" href="/evaluate/write-a-case">
+    Write a case by hand when generated ones miss a behavior.
+  </Card>
+</CardGroup>
+
+## Example suites
+
+Copy one of these to start a suite in code or in a file.
+
+<CardGroup cols={3}>
+  <Card title="Asana" icon="github" href="https://github.com/MCPJam/inspector/tree/main/examples/evals/asana">
+    SDK unit tests and evals for the Asana MCP server, run with Jest: tool choice, arguments, multi-turn conversations and token use.
+  </Card>
+  <Card title="Bright Data" icon="github" href="https://github.com/MCPJam/inspector/tree/main/examples/evals/brightdata">
+    SDK unit tests and evals for the Bright Data ecommerce MCP server, run with Vitest.
+  </Card>
+  <Card title="Suite file quick start" icon="file-code" href="/cli/local-evals#quick-start">
+    A two-case YAML suite for a notes server, run with `mcpjam test`.
+  </Card>
+</CardGroup>

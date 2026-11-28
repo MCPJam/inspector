@@ -1,7 +1,21 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
 import mcpAppsRoutes from "../mcp-apps";
 import { requestLogContextMiddleware } from "../../../middleware/request-log-context";
+import { generateSessionToken } from "../../../services/session-token.js";
+
+const reportRouteFailureMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../../utils/route-error-report.js", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../../../utils/route-error-report.js")
+  >();
+  return { ...actual, reportRouteFailure: reportRouteFailureMock };
+});
+
+beforeEach(() => {
+  reportRouteFailureMock.mockClear();
+});
 
 /**
  * Tests for SEP-1865 per-field metadata precedence in /widget-content.
@@ -68,10 +82,16 @@ function buildApp(manager: ReturnType<typeof makeMockManager>) {
 async function postWidgetContent(
   app: Hono,
   cspMode: "permissive" | "widget-declared" = "widget-declared",
+  sessionToken?: string,
 ) {
   return app.request("/api/apps/mcp-apps/widget-content", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(sessionToken
+        ? { "X-MCP-Session-Auth": `Bearer ${sessionToken}` }
+        : {}),
+    },
     body: JSON.stringify({
       serverId: "s1",
       resourceUri: RESOURCE_URI,
@@ -278,5 +298,90 @@ describe("/widget-content — SEP-1865 metadata precedence", () => {
       prefersBorder: "none",
       domain: "none",
     });
+  });
+
+  it("returns oversized declared CSP as the original validation error", async () => {
+    const sessionToken = generateSessionToken();
+    const manager = makeMockManager({
+      contentMeta: {
+        ui: {
+          csp: {
+            resourceDomains: Array.from(
+              { length: 128 },
+              (_, index) =>
+                `https://asset-${index}.example/${"a".repeat(80)}`,
+            ),
+          },
+        },
+      },
+    });
+
+    const res = await postWidgetContent(
+      buildApp(manager),
+      "widget-declared",
+      sessionToken,
+    );
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error:
+        "The App content policy is invalid or exceeds 8 KiB. Reduce its domain lists and reopen the App.",
+      code: "VALIDATION_ERROR",
+    });
+    expect(reportRouteFailureMock).toHaveBeenCalledWith(
+      "[MCP Apps] Error fetching resource",
+      expect.objectContaining({ status: 400, code: "VALIDATION_ERROR" }),
+      expect.objectContaining({
+        source: "apps.mcp-apps.widget-content",
+        hop: "user_server_hop",
+      }),
+    );
+  });
+
+  it("keeps genuine internal failures at 500", async () => {
+    const sessionToken = generateSessionToken();
+    const manager = {
+      ...makeMockManager({}),
+      getServerConfig: vi.fn(() => {
+        throw new Error("internal config failure");
+      }),
+    };
+
+    const res = await postWidgetContent(
+      buildApp(manager),
+      "widget-declared",
+      sessionToken,
+    );
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "internal config failure" });
+    expect(reportRouteFailureMock).toHaveBeenCalledWith(
+      "[MCP Apps] Error fetching resource",
+      expect.objectContaining({ message: "internal config failure" }),
+      expect.objectContaining({
+        source: "apps.mcp-apps.widget-content",
+        hop: "mcpjam_internal",
+      }),
+    );
+  });
+
+  it("reports resource-read failures on the user-server hop", async () => {
+    const manager = makeMockManager({});
+    const readError = Object.assign(new Error("connection refused"), {
+      code: "ECONNREFUSED",
+    });
+    manager.readResource.mockRejectedValueOnce(readError);
+
+    const res = await postWidgetContent(buildApp(manager));
+
+    expect(res.status).toBe(500);
+    expect(reportRouteFailureMock).toHaveBeenCalledWith(
+      "[MCP Apps] Error fetching resource",
+      expect.objectContaining({ code: "ECONNREFUSED" }),
+      expect.objectContaining({
+        source: "apps.mcp-apps.widget-content",
+        hop: "user_server_hop",
+      }),
+    );
   });
 });

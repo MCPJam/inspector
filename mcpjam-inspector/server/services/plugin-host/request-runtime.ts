@@ -18,7 +18,8 @@ import {
   ownedLegacyFormCapabilities,
 } from "./owned-legacy.js";
 import { pluginFormSources } from "./form-sources.js";
-import { pluginInstances } from "./instances.js";
+import type { PluginFormOwnerRef } from "./form-source-control.js";
+import { assertPluginFormOwnerCurrent } from "./form-owner.js";
 import type {
   ResolvedInvocationContext,
   PluginToolCallParams,
@@ -243,6 +244,11 @@ export function createPluginRequestRuntime(
     /** The extension governing a retained owner that has no activation
      * (a mention lease). An App's own kind decides it otherwise. */
     extension?: keyof PluginExtensionCapabilities;
+    /** The owner's stored row, so MRTR form sources are stored too. Every
+     * form step reads it again after admission unless `fenceOwner` is false
+     * (a model call whose row is not written yet). */
+    ownerRef?: PluginFormOwnerRef;
+    fenceOwner?: boolean;
   } = {},
 ) {
   const currentBearer = () => admission.getAuthorization?.() ?? Promise.resolve(bearer);
@@ -322,6 +328,7 @@ export function createPluginRequestRuntime(
       hostConfig: config,
       serverBindings,
       serverNamesById,
+      publishedPluginIdsByServerId,
     } = await read(() =>
       timedPluginStep("backend-admission-read", async () =>
         readPluginExecutionContext({
@@ -387,11 +394,14 @@ export function createPluginRequestRuntime(
       humanInput();
       signal.throwIfAborted();
       if (!expected) throw denied();
-      pluginInstances.getFormOwner(expected.owner, {
-        ...expected.owner,
-        subject: expected.subject,
+      await assertPluginFormOwnerCurrent({
+        owner: expected.owner,
+        identity: { ...expected.owner, subject: expected.subject },
+        ownerRef: options.ownerRef,
+        fenceOwner: options.fenceOwner,
+        admit: () => admission.revalidate({ signal }),
+        signal,
       });
-      await admission.revalidate({ signal });
       const fresh = await readPluginExecutionContext({
         projectId: admission.projectId,
         expectedActorId: admission.actorId,
@@ -519,7 +529,7 @@ export function createPluginRequestRuntime(
                     .fileResources,
                   ...(uploadTarget() ? { uploadTarget: uploadTarget() } : {}),
                 };
-                const handle = pluginFormSources.bind(source);
+                const handle = pluginFormSources.bind(source, expected.subject);
                 return {
                   ...handle,
                   deliver: async (result) => {
@@ -527,7 +537,7 @@ export function createPluginRequestRuntime(
                     input.signal.throwIfAborted();
                     pluginFormSources.get(
                       handle.token,
-                      source.owner,
+                      { ...source.owner, subject: expected.subject },
                       source.parent,
                     );
                     // The client's CURRENT Forms toggle decides delivery.
@@ -597,6 +607,8 @@ export function createPluginRequestRuntime(
               fileResources: extensions.capabilities.fileResources,
               fileResourcesEnabled: () => latest?.capabilities.fileResources === true,
               formsEnabled,
+              identity: { ...expected.owner, subject: expected.subject },
+              ownerRef: options.ownerRef,
             })
           : undefined;
     }
@@ -653,6 +665,8 @@ export function createPluginRequestRuntime(
         projectServerSchema,
         {
           lazyConnect: true,
+          // An App's calls in a member's chat are that member's use.
+          observeFeatures: true,
           extensionRequestHandlers: legacyForms
             ? {
                 [binding.serverId]: [
@@ -868,6 +882,7 @@ export function createPluginRequestRuntime(
       hostRevision,
       bindingId: lease.bindingId,
       serverIdentity,
+      publishedPluginId: publishedPluginIdsByServerId?.[binding.serverId],
       localFileTargetContract: fileTargets.contract,
       executionScope: config.executionScope,
       /** Form uploads for this server can be placed on the project's Computer. */
@@ -909,7 +924,7 @@ export function createPluginRequestRuntime(
   ) => {
     signal.throwIfAborted();
     if (disposed) throw new PluginInvocationError("INSTANCE_REQUEST_CLOSED");
-    const { hostConfig, serverBindings } = await read(() =>
+    const { hostConfig, serverBindings, publishedPluginIdsByServerId } = await read(() =>
       timedPluginStep("backend-admission-read", async () =>
         readPluginExecutionContext({
           projectId: admission.projectId,
@@ -936,6 +951,7 @@ export function createPluginRequestRuntime(
       throw denied();
     signal.throwIfAborted();
     if (disposed) throw new PluginInvocationError("INSTANCE_REQUEST_CLOSED");
+    return publishedPluginIdsByServerId?.[binding.serverId];
   };
   let resolving = false;
   const owned = async <T>(effect: () => Promise<T>): Promise<T> => {
@@ -1075,7 +1091,7 @@ export function createPluginRequestRuntime(
     verifyCurrent: (signal: AbortSignal) =>
       owned(async () => {
         if (!lastAdmitted) throw denied();
-        await verify(lastAdmitted, signal);
+        return verify(lastAdmitted, signal);
       }),
     /** Related tools share one freshly admitted catalog, never a retained grant. */
     resolveTools: async (
@@ -1168,6 +1184,7 @@ export function createPluginRequestRuntime(
       params: PluginToolCallParams,
       submission: PluginContinuationSubmission,
       signal: AbortSignal,
+      pending?: PluginInvocationSuspension,
     ) => {
       const mrtr = ownedMrtr();
       if (!mrtr) {
@@ -1189,6 +1206,7 @@ export function createPluginRequestRuntime(
         params,
         submission,
         signal,
+        pending,
       );
     },
     /** Logs entries for the client, returned with this request's response. */

@@ -166,6 +166,7 @@ describe("Describe composer → transport → proposal → Create", () => {
     const sessionId = openEvalChat(scope);
     renderWithProviders(
       <McpjamAgentThread
+        onNewChat={() => {}}
         sessionId={sessionId}
         projectId={scope.projectId}
         organizationId={null}
@@ -236,6 +237,7 @@ it("keeps transcripts and outgoing history separate when moving between cases", 
   ];
   const { rerender } = renderWithProviders(
     <McpjamAgentThread
+      onNewChat={() => {}}
       key={a}
       sessionId={a}
       projectId={scope.projectId}
@@ -259,6 +261,7 @@ it("keeps transcripts and outgoing history separate when moving between cases", 
   });
   rerender(
     <McpjamAgentThread
+      onNewChat={() => {}}
       key={b}
       sessionId={b}
       projectId={scope.projectId}
@@ -324,6 +327,7 @@ it("keeps transcripts and outgoing history separate when moving between cases", 
   expect(resumed).toBe(a);
   rerender(
     <McpjamAgentThread
+      onNewChat={() => {}}
       key={a}
       sessionId={a}
       projectId={scope.projectId}
@@ -343,6 +347,7 @@ it("keeps Describe guidance focused when the draft gains content", async () => {
   });
   renderWithProviders(
     <McpjamAgentThread
+      onNewChat={() => {}}
       sessionId={sessionId}
       projectId={scope.projectId}
       organizationId={null}
@@ -395,6 +400,7 @@ it("asks before continuing a paused creation", async () => {
   });
   renderWithProviders(
     <McpjamAgentThread
+      onNewChat={() => {}}
       sessionId={sessionId}
       projectId={scope.projectId}
       organizationId={null}
@@ -453,6 +459,7 @@ it("queues a description during tool loading and sends it once when metadata arr
   });
   renderWithProviders(
     <McpjamAgentThread
+      onNewChat={() => {}}
       sessionId={sessionId}
       projectId={scope.projectId}
       organizationId={null}

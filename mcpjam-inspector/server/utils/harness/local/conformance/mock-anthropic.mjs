@@ -3,12 +3,17 @@
 //   "READFILE <path>"  -> tool_use Read {file_path}
 //   "BASH <cmd>"       -> tool_use Bash {command}
 //   "WRITE <path>"     -> tool_use Write {file_path, content}
-//   "COUNT"            -> text: number of user turns seen in this request (continuity probe)
+//   "COUNT"            -> text: the user turns in this request, counted and listed
+//                         by scenario, oldest first (continuity probe)
 //   "BGAGENT"          -> tool_use Agent {run_in_background: true} with a "BGSUB" prompt
 //   "BGSUB …"          -> tool_use Bash: the background subagent's one step
 //                         (its tool result then ends it, like any other)
 //   "<task-notification>" (a background task reported back) -> text: BGREPORT
 //   "BGSHELL <cmd>"    -> tool_use Bash {command, run_in_background: true}
+//   "MCPPROBE"         -> tool_use mcp__delivery_probe__ping {}, or, with
+//                         MOCK_PROBE_SUFFIX set, the offered tool whose name
+//                         ends with it {message: "conformance"} (MCPJam's host
+//                         tool, under whatever name the runtime gives it)
 //   anything else      -> text echo
 // After a tool_result arrives, answers with a final text summarising the result.
 // Verifies the gateway's proof-of-possession header when MOCK_POP_SECRET is set.
@@ -40,6 +45,10 @@ if (!Number.isFinite(latencyMs) || latencyMs < 0) {
     `MOCK_LATENCY_MS must be a finite, non-negative number of milliseconds; got ${JSON.stringify(process.env.MOCK_LATENCY_MS)}`,
   );
 }
+/** The host tool `MCPPROBE` calls, by the end of its name; unset keeps the delivery probe. */
+const probeSuffix = process.env.MOCK_PROBE_SUFFIX ?? "";
+/** A user turn's scenario is its last line that starts with one of these. */
+const SCENARIO = /^(READFILE|BASH|WRITE|COUNT|MCPPROBE|HELLO|BGAGENT|BGSHELL|SLOW)\b/;
 const seenNonces = new Set();
 const log = (...a) => console.error("[mock]", ...a);
 let requestCount = 0;
@@ -162,7 +171,15 @@ const server = http.createServer((req, res) => {
       // timing stress never covered.
       if (req.url.includes("count_tokens")) { held(() => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ input_tokens: 42 })); }); return; }
       const messages = Array.isArray(body.messages) ? body.messages : [];
-      const userTurns = messages.filter((m) => m.role === "user" && (typeof m.content === "string" || (Array.isArray(m.content) && m.content.some((b) => b.type === "text")))).length;
+      const userMessages = messages.filter((m) => m.role === "user" && (typeof m.content === "string" || (Array.isArray(m.content) && m.content.some((b) => b.type === "text"))));
+      const userTurns = userMessages.length;
+      // Which turns, not only how many: a lost turn shows even when a
+      // duplicated one keeps the count.
+      const scenarios = userMessages
+        .map((m) => (typeof m.content === "string" ? m.content : m.content.filter((b) => b.type === "text").map((b) => b.text).join("\n")))
+        .map((text) => text.split("\n").map((line) => line.trim()).filter((line) => SCENARIO.test(line)).pop())
+        .filter(Boolean)
+        .map((line) => SCENARIO.exec(line)[1]);
       const id = `msg_${requestCount}`;
       const { text, toolResult } = lastUserText(messages);
       const tools = Array.isArray(body.tools) ? body.tools.map((t) => t.name) : [];
@@ -201,9 +218,14 @@ const server = http.createServer((req, res) => {
         const [, kind, arg] = m;
         if (kind === "READFILE") return sse(res, toolEvents(id, "Read", { file_path: arg.trim() }, inputTokens));
         if (kind === "BASH") return sse(res, toolEvents(id, "Bash", { command: arg.trim() }, inputTokens));
+        if (kind === "MCPPROBE" && probeSuffix) {
+          const name = tools.find((tool) => typeof tool === "string" && tool.endsWith(probeSuffix));
+          if (!name) return sse(res, textEvents(id, `NO PROBE TOOL OFFERED: ${JSON.stringify(tools).slice(0, 200)}`, inputTokens));
+          return sse(res, toolEvents(id, name, { message: "conformance" }, inputTokens));
+        }
         if (kind === "MCPPROBE") return sse(res, toolEvents(id, "mcp__delivery_probe__ping", {}, inputTokens));
         if (kind === "WRITE") return sse(res, toolEvents(id, "Write", { file_path: arg.trim(), content: "written by the conformance mock\n" }, inputTokens));
-        if (kind === "COUNT") return sse(res, textEvents(id, `USER_TURNS=${userTurns}`, inputTokens));
+        if (kind === "COUNT") return sse(res, textEvents(id, `USER_TURNS=${userTurns} SCENARIOS=${scenarios.join(",")}`, inputTokens));
       }
       return sse(res, textEvents(id, `ECHO: ${t.slice(0, 80)}`, inputTokens));
     }

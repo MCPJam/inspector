@@ -1,13 +1,15 @@
 import {
   DIRECTORY_OBSERVATION_STATUSES,
   type DirectoryAnswer,
+  type DirectoryDecisionAnswer,
+  type DirectoryDecisionItem,
 } from "@mcpjam/sdk";
 /**
  * The inspector's half of the readiness lease protocol.
  *
- * Six service-token calls against the backend's `/internal/v1/claude-readiness/*`
- * routes: claim, heartbeat, request observations, read the frozen submission
- * answers, finalize, fail. The backend already
+ * Seven service-token calls against the backend's `/internal/v1/claude-readiness/*`
+ * routes: claim, heartbeat, request observations, ask decision questions,
+ * read the frozen submission answers, finalize, fail. The backend already
  * owns the durable side — claim, lease, recovery, retention — and nothing here
  * duplicates it; this is the client a worker holds while it executes.
  *
@@ -30,10 +32,17 @@ import {
 } from "../internal-backend.js";
 import { backendFailureText } from "../../utils/backend-failure-text.js";
 import { isOrgKeyPolicyRefusalCode } from "../../../shared/ai-execution-refusal.js";
+import { logger } from "../../utils/logger.js";
+import { abortableSleep } from "../../utils/run-supervisor/backoff.js";
+import type { DecisionBrokerAnswer } from "./decision-scan.js";
 import {
   ReadinessLeaseLostError,
   type ObservationBrokerAnswer,
 } from "./runner.js";
+import type {
+  ReviewerAttemptView,
+  ReviewerAttemptWrite,
+} from "./reviewer-sign-in.js";
 
 // Re-exported so a caller that only holds the client does not have to reach
 // past it for the error the client throws.
@@ -69,10 +78,12 @@ const OBSERVATION_TIMEOUT_MS = 90_000;
  * with no bound at all, quietly turning the heartbeat's ten-second budget into
  * an unbounded wait.
  */
-async function postInternal(
+export async function postInternal(
   path: string,
   body: unknown,
   timeoutMs: number,
+  /** The run's own signal, for a call too long to wait out after a cancel. */
+  signal?: AbortSignal,
 ): Promise<{ response: Response; release: () => void }> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   const controller = new AbortController();
@@ -86,7 +97,9 @@ async function postInternal(
         "x-inspector-service-token": serviceToken,
       },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: signal
+        ? AbortSignal.any([controller.signal, signal])
+        : controller.signal,
     });
     return { response, release };
   } catch (error) {
@@ -111,7 +124,7 @@ export type ReadinessClaim =
 
 const CLAIM_TIMEOUT_MS = 10_000;
 
-function parseJsonObject(text: string): Record<string, unknown> | null {
+export function parseJsonObject(text: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(text);
     return typeof value === "object" && value !== null
@@ -164,6 +177,103 @@ export async function claimReadinessRun(
 
 /** What a heartbeat learned: the backend's answer, or that none came. */
 export type ReadinessLeaseAnswer = "owned" | "lost" | "unanswered";
+
+/** The attempt route refused a write for a reason other than the lease. */
+export class ReviewerAttemptRefusedError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ReviewerAttemptRefusedError";
+  }
+}
+
+/** One write to the attempt the run works on; an empty write only joins it. */
+async function postReviewerAttempt(
+  lease: ReadinessLease,
+  attemptId: string,
+  write: ReviewerAttemptWrite,
+): Promise<Record<string, unknown>> {
+  const { response, release } = await postInternal(
+    `${READINESS_PATH}/reviewer-attempt`,
+    { ...lease, attemptId, ...write },
+    CLAIM_TIMEOUT_MS,
+  );
+  try {
+    const body = parseJsonObject(await response.text());
+    if (response.ok && body?.ok === true) return body;
+    if (body?.error === "lease_lost") throw new ReadinessLeaseLostError();
+    const code =
+      typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const message = typeof body?.message === "string" ? body.message : code;
+    throw new ReviewerAttemptRefusedError(code, message);
+  } finally {
+    release();
+  }
+}
+
+/**
+ * The fields a sign-in needs, read off the attempt the join answers with:
+ * the secret names (never values), where and as whom to sign in, and whether
+ * a person already finished it.
+ */
+function attemptView(value: unknown): ReviewerAttemptView | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const row = value as Record<string, unknown>;
+  if (typeof row.projectId !== "string") return undefined;
+  if (typeof row.passwordSecretName !== "string") return undefined;
+  const text = (key: string) =>
+    typeof row[key] === "string" ? { [key]: row[key] as string } : {};
+  return {
+    projectId: row.projectId,
+    passwordSecretName: row.passwordSecretName,
+    ...text("usernameSecretName"),
+    ...text("username"),
+    ...text("reviewerAccountId"),
+    ...text("loginUrl"),
+    ...text("tenant"),
+    ...(typeof row.humanSignInCompletedAt === "number"
+      ? { humanSignInCompletedAt: row.humanSignInCompletedAt }
+      : {}),
+  };
+}
+
+/**
+ * Join the reviewer sign-in attempt the run was started for, so the attempt
+ * names the run working on it and a resume of the run finds it again. A lost
+ * lease throws; any other refusal comes back as the reason.
+ */
+export async function joinReviewerAttempt(
+  lease: ReadinessLease,
+  attemptId: string,
+): Promise<
+  | { joined: true; attempt?: ReviewerAttemptView }
+  | { joined: false; reason: string }
+> {
+  try {
+    const body = await postReviewerAttempt(lease, attemptId, {});
+    return { joined: true, attempt: attemptView(body.attempt) };
+  } catch (error) {
+    if (error instanceof ReadinessLeaseLostError) throw error;
+    const reason =
+      error instanceof ReviewerAttemptRefusedError
+        ? error.code
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    return { joined: false, reason };
+  }
+}
+
+/** Record a stage, the reviewer account, a stop for a person or an outcome. */
+export async function recordReviewerAttempt(
+  lease: ReadinessLease,
+  attemptId: string,
+  write: ReviewerAttemptWrite,
+): Promise<void> {
+  await postReviewerAttempt(lease, attemptId, write);
+}
 
 /**
  * Renew the lease, and report only what the backend confirmed. For a caller
@@ -313,12 +423,134 @@ export async function requestManagedObservations(
   }
 }
 
+const DECISIONS_PATH = "/internal/v1/claude-readiness/decisions";
+/**
+ * A full pass asks 24 questions four at a time and gives each 30 seconds:
+ * three minutes at worst, plus its holds. Past this the checks go unjudged.
+ */
+const DECISIONS_TIMEOUT_MS = 4 * 60_000;
+/**
+ * A pass already running for this run (a replaced node's, say) is waited for
+ * as long as a worst-case pass takes; the retry then gets its answers.
+ */
+const DECISIONS_RETRY_DELAY_MS = 30_000;
+const DECISIONS_RETRIES = 6;
+/** Refusals that mean the scan is off for this run, skipped quietly. */
+const DECISIONS_OFF = ["decisions_disabled", "decisions_not_requested"];
+
+function isDecisionAnswer(entry: unknown): entry is DirectoryDecisionAnswer {
+  const answer = entry as Partial<
+    Record<keyof DirectoryDecisionAnswer, unknown>
+  > | null;
+  return (
+    typeof answer?.questionId === "string" &&
+    typeof answer.candidateKey === "string" &&
+    typeof answer.verdict === "string" &&
+    typeof answer.quote === "string" &&
+    typeof answer.confidence === "number"
+  );
+}
+
+/** One request to the decision route: its status and body, or a throw. */
+async function postDecisions(
+  lease: ReadinessLease,
+  items: readonly DirectoryDecisionItem[],
+  signal?: AbortSignal,
+): Promise<{ status: number; body: Record<string, unknown> | null }> {
+  const { response, release } = await postInternal(
+    DECISIONS_PATH,
+    { ...lease, items },
+    DECISIONS_TIMEOUT_MS,
+    signal,
+  );
+  try {
+    const body = parseJsonObject(await response.text());
+    return { status: response.status, body };
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Ask the broker's decision pass about the run's candidates.
+ *
+ * As for observations, every failure but a lost lease is an answer: a
+ * refusal, a timeout or an unreadable body leaves the decision checks
+ * unjudged. A pass still running for this run is waited for, then given up
+ * on the same way. Any other 409 is a lost lease.
+ */
+export async function requestReadinessDecisions(
+  lease: ReadinessLease,
+  items: readonly DirectoryDecisionItem[],
+  signal?: AbortSignal,
+): Promise<DecisionBrokerAnswer> {
+  const unanswered = (detail: string): DecisionBrokerAnswer => {
+    // The run row has no field for this pass, so the log is its record.
+    logger.warn("[readiness] decision questions went unanswered", {
+      runId: lease.runId,
+      detail,
+    });
+    return { status: "unanswered", detail };
+  };
+  // A cancelled run stops with its own reason once this returns.
+  const cancelled: DecisionBrokerAnswer = {
+    status: "unanswered",
+    detail: "cancelled",
+  };
+  for (let attempt = 0; attempt <= DECISIONS_RETRIES; attempt += 1) {
+    if (attempt > 0) {
+      await abortableSleep(DECISIONS_RETRY_DELAY_MS, signal);
+      if (signal?.aborted) return cancelled;
+    }
+    let reply: Awaited<ReturnType<typeof postDecisions>>;
+    try {
+      reply = await postDecisions(lease, items, signal);
+    } catch (error) {
+      if (signal?.aborted) return cancelled;
+      const message = error instanceof Error ? error.message : String(error);
+      return unanswered(
+        error instanceof Error && error.name === "AbortError"
+          ? `no answer within ${DECISIONS_TIMEOUT_MS / 60_000} minutes`
+          : `the broker could not be reached: ${message}`,
+      );
+    }
+    const { status, body } = reply;
+    const code = typeof body?.error === "string" ? body.error : undefined;
+    if (status === 409 && code === "decisions_in_progress") continue;
+    if (status === 409) throw new ReadinessLeaseLostError();
+    if (status === 403 && code !== undefined && DECISIONS_OFF.includes(code)) {
+      return { status: "off", detail: code };
+    }
+    if (status !== 200) {
+      return unanswered(`HTTP ${status}${code ? ` ${code}` : ""}`);
+    }
+    // Picked to the graded fields; the SDK checks each verdict and quote.
+    const answers = (Array.isArray(body?.decisions) ? body.decisions : [])
+      .filter(isDecisionAnswer)
+      .map(({ questionId, candidateKey, verdict, quote, confidence }) => ({
+        questionId,
+        candidateKey,
+        verdict,
+        quote,
+        confidence,
+      }));
+    return answers.length > 0
+      ? { status: "answered", answers }
+      : unanswered(`no verdicts (${String(body?.status ?? "no status")})`);
+  }
+  const waited = (DECISIONS_RETRIES * DECISIONS_RETRY_DELAY_MS) / 60_000;
+  return unanswered(
+    `another decision pass for this run was still running after ${waited} minutes`,
+  );
+}
+
 /** The answers a run grades, frozen when the run was requested. */
 export interface ReadinessRunSubmission {
   submissionId: string;
   submissionRevision: number;
   flowId: string;
   flowVersion: string;
+  pluginVersionId?: string;
   answers: DirectoryAnswer[];
 }
 

@@ -3,8 +3,11 @@ import type {
   HarnessOwnerRef,
   HarnessResumePayload,
 } from "../../harness-session-state";
+import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
+import { HARNESS_CONVERSATION_STATE } from "../../conversation-state";
 import { startSessionSnapshotRestore } from "../restore-session-snapshot";
 import { encodeSnapshot, type SnapshotFileSession } from "../snapshot-bundle";
+import { sessionFileSpec } from "../session-files";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_URL = process.env.CONVEX_HTTP_URL;
@@ -108,6 +111,22 @@ describe("startSessionSnapshotRestore", () => {
     ]);
   });
 
+  it("lets a cancelled turn interrupt the writes, but not the download's timeout", async () => {
+    mockBackend(await snapshotBytes());
+    const cancel = new AbortController();
+    const restore = start({ abortSignal: cancel.signal });
+    await restore!.ready();
+    const box = newBox();
+    const signals: Array<AbortSignal | undefined> = [];
+    const run = box.session.run;
+    box.session.run = (args) => {
+      signals.push(args.abortSignal);
+      return run(args);
+    };
+    await restore!.apply(box.session, WORKDIR);
+    expect(signals).toEqual([cancel.signal, cancel.signal]);
+  });
+
   it("writes only once, even if the session is created again after a failure", async () => {
     mockBackend(await snapshotBytes());
     const restore = start();
@@ -172,6 +191,78 @@ describe("startSessionSnapshotRestore", () => {
     const box = newBox();
     await expect(restore!.apply(box.session, WORKDIR)).rejects.toThrow(
       /another working folder/,
+    );
+    expect(box.writes).toEqual([]);
+  });
+});
+
+describe.each(
+  HARNESS_IDS.filter((id) => HARNESS_CONVERSATION_STATE[id] !== null),
+)("a replaced box running %s", (harnessId) => {
+  const declaration = HARNESS_CONVERSATION_STATE[harnessId]!;
+  const committed: HarnessResumePayload = {
+    harnessSessionId: "hs-1",
+    computerId: "row-old",
+    resumeState: {
+      type: "resume-session",
+      harnessId,
+      data: {
+        ...(declaration.idKey ? { [declaration.idKey]: "cli-1" } : {}),
+        bridge: { sandboxId: "sbx-old" },
+      },
+    },
+  };
+  const root = sessionFileSpec({
+    harnessId,
+    conversationState: declaration,
+    harnessSessionId: "hs-1",
+    resumeState: committed.resumeState,
+    home: "/home/user",
+  })!.root;
+  const conversation = `${root.slice("/home/user/".length)}/a/conversation.jsonl`;
+  const bytes = () =>
+    encodeSnapshot({
+      version: 1,
+      harnessId,
+      harnessSessionId: "hs-1",
+      workDir: WORKDIR,
+      files: [{ path: conversation, content: '{"turn":1}\n' }],
+    });
+  const restore = (state: HarnessResumePayload) =>
+    start({ owner: { ...OWNER, harnessId }, state });
+
+  it("puts the conversation's files back before the CLI starts", async () => {
+    mockBackend(await bytes());
+    const restored = restore(committed);
+    expect(await restored!.ready()).toBe(true);
+    const box = newBox();
+    await restored!.apply(box.session, WORKDIR);
+    expect(box.writes).toEqual([
+      { path: `/home/user/${conversation}`, content: '{"turn":1}\n' },
+    ]);
+  });
+
+  it("fetches nothing for a turn paused on an approval, so the paused action never becomes runnable", async () => {
+    const urls = mockBackend(await bytes());
+    expect(restore({ ...committed, awaitingApproval: true })).toBeUndefined();
+    expect(urls).toEqual([]);
+  });
+
+  it("refuses another runtime's snapshot", async () => {
+    mockBackend(
+      await encodeSnapshot({
+        version: 1,
+        harnessId: harnessId === "claude-code" ? "codex" : "claude-code",
+        harnessSessionId: "hs-1",
+        workDir: WORKDIR,
+        files: [{ path: conversation, content: "{}\n" }],
+      }),
+    );
+    const restored = restore(committed);
+    await restored!.ready();
+    const box = newBox();
+    await expect(restored!.apply(box.session, WORKDIR)).rejects.toThrow(
+      /does not belong/,
     );
     expect(box.writes).toEqual([]);
   });

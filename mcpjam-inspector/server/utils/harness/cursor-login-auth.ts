@@ -19,8 +19,13 @@ export function withCursorLoginAuthentication<T extends HarnessV1>(
 function wrapSandbox(
   sandbox: HarnessV1StartOptions["sandboxSession"],
 ): HarnessV1StartOptions["sandboxSession"] {
-  return new Proxy(sandbox, {
-    get(target, property) {
+  // A proxy over a fresh object rather than the session itself: a frozen
+  // session (the local supervised provider's) makes each method a read-only,
+  // non-configurable property, which a proxy over it must return unchanged.
+  const target = sandbox;
+  return new Proxy(Object.create(null) as typeof sandbox, {
+    has: (_, property) => property in target,
+    get(_, property) {
       if (property === "restricted" && "restricted" in target)
         return () => wrapSandbox(target.restricted());
       if (property === "spawn") {

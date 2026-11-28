@@ -8,12 +8,9 @@ import { GuestCreditWallView } from "@/components/billing/GuestCreditWallView";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useConvexAuth } from "convex/react";
-import {
-  useActiveFeatureFlags,
-  useFeatureFlagVariantKey,
-  usePostHog,
-} from "posthog-js/react";
-import { useEffect, useRef, useState } from "react";
+import { useFeatureFlagVariantKey } from "posthog-js/react";
+import { useLockedFlagVariant } from "@/hooks/use-locked-flag-variant";
+import { useEffect, useRef } from "react";
 import {
   canManageOrgCredits,
   useOrganizationQueries,
@@ -25,6 +22,7 @@ import { useUpgradeCheckout } from "@/hooks/use-upgrade-checkout";
 import { useUpgradeRequestRecipients } from "@/hooks/use-upgrade-request-recipients";
 import { CreditsLimitDialogView } from "@/components/billing/CreditsLimitDialogView";
 import { ScenarioOwnerLimitDialogView } from "@/components/billing/ScenarioOwnerLimitDialogView";
+import { NativeHarnessLimitDialog } from "@/components/billing/NativeHarnessLimitDialog";
 import { track } from "@/lib/analytics";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
@@ -63,39 +61,12 @@ const normalizeGuestVariant = (
 function GuestCreditWall() {
   const { signIn, signUp } = useInspectorAuth();
   const dismiss = useMCPJamLimitDialogStore((s) => s.dismiss);
-  const posthog = usePostHog();
   // Reading the variant fires the PostHog exposure ($feature_flag_called).
   const rawVariant = useFeatureFlagVariantKey(GUEST_WALL_FLAG);
-  // `useActiveFeatureFlags` is here purely for its `onFeatureFlags`
-  // subscription: it re-renders when flags resolve even if our flag is absent
-  // (the pre-experiment state), which a render-time `hasLoadedFlags` read needs
-  // in order to update. It returns string[] (seeded to [] synchronously) and
-  // never undefined, so it can't answer "have flags loaded?" — hasLoadedFlags
-  // can, and is public on the client.
-  useActiveFeatureFlags();
-  const flagsLoaded = posthog?.featureFlags?.hasLoadedFlags ?? false;
-
-  // Commit the variant once per opening. Initialize synchronously when flags are
-  // already loaded (the common case — the wall shows after the guest has used
-  // the app) to avoid a control→treatment flicker; otherwise hold null until
-  // flags resolve so we never bake in control while PostHog's exposure has
-  // already enrolled a slow guest in treatment.
-  const [committedVariant, setCommittedVariant] = useState<
-    "control" | "treatment" | null
-  >(() => (flagsLoaded ? normalizeGuestVariant(rawVariant) : null));
-
-  // Flags resolved after mount (slow /flags): commit the real value now. We
-  // never commit on a timeout — the control layout already renders as a visual
-  // fallback below while unresolved, so a timeout would add no UX, and pinning
-  // control after N seconds would misattribute a guest whose flag resolves late
-  // to treatment (both the shown copy and the recorded variant). If /flags never
-  // resolves (e.g. an ad blocker), the guest keeps the control fallback and no
-  // impression fires — and a blocked PostHog can't send events anyway, so there
-  // is no impression to lose.
-  useEffect(() => {
-    if (committedVariant !== null || !flagsLoaded) return;
-    setCommittedVariant(normalizeGuestVariant(rawVariant));
-  }, [committedVariant, flagsLoaded, rawVariant]);
+  const committedVariant = useLockedFlagVariant(
+    rawVariant,
+    normalizeGuestVariant,
+  );
 
   // One impression per opening, and only once a variant is committed — reporting
   // the control fallback below early would misattribute a treatment guest.
@@ -484,6 +455,7 @@ export function MCPJamLimitDialog() {
         />
       )}
       {showScenarioWall && <ScenarioOwnerLimitDialogView onDismiss={dismiss} />}
+      <NativeHarnessLimitDialog />
       {showGuestDialog && !frontierOpen && <GuestCreditWall />}
       {showCreditWall && (
         <CreditsLimitDialogView

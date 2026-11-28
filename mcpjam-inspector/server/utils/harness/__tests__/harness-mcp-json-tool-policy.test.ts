@@ -117,3 +117,45 @@ describe("policied harness .mcp.json assembly", () => {
     await expect(build(hosted, { "srv-a": policy })).rejects.toThrow();
   });
 });
+
+describe("the v1 API's read_only exclusions on a proxied harness", () => {
+  it("are sealed into the credential, and the proxy refuses a mutating call with them", async () => {
+    const { toolModeHarnessPolicy } = await import(
+      "../../../routes/v1/chat-session-host-target.js"
+    );
+    const { evaluateHarnessProxyToolPolicy } = await import(
+      "../harness-proxy-policy-enforcement.js"
+    );
+    const readOnly = toolModeHarnessPolicy(
+      ["srv-a"],
+      [
+        {
+          serverId: "srv-a",
+          tools: [
+            { name: "read_file", annotations: { readOnlyHint: true } },
+            { name: "delete_repo" },
+          ],
+        },
+      ],
+      ["delete_repo"],
+    );
+    const { mcpJson } = await build(hosted, readOnly);
+    const sealed = unsealHarnessProxyToken(
+      Object.values(mcpJson.mcpServers)[0]?.headers?.["X-MCPJam-Proxy-Token"],
+      "srv-a",
+    );
+    expect(sealed?.policy).toEqual(readOnly["srv-a"]);
+    const call = (name: string) =>
+      evaluateHarnessProxyToolPolicy({
+        body: { method: "tools/call", params: { name, arguments: {} }, id: 1 },
+        policyServerId: "srv-a",
+        policy: sealed!.policy,
+        hasServer: (id) => id === "srv-a",
+      });
+    expect(call("delete_repo")?.marker).toMatchObject({
+      toolName: "delete_repo",
+      reason: "readOnlyModeUnclassified",
+    });
+    expect(call("read_file")).toBeNull();
+  });
+});

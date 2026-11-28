@@ -25,7 +25,10 @@ import { startForwardingApprovalPresentation } from "./approval.js";
 import { nativeRpcLogScope } from "./native-rpc-logs.js";
 import { sessionForwardingHeaders } from "./session-forwarding.js";
 import { createApprovalBindings } from "./approval-bindings.js";
-import type { HarnessSessionTurn } from "../session-mcp-config.js";
+import {
+  HARNESS_TOOL_CATALOG_QUERY,
+  type HarnessSessionTurn,
+} from "../session-mcp-config.js";
 import { nativePolicyDigest, forwardingToolPolicy } from "./native-policy.js";
 import { readNativeToolResult } from "./native-results.js";
 import type { HarnessConnectionProfile } from "../harness-connection-profile.js";
@@ -97,6 +100,10 @@ export function nativeForwardingSelection(args: {
   };
 }
 
+/** A session entry's request bound: the longest a turn's grant lives, which
+ *  covers the human approval wait at the gate without varying per turn. */
+const SESSION_FORWARDING_TIMEOUT_MS = 30 * 60_000;
+
 /** Build only from backend-confirmed owners. No signed grant enters the VM. */
 export async function prepareNativeForwarding(args: {
   owners: ForwardingOwner[];
@@ -112,8 +119,12 @@ export async function prepareNativeForwarding(args: {
   profiles?: Record<string, HarnessConnectionProfile>;
   correlationKey?: string;
   tasks?: ToolTaskSeamOptions;
-  /** The lane of a runtime whose MCP config must not change between turns. */
+  /** The chat lane whose session envelopes replace per-turn contexts. */
   session?: HarnessSessionTurn;
+  /** Each server's tool-catalog version, for a runtime whose agent can
+   *  outlive the turn: a changed catalog then changes its configuration. A
+   *  runtime that fingerprints its configuration gets none. */
+  toolCatalog?: (serverId: string) => Promise<string | undefined>;
   /** For a runtime that names the server in a call's input, not its name. */
   attributeToolCall?: (call: {
     rawToolName: string;
@@ -137,6 +148,9 @@ export async function prepareNativeForwarding(args: {
           "Native forwarding origin differs from the sandbox credential binding.",
         );
       url.searchParams.set("native", "1");
+      const catalog =
+        args.session && (await args.toolCatalog?.(owner.serverId));
+      if (catalog) url.searchParams.set(HARNESS_TOOL_CATALOG_QUERY, catalog);
       return { name: owner.serverId, proxyUrl: url.toString() };
     }),
   );
@@ -159,11 +173,15 @@ export async function prepareNativeForwarding(args: {
         grantTurnId: args.turnId,
         policies: args.policies,
         bearer: args.authHeader,
+        ...(args.delivery === "bridge" ? { profiles: args.profiles } : {}),
+        ...(args.correlationKey ? { correlationKey: args.correlationKey } : {}),
       })
     : undefined;
   for (const [key, serverId] of Object.entries(keyToServerId)) {
     if (sessionHeaders) {
       mcpJson.mcpServers[key].headers = sessionHeaders[serverId];
+      if (args.toolCatalog)
+        mcpJson.mcpServers[key].timeout = SESSION_FORWARDING_TIMEOUT_MS;
       continue;
     }
     // The native HTTP request includes the human approval wait at the gate.
@@ -220,9 +238,9 @@ export async function prepareNativeForwarding(args: {
       grantTurnId: args.turnId,
     }),
     readToolResult: async (serverId: string, toolCallId: string, toolName?: string) => {
-      // A session-stable runtime's requests name no tool call, so no receipt
-      // matches this one: the runtime's own result stands.
-      if (args.session) return undefined;
+      // A runtime that stamps no call id on a session envelope's requests
+      // (Cursor CLI) has no receipt to match: its own result stands.
+      if (args.session && !args.correlationKey) return undefined;
       const owner = args.owners.find(
         (candidate) => candidate.serverId === serverId,
       );

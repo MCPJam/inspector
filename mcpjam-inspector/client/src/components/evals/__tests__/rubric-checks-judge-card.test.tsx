@@ -1,12 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
-import {
-  RUBRIC_CHECKS_GOAL_OFF_COPY,
-  RubricChecksJudgeCard,
-} from "../rubric-checks-judge-card";
+import { RubricChecksJudgeCard } from "../rubric-checks-judge-card";
+import { RUBRIC_CHECKS_GOAL_OFF_COPY } from "../evaluator-library/library-pause";
 import { SuiteJudgeCard } from "../suite-judge-card";
-import { RUBRIC_CHECK_QUESTION_IDENTITY_HINT } from "../rubric-checks-model";
 
 const judgesCapabilities = {
   rubricChecks: {
@@ -42,31 +39,24 @@ describe("RubricChecksJudgeCard", () => {
     const derived = screen.getByTestId("rubric-checks-derived");
     expect(derived.textContent).toContain("Cites a source");
     expect(derived.textContent).toContain("Stays polite");
-    // Wording edits churn the row identity, and the card says so.
-    expect(screen.getByTestId("rubric-checks-identity-hint").textContent).toBe(
-      RUBRIC_CHECK_QUESTION_IDENTITY_HINT,
-    );
   });
 
   it("says where criteria come from when there are none", () => {
     render(
       <RubricChecksJudgeCard
         judgeConfig={undefined}
-        onJudgeConfigChange={vi.fn()}
         judgesCapabilities={judgesCapabilities}
         criteria={[]}
         goalJudgeOff={false}
       />,
     );
     expect(screen.getByTestId("rubric-checks-no-criteria")).toBeTruthy();
-    expect(screen.queryByTestId("rubric-checks-identity-hint")).toBeNull();
   });
 
   it("says the checks are paused while the goal judge is off", () => {
     render(
       <RubricChecksJudgeCard
         judgeConfig={{ goalCompletion: { enabled: false } }}
-        onJudgeConfigChange={vi.fn()}
         judgesCapabilities={judgesCapabilities}
         criteria={criteria}
         goalJudgeOff
@@ -77,98 +67,30 @@ describe("RubricChecksJudgeCard", () => {
     );
   });
 
-  it("adds a question into the slot and keeps the goal judge's config", () => {
-    const onChange = vi.fn();
+  it("has no question list or add buttons of its own", () => {
     render(
       <RubricChecksJudgeCard
-        judgeConfig={{ goalCompletion: { threshold: 0.8 } }}
-        onJudgeConfigChange={onChange}
+        judgeConfig={{
+          rubricChecks: {
+            questions: [
+              {
+                id: "tone",
+                kind: "yesno",
+                label: "Tone",
+                instructions: "Is it polite?",
+                pass: { answer: "yes" },
+              },
+            ],
+          },
+        }}
         judgesCapabilities={judgesCapabilities}
         criteria={criteria}
         goalJudgeOff={false}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /Score/ }));
-    expect(onChange).toHaveBeenCalledWith({
-      goalCompletion: { threshold: 0.8 },
-      rubricChecks: {
-        questions: [
-          {
-            id: "score",
-            kind: "score",
-            label: "",
-            instructions: "",
-            levels: ["", "", ""],
-            pass: { minLevel: 2 },
-          },
-        ],
-      },
-    });
-  });
-
-  it("shows why an authored question cannot be saved yet", () => {
-    render(
-      <RubricChecksJudgeCard
-        judgeConfig={{
-          rubricChecks: {
-            questions: [
-              {
-                id: "tone",
-                kind: "choice",
-                label: "Tone",
-                instructions: "Which fits the reply?",
-                options: [
-                  { id: "warm", label: "Warm" },
-                  { id: "curt", label: "Curt" },
-                ],
-                pass: { anyOf: [] },
-              },
-            ],
-          },
-        }}
-        onJudgeConfigChange={vi.fn()}
-        judgesCapabilities={judgesCapabilities}
-        criteria={[]}
-        goalJudgeOff={false}
-      />,
-    );
-    expect(screen.getByRole("alert").textContent).toMatch(
-      /at least one option as passing/,
-    );
-  });
-
-  it("marks an option as passing through the pass line", () => {
-    const onChange = vi.fn();
-    render(
-      <RubricChecksJudgeCard
-        judgeConfig={{
-          rubricChecks: {
-            questions: [
-              {
-                id: "tone",
-                kind: "choice",
-                label: "Tone",
-                instructions: "Which fits the reply?",
-                options: [
-                  { id: "warm", label: "Warm" },
-                  { id: "curt", label: "Curt" },
-                ],
-                pass: { anyOf: [] },
-              },
-            ],
-          },
-        }}
-        onJudgeConfigChange={onChange}
-        judgesCapabilities={judgesCapabilities}
-        criteria={[]}
-        goalJudgeOff={false}
-      />,
-    );
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: "Question 1 option 1 passes" }),
-    );
-    expect(onChange.mock.calls[0][0].rubricChecks.questions[0].pass).toEqual({
-      anyOf: ["warm"],
-    });
+    expect(screen.queryByDisplayValue("Tone")).toBeNull();
+    for (const name of ["Yes/no", "Choice", "Score"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
   });
 });

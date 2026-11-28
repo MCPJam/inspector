@@ -1,0 +1,111 @@
+{
+  "ids": {
+    "project": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "base": "srvxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "mock": "mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "created": {
+    "id": "mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "name": "markets (mock)",
+    "projectId": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "baseServerId": "srvxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "address": "https://inspector.test/api/web/mock-mcp/mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "version": 1,
+    "contentHash": "hash-1",
+    "created": true,
+    "loosened": [],
+    "policy": { "forwarding": "block", "scope": "workspace", "updatedAt": 9 },
+    "counts": { "changes": 1, "tools": 0, "prompts": 0, "resources": 0, "resourceTemplates": 0 },
+    "changes": {
+      "items": [
+        { "path": "instructions", "target": "server", "fields": ["instructions"], "summary": "Changed the server's instructions" }
+      ],
+      "page": { "offset": 0, "count": 1, "total": 1, "end": true }
+    }
+  },
+  "summary": {
+    "view": "summary",
+    "id": "mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "name": "markets (mock)",
+    "projectId": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "baseServerId": "srvxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "address": "https://inspector.test/api/web/mock-mcp/mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "version": 2,
+    "headVersion": 2,
+    "contentHash": "hash-2",
+    "loosened": [],
+    "policy": { "forwarding": "block", "scope": "workspace", "updatedAt": 9 },
+    "counts": { "changes": 2, "tools": 1, "prompts": 0, "resources": 0, "resourceTemplates": 0 },
+    "createdAt": 5,
+    "changes": {
+      "items": [
+        {
+          "path": "instructions",
+          "target": "server",
+          "fields": ["instructions"],
+          "summary": "Changed the server's instructions"
+        },
+        {
+          "path": "tools.tool_001",
+          "target": "tool",
+          "name": "tool_001",
+          "fields": ["description"],
+          "summary": "Changed the description of \"tool_001\""
+        }
+      ],
+      "page": { "offset": 0, "count": 2, "total": 2, "end": true }
+    }
+  },
+  "value": {
+    "view": "value",
+    "id": "mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "mockName": "markets (mock)",
+    "projectId": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "version": 2,
+    "headVersion": 2,
+    "contentHash": "hash-2",
+    "listing": "saved",
+    "family": "tools",
+    "name": "tool_001",
+    "path": ["description"],
+    "stated": true,
+    "type": "string",
+    "value": "First.",
+    "page": { "offset": 0, "count": 6, "total": 6, "end": true, "unit": "characters" }
+  },
+  "patched": {
+    "id": "mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "name": "markets (mock)",
+    "projectId": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "baseServerId": "srvxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "address": "https://inspector.test/api/web/mock-mcp/mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "version": 3,
+    "contentHash": "hash-3",
+    "created": true,
+    "loosened": [],
+    "path": ["tools", "tool_001", "description"]
+  },
+  "run": {
+    "runId": "run-1",
+    "mockId": "mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "projectId": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "version": 2,
+    "epoch": 1,
+    "expiresAt": 1790000000000,
+    "runUrl": "https://inspector.test/api/web/mock-mcp/mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx?run=run-1&epoch=1"
+  },
+  "reset": {
+    "runId": "run-1",
+    "mockId": "mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "projectId": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "version": 2,
+    "epoch": 2,
+    "expiresAt": 1790000000000,
+    "runUrl": "https://inspector.test/api/web/mock-mcp/mockxxxxxxxxxxxxxxxxxxxxxxxxxxxxx?run=run-1&epoch=2"
+  },
+  "closed": {
+    "runId": "run-1",
+    "projectId": "p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "closed": true
+  }
+}

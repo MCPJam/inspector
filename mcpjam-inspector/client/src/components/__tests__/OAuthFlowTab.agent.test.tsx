@@ -27,6 +27,7 @@ import type {
 } from "@/shared/inspector-command.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { OAuthFlowState } from "@mcpjam/sdk/browser";
+import type { OAuthCallbackMessage } from "@/lib/oauth/popup-handoff";
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
@@ -552,17 +553,16 @@ describe("OAuthFlowTab, when the authorization callback delivers the code", () =
         authorizationUrl: "https://auth.example.com/authorize?x=1",
       });
     });
+    // The popup handoff checked origin and state; the tab gets its answer.
     await act(async () => {
-      window.dispatchEvent(
-        new MessageEvent("message", {
-          origin: window.location.origin,
-          data: {
-            type: "OAUTH_CALLBACK",
-            code: "fresh-code",
-            state: "flow-state",
-          },
-        }),
-      );
+      const props = captureAuthModalProps.mock.lastCall?.[0] as {
+        onCallback?: (message: OAuthCallbackMessage) => void;
+      };
+      props.onCallback?.({
+        type: "OAUTH_CALLBACK",
+        code: "fresh-code",
+        state: "flow-state",
+      });
     });
     return view;
   }

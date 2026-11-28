@@ -1,3 +1,5 @@
+import { inspectorDiscoveryRunMetadata } from "./discovery-run-metadata";
+import type { ToolNotification } from "../../shared/tool-notification.js";
 import { buildResolvedModelRequestPayload } from "./model-request-payload";
 import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
@@ -39,11 +41,12 @@ import {
 } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
 import {
+  collectRejectedToolCalls,
+  markRejectedCalls,
   commitNewlyLoaded,
-  gateToolsToActiveSubset,
-  META_TOOL_SEARCH,
-  resolveActiveToolNames,
-  shouldForceInitialToolSearch,
+  planDiscoveryStep,
+  validateDeferredToolInputs,
+  type DiscoveryStep,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@mcpjam/sdk";
@@ -58,12 +61,14 @@ import type { PersistedTurnTrace } from "./chat-ingestion";
 import { buildDirectChatTurnTrace } from "./direct-chat-turn-full-stream";
 import { logger } from "./logger";
 import { withoutEmptyTextBlocks } from "./empty-text-blocks";
-import { withProviderSafeToolNames } from "@mcpjam/sdk";
+import { withProviderSafeToolNames, withUniqueToolCallIds, redactUnavailableToolError } from "@mcpjam/sdk";
 import {
   applyPrepareAdvertisedTools,
   gateToolsToAdvertisedSubset,
   type PrepareAdvertisedTools,
 } from "./advertised-tools";
+import type { StepCallPricer } from "./call-cost/direct-call-pricer.js";
+import type { TurnModelCall } from "./call-cost/local-usage-cost.js";
 
 /**
  * Stream parts that mean the model has produced something — the subset AI
@@ -110,6 +115,8 @@ export interface DirectChatTurnTraceTurn {
     ReturnType<typeof createAiSdkEvalTraceContext>
   >["recordedSpans"];
   turnUsage: LiveChatTraceUsage | undefined;
+  /** Each provider request the turn made, in step order. */
+  turnCalls: TurnModelCall[];
 }
 
 export interface DirectChatTurnRequestPayloadInfo {
@@ -193,6 +200,8 @@ export interface DirectChatTurnPersistEvent {
   usage?: LiveChatTraceUsage;
   finishReason?: string;
   turnTrace: PersistedTurnTrace;
+  /** Each provider request, for a writeback that records one row per call. */
+  calls: TurnModelCall[];
 }
 
 export interface DirectChatTurnTraceEvents {
@@ -202,6 +211,8 @@ export interface DirectChatTurnTraceEvents {
   onRequestPayload?: (event: DirectChatTurnRequestPayloadInfo) => void;
   /** Fired for every text-delta chunk. */
   onTextDelta?: (event: DirectChatTurnTextDelta) => void;
+  /** Fired for each progress or log record a server sends while a tool call runs. */
+  onToolNotification?: (notification: ToolNotification) => void;
   /** Fired for every tool-call chunk. */
   onToolCallChunk?: (event: DirectChatTurnToolCallChunk) => void;
   /** Fired for every tool-result chunk. */
@@ -298,9 +309,15 @@ export interface DirectChatTurnEngineErrorEvent {
  * provider rejects (`cart.add`) are aliased on the wire and restored in its
  * reply. A gateway id string has no model object to wrap.
  */
-function providerReadyModel(llmModel: LanguageModel): LanguageModel {
+function providerReadyModel(
+  llmModel: LanguageModel,
+  history: ModelMessage[],
+  getShown?: () => readonly string[] | undefined,
+): LanguageModel {
   const model = withoutEmptyTextBlocks(llmModel);
-  return typeof model === "string" ? model : withProviderSafeToolNames(model);
+  return typeof model === "string"
+    ? model
+    : withUniqueToolCallIds(withProviderSafeToolNames(model, getShown), history);
 }
 
 export interface RunDirectChatTurnOptions {
@@ -437,6 +454,12 @@ export interface RunDirectChatTurnOptions {
    * observability; chat currently omits.
    */
   experimentalTelemetry?: Parameters<typeof streamText>[0]["experimental_telemetry"];
+  /**
+   * Prices each step's one provider call for its llm span. Set for personal
+   * keys, which only this machine can price; org calls are priced by the
+   * backend, which holds the org's rates.
+   */
+  priceStepCall?: StepCallPricer;
 }
 
 export interface RunDirectChatTurnHandle {
@@ -455,6 +478,8 @@ export interface RunDirectChatTurnHandle {
    * `NoOutputGeneratedError`, which names neither provider nor status.
    */
   lastStreamError: () => unknown;
+  rejectedToolCallIds: ReadonlySet<string>;
+  discoveryMetadata: ReturnType<typeof inspectorDiscoveryRunMetadata>;
 }
 
 export function stampMcpToolOriginProviderOptions(
@@ -607,6 +632,7 @@ export function runDirectChatTurn(
     shouldPauseAfterStep,
     suspendedToolCallIds,
     transformStepMessages,
+    priceStepCall,
   } = options;
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -631,9 +657,12 @@ export function runDirectChatTurn(
     turnStartedAt,
     turnSpans: [],
     turnUsage: undefined,
+    turnCalls: [],
   };
   const traceContext = createAiSdkEvalTraceContext(traceAnchor);
+  traceContext.onToolNotification = traceEvents?.onToolNotification;
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
+  const rejectedToolCallIds = new Set<string>();
   let currentStepIndex = 0;
   // Time-to-first-chunk capture (OTel gen_ai.response.time_to_first_chunk):
   // absolute Date.now() of the first streamed chunk for each step, set once in
@@ -672,49 +701,25 @@ export function runDirectChatTurn(
     traceTurn.promptIndex,
   ) as ToolSet;
 
-  // Progressive discovery narrows the cataloged MCP tools, but tools injected
-  // into the map *after* the catalog was built (e.g. the eval Computer Use
-  // tools) aren't part of discovery and must stay in the advertised default set
-  // — otherwise the prepareAdvertisedTools hook below could never surface them
-  // (it can only keep names already in the default set). This appends those
-  // non-cataloged extras to a progressive active-subset list; their per-step
-  // visibility stays governed by the hook (and execution by the
-  // advertised-subset gate). Returns the list unchanged when there are none
-  // (chat / hosted, where every tool is cataloged).
-  const withInjectedTools = (activeNames: string[]): string[] => {
-    if (!progressivePlan) return activeNames;
-    const cataloged = new Set(
-      progressivePlan.catalog.map((entry) => entry.modelName),
-    );
-    const seen = new Set(activeNames);
-    const out = [...activeNames];
-    for (const name of Object.keys(tools)) {
-      if (!cataloged.has(name) && !seen.has(name)) out.push(name);
-    }
-    return out;
+  let discoveryStep: DiscoveryStep | undefined;
+  let callableNames: Set<string> | null = null;
+  let beforeFirstModelStep = true;
+  const startedToolCalls = new Set<string>();
+  const prepareDiscoveryStep = async (stepNumber: number) => {
+        if (discoveryState) commitNewlyLoaded(discoveryState);
+        const eligible = await applyPrepareAdvertisedTools({
+          defaultToolNames: Object.keys(tools),
+          stepIndex: stepNumber,
+          prepareAdvertisedTools,
+          onWarn: (message, meta) => logger.warn(`[direct-chat-turn] ${message}`, meta),
+        });
+        discoveryStep = planDiscoveryStep(eligible, progressivePlan, discoveryState);
+        callableNames = new Set(discoveryStep.callable);
   };
-
-  // Progressive mode: gate execution to the active subset. `activeTools`
-  // (set in `prepareStep` below) narrows what the model sees, but a
-  // hallucinated/remembered call to a non-active tool would still execute
-  // against the full map. Gating wraps each tool's `execute` to throw a
-  // structured "not loaded" error, which the AI SDK surfaces as an error
-  // tool-result the model can recover from via `load_mcp_tools`.
-  //
-  // The prepareAdvertisedTools hook (PR 2) is advertise = ENFORCE the same way:
-  // when it narrows the advertised set, `advertisedToolNames` (updated per step
-  // in prepareStep) gates execution too, so a hidden tool call (e.g. `computer`
-  // before a widget renders) becomes a recoverable tool error, not a silent
-  // side effect. `null` => no hook narrowing => no-op gate.
-  let advertisedToolNames: Set<string> | null = null;
   const executableTools = gateToolsToAdvertisedSubset(
-    gateToolsToActiveSubset(
-      tracedTools as Record<string, unknown>,
-      progressivePlan,
-      () => discoveryState,
-    ) as Record<string, unknown>,
-    () => advertisedToolNames,
-  ) as ToolSet;
+    progressivePlan?.enabled || prepareAdvertisedTools ? validateDeferredToolInputs(tracedTools, () => discoveryStep) : tracedTools,
+    () => callableNames,
+  );
 
   const scrubSuspendedToolResultMessages = (
     messages: ModelMessage[],
@@ -743,7 +748,7 @@ export function runDirectChatTurn(
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
-    model: providerReadyModel(llmModel),
+    model: providerReadyModel(llmModel, messageHistory, () => discoveryStep?.shown),
     messages: messageHistory,
     // AI SDK 7 rejects system messages in `messages` by default. The history
     // carries them on purpose: MCP server instructions reach the model as
@@ -764,37 +769,40 @@ export function runDirectChatTurn(
     ...(experimentalTelemetry
       ? { experimental_telemetry: experimentalTelemetry }
       : {}),
+    ...(progressivePlan?.enabled || prepareAdvertisedTools
+      ? { repairToolCall: redactUnavailableToolError }
+      : {}),
+    onToolExecutionStart: ({ toolCall }) => {
+      startedToolCalls.add(toolCall.toolCallId);
+    },
+    experimental_transform: () => new TransformStream({
+      transform(part, controller) {
+        if (part.type === "start-step") beforeFirstModelStep = false;
+        if (beforeFirstModelStep && part.type === "tool-error" && !startedToolCalls.has(part.toolCallId)) {
+          rejectedToolCallIds.add(part.toolCallId);
+          for (const [index, message] of markRejectedCalls(traceHistory, rejectedToolCallIds).entries()) {
+            traceHistory[index] = message;
+          }
+        }
+        controller.enqueue(part);
+      },
+    }),
+    onStart: async () => {
+      if ((progressivePlan?.enabled || prepareAdvertisedTools) && messageHistory.some(message =>
+        message.role === "tool" && message.content.some(part => part.type === "tool-approval-response" && part.approved))) {
+        await prepareDiscoveryStep(0);
+      }
+    },
     prepareStep: async ({ stepNumber, messages: stepMessages }) => {
       currentStepIndex = stepNumber;
       registerAiSdkPrepareStep(traceContext, stepNumber, {
         modelId,
         promptIndex: traceTurn.promptIndex,
       });
-      // Base advertised set: progressive discovery narrows to the active
-      // subset; otherwise the model sees the full tool map.
       let activeToolNames: string[] | undefined;
-      if (progressivePlan?.enabled && discoveryState) {
-        commitNewlyLoaded(discoveryState);
-        activeToolNames = withInjectedTools(
-          resolveActiveToolNames(progressivePlan, discoveryState),
-        );
-      }
-      // Browser-rendered MCP App eval PR 2: layer runtime-conditional
-      // advertised-tool narrowing on top (e.g. hide `computer` /
-      // `finish_widget` until a widget has rendered). Mirrors the
-      // stream-handler hook: names outside the default set are ignored, and a
-      // throw is logged + falls back to the default set.
-      if (prepareAdvertisedTools) {
-        activeToolNames = await applyPrepareAdvertisedTools({
-          defaultToolNames: activeToolNames ?? Object.keys(tools),
-          stepIndex: stepNumber,
-          prepareAdvertisedTools,
-          onWarn: (message, meta) =>
-            logger.warn(`[direct-chat-turn] ${message}`, meta),
-        });
-        // advertise = ENFORCE: gate execution to this step's advertised set so
-        // a hidden tool call can't take effect (read by `executableTools`).
-        advertisedToolNames = new Set(activeToolNames);
+      if (progressivePlan?.enabled || prepareAdvertisedTools) {
+        await prepareDiscoveryStep(stepNumber);
+        activeToolNames = discoveryStep?.shown;
       }
       // What the model is shown this step, when the caller shapes it.
       const presentedMessages =
@@ -828,23 +836,7 @@ export function runDirectChatTurn(
       if (presentedMessages) {
         stepOptions.messages = presentedMessages;
       }
-      if (activeToolNames !== undefined) {
-        stepOptions.activeTools = activeToolNames;
-      }
-      if (
-        toolChoice === undefined &&
-        shouldForceInitialToolSearch(
-          progressivePlan,
-          discoveryState,
-          stepNumber,
-        ) &&
-        activeToolNames?.includes(META_TOOL_SEARCH)
-      ) {
-        stepOptions.toolChoice = {
-          type: "tool",
-          toolName: META_TOOL_SEARCH,
-        };
-      }
+      if (discoveryStep) stepOptions.activeTools = [...discoveryStep.callable, ...discoveryStep.loadRequired];
       return stepOptions;
     },
     onChunk: async ({ chunk }) => {
@@ -904,10 +896,11 @@ export function runDirectChatTurn(
       }
     },
     onStepFinish: async (step) => {
+      collectRejectedToolCalls(rejectedToolCallIds, step.toolCalls ?? []);
       const responseMessages = scrubSuspendedToolResultMessages(
         stampMcpToolOriginProviderOptions(
           Array.isArray(step?.response?.messages)
-            ? (step.response.messages as ModelMessage[])
+            ? markRejectedCalls(step.response.messages, rejectedToolCallIds)
             : [],
           tools,
         ),
@@ -939,7 +932,25 @@ export function runDirectChatTurn(
           ? step.response.timestamp.toISOString()
           : undefined;
 
-      emitAiSdkOnStepFinish(traceContext, Date.now(), {
+      // Read before pricing so a slow rate lookup never stretches the span.
+      // No pricer, no await: unpriced routes settle the step as before.
+      const stepFinishedAt = Date.now();
+      traceTurn.turnCalls.push({
+        callId: `${traceTurn.turnId}:${currentStepIndex}`,
+        stepIndex: currentStepIndex,
+        ...(stepUsage ? { usage: stepUsage } : {}),
+        ...(step?.finishReason
+          ? { finishReason: String(step.finishReason) }
+          : {}),
+        finishedAt: stepFinishedAt,
+      });
+      const cost = priceStepCall
+        ? await priceStepCall({
+            usage: step.usage,
+            providerMetadata: step.providerMetadata,
+          })
+        : undefined;
+      emitAiSdkOnStepFinish(traceContext, stepFinishedAt, {
         modelId,
         inputTokens: stepUsage?.inputTokens,
         outputTokens: stepUsage?.outputTokens,
@@ -951,6 +962,7 @@ export function runDirectChatTurn(
         responseId: step?.response?.id,
         responseTimestamp,
         ttfcMs,
+        cost,
       });
 
       setToolSpanMessageRangesFromResults(
@@ -1099,7 +1111,7 @@ export function runDirectChatTurn(
           scrubSuspendedToolResultMessages(
             stampMcpToolOriginProviderOptions(
               Array.isArray(step?.response?.messages)
-                ? (step.response.messages as ModelMessage[])
+                ? markRejectedCalls(step.response.messages, rejectedToolCallIds)
                 : [],
               tools,
             ),
@@ -1121,7 +1133,9 @@ export function runDirectChatTurn(
             ),
           usage: traceTurn.turnUsage,
           finishReason: event.finishReason,
+          calls: [...traceTurn.turnCalls],
           turnTrace: {
+            ...inspectorDiscoveryRunMetadata(progressivePlan?.runUnloadedToolCalls),
             turnId: traceTurn.turnId,
             promptIndex: traceTurn.promptIndex,
             startedAt: traceTurn.turnStartedAt,
@@ -1152,6 +1166,8 @@ export function runDirectChatTurn(
     modelId,
     cleanup,
     isAborted: () => aborted || abortSignal?.aborted === true,
+    rejectedToolCallIds,
+    discoveryMetadata: inspectorDiscoveryRunMetadata(progressivePlan?.runUnloadedToolCalls),
     lastStreamError: () => streamError,
   };
 }
@@ -1193,7 +1209,7 @@ export async function consumeDirectChatTurnHeadless(
     const totalUsage = await handle.result.totalUsage;
     const finishReason = await handle.result.finishReason;
     const messages = Array.isArray(responseMessages)
-      ? (responseMessages as ModelMessage[])
+      ? markRejectedCalls(responseMessages, handle.rejectedToolCallIds)
       : [];
     return {
       messages,

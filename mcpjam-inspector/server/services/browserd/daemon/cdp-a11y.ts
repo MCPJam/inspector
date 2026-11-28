@@ -329,10 +329,15 @@ interface DomNode {
  * Separate from `readAxTree` because the caller needs to tell an unmatched
  * ROOT SELECTOR (an error the model can act on: "that element isn't there")
  * from an unavailable tree (not the model's fault and not its problem).
+ *
+ * `DOM.querySelector` reads CSS only, and refuses Playwright's own syntax
+ * (`role=`, `text=`, `>>` chains, `nth=`) that act targets use. A selector it
+ * refuses goes to `otherwise` when one is given; CSS never does, matched or not.
  */
 export async function resolveBackendNodeId(
   cdp: CdpLike,
   selector: string,
+  otherwise?: (selector: string) => Promise<number | null>,
 ): Promise<number | null> {
   try {
     const doc = (await cdp.send("DOM.getDocument", { depth: 0 })) as {
@@ -340,10 +345,16 @@ export async function resolveBackendNodeId(
     };
     const rootNodeId = doc?.root?.nodeId;
     if (rootNodeId === undefined) return null;
-    const found = (await cdp.send("DOM.querySelector", {
-      nodeId: rootNodeId,
-      selector,
-    })) as { nodeId?: number };
+    let found: { nodeId?: number };
+    try {
+      found = (await cdp.send("DOM.querySelector", {
+        nodeId: rootNodeId,
+        selector,
+      })) as { nodeId?: number };
+    } catch (refused) {
+      if (!otherwise) throw refused;
+      return await otherwise(selector);
+    }
     if (!found?.nodeId) return null;
     const described = (await cdp.send("DOM.describeNode", {
       nodeId: found.nodeId,

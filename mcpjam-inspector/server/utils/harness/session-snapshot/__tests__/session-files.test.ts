@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  HARNESS_CONVERSATION_STATE,
+  type HarnessConversationState,
+} from "../../conversation-state";
+import {
   isPathUnderRoot,
   parseFileListing,
   sessionFileSpec,
@@ -11,64 +15,114 @@ const CLAUDE_STATE = {
   harnessId: "claude-code",
   data: { claudeSessionId: "0f8e1c1e-6a4b-4f58-9b7e-2f6f5b9d1a10" },
 };
+const spec = (
+  harnessId: keyof typeof HARNESS_CONVERSATION_STATE,
+  overrides: Partial<Parameters<typeof sessionFileSpec>[0]> = {},
+) =>
+  sessionFileSpec({
+    harnessId,
+    conversationState: HARNESS_CONVERSATION_STATE[harnessId],
+    harnessSessionId: "hs-1",
+    resumeState: {},
+    home: HOME,
+    ...overrides,
+  });
 
 describe("sessionFileSpec", () => {
-  it("finds a Claude Code transcript by its session id under ~/.claude/projects", () => {
-    const spec = sessionFileSpec({
+  it("finds a Claude Code transcript and its subagent folder by session id, two folders down", () => {
+    const claude = spec("claude-code", { resumeState: CLAUDE_STATE });
+    expect(claude).toEqual({
       harnessId: "claude-code",
-      harnessSessionId: "hs-1",
-      resumeState: CLAUDE_STATE,
-      home: HOME,
+      root: "/home/user/.claude/projects",
+      listCommand:
+        "find '/home/user/.claude/projects' -mindepth 2 -maxdepth 2 " +
+        "\\( -name '0f8e1c1e-6a4b-4f58-9b7e-2f6f5b9d1a10.jsonl' " +
+        "-o -name '0f8e1c1e-6a4b-4f58-9b7e-2f6f5b9d1a10' \\) " +
+        "-exec find {} -type f -printf '%s\\t%p\\n' \\; 2>/dev/null",
     });
-    expect(spec?.root).toBe("/home/user/.claude/projects");
-    expect(spec?.listCommand).toContain(
-      "-name '0f8e1c1e-6a4b-4f58-9b7e-2f6f5b9d1a10.jsonl'",
-    );
   });
 
   it("saves only Codex's rollouts, never the rest of its home", () => {
-    const spec = sessionFileSpec({
+    expect(spec("codex")).toEqual({
       harnessId: "codex",
-      harnessSessionId: "hs-1",
-      resumeState: {},
-      home: HOME,
+      root: "/home/user/.ai-sdk-harness/.agent-runs/hs-1/codex-home/sessions",
+      listCommand:
+        "find '/home/user/.ai-sdk-harness/.agent-runs/hs-1/codex-home/sessions' " +
+        "-type f -printf '%s\\t%p\\n' 2>/dev/null",
     });
-    expect(spec?.root).toBe(
-      "/home/user/.ai-sdk-harness/.agent-runs/hs-1/codex-home/sessions",
-    );
   });
 
-  it("refuses runtimes it cannot restore and ids it cannot quote safely", () => {
-    const base = { harnessSessionId: "hs-1", home: HOME };
+  it("saves only the Copilot CLI thread's own session folder", () => {
     expect(
-      sessionFileSpec({ ...base, harnessId: "cursor", resumeState: {} }),
+      spec("copilot-cli", {
+        resumeState: { data: { threadId: "4aa3e560-b067" } },
+      }),
+    ).toEqual({
+      harnessId: "copilot-cli",
+      root: "/home/user/.ai-sdk-harness/.agent-runs/hs-1/copilot-home/session-state/4aa3e560-b067",
+      listCommand:
+        "find '/home/user/.ai-sdk-harness/.agent-runs/hs-1/copilot-home/session-state/4aa3e560-b067' " +
+        "-type f -printf '%s\\t%p\\n' 2>/dev/null",
+    });
+    expect(spec("copilot-cli")).toBeUndefined();
+    expect(
+      spec("copilot-cli", { resumeState: { data: { threadId: "../x" } } }),
     ).toBeUndefined();
+  });
+
+  it("refuses runtimes that declare nothing and ids it cannot quote safely", () => {
+    expect(spec("cursor")).toBeUndefined();
+    expect(spec("claude-code")).toBeUndefined();
     expect(
-      sessionFileSpec({ ...base, harnessId: "claude-code", resumeState: {} }),
-    ).toBeUndefined();
-    expect(
-      sessionFileSpec({
-        ...base,
-        harnessId: "claude-code",
+      spec("claude-code", {
         resumeState: { data: { claudeSessionId: "x'; rm -rf ~; '" } },
       }),
     ).toBeUndefined();
     expect(
+      spec("claude-code", {
+        resumeState: { data: { claudeSessionId: "a.b" } },
+      }),
+    ).toBeUndefined();
+    expect(spec("codex", { harnessSessionId: "../x" })).toBeUndefined();
+    expect(spec("codex", { home: "/home/it's" })).toBeUndefined();
+  });
+
+  it("refuses a declaration that would reach outside its own folder", () => {
+    const declared = (state: HarnessConversationState) =>
       sessionFileSpec({
-        ...base,
-        harnessId: "codex",
-        harnessSessionId: "../x",
-        resumeState: {},
+        harnessId: "probe",
+        conversationState: state,
+        harnessSessionId: "hs-1",
+        resumeState: { data: { id: "abc" } },
+        home: HOME,
+      });
+    expect(declared({ folder: "../etc" })).toBeUndefined();
+    expect(declared({ folder: "" })).toBeUndefined();
+    expect(declared({ folder: ".x/{id}" })).toBeUndefined();
+    expect(
+      declared({
+        idKey: "id",
+        folder: ".x",
+        named: { depth: 1, names: ["a/b"] },
       }),
     ).toBeUndefined();
     expect(
-      sessionFileSpec({
-        ...base,
-        harnessId: "codex",
-        home: "/home/it's",
-        resumeState: {},
+      declared({
+        idKey: "id",
+        folder: ".x",
+        named: { depth: 0, names: ["{id}"] },
       }),
     ).toBeUndefined();
+    expect(
+      declared({
+        idKey: "id",
+        folder: ".x",
+        named: { depth: 1, names: [".."] },
+      }),
+    ).toBeUndefined();
+    expect(declared({ idKey: "id", folder: ".x/{id}" })?.root).toBe(
+      "/home/user/.x/abc",
+    );
   });
 });
 

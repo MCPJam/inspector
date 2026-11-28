@@ -93,8 +93,17 @@ export function mimeTypeFor(uri: string): string {
   return "text/plain";
 }
 
-function entryFor(uri: string): SkillsBundleEntry {
-  const entry = SKILLS_BUNDLE_ENTRIES.find((skill) => skill.uri === uri);
+/** Teaches the eval tools, so it is served only with them (`--evals`). */
+const EVAL_SKILL_ROOT = "skill://mcpjam/run-mcpjam-evals/";
+
+function servedSkillUri(uri: string, evals: boolean): boolean {
+  return evals || !uri.startsWith(EVAL_SKILL_ROOT);
+}
+
+function entryFor(uri: string, evals: boolean): SkillsBundleEntry {
+  const entry = servedSkillUri(uri, evals)
+    ? SKILLS_BUNDLE_ENTRIES.find((skill) => skill.uri === uri)
+    : undefined;
   if (!entry) {
     throw new InvalidSkillParamsError(`Unknown skill URI: ${uri}`);
   }
@@ -133,7 +142,11 @@ export function resourceMetadataFor(uri: string): {
 }
 
 /** Registers `skills/list`, `skills/get`, and one resource per manifest file. */
-export function registerSkillsSurface(server: McpServer): void {
+export function registerSkillsSurface(
+  server: McpServer,
+  options: { evals?: boolean } = {}
+): void {
+  const evals = options.evals === true;
   server.server.setRequestHandler(
     "skills/list",
     { params: listParamsSchema, result: looseResult },
@@ -147,7 +160,9 @@ export function registerSkillsSurface(server: McpServer): void {
         );
       }
       return {
-        skills: SKILLS_BUNDLE_ENTRIES,
+        skills: SKILLS_BUNDLE_ENTRIES.filter((skill) =>
+          servedSkillUri(skill.uri, evals)
+        ),
         ttlMs: SKILLS_LIST_TTL_MS,
         cacheScope: SKILLS_LIST_CACHE_SCOPE,
       };
@@ -160,13 +175,14 @@ export function registerSkillsSurface(server: McpServer): void {
     // The SDK fills `ttlMs` / `cacheScope` only on the base protocol's
     // cacheable methods, so an extension method has to carry its own.
     async (params) => ({
-      skill: entryFor(params.uri),
+      skill: entryFor(params.uri, evals),
       ttlMs: SKILLS_LIST_TTL_MS,
       cacheScope: SKILLS_LIST_CACHE_SCOPE,
     })
   );
 
   for (const [uri, text] of Object.entries(SKILLS_BUNDLE_CONTENTS)) {
+    if (!servedSkillUri(uri, evals)) continue;
     const mimeType = mimeTypeFor(uri);
     const { name, description } = resourceMetadataFor(uri);
     server.registerResource(

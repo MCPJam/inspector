@@ -10,6 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getFunctionName } from "convex/server";
 
 const queryMock = vi.hoisted(() => vi.fn());
 const actionMock = vi.hoisted(() => vi.fn());
@@ -45,6 +46,7 @@ vi.mock("../../../utils/org-model-config", async (importOriginal) => ({
 }));
 
 import {
+  prepareSingleCaseExecution,
   runEvalTestCaseWithManager,
   streamEvalTestCaseWithManager,
 } from "../evals";
@@ -139,7 +141,8 @@ describe("environment quick runs", () => {
     clientManager.getConnectionStatus.mockReset().mockReturnValue("connected");
     process.env.CONVEX_URL = "https://example.convex.cloud";
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
-    queryMock.mockImplementation(async (name: string) => {
+    queryMock.mockImplementation(async (ref: string | Parameters<typeof getFunctionName>[0]) => {
+      const name = typeof ref === "string" ? ref : getFunctionName(ref);
       if (name === "projectEnvironments:resolveEnvironmentForLaunch") {
         return RESOLVED;
       }
@@ -148,10 +151,13 @@ describe("environment quick runs", () => {
           _id: "case-1",
           title: "Refund",
           query: "Refund",
-          evalTestSuiteId: "suite-1",
+          testSuiteId: "suite-1",
           projectId: "project-1",
           models: [{ model: "openai/gpt-5-mini", provider: "openai" }],
         };
+      }
+      if (name === "testSuites:getSuiteRunServerSelection") {
+        return { serverIds: ["srv-1"], serverNames: ["billing"] };
       }
       if (name === "hosts:getHost") {
         return { config: { hostStyle: "claude", systemPrompt: "Live." } };
@@ -221,9 +227,12 @@ describe("environment quick runs", () => {
     expect(params.suiteHostConfig).toEqual(FROZEN_HOST_CONFIG);
     expect(params.selectedServers).toEqual(["srv-1"]);
     expect(params.projectEnvironmentId).toBe("env-1");
-    // An empty committed skill set stays empty on both channels.
-    expect(params.pinnedHarnessSkills).toEqual([]);
-    expect(params.pinnedSkillSource).toMatchObject({ kind: "pins", pins: [] });
+    // An empty committed skill set stays empty, and clears a harness's box.
+    expect(params.pinnedSkillSource).toMatchObject({
+      kind: "pins",
+      pins: [],
+      harnessSkills: [],
+    });
     expect(params.environment.serverBindings).toEqual([
       { serverName: "billing", projectServerId: "srv-1" },
     ]);
@@ -564,5 +573,18 @@ describe("environment quick runs", () => {
         } as never,
       ),
     ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("binds saved project server names when a legacy case runs by server ID", async () => {
+    const prepared = await prepareSingleCaseExecution(clientManager as never, baseRequest({
+      environmentId: undefined,
+      serverIds: ["srv-1"],
+      model: "openai/gpt-5",
+      provider: "openai",
+    }));
+    expect(prepared.runtimeEnvironment).toEqual({
+      servers: ["srv-1"],
+      serverBindings: [{ serverName: "billing", projectServerId: "srv-1" }],
+    });
   });
 });

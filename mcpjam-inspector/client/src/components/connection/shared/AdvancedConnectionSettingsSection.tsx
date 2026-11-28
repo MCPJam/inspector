@@ -47,6 +47,7 @@ interface AdvancedConnectionSettingsSectionProps {
   requestTimeout: string;
   onRequestTimeoutChange: (value: string) => void;
   inheritedRequestTimeout?: number;
+  publishedPluginId?: { value: string; onChange: (value: string) => void };
   customHeaders?: HeaderEntry[];
   onAddHeader?: () => void;
   onRemoveHeader?: (index: number) => void;
@@ -111,6 +112,7 @@ export function AdvancedConnectionSettingsSection({
   requestTimeout,
   onRequestTimeoutChange,
   inheritedRequestTimeout = 10000,
+  publishedPluginId,
   customHeaders,
   onAddHeader,
   onRemoveHeader,
@@ -198,6 +200,7 @@ export function AdvancedConnectionSettingsSection({
   // label sits in a sibling element and so needs an explicit association.
   const bodyId = useId();
   const timeoutFieldId = `${bodyId}-timeout`;
+  const pluginIdFieldId = `${bodyId}-published-plugin-id`;
   const protocolLabelId = `${bodyId}-protocol-label`;
   const protocolTriggerId = `${bodyId}-protocol-trigger`;
   const selectedDropdownValue: DropdownValue =
@@ -262,6 +265,33 @@ export function AdvancedConnectionSettingsSection({
                 step="1000"
               />
             </div>
+
+            {publishedPluginId && (
+              <div className="space-y-1.5">
+                <label
+                  htmlFor={pluginIdFieldId}
+                  className="text-xs font-medium text-foreground"
+                >
+                  Published plugin ID
+                </label>
+                <Input
+                  id={pluginIdFieldId}
+                  value={publishedPluginId.value}
+                  onChange={(event) =>
+                    publishedPluginId.onChange(event.target.value)
+                  }
+                  placeholder="plugin_abc123"
+                  aria-describedby={`${pluginIdFieldId}-help`}
+                  className="h-8 text-xs"
+                />
+                <p
+                  id={`${pluginIdFieldId}-help`}
+                  className="text-xs text-muted-foreground"
+                >
+                  Optional. Use the ID from your published ChatGPT plugin link.
+                </p>
+              </div>
+            )}
 
             {/* Headers. Same row idiom as the env-var editor: monospace
                 key/value pair, muted separator, ghost remove. */}

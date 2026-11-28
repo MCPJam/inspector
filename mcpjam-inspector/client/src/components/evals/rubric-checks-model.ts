@@ -26,14 +26,8 @@ import {
   slugifyCriterionId,
   uniqueCriterionId,
 } from "./judge-rubric-editor";
+import { LIBRARY_QUESTION_IDS } from "./evaluator-library/library-catalog";
 import type { EvalJudgeConfig } from "./types";
-
-/**
- * Shown on the rubric-checks card. The same fact as the criteria editor's
- * hint, for the questions authored here.
- */
-export const RUBRIC_CHECK_QUESTION_IDENTITY_HINT =
-  "Editing a question's wording, options, levels or pass line starts a new rubric-check row, so baseline comparisons show it as removed and added.";
 
 function boundedTextError(
   value: string | undefined,
@@ -48,7 +42,8 @@ function boundedTextError(
 }
 
 /** Why this question cannot be saved, or `undefined`. The first problem only. */
-export function rubricCheckQuestionError(
+/** The question's ID problem, if it has one: shape, then uniqueness. */
+export function questionIdError(
   question: RubricCheckQuestion,
   index: number,
   all: readonly RubricCheckQuestion[],
@@ -59,6 +54,16 @@ export function rubricCheckQuestionError(
   if (all.some((other, at) => at !== index && other.id === question.id)) {
     return "Ids must be unique: each one names a score row.";
   }
+  return undefined;
+}
+
+export function rubricCheckQuestionError(
+  question: RubricCheckQuestion,
+  index: number,
+  all: readonly RubricCheckQuestion[],
+): string | undefined {
+  const id = questionIdError(question, index, all);
+  if (id) return id;
   const label = boundedTextError(
     question.label,
     MAX_RUBRIC_CHECK_LABEL_LENGTH,
@@ -72,6 +77,11 @@ export function rubricCheckQuestionError(
   );
   if (instructions) return instructions;
 
+  if (question.kind === "yesno") {
+    return question.pass.answer === "yes" || question.pass.answer === "no"
+      ? undefined
+      : "Choose whether Yes or No passes.";
+  }
   if (question.kind === "choice") {
     const options = question.options ?? [];
     if (
@@ -110,31 +120,56 @@ export function rubricCheckQuestionError(
     return undefined;
   }
 
-  const levels = question.levels ?? [];
-  if (
-    levels.length < MIN_RUBRIC_CHECK_LEVELS ||
-    levels.length > MAX_RUBRIC_CHECK_LEVELS
-  ) {
-    return `A score needs ${MIN_RUBRIC_CHECK_LEVELS} to ${MAX_RUBRIC_CHECK_LEVELS} levels.`;
+  if (question.kind === "score") {
+    const levels = question.levels ?? [];
+    if (
+      levels.length < MIN_RUBRIC_CHECK_LEVELS ||
+      levels.length > MAX_RUBRIC_CHECK_LEVELS
+    ) {
+      return `A score needs ${MIN_RUBRIC_CHECK_LEVELS} to ${MAX_RUBRIC_CHECK_LEVELS} levels.`;
+    }
+    for (const level of levels) {
+      const error = boundedTextError(
+        level,
+        MAX_RUBRIC_CHECK_LABEL_LENGTH,
+        "Each level",
+      );
+      if (error) return error;
+    }
+    const minLevel = question.pass.minLevel;
+    if (
+      minLevel === undefined ||
+      !Number.isInteger(minLevel) ||
+      minLevel < 1 ||
+      minLevel > levels.length - 1
+    ) {
+      return "Pick the lowest passing level; the lowest level itself cannot pass.";
+    }
+    return undefined;
   }
-  for (const level of levels) {
-    const error = boundedTextError(
-      level,
-      MAX_RUBRIC_CHECK_LABEL_LENGTH,
-      "Each level",
-    );
-    if (error) return error;
-  }
-  const minLevel = question.pass.minLevel;
-  if (
-    minLevel === undefined ||
-    !Number.isInteger(minLevel) ||
-    minLevel < 1 ||
-    minLevel > levels.length - 1
-  ) {
-    return "Pick the lowest passing level; the lowest level itself cannot pass.";
-  }
+
+  // A kind this build does not know came from a newer backend, which
+  // validates it on save. Refusing it here would block every other setting
+  // in the same save, with no way to fix the question from this build.
   return undefined;
+}
+
+/**
+ * A score row keeps only the question's id, so a question written here must
+ * not take a library preset's id and read as that preset's. Checked where a
+ * question is written, against the id it had (`savedId`), and not in
+ * `areRubricChecksValid`: a stored question that already holds one must not
+ * block saving the rest of the suite's settings.
+ */
+export function libraryQuestionIdError(
+  question: RubricCheckQuestion,
+  savedId?: string,
+): string | undefined {
+  if (question.id === savedId) return undefined;
+  const presetId = LIBRARY_QUESTION_IDS.get(question.id);
+  return presetId && question.evaluator?.id !== presetId
+    ? "This ID belongs to a library preset. Enter a different ID."
+    : undefined;
 }
 
 /** True when the slot can be saved. An absent slot is valid. */
@@ -174,15 +209,18 @@ export function withRubricChecks(
   return { ...judgeConfig, rubricChecks: next };
 }
 
-/** A new question of either kind, with an id no other question uses. */
+/** A new question of any kind, with an id no other question uses. */
 export function blankRubricCheckQuestion(
   kind: RubricCheckQuestion["kind"],
   existing: readonly RubricCheckQuestion[],
 ): RubricCheckQuestion {
   const id = uniqueCriterionId(
-    kind === "choice" ? "choice" : "score",
+    kind,
     new Set(existing.map((question) => question.id)),
   );
+  if (kind === "yesno") {
+    return { id, kind, label: "", instructions: "", pass: { answer: "yes" } };
+  }
   if (kind === "choice") {
     return {
       id,
@@ -225,7 +263,10 @@ export function withQuestionLabel(
     label,
     id: uniqueCriterionId(
       slugifyCriterionId(label),
-      new Set(others.map((other) => other.id)),
+      new Set([
+        ...LIBRARY_QUESTION_IDS.keys(),
+        ...others.map((other) => other.id),
+      ]),
     ),
   };
 }

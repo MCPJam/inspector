@@ -126,6 +126,30 @@ describe("POST /api/internal/events/enqueue", () => {
     expect(kick).toHaveBeenCalledTimes(1);
   });
 
+  it("validates JSON-encoded schemas with references before scheduling", async () => {
+    const { post, enqueue } = setup({ descriptor: {
+      hash: "h1", delivery: ["webhook"],
+      payloadSchema: JSON.stringify({
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object", required: ["text"],
+        $defs: { text: { type: "string" } },
+        properties: { text: { $ref: "#/$defs/text" } },
+      }),
+    } });
+    const response = await post({ inboxId: "inbox_1", deliveries: [delivery("good"), delivery("bad", { data: { text: 1 } })] });
+    expect(response.status).toBe(200);
+    expect((await response.json()).results).toEqual([
+      { deliveryKey: "good", outcome: "scheduled", runIds: ["run_good"] },
+      { deliveryKey: "bad", outcome: "quarantined", runIds: [] },
+    ]);
+    expect(enqueue.mock.calls[0][0].deliveries).toHaveLength(1);
+  });
+  it.each(["invalid JSON", "[]", "42"])("quarantines a malformed stored schema: %s", async (schema) => {
+    const { post, enqueue } = setup({ descriptor: { hash: "h1", delivery: ["webhook"], payloadSchema: schema } });
+    const response = await post({ inboxId: "inbox_1", deliveries: [delivery("bad")] });
+    expect((await response.json()).results[0].outcome).toBe("quarantined");
+    expect(enqueue).not.toHaveBeenCalled();
+  });
   it("passes slotless, terminated and keeper-report rows through untouched", async () => {
     const { post, enqueue } = setup();
     const rows = [

@@ -72,6 +72,7 @@ import {
 } from "@/components/evals/runner-checks";
 import type { ScorecardGroup, ScorecardRow } from "./case-scorecard-model";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
+import { rubricCheckVerdictQuestions } from "@/shared/rubric-check-verdict";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 export type TrialRowResultSource =
@@ -81,6 +82,7 @@ export type TrialRowResultSource =
   | "chainSelection"
   | "chainStage"
   | "judgeCase"
+  | "modelVerdict" // a saved custom judge verdict with no projected row yet
   | "live";
 
 export type TrialRowResult =
@@ -113,7 +115,7 @@ export type TrialRowResult =
     }
   | {
       state: "error";
-      source: "scoreRow" | "judgeCase" | "chainStage";
+      source: Exclude<TrialRowResultSource, "stepResult" | "chainSelection" | "live">;
       reason: string;
     }
   | {
@@ -123,7 +125,7 @@ export type TrialRowResult =
     }
   | {
       state: "notApplicable";
-      source: "scoreRow" | "chainStage";
+      source: "scoreRow" | "chainStage" | "predicateResult" | "stepResult";
       reason?: string;
     }
   | { state: "pending"; source: "live" }
@@ -198,7 +200,7 @@ type ScoreIndex = {
  * row is simply not indexed, so its scorer reads "not measured" rather than
  * borrowing someone else's verdict.
  */
-function indexScores(
+export function indexScores(
   scores: ScoreResult[] | null,
   config: EvaluationConfigSnapshot | null,
 ): ScoreIndex {
@@ -218,7 +220,27 @@ function indexScores(
   return { byScorerId };
 }
 
-function resultFromScore(
+/** A stored predicate verdict; an error or not-applicable row is neither a pass nor a fail. */
+export function resultFromPredicate(predicate: {
+  passed: boolean;
+  status?: "scored" | "error" | "not_applicable";
+  reason: string;
+}): TrialRowResult {
+  const reason = predicate.reason ? { reason: predicate.reason } : {};
+  if (predicate.status === "error") {
+    return { state: "error", source: "predicateResult", reason: predicate.reason };
+  }
+  if (predicate.status === "not_applicable") {
+    return { state: "notApplicable", source: "predicateResult", ...reason };
+  }
+  return {
+    state: predicate.passed ? "passed" : "failed",
+    source: "predicateResult",
+    ...reason,
+  };
+}
+
+export function resultFromScore(
   score: ScoreResult,
   definition: ResolvedScoreDefinition | null,
 ): TrialRowResult {
@@ -279,6 +301,9 @@ function stepReplayResult(
       reason:
         row.reason ?? "An earlier step failed, so this one never ran.",
     };
+  }
+  if (row.status === "not_applicable") {
+    return { state: "notApplicable", source: "stepResult", reason: row.reason };
   }
   // `pending` on a finished trial means the runner never reached a verdict for
   // this step — an honest absence, not a hold.
@@ -486,11 +511,7 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
       if (predicate) {
         return {
           ...row,
-          result: {
-            state: predicate.passed ? "passed" : "failed",
-            source: "predicateResult",
-            ...(predicate.reason ? { reason: predicate.reason } : {}),
-          },
+          result: resultFromPredicate(predicate),
           ...(evidence ? { evidence } : {}),
         };
       }
@@ -514,11 +535,7 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
     if (predicate) {
       return {
         ...row,
-        result: {
-          state: predicate.passed ? "passed" : "failed",
-          source: "predicateResult",
-          ...(predicate.reason ? { reason: predicate.reason } : {}),
-        },
+        result: resultFromPredicate(predicate),
       };
     }
     const scored = ctx.scores.byScorerId.get(`predicate:${join.criterionId}`);
@@ -589,7 +606,7 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
 }
 
 /**
- * The band, on P(yes), where a rubric-check criterion reads Uncertain. A
+ * The band, on P(yes), where a boolean rubric check reads Uncertain. A
  * classifier at 0.51 has not said yes; it has declined to decide.
  */
 export const RUBRIC_CHECK_UNCERTAIN_BAND = { from: 0.4, below: 0.6 } as const;
@@ -605,6 +622,9 @@ const RUBRIC_CHECK_LABEL_PREFIX = "rubric check: ";
  * would otherwise show a row this trial was never asked, and a deployment
  * that does not grade rubric checks would show rows that never fill in.
  * Returned in the order the backend asked them, criteria first.
+ *
+ * The stored verdict is read only to tell which rows are yes/no answers and
+ * what P(yes) each got; a question with no score row gets no row here.
  */
 export function rubricCheckTrialRows(
   iteration: EvalIteration | null,
@@ -614,6 +634,11 @@ export function rubricCheckTrialRows(
   const scores = indexScores(
     parseIterationScores(metadata),
     parseEvaluationConfig(metadata),
+  );
+  const booleanAnswers = new Map(
+    rubricCheckVerdictQuestions(metadata.rubricChecksVerdict)
+      .filter((question) => question.kind === "boolean")
+      .map((question) => [question.key, question]),
   );
   const rows: JoinedScorecardRow[] = [];
   for (const [scorerId, { score, definition }] of scores.byScorerId) {
@@ -641,22 +666,42 @@ export function rubricCheckTrialRows(
     };
     const result = resultFromScore(score, definition);
     const evidence = scoreEvidence(score, definition, row);
+    // Every criterion is a yes/no answer; an authored question is one only
+    // when the verdict says so; a choice or score value is never P(yes).
+    const answer = booleanAnswers.get(key);
     rows.push({
       ...row,
-      result: criterion ? uncertainIfUndecided(result) : result,
+      result:
+        criterion || answer
+          ? uncertainIfUndecided(result, answer?.probability)
+          : result,
       ...(evidence ? { evidence } : {}),
     });
   }
   return rows;
 }
 
-function uncertainIfUndecided(result: TrialRowResult): TrialRowResult {
+/**
+ * Uncertain when P(yes) is inside the band. The row's value is P(pass), which
+ * for a question that passes on No is 1 - P(yes), so the band reads the
+ * verdict's own P(yes) when the grader gave one. Without one the answer came
+ * from a model that gives no probability, and the value is 0 or 1.
+ */
+function uncertainIfUndecided(
+  result: TrialRowResult,
+  pYes: number | undefined,
+): TrialRowResult {
   if (
     (result.state !== "passed" && result.state !== "failed") ||
     result.source !== "scoreRow" ||
-    typeof result.value !== "number" ||
-    result.value < RUBRIC_CHECK_UNCERTAIN_BAND.from ||
-    result.value >= RUBRIC_CHECK_UNCERTAIN_BAND.below
+    typeof result.value !== "number"
+  ) {
+    return result;
+  }
+  const p = pYes ?? result.value;
+  if (
+    p < RUBRIC_CHECK_UNCERTAIN_BAND.from ||
+    p >= RUBRIC_CHECK_UNCERTAIN_BAND.below
   ) {
     return result;
   }
@@ -758,6 +803,7 @@ function liveResult(status: EvalStepStatus): TrialRowResult {
   if (status === "ok") return { state: "passed", source: "live" };
   if (status === "fail") return { state: "failed", source: "live" };
   if (status === "skipped") return { state: "skipped", source: "stepResult" };
+  if (status === "not_applicable") return { state: "notApplicable", source: "stepResult" };
   return { state: "pending", source: "live" };
 }
 
@@ -781,7 +827,7 @@ function judgeResult(judge: JudgeCase): TrialRowResult {
   };
 }
 
-function scoreEvidence(
+export function scoreEvidence(
   score: ScoreResult,
   definition: ResolvedScoreDefinition | null,
   row: ScorecardRow,

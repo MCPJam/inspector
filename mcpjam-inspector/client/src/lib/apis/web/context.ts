@@ -311,13 +311,15 @@ export function setApiContext(next: ApiContext | null): void {
  * post-save connect would fall back to the legacy `{serverConfig, serverId}`
  * shape for one tick.
  *
- * The next `setApiContext` call from the subscription will overwrite
- * this with identical data, so there is no risk of stale entries.
+ * Only publish into the project that owns the save. A pending save can settle
+ * after `setApiContext` has already switched to another project.
  */
 export function injectHostedServerMapping(
   serverName: string,
-  serverId: string
+  serverId: string,
+  projectId: string,
 ): void {
+  if (apiContext.projectId !== projectId) return;
   // Every connect re-injects the mapping it already has. Announcing that as a
   // change made every subscriber refetch for a context that had not moved.
   if (apiContext.serverIdsByName[serverName] === serverId) return;

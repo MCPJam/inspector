@@ -178,6 +178,27 @@ describe("workspace tool catalog", () => {
       "update_directory_submission",
       "start_directory_submission_run",
       "get_directory_submission_results",
+      "create_reviewer_attempt",
+      "list_reviewer_attempts",
+      "get_reviewer_attempt",
+      "resume_reviewer_attempt",
+      "cancel_reviewer_attempt",
+      "get_directory_submission_handoff",
+      "list_directory_submission_findings",
+      "get_directory_submission_finding",
+      "export_directory_submission",
+      "list_directory_submission_events",
+      "record_directory_submission_status",
+      "record_directory_submission_snapshot",
+      "import_directory_finding",
+      "get_directory_submission_test_plan",
+      "draft_directory_submission_test_plan",
+      "save_directory_submission_test_plan",
+      "get_directory_submission_tool_tests",
+      "get_directory_submission_evals",
+      "set_directory_submission_evals",
+      "import_directory_submission_test_cases",
+      "export_directory_submission_test_cases",
       "start_conformance_run",
       "get_conformance_run",
       "list_conformance_runs",
@@ -490,7 +511,7 @@ describe("live server operations", () => {
     });
   });
 
-  it("fails deterministically for stdio servers instead of a connect error", async () => {
+  it("diagnoses a stdio server deterministically instead of attempting a connect", async () => {
     const { client, calls } = makeClient({
       "GET /api/v1/projects": () => ({ json: PROJECTS_PAGE }),
       "GET /api/v1/projects/proj_1/servers": () => ({ json: SERVERS_PAGE }),
@@ -502,9 +523,10 @@ describe("live server operations", () => {
 
     const result = (await execTool(builtTool, {
       server: "Local stdio",
-    })) as { error: string };
+    })) as { report: { status: string; connection: { detail: string } } };
 
-    expect(result.error).toMatch(/stdio servers are not supported/);
+    expect(result.report.status).toBe("error");
+    expect(result.report.connection.detail).toMatch(/local command \(stdio\)/);
     expect(calls.some((call) => call.method === "POST")).toBe(false);
   });
 

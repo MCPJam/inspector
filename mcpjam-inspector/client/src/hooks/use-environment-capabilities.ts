@@ -13,6 +13,8 @@ export type EnvironmentCapabilities = {
   environmentSuiteSettings?: boolean;
   /** `createTestSuite` takes `environmentIds` / `environmentTargets`. */
   createSuiteWithEnvironments?: boolean;
+  /** Environment writes accept `skillScope: 'all-shared-library'`. */
+  allSharedLibrarySkillScope?: boolean;
 };
 
 /**

@@ -46,6 +46,9 @@ import {
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
+  requestEvalRunInsightsOperation,
+  cancelEvalRunInsightsOperation,
+  buildEvalRunFindingsOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
@@ -71,6 +74,27 @@ import {
   updateDirectorySubmissionOperation,
   startDirectorySubmissionRunOperation,
   getDirectorySubmissionResultsOperation,
+  createReviewerAttemptOperation,
+  listReviewerAttemptsOperation,
+  getReviewerAttemptOperation,
+  resumeReviewerAttemptOperation,
+  cancelReviewerAttemptOperation,
+  getDirectorySubmissionHandoffOperation,
+  listDirectorySubmissionFindingsOperation,
+  getDirectorySubmissionFindingOperation,
+  exportDirectorySubmissionOperation,
+  listDirectorySubmissionEventsOperation,
+  recordDirectorySubmissionStatusOperation,
+  recordDirectorySubmissionSnapshotOperation,
+  importDirectoryFindingOperation,
+  draftDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionTestPlanOperation,
+  getDirectorySubmissionToolTestsOperation,
+  saveDirectorySubmissionTestPlanOperation,
+  exportDirectorySubmissionTestCasesOperation,
+  getDirectorySubmissionEvalsOperation,
+  importDirectorySubmissionTestCasesOperation,
+  setDirectorySubmissionEvalsOperation,
   startConformanceRunOperation,
   getConformanceRunOperation,
   listConformanceRunsOperation,
@@ -128,6 +152,16 @@ import {
   listServerRevisionsOperation,
   getServerRevisionOperation,
   diffServerRevisionsOperation,
+  createMockServerOperation,
+  updateMockServerOperation,
+  getMockServerOperation,
+  patchMockServerOperation,
+  refreshMockServerOperation,
+  openMockRunOperation,
+  resetMockRunOperation,
+  closeMockRunOperation,
+  getMockForwardingPolicyOperation,
+  setMockForwardingPolicyOperation,
   listServerAccountsOperation,
   getServerAccountOperation,
   readServerResourceOperation,
@@ -1589,8 +1623,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: startDirectorySubmissionRunOperation,
     tier: "gated",
     proposal: {
+      // Naming a plan revision authorizes its calls, so the approval says so.
       describe: (input) =>
-        `Run the checks for directory submission ${named(input, "submission") ?? "(unnamed)"}`,
+        `Run the checks for directory submission ${named(input, "submission") ?? "(unnamed)"}${
+          typeof input.testPlanRevision === "number"
+            ? `, with the calls of its test plan revision ${input.testPlanRevision}`
+            : ""
+        }`,
       buttonLabel: "Run it",
       kind: "start",
       // Platform-paid, like the readiness starts: no money to warn about.
@@ -1601,6 +1640,77 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getDirectorySubmissionResultsOperation, tier: "direct" },
+  // A plan is saved like answers; its calls run only in a start a person approves.
+  { operation: getDirectorySubmissionTestPlanOperation, tier: "direct" },
+  { operation: draftDirectorySubmissionTestPlanOperation, tier: "direct" },
+  {
+    operation: saveDirectorySubmissionTestPlanOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `save_directory_submission_test_plan` calls no tool. A run makes the plan's calls, destructive ones included, only when `start_directory_submission_run` names the plan's `revision` as `testPlanRevision`: name it only for a plan the user has reviewed.",
+    ],
+  },
+  { operation: getDirectorySubmissionToolTestsOperation, tier: "direct" },
+  // A submission's test cases live in an eval suite. Linking it and importing
+  // a package's cases write MCPJam rows and call no tool; a run of the suite
+  // goes through run_eval_suite's own approval.
+  { operation: getDirectorySubmissionEvalsOperation, tier: "direct" },
+  { operation: setDirectorySubmissionEvalsOperation, tier: "direct" },
+  { operation: importDirectorySubmissionTestCasesOperation, tier: "direct" },
+  { operation: exportDirectorySubmissionTestCasesOperation, tier: "direct" },
+  // Reviewer sign-in: each start or resume begins a run that signs in to the
+  // submission's server, so a person approves it. Reading and stopping do not.
+  {
+    operation: createReviewerAttemptOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Sign in as the reviewer for directory submission ${named(input, "submission") ?? "(unnamed)"}`,
+      buttonLabel: "Sign in",
+      kind: "start",
+      // MCPJam runs the sign-in; there is no money to warn about.
+      confirmSeverity: "none",
+    },
+    promptNotes: [
+      "- `create_reviewer_attempt` takes secret NAMES only. Never write a password into a call: ask the user to save it in the app as a materialized project secret whose name starts with `MCPJAM_REVIEWER_`, then pass that name.",
+    ],
+  },
+  { operation: listReviewerAttemptsOperation, tier: "direct" },
+  { operation: getReviewerAttemptOperation, tier: "direct" },
+  {
+    operation: resumeReviewerAttemptOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Continue the reviewer sign-in ${named(input, "attempt") ?? "(unnamed)"}`,
+      buttonLabel: "Continue",
+      kind: "start",
+      confirmSeverity: "none",
+    },
+  },
+  { operation: cancelReviewerAttemptOperation, tier: "direct" },
+  // Picking a submission up from its id, and recording what happened in the
+  // directory. The records spend nothing and name the agent's principal.
+  {
+    operation: getDirectorySubmissionHandoffOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Given a directory submission's id or link, call `get_directory_submission_handoff` first: it says where the submission stands and lists `nextActions`, each an operation with the input to send. Do not ask the user again for anything it already holds.",
+    ],
+  },
+  { operation: listDirectorySubmissionFindingsOperation, tier: "direct" },
+  { operation: getDirectorySubmissionFindingOperation, tier: "direct" },
+  { operation: exportDirectorySubmissionOperation, tier: "direct" },
+  { operation: listDirectorySubmissionEventsOperation, tier: "direct" },
+  {
+    operation: recordDirectorySubmissionStatusOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Record a directory status, snapshot or finding only as the user told you (`reported`) or as you saw it in the portal (`observed`), never inferred from MCPJam's own results. A record is never edited: to correct one, record a newer one.",
+    ],
+  },
+  { operation: recordDirectorySubmissionSnapshotOperation, tier: "direct" },
+  { operation: importDirectoryFindingOperation, tier: "direct" },
   {
     operation: startConformanceRunOperation,
     tier: "gated",
@@ -1665,6 +1775,32 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: listServerRevisionsOperation, tier: "direct" },
   { operation: getServerRevisionOperation, tier: "direct" },
   { operation: diffServerRevisionsOperation, tier: "direct" },
+  // A mock server and its versions: saved, free, and undone by saving the
+  // version before. The backend holds the tier and the flag.
+  { operation: createMockServerOperation, tier: "direct" },
+  { operation: updateMockServerOperation, tier: "direct" },
+  { operation: getMockServerOperation, tier: "direct" },
+  { operation: patchMockServerOperation, tier: "direct" },
+  { operation: refreshMockServerOperation, tier: "direct" },
+  { operation: openMockRunOperation, tier: "direct" },
+  { operation: resetMockRunOperation, tier: "direct" },
+  { operation: closeMockRunOperation, tier: "direct" },
+  { operation: getMockForwardingPolicyOperation, tier: "direct" },
+  {
+    // Decides whether every mock in a workspace may call its real server: who
+    // can reach those servers through a mock, so a person approves it.
+    operation: setMockForwardingPolicyOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `${input.forwarding === "block" ? "Block" : "Allow"} mock servers calling their real servers${
+          named(input, "project") ? ` in project ${named(input, "project")}` : ""
+        }`,
+      buttonLabel: "Change the policy",
+      kind: "external",
+      confirmSeverity: "external",
+    },
+  },
   // Account metadata only, structurally without a token, like the secrets
   // reads; the three writes are in EXCLUDED_FROM_AGENT.
   { operation: listServerAccountsOperation, tier: "direct" },
@@ -2053,6 +2189,42 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
     ],
   },
+  { operation: cancelEvalRunInsightsOperation, tier: "direct" },
+  {
+    operation: buildEvalRunFindingsOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Build findings for eval run ${named(input, "runId") ?? "(unnamed)"}${
+          input.force === true ? " again" : ""
+        }`,
+      buttonLabel: "Build them",
+      kind: "generate",
+      // The build makes no model call, but on a run never analyzed a
+      // finished build starts the automatic analysis, which takes a unit of
+      // the shared daily insight quota. Gated on that quota, like the
+      // request below; there is no money to warn about.
+      confirmSeverity: "none",
+    },
+  },
+  {
+    operation: requestEvalRunInsightsOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Analyze eval run ${named(input, "runId") ?? "(unnamed)"}${
+          input.force === true ? " again" : ""
+        } with a model`,
+      buttonLabel: "Analyze it",
+      kind: "generate",
+      // Platform-paid; gated on the shared daily quota, like
+      // `request_swarm_run_insights`.
+      confirmSeverity: "none",
+    },
+    promptNotes: [
+      "- `request_eval_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with goal, study and user-testing insights. Most finished runs are analyzed automatically: read `get_eval_run`'s `insights` first. The findings are `currentFindings`, and `unifiedFindings.snapshot.enrichment.status` says whether a model explained them. Request only when there is no explanation or it is `stale`, and never when `unifiedFindings.job.errorCode` is `org_model_unavailable`: that analysis cannot run until the organization's AI key policy changes.",
+    ],
+  },
   {
     operation: proposeEvalDescriptionRewriteOperation,
     tier: "gated",
@@ -2400,7 +2572,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "gated",
     proposal: {
       describe: (input) =>
-        `Analyze wave ${named(input, "wave") ?? "(unnamed)"} with a model`,
+        `Analyze swarm run ${
+          named(input, "swarmRun") ?? named(input, "wave") ?? "(unnamed)"
+        } with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
       // The insight model call is on MCPJam, so there is no money to warn
@@ -2410,7 +2584,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       confirmSeverity: "none",
     },
     promptNotes: [
-      "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+      "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with study, user-testing and eval run insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
       "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
     ],
   },
@@ -2449,7 +2623,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     proposal: {
       describe: (input) =>
         `Analyze user testing on ${
-          named(input, "scenario") ?? "(unnamed)"
+          named(input, "study") ?? named(input, "scenario") ?? "(unnamed)"
         } with a model`,
       buttonLabel: "Analyze it",
       kind: "generate",
@@ -2679,6 +2853,8 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
+  create_reviewer_handoff:
+    "The response contains a single-use browser sign-in link for the requester. Create it from Readiness or a direct API or CLI call so it does not enter the agent transcript.",
   // Swarms operations the agent may not even PROPOSE. All three are
   // `risk: destructive` in the SDK catalog, and the rule this surface applies
   // is the one the gated block above states: a proposal makes spend

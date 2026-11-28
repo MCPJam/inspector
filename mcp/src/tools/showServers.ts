@@ -11,11 +11,8 @@ import {
   PLATFORM_WIDGET_RESOURCE_URIS,
 } from "../shared/platform-widgets.js";
 import type { PlatformToolContext } from "../server.js";
-import {
-  operationAnnotations,
-  platformWidgetUi,
-  runPlatformOperation,
-} from "./platformTools.js";
+import { operationAnnotations } from "@mcpjam/sdk/internal/mcp-surface";
+import { platformWidgetUi, runPlatformOperation } from "./platformTools.js";
 import type { SessionToolRegistrar } from "./sessionToolRegistrar.js";
 
 export const SHOW_SERVERS_RESOURCE_URI = PLATFORM_WIDGET_RESOURCE_URIS.servers;

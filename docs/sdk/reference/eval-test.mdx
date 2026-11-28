@@ -28,17 +28,17 @@ new EvalTest(options: EvalTestConfig)
 
 | Property            | Type                     | Required | Description                                                                    |
 | ------------------- | ------------------------ | -------- | ------------------------------------------------------------------------------ |
-| `id`                | `string`                 | Yes      | The case's identity. **Required from 5.0** — see below.                         |
+| `id`                | `string`                 | Yes      | The case's identity. **Required from 5.0**, see below.                         |
 | `name`              | `string`                 | Yes      | Human-readable display name for the test                                       |
 | `test`              | `TestFunction`           | Yes      | The test function to run                                                       |
-| `expectedToolCalls` | `EvalExpectedToolCall[]` | No       | Tool calls the iteration must make. **Enforced locally from 3.0** — see below. |
+| `expectedToolCalls` | `EvalExpectedToolCall[]` | No       | Tool calls the iteration must make. **Enforced locally from 3.0**, see below. |
 | `matchOptions`      | `EvalMatchOptions`       | No       | How `expectedToolCalls` is matched (order, arguments, extras)                   |
 | `intent`            | `string`                 | No       | Analytics grouping label for this case. Forwarded with every result but never affects scoring or the verdict. Must be 1–64 characters, already trimmed (no leading or trailing whitespace). |
 | `predicates`        | `Predicate[]`            | No       | Deterministic transcript checks that gate each iteration                        |
 
 <Warning>
   **New in 5.0: `id` is required.** A case's identity used to be its `name`, so
-  renaming a test forked its history — the run page started a fresh series and
+  renaming a test forked its history; the run page started a fresh series and
   the old one was orphaned. `id` separates the two: history joins on `id`, and
   `name` is free to change.
 
@@ -46,21 +46,21 @@ new EvalTest(options: EvalTestConfig)
 
   ```typescript
   import { mintCaseId } from "@mcpjam/sdk/contract";
-  console.log(mintCaseId()); // c_V1StGXR8Z5jdHi6Bmy — paste this in
+  console.log(mintCaseId()); // c_V1StGXR8Z5jdHi6Bmy; paste this in
   ```
 
   Any URL-safe string of 1–128 characters (`A-Z a-z 0-9 _ -`) is accepted, so an
-  id you already have — a hosted case id, a ticket number, a slug you maintain —
+  id you already have (a hosted case id, a ticket number, a slug you maintain)
   works as-is; the `c_` prefix is only a grep convenience. Do **not** call
   `mintCaseId()` inline: an id regenerated on every run is not an identity.
   Constructing an `EvalTest` without an `id` throws, and the error carries a
   freshly minted id to paste.
 
   **Migrating from `externalCaseId`:** If your test already declares
-  `externalCaseId`, reuse that value verbatim as `id` — do not mint a new one.
+  `externalCaseId`, reuse that value verbatim as `id`. Do not mint a new one.
   The hosted history for that case is keyed on `externalCaseId`, so setting
   `id` to the same value keeps the history intact. Setting `id` to a different
-  value is a hard error — at construction from 6.0, and at ingest.
+  value is a hard error; at construction from 6.0, and at ingest.
 
   If your `externalCaseId` is not a valid id (it was never charset-bound, so it
   may contain spaces, slashes or punctuation), no `id` can agree with it.
@@ -71,22 +71,22 @@ new EvalTest(options: EvalTestConfig)
   // Before
   new EvalTest({ externalCaseId: "case_123", name: "refunds a duplicate charge", ... })
 
-  // After — reuse the existing externalCaseId as id
+  // After: reuse the existing externalCaseId as id
   new EvalTest({ id: "case_123", externalCaseId: "case_123", name: "refunds a duplicate charge", ... })
   ```
 </Warning>
 
 <Warning>
   **New in 5.0: step objects reject unknown fields.** `prompt`, `toolCall`,
-  `interact`, and `assert` steps — and their nested sub-objects such as
-  `elementLocator` and widget assertions — are now **closed schemas**. A step
+  `interact`, and `assert` steps, and their nested sub-objects such as
+  `elementLocator` and widget assertions, are now **closed schemas**. A step
   carrying a field the contract does not declare fails to parse instead of
   silently dropping that field.
 
   Two things are deliberately left open:
-  - `toolCallStep.arguments` — the tool's own argument object, whose keys come
+  - `toolCallStep.arguments`: the tool's own argument object, whose keys come
     from the server's input schema.
-  - A `Predicate` inside an `assert` step — predicates are a separate contract
+  - A `Predicate` inside an `assert` step; predicates are a separate contract
     module with their own versioning.
 
   If you generate steps programmatically (for example, from an LLM or an
@@ -97,7 +97,7 @@ new EvalTest(options: EvalTestConfig)
 <Warning>
   **Changed in 3.0.** `expectedToolCalls` used to be reporting metadata only:
   the local verdict came from your `test` function alone, while the dashboard
-  recomputed the match — so the same run could show `accuracy() === 1` locally
+  recomputed the match, so the same run could show `accuracy() === 1` locally
   and fail in MCPJam. It is now enforced during the run, which means a test
   whose expectations were never actually checked can start failing on upgrade.
 
@@ -119,7 +119,7 @@ Layered suite → case, and validated when the test is constructed rather than m
 
 #### predicates
 
-Deterministic, state-based checks evaluated against the iteration transcript — same transcript, same verdict, which is what makes them usable as a CI gate. An iteration passes only if **every** predicate passes, independently of `failOnToolError`. Verdicts are reported under `metadata.predicates`, so the dashboard's check chips work for code-first runs too. See [eval reporting](/sdk/reference/eval-reporting#predicate-gate) for the full list of predicate types.
+Deterministic, state-based checks evaluated against the iteration transcript; same transcript, same verdict, which is what makes them usable as a CI gate. An iteration passes only if **every** predicate passes, independently of `failOnToolError`. Verdicts are reported under `metadata.predicates`, so the dashboard's check chips work for code-first runs too. See [eval reporting](/sdk/reference/eval-reporting#predicate-gate) for the full list of predicate types.
 
 ```typescript
 const test = new EvalTest({
@@ -263,13 +263,13 @@ precision(): number
 
 #### Returns
 
-`number` — True positives / (True positives + False positives).
+`number`: True positives / (True positives + False positives).
 
 Counted per iteration from the expected/actual tool calls: a matched expectation is a true positive, an unexpected call is a false positive, a missing one is a false negative, and an argument mismatch counts as both.
 
 <Warning>
   **Changed in 3.0.** `precision()`, `recall()` and `truePositiveRate()` all
-  used to `return this.accuracy()` — three names for one number. They now
+  used to `return this.accuracy()`, three names for one number. They now
   compute real values, and **throw** when no test in the run declared
   `expectedToolCalls`, because there is nothing to compute them from. If you
   were reading `precision()` as a stand-in for accuracy, call
@@ -288,7 +288,7 @@ recall(): number
 
 #### Returns
 
-`number` — True positives / (True positives + False negatives).
+`number`: True positives / (True positives + False negatives).
 
 Throws when the run declared no `expectedToolCalls`.
 
@@ -314,14 +314,14 @@ unexpectedToolCallRate(): number
 
 #### Returns
 
-`number` — Iterations with an extra call / iterations that had expectations. `0` when the run declared no expectations.
+`number`: Iterations with an extra call / iterations that had expectations. `0` when the run declared no expectations.
 
 ---
 
 ### falsePositiveRate()
 
 <Warning>
-  **Deprecated in 3.0** — use [`unexpectedToolCallRate()`](#unexpectedtoolcallrate).
+  **Deprecated in 3.0**: use [`unexpectedToolCallRate()`](#unexpectedtoolcallrate).
   The old implementation returned `failures / iterations`, which is the failure
   rate, not a false-positive rate. For runs with no `expectedToolCalls` it still
   returns that legacy value so existing dashboards do not change; for runs with

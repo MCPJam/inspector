@@ -40,16 +40,71 @@ export async function running(pid: number): Promise<boolean> {
   }
 }
 
+/** A Windows process-table row: its pid, the pid it names as parent, and its start as a FILETIME (null when CIM hides it). */
+export type ProcessRow = { pid: number; parent: number; started: bigint | null };
+
+/**
+ * `pid`'s descendants in a Windows process table. A process keeps its parent's
+ * pid as `ParentProcessId` after that parent exits, and Windows reuses pids
+ * soon after: a bridge that lands on such a pid would claim everything the
+ * dead process started, on a CI runner the whole system (wininit, services,
+ * svchost and their sockets). A child cannot start before its parent, so a
+ * row older than its claimed parent belongs to an earlier holder of the pid
+ * and is skipped. A root missing from the table has no start to compare, so
+ * nothing is claimed for it.
+ */
+export function descendantsInTable(rows: readonly ProcessRow[], pid: number): number[] {
+  const byPid = new Map(rows.map((row) => [row.pid, row]));
+  const childrenOf = new Map<number, ProcessRow[]>();
+  for (const row of rows) childrenOf.set(row.parent, [...(childrenOf.get(row.parent) ?? []), row]);
+  const found: number[] = [];
+  const seen = new Set([pid]);
+  const queue = [pid];
+  while (queue.length > 0) {
+    const parent = byPid.get(queue.shift()!);
+    if (parent?.started == null) continue;
+    for (const child of childrenOf.get(parent.pid) ?? []) {
+      if (seen.has(child.pid) || child.started == null || child.started < parent.started) continue;
+      seen.add(child.pid);
+      found.push(child.pid);
+      queue.push(child.pid);
+    }
+  }
+  return found;
+}
+
+/** One `<pid> <parent pid> <FILETIME or ->` line per process. */
+const PROCESS_TABLE =
+  "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $(if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { '-' })\" }";
+
+export function parseProcessTable(stdout: string): ProcessRow[] {
+  const rows: ProcessRow[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^(\d+)\s+(\d+)\s+(\d+|-)$/.exec(line.trim());
+    if (match) rows.push({ pid: Number(match[1]), parent: Number(match[2]), started: match[3] === "-" ? null : BigInt(match[3]!) });
+  }
+  return rows;
+}
+
 export async function descendants(pid: number): Promise<number[]> {
+  if (WIN) {
+    // Throws rather than answering "no descendants" when the table could not
+    // be read: an empty tree passes the listener and survivor checks without
+    // looking.
+    const { stdout } = await powershell(PROCESS_TABLE);
+    const rows = parseProcessTable(stdout);
+    if (!rows.some((row) => row.started !== null)) {
+      throw new Error(`the Windows process table had no readable rows: ${JSON.stringify(stdout.slice(0, 200))}`);
+    }
+    return descendantsInTable(rows, pid);
+  }
   const out: number[] = [];
   const walk = async (parent: number) => {
     let kids = "";
     try {
-      kids = WIN
-        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${parent}" | ForEach-Object { $_.ProcessId }`)).stdout
-        : (await execFileP("pgrep", ["-P", String(parent)])).stdout;
+      kids = (await execFileP("pgrep", ["-P", String(parent)])).stdout;
     } catch {
-      return;
+      return; // `pgrep` exits 1 for a process with no children.
     }
     for (const kid of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
       out.push(kid);

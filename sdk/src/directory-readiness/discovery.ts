@@ -30,6 +30,13 @@
  * Node/browser agnostic: `fetch`, `AbortController`, `TextDecoder` only.
  */
 
+import {
+  findMetadataDocument,
+  protectedResourceMetadataUrls,
+  resolveSameOriginPointer,
+  type MetadataLookup,
+} from "../oauth/metadata-candidates.js";
+
 export interface DirectoryDiscoveryOptions {
   /** The target URL exactly as the user entered it. Never canonicalized. */
   enteredUrl: string;
@@ -164,6 +171,8 @@ export function parseSseEventData(
 
 /**
  * Read an SSE response only as far as its first JSON-RPC message, then stop.
+ * With `responseTo`, read as far as the response to that request id instead:
+ * a server may send notifications or its own requests on the stream first.
  *
  * Stopping is the point: the server is entitled to hold the stream open after
  * answering, so reading to `done` would hang until the probe's timeout and
@@ -173,7 +182,13 @@ export function parseSseEventData(
 export async function readSseJsonRpc(
   response: Response,
   maxBytes: number = DIRECTORY_DISCOVERY_DEFAULTS.maxMetadataBytes,
+  responseTo?: string | number,
 ): Promise<Record<string, unknown> | undefined> {
+  // A server request can reuse the id, since ids are per sender; a response
+  // carries no method.
+  const wanted = (message: Record<string, unknown>) =>
+    responseTo === undefined ||
+    (message.id === responseTo && !("method" in message));
   const body = response.body;
   if (!body || typeof body.getReader !== "function") return undefined;
 
@@ -196,11 +211,12 @@ export async function readSseJsonRpc(
       buffered = events.pop() ?? "";
       for (const event of events) {
         const document = parseSseEventData(event);
-        if (document) return document;
+        if (document && wanted(document)) return document;
       }
     }
     // A stream that closed without a final blank line still left one event.
-    return parseSseEventData(buffered);
+    const last = parseSseEventData(buffered);
+    return last && wanted(last) ? last : undefined;
   } finally {
     await reader.cancel().catch(() => undefined);
     reader.releaseLock?.();
@@ -216,7 +232,7 @@ export async function readSseJsonRpc(
  * long-lived caller signal accumulates one listener per request without it,
  * and a readiness run makes dozens.
  */
-function linkAbortSignal(
+export function linkAbortSignal(
   signal: AbortSignal | undefined,
   controller: AbortController,
 ): () => void {
@@ -417,43 +433,6 @@ export async function traceRedirects(
   };
 }
 
-/**
- * Resolve a `resource_metadata` pointer, or refuse it.
- *
- * THE POINTER IS ATTACKER-CONTROLLED. It arrives in a `WWW-Authenticate` header
- * from the server under test, and `new URL()` will happily accept
- * `http://169.254.169.254/…` or a `file:` URL. In a hosted run the pinned
- * transport would refuse it, but these functions accept any `fetchFn`, so the
- * pointer is validated here rather than trusted to the caller's transport.
- *
- * Same origin is not an arbitrary narrowing: RFC 9728 constructs the metadata
- * URL from the resource identifier itself, and requires the document's
- * `resource` to equal the request URL. A pointer to another origin cannot
- * satisfy that, so following it could only ever produce a document we would
- * then reject.
- *
- * Returns `undefined` for a refusal so the caller can REPORT it rather than
- * silently continuing to the well-known paths as if no pointer existed.
- */
-export function resolveSameOriginPointer(
-  pointer: string,
-  enteredUrl: string,
-): string | undefined {
-  let resolved: URL;
-  let base: URL;
-  try {
-    base = new URL(enteredUrl);
-    resolved = new URL(pointer, enteredUrl);
-  } catch {
-    return undefined;
-  }
-  if (resolved.protocol !== "https:" && resolved.protocol !== "http:") {
-    return undefined;
-  }
-  if (resolved.origin !== base.origin) return undefined;
-  return resolved.toString();
-}
-
 export type PrmDiscoveryStep =
   | "www-authenticate"
   | "well-known-path-suffixed"
@@ -508,16 +487,11 @@ export async function discoverProtectedResourceMetadata(
     }
   }
   try {
-    const base = new URL(options.enteredUrl);
-    const path = base.pathname.replace(/\/$/, "");
-    attempts.push({
-      step: "well-known-path-suffixed",
-      url: `${base.origin}/.well-known/oauth-protected-resource${path}`,
-    });
-    attempts.push({
-      step: "well-known-root",
-      url: `${base.origin}/.well-known/oauth-protected-resource`,
-    });
+    const [pathSuffixed, root] = protectedResourceMetadataUrls(
+      options.enteredUrl,
+    );
+    attempts.push({ step: "well-known-path-suffixed", url: pathSuffixed });
+    attempts.push({ step: "well-known-root", url: root });
   } catch {
     return {
       discoveredVia: "not-found",
@@ -533,28 +507,47 @@ export async function discoverProtectedResourceMetadata(
   const rejectionNote = rejectedPointer
     ? `the challenge's resource_metadata pointer was refused (it must be an http(s) URL on the target's own origin)`
     : undefined;
-  let lastError: string | undefined;
-  let answered = false;
-  for (const attempt of attempts) {
-    const result = await fetchDiscoveryJson(attempt.url, options);
-    answered ||= result.status !== 0;
-    if (result.status >= 200 && result.status < 300 && result.document) {
-      // `rejectedPointer` rides along on SUCCESS too: the fallback worked, and
-      // the server still published a pointer no conforming client can follow.
-      return {
-        discoveredVia: attempt.step,
-        url: attempt.url,
-        document: result.document,
-        rejectedPointer,
-      };
-    }
-    lastError = result.error ?? `${attempt.url} answered ${result.status}`;
+  const lookup = await findDiscoveryDocument(attempts, options);
+  if (lookup.found) {
+    // `rejectedPointer` rides along on SUCCESS too: the fallback worked, and
+    // the server still published a pointer no conforming client can follow.
+    return {
+      discoveredVia: lookup.candidate.step,
+      url: lookup.candidate.url,
+      document: lookup.document,
+      rejectedPointer,
+    };
   }
   return {
     discoveredVia: "not-found",
     fetchError:
-      [rejectionNote, lastError].filter(Boolean).join("; ") || undefined,
+      [rejectionNote, lookup.lastError].filter(Boolean).join("; ") ||
+      undefined,
     rejectedPointer,
-    ...(answered ? {} : { unanswered: true }),
+    ...(lookup.answered ? {} : { unanswered: true }),
   };
+}
+
+/**
+ * The first of `candidates` that answers 2xx with a JSON object, read with
+ * {@link fetchDiscoveryJson} (so no caller header goes out). A miss names the
+ * last candidate's status or error, and whether anything answered at all.
+ */
+export function findDiscoveryDocument<C extends { url: string }>(
+  candidates: readonly C[],
+  options: DirectoryDiscoveryOptions,
+): Promise<MetadataLookup<C, Record<string, unknown>>> {
+  return findMetadataDocument<C, Record<string, unknown>>(
+    candidates,
+    async (candidate) => {
+      const result = await fetchDiscoveryJson(candidate.url, options);
+      if (result.status >= 200 && result.status < 300 && result.document) {
+        return { document: result.document };
+      }
+      return {
+        error: result.error ?? `${candidate.url} answered ${result.status}`,
+        answered: result.status !== 0,
+      };
+    },
+  );
 }

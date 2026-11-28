@@ -484,9 +484,10 @@ describe("App call backend trips", () => {
     vi.restoreAllMocks();
   });
 
-  /** One authorization's read: the App's durable control beside the
-   * member's admission and current host, side by side. */
-  const FENCE = ["control.read", "admission"];
+  /** One authorization's read: the member's admission and current host,
+   * then the App's durable control, so a close during the admission wait
+   * refuses what follows. */
+  const FENCE = ["admission", "control.read"];
   /**
    * An App tools/call (and the entrypoint call), in order, as each guarantee
    * needs it and no more:
@@ -524,15 +525,18 @@ describe("App call backend trips", () => {
     expect(response.status).toBe(200);
     await settled();
     expect(f.log).toEqual([...APP_CALL, ...AFTER_ANSWER]);
-    // 9 backend calls (was 23): 8 before the answer, 6 of them one after
-    // another (was 15), and one tools/list (was 5).
+    // 9 backend calls (was 23): 8 before the answer, all of them one after
+    // another, since each fence reads the control only after admission, and
+    // one tools/list (was 5).
     expect(backendTrips(APP_CALL)).toBe(8);
     expect(f.serial).toEqual([
       "admission",
       "control.read",
       "admission",
       "receipt.claim+dispatch",
+      "admission",
       "control.read",
+      "admission",
       "control.read",
       "receipt.write:completed",
     ]);

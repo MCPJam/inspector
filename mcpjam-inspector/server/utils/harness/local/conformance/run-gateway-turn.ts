@@ -19,7 +19,9 @@
  *    message continues it on a fresh bridge, as a chat turn resumes it;
  *  - no supervised process listens off loopback;
  *  - Stop leaves no process and no registry record, and nothing in the
- *    workspace.
+ *    workspace;
+ *  - a runtime whose own MCP client dials MCPJam's per-server proxy runs the
+ *    approval journeys in `native-mcp-journeys.ts`.
  *
  * Every verdict is asserted; a run that observes a violation exits non-zero.
  */
@@ -30,6 +32,7 @@ import { join } from "node:path";
 import { tool } from "ai";
 import { z } from "zod";
 import { HarnessAgent, type HarnessAgentSession } from "@ai-sdk/harness/agent";
+import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import { HARNESS_DESCRIPTORS } from "../../../../../shared/harness-descriptors.js";
 import { getHarnessAdapter } from "../../registry.js";
 import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
@@ -50,6 +53,12 @@ import { localPackTarget, LOCAL_HARNESS_POLICY_VERSION, type LocalPlatform } fro
 import { listProcessRecords } from "../process-registry.js";
 import { localRuntimeOf } from "../runtimes/index.js";
 import {
+  runNativeMcpJourneys,
+  startNativeMcpPath,
+  type JourneySession,
+  type NativeMcpPath,
+} from "./native-mcp-journeys.js";
+import {
   descendants,
   freePort,
   isLoopbackListener,
@@ -63,6 +72,10 @@ import {
 const HARNESS_ID = process.argv[2] ?? "";
 const runtime = localRuntimeOf(HARNESS_ID);
 if (runtime === undefined) throw new Error(`${JSON.stringify(HARNESS_ID)} is not a local runtime`);
+const credential = runtime.credential;
+// A runtime on its vendor's own login has no gateway to drive a turn through.
+if (credential.kind !== "gateway") throw new Error(`${HARNESS_ID} runs on a runtime login, not a model gateway`);
+const gatewayAuth = credential.childAuth;
 const ROOT = process.env.CONFORMANCE_ROOT!;
 const PLATFORM = process.platform as LocalPlatform;
 const PACK_TARGET = localPackTarget();
@@ -81,6 +94,8 @@ const scenariosSeen = (text: string) => /SCENARIOS=([A-Z,]*)/.exec(text)?.[1] ??
 const MOCKS: Partial<Record<string, { script: string; env: Record<string, string> }>> = {
   // MCPJam's host tools reach a non-Codex runtime as plain functions.
   "openai-responses": { script: "mock-responses.mjs", env: { MOCK_PROBE_NAMESPACE: "" } },
+  // Under whatever prefix the runtime's MCP client gives the relay's tools.
+  "anthropic-messages": { script: "mock-anthropic.mjs", env: { MOCK_PROBE_SUFFIX: "mcp__probe__echo" } },
 };
 
 // A CI log, not the server's: plain lines on stdout, failures on stderr.
@@ -93,6 +108,7 @@ const mark = (name: string) => {
 };
 const helpers: ChildProcess[] = [];
 let owned: { supervisor: LocalHarnessSupervisor; sessionId: string } | null = null;
+let nativeMcp: NativeMcpPath | undefined;
 
 type TurnResult = { text: string; parts: Record<string, number>; errors: string[]; tools: string[] };
 
@@ -108,6 +124,7 @@ async function runTurn(label: string, agent: HarnessAgent, session: HarnessAgent
     if (part.type === "tool-call") tools.push(part.toolName);
     if (part.type === "error") errors.push(part.error instanceof Error ? part.error.message : String(part.error));
   }
+  mark(`turn_${label}`);
   say(`${label}: parts=${JSON.stringify(parts)} tools=${JSON.stringify(tools)} text=${JSON.stringify(text.slice(0, 200))}`);
   return { text, parts, errors, tools };
 }
@@ -201,7 +218,7 @@ async function main() {
   const sessionId = `${HARNESS_ID}-conformance-${Date.now()}`;
   owned = { supervisor, sessionId };
   let bridgePid = -1;
-  const provider = createSupervisedLocalHarnessProvider({
+  const providerFor = async (id: string) => createSupervisedLocalHarnessProvider({
     harnessId: runtime!.harnessId,
     manifest: plan.manifest,
     runtime: plan.runtime,
@@ -209,7 +226,7 @@ async function main() {
     launcher: resolveNodeLauncher({ bundledNodePath: plan.runtime.nodePath! }),
     workspacePath: plan.workspacePath,
     workspaceGrantId: target.workspaceGrantId,
-    sessionStateDir: sessionStateDirFor(localHarnessStateRoot(), sessionId),
+    sessionStateDir: sessionStateDirFor(localHarnessStateRoot(), id),
     targetKind: "local-native",
     bridgePort: await freePort(),
     bridgeReadinessTimeoutMs: 60_000,
@@ -218,6 +235,7 @@ async function main() {
       mark("bridge_listening");
     },
   });
+  const provider = await providerFor(sessionId);
 
   // A host-executed tool, exactly as the turn runner projects one.
   let probeCalls = 0;
@@ -231,20 +249,25 @@ async function main() {
       },
     }),
   };
-  const harness = getHarnessAdapter(runtime!.harnessId).createHarness({
+  // A runtime whose own MCP client takes MCPJam's per-server proxy gets the
+  // session config a local turn builds; the host tool above covers the rest.
+  if (getHarnessAdapter(runtime!.harnessId).mcpDelivery === "harness") {
+    nativeMcp = await startNativeMcpPath(sessionId);
+  }
+  const harness = await withLocalRuntimeBootstrap(getHarnessAdapter(runtime!.harnessId).createHarness({
     modelId: "gpt-5.5",
-    auth: runtime!.childAuth({ baseUrl: `http://127.0.0.1:${gateway.port}`, sessionCapability: CAPABILITY }),
-    // No forwarded server: the host tool above is the MCP path this checks.
-    mcpJson: { mcpServers: {} },
-  });
-  const agent = new HarnessAgent({
-    harness: await withLocalRuntimeBootstrap(harness, plan.runtime),
-    sandbox: provider,
-    permissionMode: "allow-reads",
+    auth: gatewayAuth({ baseUrl: `http://127.0.0.1:${gateway.port}`, sessionCapability: CAPABILITY }),
+    mcpJson: nativeMcp?.mcpJson ?? { mcpServers: {} },
+  }), plan.runtime);
+  const agentFor = (sandbox: typeof provider, permissionMode: HarnessV1PermissionMode) => new HarnessAgent({
+    harness,
+    sandbox,
+    permissionMode,
     instructions: "You are running a conformance check.",
     sandboxConfig: { workDir: "project" },
     tools: hostTools,
   } as ConstructorParameters<typeof HarnessAgent>[0]);
+  const agent = agentFor(provider, "allow-reads");
   let session = await agent.createSession({ sessionId });
   mark("session_ready");
 
@@ -302,6 +325,40 @@ async function main() {
   }
   await stopAndCheck(session, "the second Stop");
   owned = null;
+  const report: Record<string, unknown> = {};
+  if (nativeMcp) {
+    const journeys = await runNativeMcpJourneys({
+      harnessId: runtime!.harnessId,
+      path: nativeMcp,
+      say,
+      open: async (permissionMode) => {
+        const id = `${HARNESS_ID}-mcp-${permissionMode}-${Date.now()}`;
+        owned = { supervisor, sessionId: id };
+        const journeyAgent = agentFor(await providerFor(id), permissionMode);
+        const journey: JourneySession = {
+          agent: journeyAgent,
+          session: await journeyAgent.createSession({ sessionId: id }),
+          sessionId: id,
+          // Ends the session the way a member's Stop ends a parked one.
+          stop: async () => {
+            const left: string[] = [];
+            const tree = [bridgePid, ...(await descendants(bridgePid))];
+            await supervisor.stopSession(id);
+            for (const pid of tree) if (await running(pid)) left.push(`${permissionMode} Stop left process ${pid} running`);
+            const records = (await listProcessRecords()).length;
+            if (records !== 0) left.push(`${records} process registry record(s) survived the ${permissionMode} Stop`);
+            owned = null;
+            return left;
+          },
+        };
+        return journey;
+      },
+    });
+    failures.push(...journeys.failures);
+    report.nativeMcp = journeys.report;
+    await nativeMcp.close();
+    nativeMcp = undefined;
+  }
   for (const [label, turn] of Object.entries(turns)) {
     if (turn.errors.length > 0) failures.push(`${label} reported stream errors: ${JSON.stringify(turn.errors.slice(0, 3))}`);
     if (turn.text.trim() === "") failures.push(`${label} produced no assistant text`);
@@ -313,7 +370,7 @@ async function main() {
 
   await stopHelpers(helpers);
   await revokeLocalHarnessGrants();
-  process.stdout.write(`\n=====REPORT=====\n${JSON.stringify({ harness: HARNESS_ID, marks, turns, mock: mock.stderr.slice(-12), gateway: gateway.stderr.slice(-6) }, null, 2)}\n`);
+  process.stdout.write(`\n=====REPORT=====\n${JSON.stringify({ harness: HARNESS_ID, marks, turns, ...report, mock: mock.stderr.slice(-12), gateway: gateway.stderr.slice(-6) }, null, 2)}\n`);
   if (failures.length > 0) throw new Error(`${HARNESS_ID} conformance assertions failed:\n  - ${failures.join("\n  - ")}`);
   say("PASS");
 }
@@ -327,6 +384,7 @@ main().catch(async (error: unknown) => {
     current?.supervisor.stopSession(current.sessionId),
     stopHelpers(helpers),
     revokeLocalHarnessGrants(),
+    nativeMcp?.close(),
   ]);
   const report = (line: string) => process.stderr.write(`[${HARNESS_ID}-conformance] ${line}\n`);
   report(`FAILED: ${error instanceof Error ? error.stack : String(error)}`);

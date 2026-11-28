@@ -189,6 +189,29 @@ describe("buildPinnedTurnAccounting", () => {
     expect(accounting.setupFailure).toBe(false);
   });
 
+  it("keeps the call's own result as evidence, and none for a call that never ran", () => {
+    expect(buildPinnedTurnAccounting(probe, successResult).evidence).toEqual({
+      toolCallId: "pinned-0-123",
+      result: { content: [] },
+      isError: false,
+    });
+    // A policy block's refusal text is not what the server returned.
+    const blocked = buildPinnedTurnAccounting(probe, {
+      toolCall: null,
+      toolCallId: "pinned-0-456",
+      toolResult: {
+        content: [
+          { type: "text", text: "Call blocked by tool policy: denied" },
+        ],
+      },
+      summary: "Pinned tool call show_map blocked by tool policy: denied",
+    });
+    expect(blocked.evidence).toEqual({
+      toolCallId: "pinned-0-456",
+      isError: false,
+    });
+  });
+
   it("maps not-connected to iterationError + setupFailure and no phantom call", () => {
     const accounting = buildPinnedTurnAccounting(probe, {
       toolCall: null,

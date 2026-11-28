@@ -64,6 +64,7 @@ export async function prepareTargetGrounding(args: {
     const setupArgs = { ...args, authHeader: `Bearer ${args.bearer}` };
     let platformFailure: SponsoredPlatformFailure | undefined;
     let cause: unknown;
+    let fromTargetServer = false;
     try {
       setup = await runSwarmSetupTurn(setupArgs);
     } catch (error) {
@@ -71,6 +72,7 @@ export async function prepareTargetGrounding(args: {
       setup = error.partial;
       platformFailure = error.platformFailure;
       cause = error.cause;
+      fromTargetServer = error.fromTargetServer;
       // A refused server sign-in is not retried: a second setup turn signs in
       // again, and an authorization server that refused (or throttled) the
       // first request refuses the second the same way. A sign-in that may
@@ -87,18 +89,25 @@ export async function prepareTargetGrounding(args: {
         try {
           setup = await runSwarmSetupTurn({ ...setupArgs, retried: true });
           cause = undefined;
+          fromTargetServer = false;
         } catch (retryError) {
           if (!(retryError instanceof SwarmSetupError)) throw retryError;
           setup = retryError.partial;
           platformFailure = retryError.platformFailure;
           cause = retryError.cause;
+          fromTargetServer = retryError.fromTargetServer;
         }
       }
     }
     await report({ ...identity, setup });
     if (args.signal.aborted) return;
     if (!mayRunAfterSetup(setup))
-      throw new SwarmSetupError(setup, platformFailure, cause);
+      throw new SwarmSetupError(
+        setup,
+        platformFailure,
+        cause,
+        fromTargetServer,
+      );
     // The target runs on setup's evidence; the reason records that the model's
     // report was unreadable, reported missing data, or claimed unbacked items.
     if (setup.status === "completed" && setup.reason)

@@ -26,7 +26,10 @@ import {
   buildConvexAuthHeaders,
 } from "../auth.js";
 import { forceRefreshHostedOAuthAccessToken } from "../../../utils/hosted-oauth-refresh.js";
-import { hostedCredentialDeliveryHeaders } from "../../../services/service-credential.js";
+import {
+  deliveryContractHeaders,
+  hostedCredentialDeliveryHeaders,
+} from "../../../services/service-credential.js";
 import { fetchReplayConfig } from "../../../services/evals/route-helpers.js";
 
 const SERVICE_TOKEN = "svc-token-for-tests-0123456789";
@@ -49,6 +52,15 @@ describe("hostedCredentialDeliveryHeaders", () => {
         INSPECTOR_SERVICE_TOKEN: SERVICE_TOKEN,
       }),
     ).toEqual({});
+  });
+});
+
+describe("deliveryContractHeaders", () => {
+  it("names the delivery contract only for a local Inspector", () => {
+    expect(deliveryContractHeaders(false)).toEqual({
+      "x-mcpjam-delivery-contract": "1",
+    });
+    expect(deliveryContractHeaders(true)).toEqual({});
   });
 });
 
@@ -202,6 +214,8 @@ describe("a local Inspector's calls never claim managed delivery", () => {
     expect(local.buildConvexAuthHeaders({}, "user-jwt")).toEqual({
       "Content-Type": "application/json",
       Authorization: "Bearer user-jwt",
+      // It names the delivery contract instead (see `deliveryContractHeaders`).
+      "x-mcpjam-delivery-contract": "1",
     });
   });
 });

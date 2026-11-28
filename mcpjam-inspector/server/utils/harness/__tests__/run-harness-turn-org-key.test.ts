@@ -59,7 +59,11 @@ vi.mock("@ai-sdk/harness/agent", () => ({
   ),
 }));
 
-vi.mock("../registry.js", () => ({
+vi.mock("../registry.js", async () => ({
+  // The snapshot restore reads the runtime's conversation-state declaration.
+  harnessConversationState: (
+    await vi.importActual<typeof import("../registry.js")>("../registry.js")
+  ).harnessConversationState,
   // Broker-only credential delivery (COMP-23): the turn builds dummy auth
   // pointed at the broker proxy; there is no per-adapter resolveAuth anymore.
   buildBrokerDummyAuth: vi.fn(() => ({
@@ -124,11 +128,6 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({
-    ok: true,
-    credentialRevision: harnessState.leaseRevision,
-  })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
@@ -140,6 +139,13 @@ vi.mock("../harness-model-broker.js", () => ({
       credentialRevision: harnessState.leaseRevision,
     },
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({
+    ok: true,
+    credentialRevision: harnessState.leaseRevision,
+  })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -154,10 +160,8 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 
 import { runHarnessTurn } from "../run-harness-turn";
 import { commitHarnessSessionState } from "../harness-session-state.js";
-import {
-  reserveHarnessBox,
-  startHarnessModelBroker,
-} from "../harness-model-broker.js";
+import { startHarnessModelBroker } from "../harness-model-broker.js";
+import { reserveHarnessBox } from "../harness-box-reservation.js";
 import { stampOrgCredentialRevision } from "../org-credential-continuity";
 import { classifyEvalInfraError } from "../../../services/evals/infra-error-classification";
 

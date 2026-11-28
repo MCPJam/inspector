@@ -43,7 +43,7 @@ Local MCP testing:
   prompts            List and fetch MCP prompts
   apps               Validate MCP Apps metadata and resource wiring
   tasks              Create, inspect and drive MCP Tasks
-  events             List, poll, watch, subscribe to and conformance-check MCP Events (triggers, draft@28ec35e)
+  events             List, poll, watch, subscribe to and conformance-check MCP Events
   oauth              Run MCP OAuth login, proxy, and conformance flows
   xaa                Run the Cross-App Access (ID-JAG) debugger against an MCP server
   protocol           MCP protocol inspection and conformance checks
@@ -86,6 +86,8 @@ mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN --form
 mcpjam events list --url https://your-server.com/mcp
 mcpjam events watch comment.created --url https://your-server.com/mcp \
   --event-args '{"document_id":"doc_1"}' --duration 60
+mcpjam events conformance --profile beta --url https://your-server.com/mcp \
+  --checks events-capability-declared,events-list-shape
 
 # Run MCPJam itself as a stdio MCP server (for Claude Desktop, Claude Code, Cursor, ...)
 mcpjam mcp
@@ -95,6 +97,8 @@ mcpjam cloud login
 mcpjam cloud projects list
 mcpjam cloud eval run --suite smoke
 ```
+
+The CLI selects Events Beta when the server declares `io.modelcontextprotocol/events` on MCP `2026-07-28`. Use `--profile draft` or `--profile chatgpt` to exercise the corresponding top-level `capabilities.events` contract. Webhook conformance requires a receiver the MCP server can reach. Run `mcpjam events conformance --help` for receiver options.
 
 ## Why
 
@@ -194,7 +198,7 @@ Use `--format json|human` for the raw command result. Use `--reporter json-summa
 
 ## Telemetry
 
-`mcpjam` collects anonymous command-level telemetry so we can understand CLI usage and reliability. Events include the command/subcommand name, success/failure, exit code, duration, CLI version, Node version, OS, CPU architecture, transport type (`http` or `stdio`), `platform: "cli"`, and coarse CI metadata (`is_ci` and a provider enum such as `github_actions`). Conformance commands also send one `conformance_run_triggered` event per run, with only `run_source: "cli"`.
+`mcpjam` collects anonymous command-level telemetry so we can understand CLI usage and reliability. Events include the command/subcommand name, success/failure, exit code, an outcome enum (`ok`, `check_failed`, `error`, `usage_error` or `interrupted`), duration, CLI version, Node version, OS, CPU architecture, transport type (`http` or `stdio`), `platform: "cli"`, and coarse CI metadata (`is_ci` and a provider enum such as `github_actions`). A usage error names only the registered command path it matched, or `(unknown)`. Conformance commands also send one `conformance_run_triggered` event per run, with `run_source: "cli"`, the suite family (`protocol`, `oauth`, `apps`, `tasks`, `events` or `run`), whether it was one test or a suite, and the CLI version. `mcpjam mcp` sends one `cli_mcp_tool_called` event per tool call, with the name of the MCPJam tool that was called (such as `call_tool`), success, a safe error code and duration. It never sends the names of the tools on the server you are testing.
 
 Telemetry is enabled by default. The first command invocation that is not opted out writes `telemetry.json` with `enabled: true` and a random install UUID.
 

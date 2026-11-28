@@ -22,6 +22,8 @@ import { refuseWhileDraining } from "../../services/lifecycle/admission.js";
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
 import serverGroups from "./server-groups.js";
+import mockServers from "./mock-servers.js";
+import mockRuns from "./mock-runs.js";
 import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
@@ -48,6 +50,7 @@ import studies from "./studies.js";
 import shares from "./shares.js";
 import sandboxImages from "./images.js";
 import evalBacktest from "./eval-backtest.js";
+import evalRunInsights from "./eval-run-insights.js";
 import evalIngest from "./eval-ingest.js";
 import modelLeases from "./model-leases.js";
 import conformanceIngest from "./conformance-ingest.js";
@@ -71,8 +74,15 @@ import hostCatalog from "./host-catalog.js";
 import browserSessions from "./browser-sessions.js";
 import tunnels from "./tunnels.js";
 import readiness from "./readiness.js";
+import directoryReviewerAttempts from "./directory-reviewer-attempts.js";
 import directorySubmissions from "./directory-submissions.js";
+import directorySubmissionHandoff from "./directory-submission-handoff.js";
+import directoryTestPlans from "./directory-test-plans.js";
+import directorySubmissionEvals from "./directory-submission-evals.js";
 import conformanceRuns from "./conformance-runs.js";
+import productionTrafficOtlp from "./production-traffic-otlp.js";
+import productionTrafficReads from "./production-traffic-reads.js";
+import productionTrafficAdmin from "./production-traffic-admin.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
 const v1 = new Hono();
@@ -84,6 +94,12 @@ const v1 = new Hono();
 // share-link previews. GET-only router; no project/user data.
 v1.route("/", hostCatalog);
 v1.route("/", publicModels);
+// The production traffic OTLP receiver also mounts BEFORE the bearer
+// middleware: its caller is an OpenTelemetry exporter holding a producer
+// credential, which is not a user, and the route verifies that credential
+// against Convex itself on every batch. POST-only, one exact path; the
+// production traffic reads and admin routes mount below with the user routes.
+v1.route("/", productionTrafficOtlp);
 
 // Every v1 live-op route requires bearer auth + guest rate limiting, matching
 // the /api/web/* MCP operation routes.
@@ -175,6 +191,9 @@ v1.route("/", servers);
 // Convex reads are membership-gated and creating one is a member write, so
 // there is no share-link flow that needs them.
 v1.route("/", serverGroups);
+// Mock servers (guest-DENIED by default).
+v1.route("/", mockServers);
+v1.route("/", mockRuns);
 v1.route("/", serverConnections);
 v1.route("/", tools);
 v1.route("/", prompts);
@@ -183,10 +202,15 @@ v1.route("/", serverSkills);
 v1.route("/", exporter);
 v1.route("/", evals);
 v1.route("/", readiness);
+// Reviewer sign-in attempts, under their submission: guest-DENIED like it.
+v1.route("/", directoryReviewerAttempts);
 // Directory submissions and the directory flows they rehearse. Guest-DENIED
 // by default (no GUEST_ALLOWED_V1_RULES entry): writes need a project member,
 // and a run started here dials the submission's server.
 v1.route("/", directorySubmissions);
+v1.route("/", directorySubmissionHandoff);
+v1.route("/", directoryTestPlans);
+v1.route("/", directorySubmissionEvals);
 v1.route("/", conformanceRuns);
 v1.route("/", clients);
 v1.route("/", harness);
@@ -210,9 +234,7 @@ v1.route("/", plugins);
 // member-gated, and a share-link visitor has no business enumerating skills.
 v1.route("/", skills);
 // Goals + goal runs — the public API for Swarms, with the pre-rename
-// `/journeys` paths kept alongside as deprecated aliases. Flag-gated beta
-// (`sandboxes-enabled`, enforced server-side on writes), so these are absent
-// from the OpenAPI spec and from the MCP/agent/workspace catalogs until GA.
+// `/journeys` paths kept alongside as deprecated aliases.
 // Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches them, and
 // none should — a goal run spends hosted-model credits.
 // GENERATION MOUNTS FIRST, and the order is load-bearing rather than
@@ -250,11 +272,10 @@ v1.route("/", swarms);
 // against the org's shared daily ledger.
 v1.route("/", swarmInsights);
 // Scenarios — publishing a project environment for user testing. WRITES, so
-// they live here rather than in the read-proxy catalog. Publishing is behind
-// the `sandboxes-enabled` beta flag server-side; unpublishing deliberately is
-// not. Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches these,
-// and the existing scenario guest GETs (which share-link flows depend on) stay
-// exactly as they are until a guest security review says otherwise.
+// they live here rather than in the read-proxy catalog. Guest-DENIED by
+// default: no GUEST_ALLOWED_V1_RULES entry matches these, and the existing
+// scenario guest GETs (which share-link flows depend on) stay exactly as they
+// are until a guest security review says otherwise.
 v1.route("/", scenarios);
 // Studies — the list, one study's merged read, and everything you do with a
 // study ONCE IT EXISTS: read what it produced, and control who can reach it.
@@ -275,6 +296,7 @@ v1.route("/", shares);
 // project-scoped caller.
 v1.route("/", sandboxImages);
 v1.route("/", evalBacktest);
+v1.route("/", evalRunInsights);
 v1.route("/", evalIngest);
 // Model leases for SDK evals running outside the platform. Guest-DENIED by
 // default (no GUEST_ALLOWED_V1_RULES entry) — every lease this mints can
@@ -336,6 +358,12 @@ v1.route("/", capabilities);
 v1.route("/", evalDisclosure);
 v1.route("/", tunnels);
 v1.route("/", browserSessions);
+// Production traffic (PT-1): members read counts and calls, metadata only;
+// admins manage producer credentials and the ingest switch. Convex checks
+// both with the caller's own bearer. Guest-DENIED by default (no
+// GUEST_ALLOWED_V1_RULES entry).
+v1.route("/", productionTrafficReads);
+v1.route("/", productionTrafficAdmin);
 
 v1.onError((error, c) => v1OnError(error, c));
 

@@ -160,6 +160,24 @@ describe("replay masking helpers", () => {
     expect(maskReplayAttribute("data-state", "open")).toBe("open");
   });
 
+  it("keeps an inlined stylesheet's text but scrubs credentials in it", () => {
+    const css = '.btn { color: red; } @font-face { font-family: "Caveat"; }';
+    expect(maskReplayAttribute("_cssText", css)).toBe(css);
+    const leaked = maskReplayAttribute(
+      "_cssText",
+      ".hero { background: url(https://app.mcpjam.com/share/abc?token=s3cr3t); }",
+    );
+    expect(leaked).not.toContain("s3cr3t");
+  });
+
+  it("keeps rrweb's layout placeholders but not its media or URL ones", () => {
+    expect(maskReplayAttribute("rr_width", "120px")).toBe("120px");
+    expect(maskReplayAttribute("rr_scrollTop", "40")).toBe("40");
+    for (const name of ["rr_dataURL", "rr_src", "rr_mediaState"]) {
+      expect(maskReplayAttribute(name, "acme")).toBe("***");
+    }
+  });
+
   it("keeps style but scrubs the URLs in it", () => {
     expect(
       maskReplayAttribute(

@@ -28,6 +28,7 @@ import {
   type RuntimeSecret,
 } from "../computers/convex-secrets-client.js";
 import { logger } from "../logger.js";
+import { isReviewerSecretName } from "../secrets/reviewer-secrets.js";
 
 export type { RuntimeSecret };
 
@@ -57,7 +58,13 @@ export async function fetchRuntimeSecrets(
       environmentId: args.environmentId,
       ...(args.chatSessionId ? { chatSessionId: args.chatSessionId } : {}),
     });
-    return { ok: true, secrets };
+    // Reviewer credentials go only to a readiness run's sign-in browser, with
+    // the origins it may type them on. A session here could print one, or
+    // type it on any page.
+    return {
+      ok: true,
+      secrets: secrets.filter((secret) => !isReviewerSecretName(secret.name)),
+    };
   } catch (error) {
     logger.warn(
       "[runtime-secrets] fetch failed; preserving prior secret state",

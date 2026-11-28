@@ -56,7 +56,9 @@ vi.mock("e2b", () => ({
   SandboxNotFoundError: mocks.FakeSandboxNotFoundError,
 }));
 
+import { BOX_MEMORY_COMMAND } from "../box-memory.js";
 import { reapHarnessBridgesCommand } from "../bridge-reaper.js";
+import { runtimeReadAheadCommand } from "../runtime-read-ahead.js";
 import { logger } from "../../logger.js";
 import {
   createBridgeStderrRedactor,
@@ -83,6 +85,49 @@ afterEach(() => {
 });
 
 const provider = () => createE2BHarnessSandboxProvider({ sandboxId: "sbx_1" });
+
+describe("optional runtime read-ahead", () => {
+  it("does not add a read-ahead call to a resumed session", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", undefined);
+    await createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", harnessId: "codex" }).resumeSession!({ sessionId: "existing" });
+    expect(mocks.run).toHaveBeenCalledTimes(1);
+    expect(mocks.run).toHaveBeenCalledWith(harnessPnpmGuardCommand(), expect.any(Object));
+  });
+
+  it("keeps normal commands unchanged with the flag off", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", "0");
+    await createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", harnessId: "codex" }).createSession();
+    expect(mocks.run).toHaveBeenCalledTimes(1);
+    expect(mocks.run).toHaveBeenCalledWith(harnessPnpmGuardCommand(), expect.any(Object));
+  });
+
+  it("overlaps the immutable hint with the guard without delivering session credentials", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", undefined);
+    let finishHint!: () => void;
+    const hint = new Promise<void>((resolve) => { finishHint = resolve; });
+    mocks.run.mockImplementation(async (command: string) => {
+      if (command === runtimeReadAheadCommand("codex")) await hint;
+      return { stdout: '{"outcome":"cached","bytes":0,"durationMs":1}' };
+    });
+    const delivered = vi.fn();
+    let ready = false;
+    const connecting = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1", harnessId: "codex", sessionEnv: { SECRET: "fixture-only" },
+      onSessionEnvUsed: delivered,
+    }).createSession().then(() => { ready = true; });
+    await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(2));
+    expect(ready).toBe(false);
+    expect(delivered).not.toHaveBeenCalled();
+    expect(mocks.run).toHaveBeenCalledWith(runtimeReadAheadCommand("codex"), { timeoutMs: 5000 });
+    finishHint();
+    await connecting;
+    expect(ready).toBe(true);
+    expect(delivered).not.toHaveBeenCalled();
+  });
+});
 
 describe("broker-prepared connection", () => {
   it("selects the shortcut only after the caller records broker success", async () => {
@@ -219,6 +264,15 @@ describe("the pnpm guard", () => {
     await expect(provider().createSession()).resolves.toMatchObject({
       id: "sbx_1",
     });
+  });
+
+  it("leaves the guard to a caller that runs it fenced (a box preparation)", async () => {
+    await createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      skipPnpmGuard: true,
+    }).createSession();
+    expect(sandboxState.connect).toHaveBeenCalledTimes(1);
+    expect(sandboxState.run).not.toHaveBeenCalled();
   });
 
   it("installs the template's pinned pnpm, never whatever is current", async () => {
@@ -582,6 +636,76 @@ describe("exec result normalization", () => {
       stdout: "out",
       stderr: "err",
     });
+  });
+
+  it("says why E2B stopped a command it reports as exit -1", async () => {
+    const session = await provider().createSession();
+    const killed = new FakeCommandExitError(-1, "Downloading", "");
+    Object.assign(killed, { error: "signal: killed" });
+    sandboxState.run.mockImplementation(async (command: string) => {
+      if (command === BOX_MEMORY_COMMAND) {
+        return { stdout: "MemTotal: 484444 kB\noom_kill 1\n" };
+      }
+      throw killed;
+    });
+
+    const result = await session.run({ command: "pnpm install" });
+    expect(result).toMatchObject({ exitCode: -1, stdout: "Downloading" });
+    expect(result.stderr).toMatch(
+      /killed this command \(signal: killed\).*likely ran out of memory.*473 MiB/s,
+    );
+  });
+});
+
+describe("box memory", () => {
+  const opencode = () =>
+    createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      harnessId: "opencode",
+    });
+
+  it("refuses OpenCode on a box under 1 GiB without starting the pnpm guard", async () => {
+    // The guard installs pnpm when it is missing, for up to its timeout: the
+    // refusal must not wait on it.
+    sandboxState.run.mockImplementation(async (command: string) => {
+      if (command === BOX_MEMORY_COMMAND) {
+        return { stdout: "MemTotal: 484444 kB\n" };
+      }
+      if (command === harnessPnpmGuardCommand()) {
+        return new Promise(() => {});
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const failure = await Promise.resolve(opencode().createSession()).catch(
+      (error: unknown) => error,
+    );
+    expect(harnessFailureEvidenceOf(failure)).toEqual({
+      source: "sandbox_setup",
+      code: "box_memory_too_small",
+    });
+    expect(sandboxState.run).not.toHaveBeenCalledWith(
+      harnessPnpmGuardCommand(),
+      expect.anything(),
+    );
+  });
+
+  it("starts OpenCode on a 1 GiB box, and never checks on resume", async () => {
+    sandboxState.run.mockImplementation(async (command: string) => ({
+      exitCode: 0,
+      stdout: command === BOX_MEMORY_COMMAND ? "MemTotal: 999424 kB\n" : "",
+      stderr: "",
+    }));
+    const p = opencode();
+    await p.createSession();
+    expect(sandboxState.run).toHaveBeenCalledWith(BOX_MEMORY_COMMAND, {
+      timeoutMs: 5000,
+    });
+    sandboxState.run.mockClear();
+    await p.resumeSession!({ sessionId: "session" });
+    expect(sandboxState.run).not.toHaveBeenCalledWith(
+      BOX_MEMORY_COMMAND,
+      expect.anything(),
+    );
   });
 });
 

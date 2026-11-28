@@ -268,7 +268,7 @@ describe("SuiteHeader", () => {
     expect(onShowCasesSidebar).toHaveBeenCalled();
   });
 
-  it("fires the export callback when Setup SDK is clicked", async () => {
+  it("fires the export callback when Set up SDK is clicked", async () => {
     const user = userEvent.setup();
     const onOpenExportSuite = vi.fn();
 
@@ -281,7 +281,7 @@ describe("SuiteHeader", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: "Setup SDK" }));
+    await user.click(screen.getByRole("button", { name: "Set up SDK" }));
 
     expect(onOpenExportSuite).toHaveBeenCalledTimes(1);
   });
@@ -472,7 +472,7 @@ describe("SuiteHeader", () => {
     expect(actions).toHaveClass("flex-wrap");
     expect(actions).toHaveClass("justify-end");
 
-    const setupSdk = screen.getByRole("button", { name: /Setup SDK/i });
+    const setupSdk = screen.getByRole("button", { name: /Set up SDK/i });
     const generate = screen.getByRole("button", { name: /^Generate$/i });
     const newCase = screen.getByRole("button", { name: /New case/i });
     const runAll = screen.getByRole("button", {
@@ -695,7 +695,7 @@ describe("SuiteHeader — a suite managed by CI", () => {
     expect(screen.getByRole("button", { name: /Run all/i })).toBeTruthy();
   });
 
-  it("offers no Setup CI or Settings on a locked suite", () => {
+  it("offers no Set up CI or Settings on a locked suite", () => {
     renderWithProviders(
       <SuiteHeader
         {...(overviewProps as never)}
@@ -704,8 +704,8 @@ describe("SuiteHeader — a suite managed by CI", () => {
       />,
     );
 
-    // Setup CI wires a suite INTO CI; a suite CI already owns has nothing to
+    // Set up CI wires a suite INTO CI; a suite CI already owns has nothing to
     // wire, and the flow writes suite configuration.
-    expect(screen.queryByRole("button", { name: /Setup CI/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Set up CI/i })).toBeNull();
   });
 });

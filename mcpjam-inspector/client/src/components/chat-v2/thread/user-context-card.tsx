@@ -1,7 +1,8 @@
 /**
  * A context message the user added — a skill, a tool they ran by hand, an MCP
  * prompt's example assistant turn — or an MCP event a trigger ran on, shown as
- * a compact card rather than as a message they typed. Expanding it shows exactly what the model reads. Widget
+ * a compact card rather than as a message they typed. Expanding it shows exactly what the model reads,
+ * except an event, which shows its instructions and data apart. Widget
  * state is for the model only and renders nothing.
  */
 import {
@@ -13,10 +14,12 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
+import { parseEventTurnParts } from "@/shared/event-turn-parts";
 import type {
   UserContextBlock,
   UserContextKind,
 } from "@/shared/user-context-message";
+import { EventContextBody } from "./event-context-body";
 
 type ShownKind = Exclude<UserContextKind, "widget-state">;
 type ShownBlock = UserContextBlock & { kind: ShownKind };
@@ -30,8 +33,8 @@ const PRESENTATION: Record<ShownKind, { Icon: LucideIcon; label: string }> = {
     Icon: MessageSquareQuote,
     label: "Prompt example (assistant)",
   },
-  // An MCP event a trigger ran on. Its data is untrusted and shown only as
-  // the plain text the model read.
+  // An MCP event a trigger or a Playground event connection ran on. Its data
+  // is untrusted, so it is shown only as text or JSON values.
   event: { Icon: Radio, label: "Event" },
 };
 
@@ -63,6 +66,10 @@ export function UserContextCard({
   const { Icon, label } = PRESENTATION[first.kind];
   const files = rest.filter((block) => block.kind === "skill-file").length;
   const content = shown.map((block) => block.body.trim()).join("\n\n");
+  const event =
+    first.kind === "event" && shown.length === 1
+      ? parseEventTurnParts(first.body)
+      : null;
 
   return (
     <div
@@ -92,9 +99,13 @@ export function UserContextCard({
             className="shrink-0 text-muted-foreground transition-transform group-open/context:rotate-90"
           />
         </summary>
-        <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words border-t border-border px-2 py-2 font-mono text-[11px] leading-relaxed text-foreground/80">
-          {content}
-        </pre>
+        {event ? (
+          <EventContextBody parts={event} />
+        ) : (
+          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words border-t border-border px-2 py-2 font-mono text-[11px] leading-relaxed text-foreground/80">
+            {content}
+          </pre>
+        )}
       </details>
     </div>
   );

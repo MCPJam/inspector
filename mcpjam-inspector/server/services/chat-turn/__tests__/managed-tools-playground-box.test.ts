@@ -45,7 +45,10 @@ vi.mock("../../../routes/web/mcpjam-platform-client.js", () => ({
   buildMcpjamPlatformClient: () => undefined,
 }));
 import { prepareManagedTools } from "../managed-tools.js";
+import { startPlaygroundBoxEarly } from "../owned-playground-box.js";
+import { playgroundBoxPlan } from "../playground-box-plan.js";
 import { TurnResources } from "../resources.js";
+import { TurnTiming } from "../../../utils/turn-timing.js";
 
 type Setup = Parameters<typeof prepareManagedTools>[0]["setup"];
 const harnessSetup = (harness: string) =>
@@ -77,19 +80,37 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function prepareTurn(harness: string) {
+async function prepareTurn(
+  harness: string,
+  timing = new TurnTiming(),
+  bookedByRoute = false,
+) {
   const app = new Hono<{ Variables: { guestId?: string } }>();
   let failure: unknown;
   let sandboxId: string | undefined;
   app.post("/", async (c) => {
     if (m.guestId) c.set("guestId", m.guestId);
+    const resources = new TurnResources(() => {});
+    // As the route books it with MCPJAM_HARNESS_BOX_FIRST=1: right after
+    // setup, by the same plan.
+    const plan = playgroundBoxPlan({
+      c,
+      bearerToken: "bearer",
+      timing,
+      setup: harnessSetup(harness),
+    });
+    const earlyPlaygroundBox = bookedByRoute
+      ? startPlaygroundBoxEarly(resources, plan.reason, plan.args, false)
+      : undefined;
     try {
       const tools = await prepareManagedTools({
+        ...(earlyPlaygroundBox ? { earlyPlaygroundBox } : {}),
         c,
         rawBody: {},
         bearerToken: "bearer",
         localIngress: false,
-        resources: new TurnResources(() => {}),
+        resources,
+        timing,
         setup: harnessSetup(harness),
         connections: { validatedPageTools: [] },
       });
@@ -124,6 +145,14 @@ describe("the Playground box and the secrets read", () => {
     await vi.waitFor(() => expect(m.events).toContain("box:start"));
     expect(m.events).toEqual(["box:start", "secrets:start"]);
     secrets.resolve({ ok: true, secrets: [] });
+    expect(await turn.done).toEqual({ failure: undefined, sandboxId: "sbx" });
+    expect(m.acquire).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes the box the route booked right after setup instead of booking again", async () => {
+    m.secrets.mockResolvedValue({ ok: true, secrets: [] });
+    m.acquire.mockResolvedValue({ ok: true, box });
+    const turn = await prepareTurn("claude-code", new TurnTiming(), true);
     expect(await turn.done).toEqual({ failure: undefined, sandboxId: "sbx" });
     expect(m.acquire).toHaveBeenCalledTimes(1);
   });
@@ -168,6 +197,25 @@ describe("the Playground box and the secrets read", () => {
     expect(failure).toMatchObject({ status: 409 });
     expect(m.acquire).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["early, while the secrets read is in flight", "claude-code"],
+    ["after the member's own credential check", "cursor"],
+  ])(
+    "counts the box booked %s toward the turn's box wake",
+    async (_label, harness) => {
+      let now = 0;
+      const timing = new TurnTiming({ now: () => now });
+      m.secrets.mockResolvedValue({ ok: true, secrets: [] });
+      m.acquire.mockImplementation(async () => {
+        now += 3_100;
+        return { ok: true, box };
+      });
+      const turn = await prepareTurn(harness, timing);
+      expect(await turn.done).toEqual({ failure: undefined, sandboxId: "sbx" });
+      expect(timing.boxAcquisitionMs()).toBe(3_100);
+    },
+  );
 
   it("leaves a guest's turn without a Playground box", async () => {
     m.guestId = "guest-1";

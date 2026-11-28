@@ -52,6 +52,14 @@ describe("buildRedesignedHostCanvas", () => {
     expect(data.clientCaps).toHaveLength(6);
   });
 
+  it("gives a saved client's card its Harness section, with the draft's state", () => {
+    expect(matrixData(buildVm({ hostId: "host_1", isDirty: true })).harness).toEqual(
+      { hostId: "host_1", isDirty: true },
+    );
+    // A canvas that names no saved client has nothing to read or change.
+    expect(matrixData(buildVm()).harness).toBeUndefined();
+  });
+
   it("falls back to 'Untitled host' when name is whitespace", () => {
     const data = matrixData(buildVm({ hostName: "   " }));
     expect(data.hostName).toBe("Untitled host");
@@ -648,6 +656,15 @@ describe("buildRedesignedHostCanvas — Project Computers islands", () => {
       expect(vm.nodes.some((n) => n.id === COMPUTER_NODE_ID)).toBe(false);
       expect(vm.edges.some((e) => e.id === "host-to-computer")).toBe(false);
     }
+  });
+
+  it("emits no Computer island for a client on its vendor's agent loop either", () => {
+    const draft = emptyHostConfigInputV2();
+    draft.agentLoop = "codex";
+    draft.computer = { kind: "personal" };
+    const vm = buildVm({ draft, computersEnabled: true });
+    expect(vm.nodes.some((n) => n.id === COMPUTER_NODE_ID)).toBe(false);
+    expect(vm.edges.some((e) => e.id === "host-to-computer")).toBe(false);
   });
 
   it("maps attached built-in tool ids through the catalog for labels", () => {

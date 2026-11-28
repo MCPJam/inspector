@@ -58,6 +58,7 @@ export interface HostedDirectMrtrPending {
   expiresAt: number;
   /** Echoed back on every resume; part of the server-side binding fingerprint. */
   negotiatedEra: string;
+  pluginFormProfile?: import("@/shared/plugin-extensions/form-plan").PluginFormProfile;
 }
 
 export function isHostedDirectMrtrPending(
@@ -181,6 +182,7 @@ function roundFromPending(
     | "method"
     | "operationLabel"
     | "expiresAt"
+    | "pluginFormProfile"
   >,
   requests: MrtrInputRequestDisplay[],
 ) {
@@ -196,6 +198,7 @@ function roundFromPending(
       : {}),
     requests,
     expiresAt: pending.expiresAt,
+    ...(pending.pluginFormProfile ? { pluginFormProfile: pending.pluginFormProfile } : {}),
     timestamp: new Date().toISOString(),
   };
 }

@@ -86,13 +86,6 @@ interface ElectronAPI {
     isMaximized: () => Promise<boolean>;
   };
 
-  // MCP operations (for future use)
-  mcp: {
-    connect: (config: any) => Promise<any>;
-    disconnect: (id: string) => Promise<void>;
-    listServers: () => Promise<any[]>;
-  };
-
   // OAuth operations
   oauth: {
     onCallback: (callback: (url: string) => void) => void;
@@ -158,12 +151,6 @@ const electronAPI: ElectronAPI = {
     maximize: () => ipcRenderer.send("window:maximize"),
     close: () => ipcRenderer.send("window:close"),
     isMaximized: () => ipcRenderer.invoke("window:is-maximized"),
-  },
-
-  mcp: {
-    connect: (config) => ipcRenderer.invoke("mcp:connect", config),
-    disconnect: (id) => ipcRenderer.invoke("mcp:disconnect", id),
-    listServers: () => ipcRenderer.invoke("mcp:list-servers"),
   },
 
   oauth: {

@@ -408,6 +408,50 @@ describe("ToolList", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  it("offers to connect a server above a harness's built-ins when none is connected", () => {
+    const onAddServerRequested = vi.fn();
+    render(
+      <ToolList
+        {...defaultProps}
+        hasConnectedServer={false}
+        onAddServerRequested={onAddServerRequested}
+        builtinTools={[{ key: "bash", name: "Bash", description: "Run a command" }]}
+        onSelectBuiltin={vi.fn()}
+      />,
+    );
+
+    const prompt = screen.getByText(
+      "No server connected yet. Connect one to load its tools and use them in chat.",
+    );
+    expect(
+      prompt.compareDocumentPosition(screen.getByText("Bash")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /connect a server/i }));
+    expect(onAddServerRequested).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /^servers$/i }));
+    expect(
+      screen.queryByRole("button", { name: /connect a server/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Bash")).toBeInTheDocument();
+  });
+
+  it("does not offer to connect above built-ins once a server is connected", () => {
+    render(
+      <ToolList
+        {...defaultProps}
+        builtinTools={[{ key: "bash", name: "Bash", description: "Run a command" }]}
+        onSelectBuiltin={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Bash")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /connect a server/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("prefers the search-miss message when a search hides a harness's built-ins", () => {
     render(
       <ToolList

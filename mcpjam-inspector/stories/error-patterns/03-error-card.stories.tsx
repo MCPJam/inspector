@@ -28,7 +28,7 @@ import { normalizedError, useToastSpecimen } from "./_support/specimens";
  * source, and this page is about when to reach for the pattern.
  */
 const meta = {
-  title: "Error Patterns/3. ErrorCard",
+  title: "Components/Error Patterns/3. ErrorCard",
   parameters: {
     layout: "padded",
     docs: {

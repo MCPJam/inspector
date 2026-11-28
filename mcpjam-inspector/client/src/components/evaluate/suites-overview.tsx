@@ -11,7 +11,7 @@ import { formatDistanceToNow } from "date-fns";
 import { AlertTriangle, Loader2, Play, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
 import { useConvexAuth } from "convex/react";
@@ -37,6 +37,7 @@ interface SuitesOverviewProps {
     "environmentId" | "hostId" | "modelId"
   >[];
   hostNamesById?: ReadonlyMap<string, string>;
+  hostStylesById?: ReadonlyMap<string, string | null | undefined>;
   hostModelsById?: ReadonlyMap<string, string>;
   overview: EvalSuiteOverviewEntry[];
   onSelectSuite: (id: string) => void;
@@ -82,6 +83,9 @@ export function ConnectedSuitesOverview({
       {...props}
       environments={environments}
       hostNamesById={new Map(hosts.map((host) => [host.hostId, host.name]))}
+      hostStylesById={
+        new Map(hosts.map((host) => [host.hostId, host.hostStyle]))
+      }
       hostModelsById={new Map(hosts.map((host) => [host.hostId, host.modelId]))}
     />
   );
@@ -114,6 +118,7 @@ export function SuitesOverview(props: SuitesOverviewProps) {
 function OverviewBody({
   environments = [],
   hostNamesById = new Map(),
+  hostStylesById = new Map(),
   hostModelsById = new Map(),
   overview,
   onSelectSuite,
@@ -147,17 +152,20 @@ function OverviewBody({
       // A host id is not a name. Until `useHostList` resolves, an unnamed id
       // is UNKNOWN, not a label — printing the raw id put opaque Convex ids in
       // the column and, worse, in the filter's option list.
+      const hostStyles = new Map<string, string | null | undefined>();
       const clients = [
         ...new Set(
           ids
-            .map(
-              (id) =>
+            .map((id) => {
+              const name =
                 hostNamesById.get(id)?.trim() ||
                 suite.hostAttachments
                   ?.find((host) => host.namedHostId === id)
                   ?.hostName?.trim() ||
-                null,
-            )
+                null;
+              if (name) hostStyles.set(name, hostStylesById.get(id));
+              return name;
+            })
             .filter((name): name is string => Boolean(name)),
         ),
       ];
@@ -177,7 +185,7 @@ function OverviewBody({
             : [suite.defaultConfig?.modelId || null],
         ),
       ];
-      return [suite._id, { clients, models }] as const;
+      return [suite._id, { clients, hostStyles, models }] as const;
     });
     return new Map(entries);
   }, [overview, environments, hostNamesById, hostModelsById]);
@@ -335,6 +343,7 @@ function OverviewBody({
                 </span>
                 <ClientCell
                   names={clientsForSuite(entry.suite)}
+                  hostStyles={resolved.get(entry.suite._id)?.hostStyles}
                   themeMode={themeMode}
                   className="flex"
                 />
@@ -510,10 +519,12 @@ function RowDeleteControl({
 
 function ClientCell({
   names,
+  hostStyles,
   themeMode,
   className,
 }: {
   names: string[];
+  hostStyles?: ReadonlyMap<string, string | null | undefined>;
   themeMode: "light" | "dark";
   className?: string;
 }) {
@@ -535,7 +546,10 @@ function ClientCell({
             className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-background ring-1 ring-background"
           >
             <img
-              src={resolveHostLogoByName(name, themeMode)}
+              src={resolveHostLogo(
+                { name, hostStyle: hostStyles?.get(name) },
+                themeMode,
+              )}
               alt=""
               className="size-3.5 object-contain"
             />

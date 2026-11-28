@@ -1,5 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { harnessQuietClaudeStartup, hostedWarmAgentEnabled } from "../harness-flags.js";
+import {
+  harnessApiWarmEnabled,
+  harnessKeepAgentThroughPause,
+  harnessPrepareBoxEnabled,
+  harnessPrepareBoxSwitchedOn,
+  harnessQuietClaudeStartup,
+  hostedWarmAgentEnabled,
+} from "../harness-flags.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -30,6 +37,53 @@ it("treats an empty restriction as unrestricted", () => {
   vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", undefined);
   vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", " , ");
   expect(hostedWarmAgentEnabled("organization-a")).toBe(true);
+});
+
+it.each([undefined, "", "1", "TRUE", "false"])(
+  "keeps no agent through its box's pause unless switched on (%s)",
+  (value) => {
+    vi.stubEnv("MCPJAM_HARNESS_KEEP_THROUGH_PAUSE", value);
+    expect(harnessKeepAgentThroughPause()).toBe(false);
+  },
+);
+
+it("keeps an agent through its box's pause when switched on, read per call", () => {
+  vi.stubEnv("MCPJAM_HARNESS_KEEP_THROUGH_PAUSE", "true");
+  expect(harnessKeepAgentThroughPause()).toBe(true);
+  vi.stubEnv("MCPJAM_HARNESS_KEEP_THROUGH_PAUSE", "false");
+  expect(harnessKeepAgentThroughPause()).toBe(false);
+});
+
+it.each([undefined, "", "0", "false", "yes"])("keeps box preparation off unless switched on (%s)", (value) => {
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX", value);
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS", undefined);
+  expect(harnessPrepareBoxSwitchedOn()).toBe(false);
+  expect(harnessPrepareBoxEnabled("organization-a")).toBe(false);
+});
+
+it.each(["1", "true", " TRUE "])("prepares boxes for every organization once on (%s)", (value) => {
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX", value);
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS", undefined);
+  expect(harnessPrepareBoxSwitchedOn()).toBe(true);
+  expect(harnessPrepareBoxEnabled("organization-a")).toBe(true);
+  expect(harnessPrepareBoxEnabled(undefined)).toBe(false);
+});
+
+it("limits box preparation to the listed organizations", () => {
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX", "true");
+  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS", " organization-a, ,organization-b ");
+  expect(harnessPrepareBoxEnabled("organization-a")).toBe(true);
+  expect(harnessPrepareBoxEnabled("organization-c")).toBe(false);
+});
+
+it.each([undefined, "", "1", "TRUE", "false"])("keeps API warm reuse off unless set to true (%s)", (value) => {
+  vi.stubEnv("MCPJAM_HARNESS_API_WARM", value);
+  expect(harnessApiWarmEnabled()).toBe(false);
+});
+
+it("turns API warm reuse on when set to true", () => {
+  vi.stubEnv("MCPJAM_HARNESS_API_WARM", "true");
+  expect(harnessApiWarmEnabled()).toBe(true);
 });
 
 it.each([undefined, "", "1", "TRUE", "false"])("keeps Claude Code's start-up traffic unless switched on (%s)", (value) => {

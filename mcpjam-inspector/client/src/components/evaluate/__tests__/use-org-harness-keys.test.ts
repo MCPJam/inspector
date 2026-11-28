@@ -44,6 +44,16 @@ describe("useOrgHarnessKeys", () => {
     });
   });
 
+  it("reads a paired Cursor client's runtime from its agent loop", () => {
+    renderHook(() =>
+      useOrgHarnessKeys("project-1", strict, [
+        { harness: null, agentLoop: "cursor" },
+      ]),
+    );
+    const queries = useQueries.mock.lastCall?.[0] as Record<string, unknown>;
+    expect(Object.keys(queries)).toEqual(["cursor"]);
+  });
+
   it("asks nothing with the policy off, before sign-in, or with no Cursor client", () => {
     renderHook(() =>
       useOrgHarnessKeys(

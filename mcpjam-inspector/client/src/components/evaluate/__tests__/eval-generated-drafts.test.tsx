@@ -4,6 +4,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
+vi.mock("@/hooks/use-suite-harness-targets", () => ({
+  useSuiteHarnessTargets: () => [],
+}));
 import { renderWithProviders, screen, userEvent, waitFor } from "@/test";
 import {
   EvalGeneratedDrafts,

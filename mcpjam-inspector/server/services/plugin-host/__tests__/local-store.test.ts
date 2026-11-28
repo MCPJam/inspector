@@ -323,6 +323,45 @@ describe("local installs keep App controls in-process", () => {
       request({ action: "read", identityHash, controlHash }, signal()),
     ).resolves.toMatchObject({ control: { expiresAt: now + 30 * 60_000 } });
   });
+  it("keeps a suspended model form above the backend's limit only on a local install", async () => {
+    const { localPluginControls } = await import("../local-store.js");
+    let seed = 0;
+    const issue = (
+      request: ReturnType<LocalPluginControlStore["handler"]>,
+      snapshot: unknown,
+    ) => {
+      seed++;
+      return request(
+        {
+          action: "issue",
+          identityHash: "a".repeat(64),
+          controlHash: seed.toString(16).padStart(64, "0"),
+          ownerHash: (seed + 100).toString(16).padStart(64, "0"),
+          snapshotJson: JSON.stringify(snapshot),
+          expiresAt: Date.now() + 60_000,
+        },
+        signal(),
+      );
+    };
+    const drawing = "x".repeat(200 * 1024);
+    const local = localPluginControls.handler(
+      PLUGIN_INSTANCE_CONTROL_PATH,
+      "UNAVAILABLE",
+    );
+    await issue(local, { kind: "model-form", params: { drawing } });
+    // Only model forms get the room; any other row keeps the backend's limit.
+    await expect(issue(local, { kind: "form-source", drawing })).rejects.toThrow(
+      "INVALID_INSTANCE_CONTROL",
+    );
+    // A store under the backend's rules refuses the same form.
+    const backendRules = new LocalPluginControlStore().handler(
+      PLUGIN_INSTANCE_CONTROL_PATH,
+      "UNAVAILABLE",
+    );
+    await expect(
+      issue(backendRules, { kind: "model-form", params: { drawing } }),
+    ).rejects.toThrow("INVALID_INSTANCE_CONTROL");
+  });
   it("keeps, discovers, renews and closes model Apps like the backend", async () => {
     let now = 1_000_000;
     const store = new LocalPluginControlStore(() => now);

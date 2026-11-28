@@ -60,10 +60,7 @@ import {
 import { setEffortForRow } from "@/lib/reasoning-effort-selection";
 import { modelTargetLabel } from "@/lib/environment-label";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
-import {
-  harnessModelLockReasonsByRow,
-  type HarnessModelTarget,
-} from "@/lib/harness-model-locks";
+import type { HarnessModelTarget } from "@/lib/harness-model-locks";
 import type { HarnessModelPurpose } from "@/shared/harness-model-support";
 import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
@@ -131,19 +128,13 @@ export function ModelsPill({
     () => orgSavableModels(listedModels, requireOrgKeys),
     [listedModels, requireOrgKeys],
   );
-  // Per ROW, not per id: the hosted row and an org-connection row of one id
-  // run on different keys, and a harness may run one and refuse the other.
-  // Under the organization's key policy a harness runs only on an
-  // organization connection that serves its API.
-  const harnessLockReasons = useMemo(
-    () =>
-      harnessModelLockReasonsByRow(
-        availableModels,
-        harnessTargets ?? [],
-        purpose,
-        { requireOrgKeys },
-      ),
-    [availableModels, harnessTargets, purpose, requireOrgKeys],
+  // Rows no selected client can run are locked by the selector itself
+  // (`harnessScope`), per ROW: the hosted row and an org-connection row of
+  // one id run on different keys, and a harness may run one and refuse the
+  // other.
+  const harnessScope = useMemo(
+    () => ({ targets: harnessTargets ?? [], purpose }),
+    [harnessTargets, purpose],
   );
 
   const targets = value.explicitTargets;
@@ -357,8 +348,7 @@ export function ModelsPill({
   const rowDisabledReason = (
     model: ModelDefinition,
     state: { selected: boolean },
-  ): string | undefined =>
-    harnessLockReasons.get(modelRowKey(model)) ?? rowCapReason(model, state);
+  ): string | undefined => rowCapReason(model, state);
 
   const extraOptions: ModelSelectorExtraOption[] = [
     {
@@ -541,6 +531,7 @@ export function ModelsPill({
       requireOrgKeys={requireOrgKeys}
       onManageOrgProviders={onManageOrgProviders}
       onAddProvider={onAddProvider}
+      harnessScope={harnessScope}
       currentModel={selectedModels[0] ?? NO_EXPLICIT_MODEL}
       availableModels={availableModels}
       onModelChange={addModel}

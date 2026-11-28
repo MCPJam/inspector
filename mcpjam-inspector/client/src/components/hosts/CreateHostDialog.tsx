@@ -37,6 +37,8 @@ import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
+import { useOpenCodeHostEnabled } from "@/hooks/useOpenCodeHostEnabled";
+import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -113,6 +115,8 @@ export function CreateHostDialog({
   const codexEnabled = useCodexHostEnabled();
   const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
+  const openCodeEnabled = useOpenCodeHostEnabled();
+  const webClientsEnabled = useWebClientsEnabled();
   const visibleCatalogHosts = useMemo(
     () =>
       catalogState.status === "live"
@@ -121,9 +125,11 @@ export function CreateHostDialog({
             codex: codexEnabled,
             copilotCli: copilotCliEnabled === true,
             cursorCli: cursorCliEnabled,
+            openCode: openCodeEnabled,
+            webClients: webClientsEnabled,
           }).sort((a, b) => a.label.localeCompare(b.label))
         : [],
-    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled, copilotCliEnabled]
+    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled, copilotCliEnabled, openCodeEnabled, webClientsEnabled]
   );
   const defaultHostId =
     visibleCatalogHosts.find((host) => host.id === DEFAULT_CATALOG_HOST_ID)
@@ -188,12 +194,25 @@ export function CreateHostDialog({
     Boolean(selectedTemplateInput) &&
     orgSeed.ready;
 
+  // A template the member picked stays picked while it is still offered: a
+  // rollout flag that resolves after the dialog opens only changes the list.
+  const userPickedTemplateRef = useRef(false);
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      // Every close path ends the pick, including a parent that closes the
+      // dialog without `handleClose`.
+      userPickedTemplateRef.current = false;
+      return;
+    }
     if (visibleCatalogHosts.length === 0) return;
     const requested = initialTemplateId ?? DEFAULT_CATALOG_HOST_ID;
-    const allowed = visibleHostIds.has(requested);
-    setSelectedTemplateId(allowed ? requested : defaultHostId);
+    setSelectedTemplateId((current) =>
+      userPickedTemplateRef.current && visibleHostIds.has(current)
+        ? current
+        : visibleHostIds.has(requested)
+          ? requested
+          : defaultHostId,
+    );
   }, [isOpen, initialTemplateId, visibleCatalogHosts.length, visibleHostIds, defaultHostId]);
 
   useEffect(() => {
@@ -206,6 +225,7 @@ export function CreateHostDialog({
     setSetupError(null);
     setName("");
     userEditedNameRef.current = false;
+    userPickedTemplateRef.current = false;
     setSelectedTemplateId(initialTemplateId ?? DEFAULT_CATALOG_HOST_ID);
     onClose();
   };
@@ -312,7 +332,10 @@ export function CreateHostDialog({
                   <button
                     key={host.id}
                     type="button"
-                    onClick={() => setSelectedTemplateId(host.id)}
+                    onClick={() => {
+                      userPickedTemplateRef.current = true;
+                      setSelectedTemplateId(host.id);
+                    }}
                     disabled={!templateAvailable}
                     className={cn(
                       "flex min-w-0 flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors",

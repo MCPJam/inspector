@@ -1,10 +1,16 @@
 /**
  * A setup gap on the caller's side (a missing or unusable tool, bad arguments,
- * no login) leaves a requirement untested without costing points: the server
- * is not to blame. The check shows as gray "Not run" with a plain fix.
+ * no login, a protocol version the server does not speak) leaves a requirement
+ * untested without costing points: the server is not to blame. The check shows
+ * as gray "Not run" with a plain fix.
  */
 export type ConformanceInputKey =
-  "tasksProbe" | "logProbe" | "inputRequiredProbe" | "toolCallProbe" | "login";
+  | "tasksProbe"
+  | "logProbe"
+  | "inputRequiredProbe"
+  | "toolCallProbe"
+  | "login"
+  | "protocolVersion";
 
 /** `details` key holding the setup gap's own plain-English fix, when it has one. */
 export const MISSING_INPUT_MESSAGE_DETAIL = "missingInputMessage";
@@ -41,6 +47,7 @@ function inputDetail(details: unknown): ConformanceInputKey | undefined {
     case "inputRequiredProbe":
     case "toolCallProbe":
     case "login":
+    case "protocolVersion":
       return details.missingInput;
     default:
       return undefined;
@@ -96,6 +103,16 @@ export function isMissingInputCheck(check: InputCheck): boolean {
   return missingInputForCheck(check) !== undefined;
 }
 
+/**
+ * Setup gaps that leave the server untested as a whole rather than one
+ * requirement: without a login the server was never reached, and on a version
+ * it does not speak nothing was asked of it on that version. They cost no
+ * points, but unlike a missing probe tool they keep the run from passing.
+ */
+export function inputBlocksVerdict(input: ConformanceInputKey): boolean {
+  return input === "login" || input === "protocolVersion";
+}
+
 const INPUT_MESSAGES: Record<ConformanceInputKey, string> = {
   tasksProbe: "Select a tool that creates a task in setup, then run again.",
   logProbe: "Select a tool that emits logs in setup, then run again.",
@@ -103,6 +120,8 @@ const INPUT_MESSAGES: Record<ConformanceInputKey, string> = {
     "Select a tool that asks for input in setup, then run again.",
   toolCallProbe: "Select a tool to check output in setup, then run again.",
   login: "This server needs a login. Log in, then run again.",
+  protocolVersion:
+    "This server doesn't support the protocol version this run uses. Run it on a version the server supports.",
 };
 
 function ownMessage(details: unknown): string | undefined {

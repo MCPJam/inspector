@@ -173,6 +173,30 @@ test("tools call --task creates a task on the legacy wire", async () => {
   });
 });
 
+test("tools call --task refuses a legacy tool with no taskSupport, sending no call", async () => {
+  // 2025-11-25 tasks.mdx:115: a tool without `taskSupport` must not be called
+  // as a task, even on a server that accepts task tool calls.
+  await withLegacyFixture(
+    async (fixture) => {
+      const run = await runCli([
+        "tools",
+        "call",
+        "--tool-name",
+        LEGACY_TASK_TOOL_NAME,
+        "--task",
+        ...httpTarget(fixture.url),
+      ]);
+      assert.equal(run.exitCode, 1);
+      assert.equal(errorOf(run).code, "TASKS_UNSUPPORTED");
+      assert.ok(
+        !fixture.received.some((entry) => entry.method === "tools/call"),
+        "a tools/call reached the server",
+      );
+    },
+    { toolTaskSupport: null },
+  );
+});
+
 test("tools call --task-ttl reaches the legacy wire and is refused on the extension", async () => {
   await withLegacyFixture(async (fixture) => {
     const run = await runCli([

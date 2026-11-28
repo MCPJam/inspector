@@ -281,8 +281,7 @@ export function TaskAnswersField({
         </p>
       ) : (
         <p id={messageId} className="text-xs text-muted-foreground">
-          Sent when the task asks for input. Without answers, this check does
-          not apply.
+          The client sends matching answers when the MCP server asks for input.
         </p>
       )}
     </>

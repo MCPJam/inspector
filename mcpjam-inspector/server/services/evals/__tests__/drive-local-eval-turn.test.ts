@@ -13,7 +13,10 @@ vi.mock("ai", async () => {
 
 import { APICallError, NoOutputGeneratedError } from "ai";
 import { driveLocalEvalTurn } from "../drive-local-eval-turn";
-import type { DriveLocalEvalTurnParams } from "../drive-local-eval-turn";
+import type {
+  DriveLocalEvalTurnParams,
+  LocalModelCallSettled,
+} from "../drive-local-eval-turn";
 
 const ids = { toolCallId: "call-1", toolName: "search" };
 const toolCall = { type: "tool-call", ...ids, input: { q: "status" } };
@@ -201,5 +204,122 @@ describe("driveLocalEvalTurn through the unified turn", () => {
       source: "provider_call",
       httpStatus: 401,
     });
+  });
+
+  it("puts each call's writeback price on its own llm span in a local org turn", async () => {
+    const steps = [
+      { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+      { inputTokens: 40, outputTokens: 6, totalTokens: 46 },
+    ];
+    streamTextMock.mockImplementationOnce((options: any) =>
+      streamResult({
+        async *[Symbol.asyncIterator]() {
+          for (const [stepNumber, stepUsage] of steps.entries()) {
+            await options.prepareStep({ stepNumber, messages: [] });
+            await options.onStepFinish({
+              usage: stepUsage,
+              response: { messages: [] },
+              finishReason: stepNumber === 0 ? "tool-calls" : "stop",
+              toolCalls: [],
+            });
+          }
+        },
+      }),
+    );
+    const priced = (amountUsd: number) => ({
+      calculationVersion: 1 as const,
+      currency: "USD" as const,
+      completeness: "complete" as const,
+      amountUsd,
+      source: "customer_rate" as const,
+      funding: "customer" as const,
+    });
+    const onModelCallSettled = vi.fn(
+      async ({ calls = [] }: LocalModelCallSettled) =>
+        Object.fromEntries(
+          calls.map((call) => [
+            call.callId,
+            priced(call.stepIndex ? 0.5 : 0.01),
+          ]),
+        ),
+    );
+    const turnParams = params({
+      onModelCallSettled,
+      // The local org path: its calls are priced by the backend, not here.
+      beforeModelCall: async () => turnParams.llmModel!,
+    });
+
+    await driveLocalEvalTurn(turnParams);
+
+    const calls = onModelCallSettled.mock.calls[0]![0].calls!;
+    expect(calls).toHaveLength(2);
+    const spans = turnParams.acc.capturedSpans;
+    expect(
+      spans
+        .filter((span) => span.category === "llm")
+        .map((span) => [span.stepIndex, span.callId, span.cost?.amountUsd]),
+    ).toEqual([
+      [0, calls[0]!.callId, 0.01],
+      [1, calls[1]!.callId, 0.5],
+    ]);
+    expect(spans.filter((span) => span.category === "step")).not.toEqual([]);
+    expect(
+      spans.filter((span) => span.category !== "llm" && span.cost),
+    ).toEqual([]);
+  });
+
+  it("puts each call's writeback id on its llm span when the writeback fails", async () => {
+    streamTextMock.mockImplementationOnce((options: any) =>
+      streamResult({
+        async *[Symbol.asyncIterator]() {
+          await options.prepareStep({ stepNumber: 0, messages: [] });
+          await options.onStepFinish({
+            usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+            response: { messages: [] },
+            finishReason: "stop",
+            toolCalls: [],
+          });
+        },
+      }),
+    );
+    const onModelCallSettled = vi.fn(async () => undefined);
+    const turnParams = params({
+      onModelCallSettled,
+      beforeModelCall: async () => turnParams.llmModel!,
+    });
+
+    await driveLocalEvalTurn(turnParams);
+
+    const [call] = (onModelCallSettled.mock.calls[0] as any)[0].calls;
+    expect(call.callId).toMatch(/^.+:0$/);
+    expect(
+      turnParams.acc.capturedSpans
+        .filter((span) => span.category === "llm")
+        .map((span) => [span.callId, span.cost]),
+    ).toEqual([[call.callId, undefined]]);
+  });
+
+  it("cancels instead of recording when the run is cancelled while the writeback settles", async () => {
+    streamTextMock.mockReturnValueOnce(streamResult());
+    const controller = new AbortController();
+    const onTurnSuccess = vi.fn();
+    const onModelCallSettled = vi.fn(async () => {
+      controller.abort();
+      return {};
+    });
+
+    const outcome = await driveLocalEvalTurn(
+      params({
+        abortSignal: controller.signal,
+        onModelCallSettled,
+        sinks: { onTurnSuccess } as never,
+      }),
+    );
+
+    expect(onModelCallSettled.mock.calls[0]![0]).toMatchObject({
+      outcome: "ok",
+    });
+    expect(outcome).toEqual({ kind: "cancelled" });
+    expect(onTurnSuccess).not.toHaveBeenCalled();
   });
 });

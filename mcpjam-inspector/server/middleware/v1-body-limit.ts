@@ -6,6 +6,9 @@
  * Carve-out: POST to the eval-ingest artifacts route carries one artifact's
  * raw bytes (MJ-006) and enforces its own cap as it reads them
  * (`routes/v1/eval-ingest.ts`). POST-only, because that cap is on POST.
+ * Likewise POST to the production traffic OTLP receiver: an exporter's batch
+ * is routinely over 1MB, so the route bounds both the wire bytes and the
+ * inflated body itself (`services/production-traffic/otlp-receiver.ts`).
  */
 import { bodyLimit } from "hono/body-limit";
 import type { Context, Next } from "hono";
@@ -14,6 +17,7 @@ export const DEFAULT_V1_BODY_LIMIT = 1024 * 1024; // 1MB
 
 const SELF_LIMITED_V1_UPLOAD =
   /^\/api\/v1\/projects\/[^/]+\/eval-ingest\/artifacts$/;
+const SELF_LIMITED_V1_INGEST = /^\/api\/v1\/projects\/[^/]+\/otlp\/v1\/traces$/;
 
 export function v1BodyLimit() {
   const jsonLimit = bodyLimit({
@@ -28,7 +32,11 @@ export function v1BodyLimit() {
       ),
   });
   return (c: Context, next: Next) => {
-    if (c.req.method === "POST" && SELF_LIMITED_V1_UPLOAD.test(c.req.path)) {
+    if (
+      c.req.method === "POST" &&
+      (SELF_LIMITED_V1_UPLOAD.test(c.req.path) ||
+        SELF_LIMITED_V1_INGEST.test(c.req.path))
+    ) {
       return next();
     }
     return jsonLimit(c, next);

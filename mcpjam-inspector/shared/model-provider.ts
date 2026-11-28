@@ -182,6 +182,10 @@ export const RUNTIME_CHOSEN_MODEL_SENTINELS: Readonly<Record<string, string>> =
     // `CURSOR_API_KEY`, every request transits Cursor's servers, and Cursor
     // Auto picks the model on that account.
     "cursor/auto": "Cursor Auto",
+    // Claude web and ChatGPT web run on the vendor's own site, which picks
+    // the model for the signed-in account.
+    "claude-web/default": "Claude web",
+    "chatgpt-web/default": "ChatGPT web",
   });
 
 /**

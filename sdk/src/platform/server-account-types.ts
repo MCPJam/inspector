@@ -15,7 +15,11 @@ export type PlatformServerAccount = {
   isDefault: boolean;
   /** Its refresh was rejected, or it expired with no refresh token stored. */
   needsReconnect: boolean;
-  /** Used by hosted runs only; never sent to a local app, browser or sandbox. */
+  /**
+   * A shared or uploaded account: never revealed, never sent to a browser or
+   * sandbox, and sent to a local app only when a project admin allowed local
+   * runs (the owner's own app, for an account on a personal server).
+   */
   hostedOnly: boolean;
   /** Access-token expiry, epoch ms. */
   expiresAt: number | null;

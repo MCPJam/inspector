@@ -32,6 +32,8 @@ describe("orgKeys", () => {
       "copilot-cli": true,
       cursor: false,
       opencode: true,
+      "claude-web": false,
+      "chatgpt-web": false,
     });
   });
 
@@ -54,6 +56,8 @@ describe("harnessWireApi", () => {
       "copilot-cli": "responses",
       cursor: null,
       opencode: "anthropicMessages",
+      "claude-web": null,
+      "chatgpt-web": null,
     });
     expect(harnessWireApi("constructor")).toBeNull();
     expect(harnessWireApi("not-a-harness")).toBeNull();

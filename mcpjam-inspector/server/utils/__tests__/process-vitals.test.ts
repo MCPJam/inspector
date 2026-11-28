@@ -1,4 +1,6 @@
+import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildStrictLogRow } from "../../../shared/strict-log.js";
 
 const setContext = vi.fn();
 const setExtra = vi.fn();
@@ -52,6 +54,7 @@ afterEach(() => {
   setExtra.mockClear();
   event.mockClear();
   vi.doUnmock("node:v8");
+  vi.restoreAllMocks();
 });
 
 describe("process vitals sampler", () => {
@@ -209,5 +212,95 @@ describe("process vitals sampler", () => {
     const last = event.mock.calls.at(-1)![1];
     expect(last.heapUsedBytes).toBe(520 * MB);
     expect(last.peakHeapUsedBytes).toBe(900 * MB);
+  });
+
+  // A process can die of ENFILE while holding few fds of its own; this count
+  // says whether the server process is the one draining the system file table.
+  it("counts this process's open file descriptors", async () => {
+    const { flushProcessVitals } = await loadVitals([500 * MB]);
+
+    flushProcessVitals(0);
+
+    const [, payload] = event.mock.calls[0]!;
+    if (process.platform === "win32") {
+      expect(payload.openFdCount).toBeNull();
+      expect(payload.openFdError).toBe("ENOENT");
+    } else {
+      expect(payload.openFdCount).toBeGreaterThan(0);
+      expect(payload.openFdError).toBeNull();
+    }
+  });
+
+  // A listing that fails must read as "not measured", never as zero open
+  // files, and must not cost the rest of the sample. The errno travels with
+  // it: ENOENT means there is no /dev/fd to list (Windows, or a container
+  // without it), while EMFILE/ENFILE is the very exhaustion this gauge exists
+  // to catch — opendir needs an fd too, so the sample taken at the worst
+  // moment is the one that fails.
+  it("reports null plus the errno where /dev/fd cannot be listed", async () => {
+    const { flushProcessVitals } = await loadVitals([500 * MB]);
+    vi.spyOn(fs, "readdirSync").mockImplementation(() => {
+      throw Object.assign(new Error("too many open files in system"), {
+        code: "ENFILE",
+      });
+    });
+
+    flushProcessVitals(0);
+
+    const [, payload] = event.mock.calls[0]!;
+    expect(payload.openFdCount).toBeNull();
+    expect(payload.openFdError).toBe("ENFILE");
+    expect(payload.heapUsedBytes).toBe(500 * MB);
+  });
+
+  // A socket or file leak can hold fds without moving the heap; without its own
+  // trigger such a ramp would reach Axiom only on the 10-minute heartbeat.
+  it("emits a row when the fd count moves by a step on a flat heap", async () => {
+    const { flushProcessVitals } = await loadVitals([500 * MB]);
+    const fds = [30, 60, 94, 100];
+    let call = 0;
+    vi.spyOn(fs, "readdirSync").mockImplementation(
+      () => Array.from({ length: fds[call++]! }, String) as never,
+    );
+
+    for (let i = 0; i < fds.length; i++) flushProcessVitals(i * 60_000);
+
+    expect(event.mock.calls.map(([, p]) => [p.reason, p.openFdCount])).toEqual([
+      ["startup", 30],
+      ["fd_step", 94],
+    ]);
+  });
+
+  // EMFILE arriving is the moment this gauge exists for, and it has no count to
+  // step from; the listing failing is a step of its own.
+  it("emits a row when the fd listing starts failing", async () => {
+    const { flushProcessVitals } = await loadVitals([500 * MB]);
+    flushProcessVitals(0);
+    vi.spyOn(fs, "readdirSync").mockImplementation(() => {
+      throw Object.assign(new Error("too many open files"), { code: "EMFILE" });
+    });
+
+    flushProcessVitals(60_000);
+    flushProcessVitals(120_000);
+
+    expect(event.mock.calls.map(([, p]) => [p.reason, p.openFdError])).toEqual([
+      ["startup", null],
+      ["fd_step", "EMFILE"],
+    ]);
+  });
+
+  // Axiom rows pass the strict catalog generated from log-events.ts, which
+  // drops any field it has no type for: an untyped errno would never arrive.
+  it("keeps the fd fields and the fd_step reason in the strict Axiom row", () => {
+    const row = buildStrictLogRow(
+      "process.vitals",
+      {},
+      { reason: "fd_step", openFdCount: 43, openFdError: "ENFILE" },
+    );
+    expect(row).toMatchObject({
+      reason: "fd_step",
+      openFdCount: 43,
+      openFdError: "ENFILE",
+    });
   });
 });

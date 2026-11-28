@@ -1,16 +1,12 @@
 import type { EvalRoute, SuiteSettingsTab } from "@/lib/eval-route-types";
-import {
-  buildEvalsRunsPath,
-  buildEvalsPath,
-  navigateApp,
-} from "@/lib/app-navigation";
+import { buildEvaluatePath, navigateApp } from "@/lib/app-navigation";
 import type { SuiteNavigation } from "./suite-iterations-view";
 
-function applyPlaygroundEvalsPath(
+function applyEvaluatePath(
   route: EvalRoute,
   options?: { replace?: boolean }
 ) {
-  navigateApp(buildEvalsPath(route), { replace: options?.replace });
+  navigateApp(buildEvaluatePath(route), { replace: options?.replace });
 }
 
 /**
@@ -30,26 +26,22 @@ export function suiteEditRoute(
   };
 }
 
-function applyCiEvalsPath(route: EvalRoute, options?: { replace?: boolean }) {
-  navigateApp(buildEvalsRunsPath(route), { replace: options?.replace });
-}
-
-/** Playground Explore: same path shape as `buildEvalsPath`. */
+/** Playground Explore opens the current Evaluate experience. */
 export function navigatePlaygroundEvalsRoute(
   route: EvalRoute,
   options?: { replace?: boolean }
 ) {
-  applyPlaygroundEvalsPath(route, options);
+  applyEvaluatePath(route, options);
 }
 
 /** Playground: same suite-overview / drill-down path shapes as CI. */
 export function createPlaygroundSuiteNavigation(): SuiteNavigation {
   return {
     toSuiteOverview: (suiteId, view) => {
-      applyPlaygroundEvalsPath({ type: "suite-overview", suiteId, view });
+      applyEvaluatePath({ type: "suite-overview", suiteId, view });
     },
     toRunDetail: (suiteId, runId, iteration, options) => {
-      applyPlaygroundEvalsPath(
+      applyEvaluatePath(
         {
           type: "run-detail",
           suiteId,
@@ -63,7 +55,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
       );
     },
     toTestDetail: (suiteId, testId, iteration) => {
-      applyPlaygroundEvalsPath({
+      applyEvaluatePath({
         type: "test-detail",
         suiteId,
         testId,
@@ -71,7 +63,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
       });
     },
     toTestEdit: (suiteId, testId, options) => {
-      applyPlaygroundEvalsPath(
+      applyEvaluatePath(
         {
           type: "test-edit",
           suiteId,
@@ -84,7 +76,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
       );
     },
     toSuiteEdit: (suiteId, fromCaseChecks, tab, options) =>
-      applyPlaygroundEvalsPath(
+      applyEvaluatePath(
         suiteEditRoute(suiteId, fromCaseChecks, tab),
         options,
       ),
@@ -95,7 +87,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
 export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
   return {
     toSuiteOverview: (suiteId, view) =>
-      applyCiEvalsPath({
+      applyEvaluatePath({
         type: "suite-overview",
         suiteId,
         view,
@@ -104,7 +96,7 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
           : {}),
       }),
     toRunDetail: (suiteId, runId, iteration, options) =>
-      applyCiEvalsPath({
+      applyEvaluatePath({
         type: "run-detail",
         suiteId,
         runId,
@@ -114,14 +106,14 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
         compareToRunId: options?.compareToRunId,
       }),
     toTestDetail: (suiteId, testId, iteration) =>
-      applyCiEvalsPath({
+      applyEvaluatePath({
         type: "test-detail",
         suiteId,
         testId,
         iteration,
       }),
     toTestEdit: (suiteId, testId, options) =>
-      applyCiEvalsPath(
+      applyEvaluatePath(
         {
           type: "test-edit",
           suiteId,
@@ -133,6 +125,6 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
         { replace: options?.replace }
       ),
     toSuiteEdit: (suiteId, fromCaseChecks, tab, options) =>
-      applyCiEvalsPath(suiteEditRoute(suiteId, fromCaseChecks, tab), options),
+      applyEvaluatePath(suiteEditRoute(suiteId, fromCaseChecks, tab), options),
   };
 }

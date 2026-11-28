@@ -32,13 +32,29 @@ describe("probesForRun", () => {
     ).toEqual({ logProbe, inputRequiredProbe });
   });
 
-  it("sends none on a run these checks do not apply to", () => {
+  it("sends no 2026-07-28 tool on a run those checks do not apply to", () => {
     // Auto never reaches 2026-07-28, and a legacy pin skips its checks.
-    for (const pin of ["auto", "2025-11-25"] as const) {
-      expect(probesApply(pin)).toBe(false);
-      expect(probesForRun({ logProbe }, undefined, pin)).toEqual({});
+    for (const pin of ["auto", "2025-03-26", "2025-11-25"] as const) {
+      expect(
+        probesForRun({ logProbe, inputRequiredProbe }, undefined, pin),
+      ).toEqual({});
     }
-    expect(probesApply("2026-07-28")).toBe(true);
+  });
+
+  it("sends the output tool wherever the output schema rule exists", () => {
+    // 2025-06-18 and 2025-11-25 state the rule too. Auto negotiates a 2025
+    // revision, so the check runs there as well.
+    for (const pin of ["auto", "2025-06-18", "2025-11-25", "2026-07-28"] as const) {
+      expect(probesApply(pin)).toBe(true);
+      expect(probesForRun({ logProbe, toolCallProbe }, undefined, pin)).toEqual(
+        pin === "2026-07-28" ? { logProbe, toolCallProbe } : { toolCallProbe },
+      );
+    }
+  });
+
+  it("asks for no tool on 2025-03-26, which has no outputSchema", () => {
+    expect(probesApply("2025-03-26")).toBe(false);
+    expect(probesForRun({ toolCallProbe }, undefined, "2025-03-26")).toEqual({});
   });
 
   it("drops a probe whose checks are all left out", () => {
@@ -168,10 +184,10 @@ describe("Tasks probe", () => {
 
   it("is called only for the Tasks checks that need a task", () => {
     expect(probeKeyFor("tasks-update-ack-shape")).toBe("tasksProbe");
-    // Reads the wire the server negotiated; never calls the tool.
-    expect(probeKeyFor("tasks-wire-resolvable")).toBeUndefined();
+    // Probes a fabricated task id; never calls the tool.
+    expect(probeKeyFor("tasks-invalid-task-id-rejected")).toBeUndefined();
     expect(tasksProbeRuns(undefined)).toBe(true);
-    expect(tasksProbeRuns(["tasks-wire-resolvable"])).toBe(false);
+    expect(tasksProbeRuns(["tasks-invalid-task-id-rejected"])).toBe(false);
   });
 
   it("classifies every Tasks check as calling the tool or not", () => {
@@ -189,12 +205,8 @@ describe("Tasks probe", () => {
       "tasks-ttl-integer-shape",
       "tasks-undeclared-capability-names-requirements",
     ];
-    // Read the negotiated wire and declarations, or probe an unknown task id.
-    const noTool = [
-      "tasks-wire-resolvable",
-      "tasks-declaration-hygiene",
-      "tasks-invalid-task-id-rejected",
-    ];
+    // Probes an unknown task id.
+    const noTool = ["tasks-invalid-task-id-rejected"];
     expect([...callsTool, ...noTool].sort()).toEqual(
       [...MCP_TASKS_CHECK_IDS].sort(),
     );
@@ -202,7 +214,7 @@ describe("Tasks probe", () => {
     for (const id of noTool) expect(probeKeyFor(id)).toBeUndefined();
   });
 
-  it("sends the answers only when the update acknowledgement check runs", () => {
+  it("sends shared answers to polling checks and skips them for cancellation", () => {
     expect(
       tasksRunOptions({ tasksProbe }, { tasks: ["tasks-cancel-ack-shape"] }),
     ).toEqual({
@@ -230,8 +242,8 @@ describe("Tasks probe", () => {
     });
     // No picked check calls it: only the picks go.
     expect(
-      tasksRunOptions({ tasksProbe }, { tasks: ["tasks-wire-resolvable"] }),
-    ).toEqual({ checkIds: ["tasks-wire-resolvable"] });
+      tasksRunOptions({ tasksProbe }, { tasks: ["tasks-invalid-task-id-rejected"] }),
+    ).toEqual({ checkIds: ["tasks-invalid-task-id-rejected"] });
   });
 
 });
@@ -266,7 +278,7 @@ describe("Tasks per-check settings", () => {
     );
     expect(
       tasksRunOptions(probes, { tasks: ["tasks-update-ack-shape"] })
-        .inputResponses,
+        .checkOverrides?.["tasks-update-ack-shape"]?.inputResponses,
     ).toEqual({ name: "Ada" });
     expect(
       tasksRunOptions(
@@ -274,7 +286,7 @@ describe("Tasks per-check settings", () => {
           tasksProbe,
           tasksOverrides: { "tasks-update-ack-shape": { toolName: "ask" } },
         },
-        {},
+        { tasks: ["tasks-update-ack-shape"] },
       ).inputResponses,
     ).toBeUndefined();
   });
@@ -293,7 +305,7 @@ describe("Tasks per-check settings", () => {
         probesAfterRun(
           {},
           probes,
-          { tasks: ["tasks-wire-resolvable"] },
+          { tasks: ["tasks-invalid-task-id-rejected"] },
           "auto",
         ),
       ),

@@ -181,7 +181,7 @@ describe("usePlaygroundState — one tools/list per request it would send", () =
     // While the first request is in flight: the connect flow re-injects the
     // mapping it already had, and the context gets a new token getter.
     act(() => {
-      injectHostedServerMapping(SERVER, "srv-1");
+      injectHostedServerMapping(SERVER, "srv-1", BASE_CONTEXT.projectId);
       setApiContext({ ...BASE_CONTEXT, getAccessToken: async () => "t" });
     });
 
