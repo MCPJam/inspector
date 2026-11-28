@@ -158,7 +158,9 @@ async function serveHttp(
       });
     if (
       url.pathname === "/api/mcp/subscribe" ||
-      url.pathname === "/api/mcp/servers/rpc/stream"
+      url.pathname === "/api/mcp/servers/rpc/stream" ||
+      // The Playground listens for a server's question in local chat.
+      url.pathname === "/api/mcp/elicitation/stream"
     ) {
       return route.fulfill({
         contentType: "text/event-stream",
