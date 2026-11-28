@@ -16994,6 +16994,11 @@
             "description": "Tool-call arguments (`kind: toolCall`).",
             "additionalProperties": true
           },
+          "approval": {
+            "type": "string",
+            "enum": ["approve", "deny"],
+            "description": "Saved client decision for a tool call. A denial records the decision without sending the call."
+          },
           "action": {
             "type": "object",
             "description": "Widget action (`kind: interact`).",
@@ -17316,6 +17321,11 @@
                   "items": {
                     "$ref": "#/components/schemas/EvalTestStep"
                   }
+                },
+                "inputAnswers": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "items": { "$ref": "#/components/schemas/EvalInputAnswer" }
                 },
                 "runs": {
                   "type": "integer",
@@ -29463,6 +29473,11 @@
         "properties": {
           "projectId": { "type": ["string", "null"] },
           "appRecording": { "$ref": "#/components/schemas/RecordedAppTrace" },
+          "clientActions": {
+            "type": "array",
+            "description": "Ordered client action receipts. Returned with includeAppRecording when present.",
+            "items": { "$ref": "#/components/schemas/ClientActionReceipt" }
+          },
           "sessionId": {
             "type": "string"
           },
@@ -29495,6 +29510,27 @@
             "type": "string"
           }
         }
+      },
+      "ClientActionReceipt": {
+        "type": "object",
+        "required": ["id", "order", "actor", "surface", "kind", "outcome", "elapsedMs", "startedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "order": { "type": "integer", "minimum": 0 },
+          "actor": { "type": "string", "enum": ["persona", "model", "scripted"] },
+          "surface": { "type": "string", "enum": ["client"] },
+          "kind": { "type": "string", "enum": ["question", "approval"] },
+          "outcome": {
+            "type": "string",
+            "enum": ["accepted", "declined", "cancelled", "approved", "denied", "expired", "invalid", "unavailable", "unsupported"]
+          },
+          "elapsedMs": { "type": "number", "minimum": 0 },
+          "startedAt": { "type": "number", "minimum": 0 },
+          "serverId": { "type": "string", "maxLength": 256 },
+          "toolName": { "type": "string", "maxLength": 256 },
+          "invocationId": { "type": "string", "maxLength": 256 }
+        },
+        "additionalProperties": false
       },
       "RecordedAppTrace": {
         "type": "object",

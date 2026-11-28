@@ -266,6 +266,7 @@ export function buildDirectHostConfig(input: {
  * Kept in one place so the producer callbacks and the wire body can't drift.
  */
 export interface PersistedTurnTrace {
+  clientActions?: import("@mcpjam/sdk/contract").ClientActionReceipt[];
   runUnloadedToolCalls?: boolean;
   engineVersion?: string;
   setupAtTurn?: SetupAtTurn;

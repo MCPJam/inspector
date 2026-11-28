@@ -1,9 +1,14 @@
 import { z } from "zod";
 import { opaqueIdSchema } from "../contract/identity.js";
+import type { ClientActionReceipt } from "../contract/client-action-receipt.js";
+import {
+  inputAnswerSchema,
+  inputAnswersSchema,
+} from "../contract/input-answers.js";
 import { compileRecordedAppCase } from "../contract/recorded-app-case.js";
 import { recordedAppTraceSchema } from "../contract/recorded-app-trace.js";
 import type { EvalSuiteFileCaseV2 } from "../contract/suite-file.js";
-import { widgetAssertionSchema } from "../contract/steps.js";
+import { MAX_TEST_STEPS, widgetAssertionSchema } from "../contract/steps.js";
 import { PlatformApiError } from "./errors.js";
 import { resolveProjectOrThrow } from "./operation-support.js";
 import type {
@@ -29,6 +34,12 @@ const compileInput = z.object({
       "Opening arguments override. Defaults to the recorded tool input."
     ),
   assertions: z.array(widgetAssertionSchema).min(1),
+  questionReplies: z
+    .record(z.string().uuid(), inputAnswerSchema)
+    .optional()
+    .describe(
+      "Saved replies keyed by the recorded question receipt IDs. Form values need to be supplied again."
+    ),
 });
 
 export type CompileRecordedAppCaseInput = z.infer<typeof compileInput>;
@@ -151,6 +162,73 @@ export const compileRecordedAppCaseOperation: PlatformOperation<
       throw operationInputError(
         "No rendered app matches that tool call in this session."
       );
+    const questionAndApproval = trace.clientActions ?? [];
+    const approvals = questionAndApproval.filter(
+      ({ kind }) => kind === "approval"
+    );
+    const openingApproval = approvals.find(
+      (receipt) =>
+        receipt.invocationId === input.toolCallId &&
+        receipt.outcome === "approved" &&
+        receipt.serverId === app.serverId &&
+        receipt.toolName === app.toolName
+    );
+    const denied = approvals.filter((receipt) => receipt !== openingApproval);
+    for (const receipt of denied) {
+      if (
+        receipt.outcome !== "denied" ||
+        !openingApproval ||
+        receipt.order >= openingApproval.order ||
+        !receipt.invocationId ||
+        !receipt.toolName ||
+        receipt.serverId !== app.serverId
+      ) {
+        throw operationInputError(
+          `Approval ${receipt.id} (${receipt.outcome}) cannot be placed in the recorded app replay.`
+        );
+      }
+    }
+    const questions = questionAndApproval.filter(
+      ({ kind }) => kind === "question"
+    );
+    const inputAnswers = questions.map((receipt) => {
+      const reply = input.questionReplies?.[receipt.id];
+      const expected = {
+        accept: "accepted",
+        decline: "declined",
+        cancel: "cancelled",
+      } as const;
+      if (
+        !receipt.serverId ||
+        receipt.serverId !== app.serverId ||
+        !receipt.toolName ||
+        receipt.toolName !== app.toolName ||
+        !reply ||
+        expected[reply.action] !== receipt.outcome
+      ) {
+        throw operationInputError(
+          `Client ${receipt.kind} ${receipt.id} (${receipt.outcome}) cannot be replayed for this opening call. Supply a matching saved reply for a recorded question from this call.`
+        );
+      }
+      if (questions.length > 1 && !reply.message) {
+        throw operationInputError(
+          `Question ${receipt.id} needs a message matcher to distinguish its reply from other questions.`
+        );
+      }
+      return { ...reply, server: input.serverName, tool: app.toolName };
+    });
+    if (Object.keys(input.questionReplies ?? {}).length !== inputAnswers.length)
+      throw operationInputError(
+        "The saved replies must name the recorded questions."
+      );
+    if (
+      new Set(inputAnswers.map((reply) => reply.message)).size !==
+      inputAnswers.length
+    )
+      throw operationInputError(
+        "Give each saved reply a distinct question matcher."
+      );
+    const authored = inputAnswersSchema.parse(inputAnswers);
     const args =
       input.arguments ??
       (await readRecordedArguments(
@@ -159,22 +237,50 @@ export const compileRecordedAppCaseOperation: PlatformOperation<
         input.toolCallId,
         projectId
       ));
+    const testCase = compileRecordedAppCase({
+      id: input.caseId,
+      title: input.title,
+      openingCall: {
+        toolCallId: input.toolCallId,
+        toolName: app.toolName,
+        serverName: input.serverName,
+        ...(input.serverId ? { serverId: input.serverId } : {}),
+        arguments: args,
+      },
+      actions: recording.actions,
+      assertions: input.assertions,
+    });
+    if (openingApproval) {
+      const [opening, ...steps] = testCase.steps;
+      if (opening.kind !== "toolCall")
+        throw operationInputError(
+          "The recording has no deterministic opening call."
+        );
+      testCase.steps = [
+        ...denied.map((receipt) => ({
+          id: `deny-${receipt.order}`,
+          kind: "toolCall" as const,
+          ...(input.serverId ? { serverId: input.serverId } : {}),
+          serverName: input.serverName,
+          toolName: receipt.toolName!,
+          arguments: {},
+          approval: "deny" as const,
+        })),
+        { ...opening, approval: "approve" },
+        ...steps,
+      ];
+      if (testCase.steps.length > MAX_TEST_STEPS)
+        throw operationInputError(
+          "The recorded approvals exceed the supported case size."
+        );
+    }
     return {
       sessionId: trace.sessionId,
       projectId: trace.projectId ?? projectId ?? null,
-      case: compileRecordedAppCase({
-        id: input.caseId,
-        title: input.title,
-        openingCall: {
-          toolCallId: input.toolCallId,
-          toolName: app.toolName,
-          serverName: input.serverName,
-          ...(input.serverId ? { serverId: input.serverId } : {}),
-          arguments: args,
-        },
-        actions: recording.actions,
-        assertions: input.assertions,
-      }),
+      case: {
+        ...testCase,
+        ...(authored.length ? { inputAnswers: authored } : {}),
+      },
     };
   },
 };
@@ -189,6 +295,12 @@ const summarizeInput = z.object({
 });
 export type SummarizeRecordedAppActionsInput = z.infer<typeof summarizeInput>;
 
+type ClientActionsSummary = {
+  attempted: number;
+  elapsedMs: number;
+  outcomes: Partial<Record<ClientActionReceipt["outcome"], number>>;
+};
+
 export const summarizeRecordedAppActionsOperation: PlatformOperation<
   SummarizeRecordedAppActionsInput,
   {
@@ -199,6 +311,9 @@ export const summarizeRecordedAppActionsOperation: PlatformOperation<
       unavailable: number;
     };
     actions: { attempted: number; succeeded: number; elapsedMs: number };
+    clientActions?: Partial<
+      Record<ClientActionReceipt["kind"], ClientActionsSummary>
+    >;
   }
 > = {
   name: "summarize_recorded_app_actions",
@@ -218,21 +333,37 @@ export const summarizeRecordedAppActionsOperation: PlatformOperation<
       unavailable: 0,
     };
     const actions = { attempted: 0, succeeded: 0, elapsedMs: 0 };
+    const clientActions: Partial<
+      Record<ClientActionReceipt["kind"], ClientActionsSummary>
+    > = {};
     for (const sessionId of ids) {
       try {
-        const { recording } = await readRecording(
+        const { recording, trace } = await readRecording(
           context,
           sessionId,
           projectId
         );
-        if (!recording) {
+        if (!recording && !trace.clientActions?.length) {
           sessions.ungraded++;
           continue;
         }
         sessions.counted++;
-        actions.attempted += recording.summary.attempted;
-        actions.succeeded += recording.summary.succeeded;
-        actions.elapsedMs += recording.summary.elapsedMs;
+        if (recording) {
+          actions.attempted += recording.summary.attempted;
+          actions.succeeded += recording.summary.succeeded;
+          actions.elapsedMs += recording.summary.elapsedMs;
+        }
+        for (const receipt of trace.clientActions ?? []) {
+          const summary = (clientActions[receipt.kind] ??= {
+            attempted: 0,
+            elapsedMs: 0,
+            outcomes: {},
+          });
+          summary.attempted++;
+          summary.elapsedMs += receipt.elapsedMs;
+          summary.outcomes[receipt.outcome] =
+            (summary.outcomes[receipt.outcome] ?? 0) + 1;
+        }
       } catch (error) {
         if (
           !(error instanceof PlatformApiError) ||
@@ -243,6 +374,10 @@ export const summarizeRecordedAppActionsOperation: PlatformOperation<
         sessions.unavailable++;
       }
     }
-    return { sessions, actions };
+    return {
+      sessions,
+      actions,
+      ...(Object.keys(clientActions).length ? { clientActions } : {}),
+    };
   },
 };

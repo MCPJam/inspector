@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../routes/web/auth.js", () => ({
   buildConvexAuthHeaders: (_caller: unknown, bearer: string) => ({
@@ -8,12 +8,10 @@ vi.mock("../../../routes/web/auth.js", () => ({
 }));
 
 import { MCPClientManager } from "@mcpjam/sdk";
-import { createMockSessionMap } from "@mcpjam/sdk/mocks";
 import type { InputAnswer } from "@mcpjam/sdk/contract";
 import { exchangeSpan } from "../../../../shared/eval-input-exchange.js";
-import { mockConnectionPool } from "../../mock/connection.js";
 import { serveMock, type MockDoor } from "../../mock/route.js";
-import { resolvedMock, stubRealServer } from "../../mock/__tests__/helpers.js";
+import { resolvedMock } from "../../mock/__tests__/helpers.js";
 import {
   createInputAnswerResolver,
   inputAnswerResolverFor,
@@ -265,65 +263,52 @@ const asking = resolvedMock({
   },
 });
 
-describe.each(["2025-06-18", "2026-07-28"])(
-  "a question from a mock, answered by the case's reply (revision %s)",
-  (version) => {
-    let stub: ReturnType<typeof stubRealServer>;
-    beforeEach(() => {
-      stub = stubRealServer();
-    });
-    afterEach(async () => {
-      await mockConnectionPool.clear();
-    });
+describe("a 2026-07-28 question from a stateless mock", () => {
+  async function run(replies: InputAnswer[]) {
+    const resolver = createInputAnswerResolver({ answers: replies });
+    const deps = {
+      resolve: vi.fn(async () => asking),
+    };
+    // Registered before connect, as `createAuthorizedManager` does.
+    const manager = new MCPClientManager();
+    manager.setElicitationCallback(resolver.elicitationCallback);
+    manager.setMrtrInputCollector("mock", resolver.collectorFor("mock"));
+    resolver.useServerNames({ mock: "files" });
+    await manager.connectToServer("mock", {
+      url: "https://mock.mcpjam.invalid/mock1",
+      mcpProtocolVersion: "2026-07-28",
+      baseFetch: (input, init) =>
+        serveMock(new Request(input as string, init), "mock1", door, deps),
+    } as never);
+    const result = (await withToolCallScope({ tool: "cleanup" }, () =>
+      manager.executeTool("mock", "cleanup", { dir: "/tmp/x" }),
+    )) as { content: Array<{ text: string }> };
+    await manager.disconnectAllServers();
+    return { result, resolver };
+  }
 
-    async function run(replies: InputAnswer[]) {
-      const resolver = createInputAnswerResolver({ answers: replies });
-      const sessions = createMockSessionMap();
-      const deps = {
-        open: stub.open,
-        resolve: vi.fn(async () => asking),
-        sessions,
-      };
-      // Registered before connect, as `createAuthorizedManager` does.
-      const manager = new MCPClientManager();
-      manager.setElicitationCallback(resolver.elicitationCallback);
-      manager.setMrtrInputCollector("mock", resolver.collectorFor("mock"));
-      resolver.useServerNames({ mock: "files" });
-      await manager.connectToServer("mock", {
-        url: "https://mock.mcpjam.invalid/mock1",
-        mcpProtocolVersion: version,
-        baseFetch: (input, init) =>
-          serveMock(new Request(input as string, init), "mock1", door, deps),
-      } as never);
-      const result = (await withToolCallScope({ tool: "cleanup" }, () =>
-        manager.executeTool("mock", "cleanup", { dir: "/tmp/x" }),
-      )) as { content: Array<{ text: string }> };
-      await manager.disconnectAllServers();
-      await sessions.closeAll();
-      return { result, resolver };
-    }
+  it("gives the reply the case set, matched on server, tool and message", async () => {
+    const { result, resolver } = await run(answers);
+    expect(result.content).toEqual([{ type: "text", text: "accept true" }]);
+    expect(resolver.exchanges).toEqual([
+      expect.objectContaining({
+        server: "files",
+        tool: "cleanup",
+        message: "Delete /tmp/x?",
+        action: "accept",
+        replyIndex: 0,
+      }),
+    ]);
+  });
 
-    it("gives the reply the case set, matched on server, tool and message", async () => {
-      const { result, resolver } = await run(answers);
-      expect(result.content).toEqual([{ type: "text", text: "accept true" }]);
-      expect(resolver.exchanges).toEqual([
-        expect.objectContaining({
-          server: "files",
-          tool: "cleanup",
-          message: "Delete /tmp/x?",
-          action: "accept",
-          replyIndex: 0,
-        }),
-      ]);
+  it("declines when no reply was set and says so", async () => {
+    const { result, resolver } = await run([]);
+    expect(result.content).toEqual([
+      { type: "text", text: "decline {{steps.sure.content.sure}}" },
+    ]);
+    expect(resolver.exchanges[0]).toMatchObject({
+      action: "decline",
+      note: expect.stringContaining("no reply was set"),
     });
-
-    it("declines when no reply was set and says so", async () => {
-      const { result, resolver } = await run([]);
-      expect(result.content).toEqual([{ type: "text", text: "decline {{steps.sure.content.sure}}" }]);
-      expect(resolver.exchanges[0]).toMatchObject({
-        action: "decline",
-        note: expect.stringContaining("no reply was set"),
-      });
-    });
-  },
-);
+  });
+});

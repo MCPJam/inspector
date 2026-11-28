@@ -25,6 +25,12 @@ import {
 } from "@/shared/declared-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
+import {
+  createPersonaClientDriver,
+  withPersonaToolApprovals,
+  type PersonaClientDriver,
+  type PersonaClientRequest,
+} from "./persona-client-driver.js";
 import type {
   MCPClientManager,
   Harness,
@@ -162,7 +168,7 @@ export interface SimulationManagerFactory {
    * Implemented by the route handler so the runner stays free of authorize
    * + secrets fetch wiring.
    */
-  (): Promise<{
+  (clientDriver?: PersonaClientDriver): Promise<{
     manager: MCPClientManager;
     /** Server IDs that successfully connected (skip-listed OAuth servers excluded). */
     connectedServerIds: string[];
@@ -517,6 +523,11 @@ export interface SyntheticHostSessionAdapter {
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>,
     appControls?: string[],
   ): Promise<{ message: string; endSession: boolean; clickIndex?: number }>;
+  nextPersonaClientAction?(
+    transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>,
+    request: PersonaClientRequest,
+    signal: AbortSignal,
+  ): Promise<string>;
   /** Persistence attribution tags (scenario vs swarm). */
   persist: SyntheticPersistAttribution;
   /**
@@ -566,6 +577,7 @@ export async function runSyntheticHostSession(
     managerFactory,
     abortSignal,
     nextPersonaTurn,
+    nextPersonaClientAction,
     enablePersonaAppClicks,
     persist,
     onTurnPersisted,
@@ -589,7 +601,7 @@ export async function runSyntheticHostSession(
     computer,
     harness: configuredHarness,
     agentLoop,
-    tasks,
+    tasks: configuredTasks,
     sandboxBinding,
     browserSandboxBinding,
     harnessSandboxBinding,
@@ -670,6 +682,29 @@ export async function runSyntheticHostSession(
   const sessionSignal = sessionDeadline.signal;
   /** The turn currently in flight. Exactly one is armed at a time. */
   let turnDeadline: DeadlineHandle | undefined;
+  const lastTranscript: Array<{ role: "user" | "assistant"; content: string }> = [];
+  const clientDriver = nextPersonaClientAction
+    ? createPersonaClientDriver({
+        choose: (request, signal) => nextPersonaClientAction(lastTranscript, request, signal),
+        turnSignal: () => turnDeadline?.signal,
+      })
+    : undefined;
+  const tasks = clientDriver && configuredTasks?.mode === "await"
+    ? {
+        ...configuredTasks,
+        await: {
+          ...configuredTasks.await,
+          input: {
+            declaredCapabilities: undefined,
+            ...configuredTasks.await?.input,
+            handlers: {
+              ...configuredTasks.await?.input?.handlers,
+              ...clientDriver.taskHandlers,
+            },
+          },
+        },
+      }
+    : configuredTasks;
   const admissionBudget = new AdmissionWaitBudget();
   const admissionOptions = {
     budget: admissionBudget,
@@ -806,7 +841,7 @@ export async function runSyntheticHostSession(
       // A factory that settles LATE still owns a live manager and a browser
       // context. Nothing downstream will dispose it, because the session has
       // already unwound — so the loser of the race tears down its own work.
-      managerFactory().then((value) => {
+      (clientDriver ? managerFactory(clientDriver) : managerFactory()).then((value) => {
         if (sessionSignal.aborted) {
           void Promise.resolve(value.dispose()).catch(() => undefined);
         }
@@ -1107,9 +1142,6 @@ export async function runSyntheticHostSession(
         : {}),
     });
 
-    let lastTranscript: Array<{ role: "user" | "assistant"; content: string }> =
-      [];
-
     // Harness MCP-proxy plane. A synthetic run builds an ephemeral authorized
     // manager (like `/api/web/chat-v2`), so it's a WEB-authorized plane request:
     // resolve the strategy the same way `web-chat-turn.ts` does. Only needed when
@@ -1234,7 +1266,13 @@ export async function runSyntheticHostSession(
             ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
-            tools: { ...prepared.allTools, ...browser!.computerWidgetTools, ...browser!.viewTools },
+            tools: {
+              ...(clientDriver && !harness && requireToolApproval
+                ? withPersonaToolApprovals(prepared.allTools, selectedServerIds, clientDriver)
+                : prepared.allTools),
+              ...browser!.computerWidgetTools,
+              ...browser!.viewTools,
+            },
             hooks: {
               onToolCall: (event) => {
                 browser!.noteToolCallInput(event);
@@ -1403,6 +1441,7 @@ export async function runSyntheticHostSession(
       messageHistory = updatedHistory;
       const assistantText = extractAssistantText(updatedHistory);
       lastTranscript.push({ role: "assistant", content: assistantText });
+      const clientActions = clientDriver?.takeReceipts();
 
       if (!turnTrace && !drainedTurnTimedOut) {
         if (failedTurn) throw failedTurn;
@@ -1480,6 +1519,7 @@ export async function runSyntheticHostSession(
         // a pinned target's turn was handed.
         turnTrace: turnTrace && {
           ...turnTrace,
+          ...(clientActions?.length ? { clientActions } : {}),
           ...(sessionSkills.skillsAtTurn
             ? { skillsAtTurn: sessionSkills.skillsAtTurn }
             : {}),

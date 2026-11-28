@@ -459,6 +459,7 @@ function withImplicitRenderAssertForSingleToolCall(
     return normalized;
   }
   const call = normalized[0]!;
+  if (call.approval === "deny") return normalized;
   return [
     call,
     {
@@ -807,6 +808,7 @@ const createEvalSuiteSchema = z.strictObject({
           // query; `toolCalledWith` asserts are the expected tool calls; a
           // single model-free `toolCall` step is a render-check.
           steps: stepsSchema.min(1),
+          inputAnswers: inputAnswersSchema.optional(),
           runs: z.number().int().min(1).max(10).optional(),
           model: z.string().optional(),
           provider: z.string().optional(),
@@ -982,6 +984,7 @@ function normalizeCreateTestsToRunTests(
       runs,
       model,
       provider,
+      ...(test.inputAnswers !== undefined ? { inputAnswers: test.inputAnswers } : {}),
       expectedToolCalls: derived.expectedToolCalls ?? [],
       ...(test.expectedOutput !== undefined
         ? { expectedOutput: test.expectedOutput }

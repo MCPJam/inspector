@@ -1177,6 +1177,7 @@ export async function swarmPersonaNextTurn(
     sessionIdx: number;
     transcriptSoFar: Array<{ role: "user" | "assistant"; content: string }>;
     appControls?: string[];
+    clientAction?: import("./sessionSimulation/persona-client-driver.js").PersonaClientRequest;
     // Run abort signal. This call can PARK for up to LLM_TIMEOUT_MS (120s) in
     // an uncancellable place; forwarding the run's signal lets a shutdown/cancel
     // abort the parked fetch immediately so the session can unwind.
@@ -1204,6 +1205,7 @@ export async function swarmPersonaNextTurn(
       sessionIdx: args.sessionIdx,
       transcriptSoFar: args.transcriptSoFar,
       ...(args.appControls?.length ? { appControls: args.appControls } : {}),
+      ...(args.clientAction ? { clientAction: args.clientAction } : {}),
     },
     LLM_TIMEOUT_MS,
     args.signal,

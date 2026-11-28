@@ -397,15 +397,16 @@ async function handle(c: any) {
   try {
     // An eval's iteration may have replies for a server that asks; they are
     // read here, before the connection that declares the capability.
-    const inputAnswers =
+    const pinnedReplies =
       claims.runId && claims.iterationId
-        ? createInputAnswerResolver({
-            answers: await loadPinnedInputAnswers({
-              runId: claims.runId,
-              iterationId: claims.iterationId,
-            }),
+        ? await loadPinnedInputAnswers({
+            runId: claims.runId,
+            iterationId: claims.iterationId,
           })
-        : undefined;
+        : [];
+    const inputAnswers = pinnedReplies.length
+      ? createInputAnswerResolver({ answers: pinnedReplies })
+      : undefined;
     const createAuthorized = () =>
       createAuthorizedManager(
         caller,

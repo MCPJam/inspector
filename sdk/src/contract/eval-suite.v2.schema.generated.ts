@@ -425,6 +425,7 @@ export const evalSuiteFileV2JsonSchema: Record<string, unknown> = {
                       propertyNames: { type: "string" },
                       additionalProperties: {},
                     },
+                    approval: { type: "string", enum: ["approve", "deny"] },
                     renderTimeoutMs: {
                       type: "integer",
                       exclusiveMinimum: 0,

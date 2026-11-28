@@ -341,6 +341,7 @@ export type JourneyManagerFactory = (
   hooks?: {
     /** Called once the factory starts waiting on the host's MCP servers. */
     onConnecting?: () => void;
+    clientDriver?: Parameters<SimulationManagerFactory>[0];
   },
 ) => Promise<{
   manager: Awaited<ReturnType<SimulationManagerFactory>>["manager"];
@@ -1671,12 +1672,24 @@ async function runJourneyFanOut(
             authHeader: `Bearer ${bearer}`,
             // Each attempt gets a fresh manager + browser context, scoped to THIS
             // target's pinned required servers.
-            managerFactory: () => managerFactory(target),
+            managerFactory: (clientDriver) => managerFactory(target, { clientDriver }),
             // Thread the run-level stop signal (composed with shutdown/cancel) so a
             // spend-cap short-circuit cancels this host's in-flight turns.
             abortSignal: attemptSignal,
             budgets,
             enablePersonaAppClicks: true,
+            nextPersonaClientAction: async (transcriptSoFar, clientAction, signal) =>
+              (await swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
+                projectId,
+                runId,
+                hostId,
+                ...(targetId ? { targetId } : {}),
+                sessionIdx: attemptSessionIdx,
+                transcriptSoFar,
+                clientAction,
+                signal,
+                ...(sponsored ? { sponsored: true } : {}),
+              })).message,
             nextPersonaTurn: (transcriptSoFar, appControls) =>
               swarmPersonaNextTurn(convexHttpUrl, sessionBearer, {
                 projectId,

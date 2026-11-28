@@ -167,6 +167,8 @@ export const toolCallStepSchema = z
     // NOT closed, and never should be: this is the tool's OWN argument object,
     // whose keys belong to the server's input schema rather than to ours.
     arguments: toolCallArgumentsSchema,
+    /** An explicit saved client decision for this call. A denial never sends it. */
+    approval: z.enum(["approve", "deny"]).optional(),
     /** Per-call render budget override (ms); harness default applies when absent. */
     renderTimeoutMs: z
       .number()

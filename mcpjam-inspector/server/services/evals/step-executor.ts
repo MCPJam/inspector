@@ -585,6 +585,7 @@ export async function executeSteps(args: {
   }) => void;
 }): Promise<StepExecutorResult> {
   const { steps, state, browser, handlers, isAborted, onStepStatus } = args;
+  const startedAt = Date.now();
 
   // Bind the state's render-observation field to the browser session's live
   // array (a stable reference the session pushes into as widgets render). This
@@ -737,6 +738,22 @@ export async function executeSteps(args: {
 
     if (isToolCallStep(step)) {
       browser.setActivePromptIndex(turnOrdinal);
+      if (step.approval === "deny") {
+        const elapsedMs = Date.now() - startedAt;
+        state.spans.push({
+          id: crypto.randomUUID(),
+          name: "Saved client approval denied",
+          category: "step",
+          authoredStepId: step.id,
+          toolName: step.toolName,
+          promptIndex: turnOrdinal,
+          startMs: elapsedMs,
+          endMs: elapsedMs,
+          status: "ok",
+        });
+        emitStatus(stepIndex, "ok");
+        continue;
+      }
       emitStatus(stepIndex, "running");
       const outcome = await handlers.onToolCall({
         step,

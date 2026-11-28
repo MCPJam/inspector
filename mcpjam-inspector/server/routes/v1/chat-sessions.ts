@@ -1,4 +1,8 @@
-import { projectRecordedAppTrace } from "@mcpjam/sdk/contract";
+import {
+  clientActionReceiptSchema,
+  projectRecordedAppTrace,
+  type ClientActionReceipt,
+} from "@mcpjam/sdk/contract";
 import { registerChatSessionBrowserRoutes } from "./chat-session-browser-routes";
 import type { ModelReasoningEffort } from "@mcpjam/sdk";
 /**
@@ -133,6 +137,7 @@ type TurnTraceRow = {
   browserAtTurn?: { browserSessionId: string; bootId?: string; box?: unknown };
   /** The MCP event that started the turn; absent on every other turn. */
   eventAtTurn?: EventAtTurn;
+  clientActions?: ClientActionReceipt[];
 };
 
 /**
@@ -445,6 +450,15 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     ts: number;
   };
   const includeBrowserScreenshots = selected.some((row) => row.browserAtTurn);
+  const clientActions = new Map<string, ClientActionReceipt>();
+  if (includeAppRecording) {
+    for (const row of ordered) {
+      for (const receipt of row.clientActions ?? []) {
+        const parsed = clientActionReceiptSchema.safeParse(receipt);
+        if (parsed.success) clientActions.set(parsed.data.id, parsed.data);
+      }
+    }
+  }
   let artifacts: Artifact[] = [];
   let appRecording: ReturnType<typeof projectRecordedAppTrace>;
   if (includeBrowserScreenshots || includeAppRecording) {
@@ -542,6 +556,9 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     projectId: session.projectId ?? null,
     traceVersion: 1,
     ...(appRecording ? { appRecording } : {}),
+    ...(clientActions.size
+      ? { clientActions: [...clientActions.values()].sort((left, right) => left.order - right.order) }
+      : {}),
     turnCount: ordered.length,
     turns,
     ...(ordered.length > 0

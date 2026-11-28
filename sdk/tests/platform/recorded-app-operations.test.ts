@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { PlatformApiClient } from "../../src/platform/client.js";
+import type { ClientActionReceipt } from "../../src/contract/client-action-receipt.js";
 import {
   compileRecordedAppCaseOperation,
   summarizeRecordedAppActionsOperation,
@@ -25,7 +26,7 @@ const recording = {
   truncated: false,
 };
 
-function setup() {
+function setup(clientActions?: ClientActionReceipt[]) {
   const requests = vi.fn(async (target: unknown) => {
     const url = new URL(String(target));
     const sessionId = url.pathname.split("/").at(-2);
@@ -56,6 +57,7 @@ function setup() {
       turns: [],
       turnCount: 0,
       ...(sessionId === "counted" ? { appRecording: recording } : {}),
+      ...(sessionId === "counted" && clientActions ? { clientActions } : {}),
     });
   });
   return {
@@ -111,6 +113,99 @@ describe("recorded app operations", () => {
     expect(result).toEqual({
       sessions: { requested: 3, counted: 1, ungraded: 1, unavailable: 1 },
       actions: recording.summary,
+    });
+  });
+
+  it("replays ordered decisions and requires replacement values for redacted forms", async () => {
+    const shared = {
+      actor: "persona",
+      surface: "client",
+      serverId: "original",
+      startedAt: 30,
+      elapsedMs: 4,
+    } as const;
+    const questionId = "12345678-1234-4234-a234-000000000003";
+    const { client } = setup([
+      {
+        ...shared,
+        order: 0,
+        id: "12345678-1234-4234-a234-000000000001",
+        kind: "approval",
+        outcome: "denied",
+        invocationId: "discard-1",
+        toolName: "discard_form",
+      },
+      {
+        ...shared,
+        order: 1,
+        id: "12345678-1234-4234-a234-000000000002",
+        kind: "approval",
+        outcome: "approved",
+        invocationId: "open-1",
+        toolName: "open_form",
+      },
+      {
+        ...shared,
+        order: 2,
+        id: questionId,
+        kind: "question",
+        outcome: "accepted",
+        toolName: "open_form",
+      },
+    ]);
+    const input = {
+      sessionId: "counted",
+      toolCallId: "open-1",
+      title: "Save form",
+      caseId: "case-1",
+      serverName: "Forms replacement",
+      assertions: [
+        { kind: "textVisible" as const, toolName: "open_form", text: "Saved" },
+      ],
+    };
+    await expect(
+      compileRecordedAppCaseOperation.execute(input, { client })
+    ).rejects.toThrow(questionId);
+    const { case: testCase } = await compileRecordedAppCaseOperation.execute(
+      {
+        ...input,
+        questionReplies: {
+          [questionId]: { action: "accept", content: { size: "small" } },
+        },
+      },
+      { client }
+    );
+    expect(testCase.steps.slice(0, 2)).toMatchObject([
+      {
+        kind: "toolCall",
+        approval: "deny",
+        toolName: "discard_form",
+        arguments: {},
+      },
+      { kind: "toolCall", approval: "approve", toolName: "open_form" },
+    ]);
+    expect(testCase.inputAnswers).toEqual([
+      {
+        tool: "open_form",
+        server: "Forms replacement",
+        action: "accept",
+        content: { size: "small" },
+      },
+    ]);
+    await expect(
+      summarizeRecordedAppActionsOperation.execute(
+        { sessionIds: ["counted"] },
+        { client }
+      )
+    ).resolves.toMatchObject({
+      clientActions: {
+        approval: {
+          attempted: 2,
+          outcomes: { approved: 1, denied: 1 },
+          elapsedMs: 8,
+        },
+        question: { attempted: 1, outcomes: { accepted: 1 }, elapsedMs: 4 },
+      },
     });
   });
 });

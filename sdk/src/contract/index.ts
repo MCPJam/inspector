@@ -36,6 +36,8 @@
  *     boundary checks a reported derivation against.
  */
 
+export * from "./client-action-receipt.js";
+
 export type {
   EvaluationConfigSnapshot,
   ResolvedScoreDefinition,

@@ -15,6 +15,7 @@
 
 import type { ModelMessage } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { withToolCallScope } from "./input-answers.js";
 import { decideToolPolicy } from "@mcpjam/sdk/contract";
 import type { ToolCall, ToolErrorRecord } from "@/shared/eval-matching";
 import type { PinnedToolCall } from "@/shared/steps";
@@ -242,10 +243,9 @@ export async function runPinnedTurn(
     }
   }
   try {
-    rawResult = await mcpClientManager.executeTool(
-      resolvedServerKey,
-      pinned.toolName,
-      args
+    rawResult = await withToolCallScope(
+      { tool: pinned.toolName, serverId: resolvedServerKey },
+      () => mcpClientManager.executeTool(resolvedServerKey, pinned.toolName, args),
     );
     const isError =
       !!rawResult &&

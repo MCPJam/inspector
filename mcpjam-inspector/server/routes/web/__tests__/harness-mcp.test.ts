@@ -105,6 +105,7 @@ describe("/api/web/harness-mcp", () => {
     );
   });
   it("passes an eval iteration's pinned replies to the connection", async () => {
+    loadPinned.mockResolvedValueOnce([{ action: "decline" }]);
     const scoped = signTestProxyToken({
       serverId: "srv-a", projectId: "p1", externalId: "user_ext_1",
       orgId: "org_1", runId: "run-77", iterationId: "iter-1",

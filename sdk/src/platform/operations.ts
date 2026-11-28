@@ -5125,6 +5125,7 @@ const stepInputSchema = z
         serverName: z.string().min(1),
         toolName: z.string().min(1),
         arguments: z.record(z.string(), z.any()),
+        approval: z.enum(["approve", "deny"]).optional(),
         renderTimeoutMs: z.number().int().positive().optional(),
       })
       .passthrough(),
@@ -5148,6 +5149,7 @@ const stepInputSchema = z
 
 const evalCaseInput = z.object({
   title: z.string().trim().min(1).describe("Short label for the test case."),
+  inputAnswers: inputAnswersSchema.optional(),
   intent: caseIntentSchema
     .optional()
     .describe(
