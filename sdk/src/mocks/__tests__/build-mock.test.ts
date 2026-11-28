@@ -309,7 +309,8 @@ describe.each<Era>(["legacy", "modern"])("buildMock (%s era)", (era) => {
     expect(progress).toEqual([
       expect.objectContaining({ progress: 1, total: 2, message: "half" }),
     ]);
-    expect(changed).toEqual(["tools"]);
+    // 2025-era revisions send a list change on the stream of the call; 2026-07-28 sends it on a subscription.
+    expect(changed).toEqual(era === "legacy" ? ["tools"] : []);
   });
 
   it("refuses tools/list and names the tool when the real server no longer has an edited one", async () => {

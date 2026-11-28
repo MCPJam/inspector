@@ -26,6 +26,18 @@ const skillDefinition: MockDefinition = {
 describe.each<Era>(["legacy", "modern"])("skills (%s era)", (era) => {
   it("serves a skill beside a real server's resources, with a manifest a host can verify", async () => {
     const { client, handler } = await h.connect(skillDefinition, era);
+    if (era === "legacy") {
+      // `extensions` is a 2026-07-28 field, so an older revision has no skills methods; the files are still resources.
+      expect(client.getServerCapabilities()?.extensions).toBeUndefined();
+      expect((await h.rpc(handler, era, "skills/list")).error?.code).toBe(
+        -32601
+      );
+      const read = await client.readResource({
+        uri: "skill://triage/checklist.md",
+      });
+      expect(read.contents[0]).toMatchObject({ text: CHECKLIST });
+      return;
+    }
     expect(client.getServerCapabilities()?.extensions).toHaveProperty(
       "io.modelcontextprotocol/skills"
     );
@@ -65,9 +77,14 @@ describe.each<Era>(["legacy", "modern"])("skills (%s era)", (era) => {
 
   it("a mock from nothing lists its skill and reads its files", async () => {
     const { client, handler } = await h.connect(skillDefinition, era, true);
-    expect(
-      (await h.rpc(handler, era, "skills/list")).result?.skills
-    ).toHaveLength(1);
+    if (era === "legacy") {
+      expect((await h.rpc(handler, era, "skills/list")).error?.code).toBe(
+        -32601
+      );
+    } else
+      expect(
+        (await h.rpc(handler, era, "skills/list")).result?.skills
+      ).toHaveLength(1);
     expect((await client.listResources()).resources.map((r) => r.uri)).toEqual([
       "skill://triage/SKILL.md",
       "skill://triage/checklist.md",

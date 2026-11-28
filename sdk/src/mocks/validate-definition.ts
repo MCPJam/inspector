@@ -3,6 +3,7 @@ import type { MockCapIssueCode } from "./definition-caps.js";
 import { MAX_SAVED_CASES, MOCK_CAPABILITY_KEYS } from "./definition-types.js";
 import type { MockDefinition } from "./definition-types.js";
 import { checkItems } from "./validate-items.js";
+import { checkCaseSteps } from "./validate-steps.js";
 
 export type MockIssueCode =
   | MockCapIssueCode
@@ -11,7 +12,7 @@ export type MockIssueCode =
   | "unknown_field"
   | "param_conflict"
   | "uncallable_input"
-  /** A field the stored shape has room for, whose runtime comes in a later stage (steps and tasks) or is out of scope (model answers). */
+  /** A field the stored shape has room for that is out of scope (model answers). */
   | "unsupported";
 
 export interface MockIssue {
@@ -201,15 +202,9 @@ class Check {
     if (!this.object(value, path)) return;
     this.fields(value, SAVED_CASE_FIELDS, path);
     if ("when" in value) this.object(value.when, at(path, "when"));
-    for (const key of ["steps", "task"]) {
-      if (key in value) {
-        this.add(
-          "unsupported",
-          at(path, key),
-          `${at(path, key)} is not supported yet: a saved case answers with a result or an error only. Remove ${key}.`
-        );
-      }
-    }
+    checkCaseSteps(value, path, (code, p, message) =>
+      this.add(code, p, message)
+    );
     const hasResult = "result" in value;
     const hasError = "error" in value;
     if (hasResult === hasError) {

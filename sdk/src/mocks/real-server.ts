@@ -2,6 +2,7 @@ import { unknownMethodError } from "./mock-errors.js";
 import type { MockForwardBlockReason } from "./mock-observer.js";
 import type {
   CallToolResult,
+  InputRequiredResult,
   LoggingLevel,
   ServerCapabilities,
   Tool,
@@ -41,6 +42,13 @@ export interface MockRealCall {
   onProgress?: (progress: MockRealProgress) => void;
   /** Called for each log message the real server sends during the call. */
   onLog?: (log: MockRealLog) => void;
+  /**
+   * The caller's answers to questions the real server asked in an earlier
+   * round (2026-07-28 `input_required`), and the state it handed back. Send
+   * both with the call, as the real server expects them.
+   */
+  inputResponses?: Record<string, unknown>;
+  requestState?: string;
 }
 
 /** What the mock is about to send to the real server. */
@@ -111,7 +119,14 @@ export interface MockRealServer {
     request: MockForwardRequest,
     options?: { signal?: AbortSignal }
   ): Promise<MockForwardDecision>;
-  callTool(call: MockRealCall): Promise<CallToolResult>;
+  /**
+   * A real server that needs input answers a 2026-07-28 call with an
+   * `input_required` result; return it as it is and the mock hands it to the
+   * caller, who answers by retrying (the retry carries the answers back in
+   * `inputResponses` and `requestState`). A connection that answers questions
+   * itself needs no part of this.
+   */
+  callTool(call: MockRealCall): Promise<CallToolResult | InputRequiredResult>;
   /** Any other spec method, passed through whole; the result is the result object. */
   request(
     request: { method: string; params?: Record<string, unknown> },

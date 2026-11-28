@@ -1,5 +1,12 @@
-import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
+import type {
+  CallToolResult,
+  InputRequiredResult,
+  Tool,
+} from "@modelcontextprotocol/server";
 import { checkToolArgs } from "../conformance-tool-args.js";
+import { answerCase } from "./case-call.js";
+import type { CaseCall } from "./case-call.js";
+import { isInputStep } from "./definition-types.js";
 import type { MockSavedAnswer } from "./definition-types.js";
 import type { MockObserver } from "./mock-observer.js";
 import { checkStructuredOutput } from "./output-schema.js";
@@ -19,6 +26,10 @@ export interface SelfAnswerCall {
   /** Whether the real server also lists a tool of this name, to fall back to. */
   realHasTool: boolean;
   observer?: MockObserver;
+  /** What running a case's steps needs from the call. Without it a case answers with its result only. */
+  caseCall?: CaseCall;
+  /** Whether this connection can be asked a question: only a 2026-07-28 caller can, since a 2025-era mock keeps no session. */
+  canAsk?: boolean;
 }
 
 /**
@@ -26,9 +37,13 @@ export interface SelfAnswerCall {
  * listed schema, then the first matching saved case answers, and its result
  * must fit the tool's output schema. Returns `undefined` only when no saved
  * case matched and the real server has the tool, so the caller forwards the
- * call. Throws a saved case's protocol error. Each call reports once.
+ * call. A case with steps runs them first; one that asks a question stops
+ * with the questions (2026-07-28). Throws a saved case's protocol error. Each call
+ * reports once.
  */
-export function answerItself(call: SelfAnswerCall): CallToolResult | undefined {
+export async function answerItself(
+  call: SelfAnswerCall
+): Promise<CallToolResult | InputRequiredResult | undefined> {
   const { name, answer, input, observer } = call;
   const verdict = checkToolArgs(call.tool?.inputSchema, input);
   if (verdict.verdict === "invalid") {
@@ -47,7 +62,7 @@ export function answerItself(call: SelfAnswerCall): CallToolResult | undefined {
       `No saved answer for ${name} matches ${JSON.stringify(input)}. Add a case whose "when" fits this input.`
     );
   }
-  const report = (refusal?: "invalid_output") =>
+  const report = (refusal?: "invalid_output" | "input_unavailable") =>
     observer?.({
       tool: name,
       source: "saved",
@@ -55,16 +70,30 @@ export function answerItself(call: SelfAnswerCall): CallToolResult | undefined {
       catchAll: found.chosen.when === undefined,
       ...(refusal && { refusal }),
     });
-  // A protocol error is thrown by `finishCase`; it still counts as a saved answer.
-  if (found.chosen.error) report();
-  const result = finishCase(found.chosen, input);
-  const output = checkStructuredOutput(call.tool?.outputSchema, result);
-  if (!output.ok) {
-    report("invalid_output");
+  const { chosen } = found;
+  if (chosen.steps?.some(isInputStep) && !call.canAsk) {
+    report("input_unavailable");
+    return toolErrorResult(
+      `The saved answer for ${name} asks the client a question, which needs protocol revision 2026-07-28 (earlier revisions need a session, and a mock keeps none). Connect with 2026-07-28, or save an answer without ask, askUrl or sample steps.`
+    );
+  }
+  let refusal: "invalid_output" | undefined;
+  const finish = (replies: Record<string, unknown>) => {
+    const result = finishCase(chosen, input, replies);
+    const output = checkStructuredOutput(call.tool?.outputSchema, result);
+    if (output.ok) return result;
+    refusal = "invalid_output";
     return toolErrorResult(
       `The saved answer for ${name} does not match its output schema: ${output.message}. Fix the saved result, or the output schema.`
     );
+  };
+  // A protocol error is thrown by `finishCase`; it still counts as a saved answer.
+  try {
+    if (call.caseCall && chosen.steps) {
+      return await answerCase(chosen, input, call.caseCall, finish);
+    }
+    return finish({});
+  } finally {
+    report(refusal);
   }
-  report();
-  return result;
 }
