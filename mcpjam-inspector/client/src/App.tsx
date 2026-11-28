@@ -2553,6 +2553,7 @@ export function EventsRoute() {
       )}
       <div className="min-h-0 flex-1">
         <EventsTab
+          key={activeProjectId}
           serverConfig={selectedMCPConfig}
           serverName={appState.selectedServer}
           isActive

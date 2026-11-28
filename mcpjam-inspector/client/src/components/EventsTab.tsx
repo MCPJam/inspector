@@ -23,7 +23,9 @@ import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import {
   getApiContextRevision,
+  getServerRequestKey,
   subscribeApiContext,
+  tryResolveProjectServer,
 } from "@/lib/apis/web/context";
 import {
   EVENT_SUBSCRIPTIONS_API,
@@ -135,6 +137,20 @@ export function EventsTab({
   >(null);
   const navigate = useAppNavigate();
 
+  // Hosted requests need the active project's mapping and connection defaults.
+  // They can arrive after a saved server already shows up as connected.
+  useSyncExternalStore(
+    subscribeApiContext,
+    getApiContextRevision,
+    getApiContextRevision,
+  );
+  const catalogRequestKey =
+    hosted && serverName
+      ? projectId && tryResolveProjectServer(serverName)?.projectId === projectId
+        ? getServerRequestKey(serverName)
+        : null
+      : undefined;
+
   // ── catalog ─────────────────────────────────────────────────────────────
   const {
     catalog,
@@ -145,7 +161,7 @@ export function EventsTab({
     loadMoreEvents,
     selectedEventName,
     setSelectedEventName,
-  } = useEventsCatalog({ hasServer, serverName, connected });
+  } = useEventsCatalog({ hasServer, serverName, connected, catalogRequestKey });
   const declared =
     catalogState === "ready" && catalog?.support.declared === true;
   const support = catalog?.support;
@@ -166,14 +182,6 @@ export function EventsTab({
   }, [serverName]);
 
   // ── registry ────────────────────────────────────────────────────────────
-  // The hosted server id comes from the API context, which fills in after
-  // bootstrap; subscribing re-renders on every change, and the id is read
-  // fresh each render (a map lookup).
-  useSyncExternalStore(
-    subscribeApiContext,
-    getApiContextRevision,
-    getApiContextRevision,
-  );
   const hostedServerId =
     hosted && serverName ? resolveHostedEventsServerId(serverName) : null;
   const hostedRows = useQuery(

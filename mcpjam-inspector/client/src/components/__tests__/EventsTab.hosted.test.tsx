@@ -4,7 +4,7 @@
  * token (contract C7). Hosted feed messages are one FeedEntry each (with
  * `dispatchState`), plus named events (`gap`, `dispatch`, `expired`, …).
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
   fireEvent,
@@ -100,6 +100,20 @@ vi.mock("@/components/ui/json-editor", () => ({
 
 import { EventsTab } from "../EventsTab";
 import { EVENT_SUBSCRIPTIONS_API } from "@/lib/apis/mcp-events-api";
+import { setApiContext } from "@/lib/apis/web/context";
+
+function publishProjectSettings(
+  projectId: string,
+  clientConfigSyncPending = false,
+) {
+  setApiContext({
+    projectId,
+    serverIdsByName: { github: "srv_convex_1" },
+    clientConfigSyncPending,
+    isAuthenticated: true,
+    getAccessToken: async () => null,
+  });
+}
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -179,6 +193,7 @@ function subscribeButton() {
 describe("EventsTab (hosted)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    publishProjectSettings("proj_1");
     mutations.clear();
     FakeEventSource.instances = [];
     Object.assign(globalThis, { EventSource: FakeEventSource });
@@ -197,6 +212,39 @@ describe("EventsTab (hosted)", () => {
     mockFetchViewerToken
       .mockResolvedValueOnce(viewerToken("tok_1"))
       .mockResolvedValueOnce(viewerToken("tok_2"));
+  });
+
+  afterEach(() => setApiContext(null));
+
+  it("reads Events after the matching project's connection settings finish syncing", async () => {
+    const { rerender } = render(
+      <EventsTab
+        serverConfig={serverConfig()}
+        serverName="github"
+        projectId="proj_1"
+      />,
+    );
+    await waitFor(() => expect(mockLoadEventsCatalog).toHaveBeenCalledTimes(1));
+    mockLoadEventsCatalog.mockResolvedValue({
+      events: [],
+      support: { handshakeObserved: true, declared: false, listChanged: false },
+    });
+
+    rerender(
+      <EventsTab
+        serverConfig={serverConfig()}
+        serverName="github"
+        projectId="proj_2"
+      />,
+    );
+    expect(screen.getByText("Reading events support…")).toBeInTheDocument();
+    act(() => publishProjectSettings("proj_2", true));
+    expect(mockLoadEventsCatalog).toHaveBeenCalledTimes(1);
+    act(() => publishProjectSettings("proj_2"));
+    expect(
+      await screen.findByText("This server does not declare events"),
+    ).toBeInTheDocument();
+    expect(mockLoadEventsCatalog).toHaveBeenCalledTimes(2);
   });
 
   it("opens the inbox stream with a viewer token and reconnects with a fresh one", async () => {

@@ -28,10 +28,13 @@ export function useEventsCatalog({
   hasServer,
   serverName,
   connected,
+  catalogRequestKey,
 }: {
   hasServer: boolean;
   serverName?: string;
   connected: boolean;
+  /** Null while hosted context is pending, undefined for local connections. */
+  catalogRequestKey?: string | null;
 }): EventsCatalog {
   const [catalog, setCatalog] = useState<EventsListResponse | null>(null);
   const [catalogState, setCatalogState] = useState<CatalogState>("idle");
@@ -47,7 +50,9 @@ export function useEventsCatalog({
   }, [serverName]);
 
   useEffect(() => {
-    if (!hasServer || !serverName || !connected) return;
+    if (!hasServer || !serverName || !connected || catalogRequestKey === null) {
+      return;
+    }
     let cancelled = false;
     setCatalogState("loading");
     setCatalogError(null);
@@ -73,7 +78,7 @@ export function useEventsCatalog({
     return () => {
       cancelled = true;
     };
-  }, [hasServer, serverName, connected, catalogAttempt]);
+  }, [hasServer, serverName, connected, catalogRequestKey, catalogAttempt]);
 
   const loadMoreEvents = useCallback(async () => {
     if (!serverName || !catalog?.nextCursor) return;
@@ -104,8 +109,8 @@ export function useEventsCatalog({
   );
 
   return {
-    catalog,
-    catalogState,
+    catalog: catalogRequestKey === null ? null : catalog,
+    catalogState: catalogRequestKey === null ? "idle" : catalogState,
     catalogError,
     retry,
     loadingMore,
