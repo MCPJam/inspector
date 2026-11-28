@@ -120,7 +120,7 @@ export type RunsAsEntry = {
 };
 
 /**
- * "Runs as you": each server the person chooses accounts for, with the
+ * "Runs as": each server the person chooses accounts for, with the
  * accounts their runs use there.
  */
 export function runsAsEntries(
@@ -128,7 +128,8 @@ export function runsAsEntries(
   serverName: (serverId: string) => string,
 ): RunsAsEntry[] {
   return view.servers.flatMap((server) => {
-    if (!choosesAccounts(server)) return [];
+    // One account leaves nothing to choose, so there is nothing to say.
+    if (!choosesAccounts(server) || server.accounts.length === 1) return [];
     const checked = new Set(checkedAccountIds(server));
     const accounts = server.accounts
       .filter((account) => checked.has(account.connectionId))

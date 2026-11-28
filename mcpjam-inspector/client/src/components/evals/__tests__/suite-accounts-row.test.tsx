@@ -165,9 +165,10 @@ describe("SuiteAccountsRow", () => {
       onChange: edit,
       disabled: false,
     }} />);
-    const select = screen.getByRole("combobox", { name: "Asana account" });
-    expect(select).toHaveValue(live.connectionId);
-    await userEvent.selectOptions(select, dummy.connectionId);
+    const picker = screen.getByRole("button", { name: "Asana account" });
+    expect(picker).toHaveTextContent("Live");
+    await userEvent.click(picker);
+    await userEvent.click(await screen.findByRole("menuitem", { name: /Dummy/ }));
     expect(edit).toHaveBeenCalledWith([{ serverId: "srv-asana", connectionId: dummy.connectionId }]);
     expect(state.save).not.toHaveBeenCalled();
   });
