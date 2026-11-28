@@ -63,8 +63,21 @@ function check(label, condition, detail) {
   if (detail) console.log(detail.replace(/^/gm, "        "));
 }
 
+// On Windows npm and npx are .cmd shims, which spawn cannot start without a
+// shell (ENOENT), and a shell would need every path quoted. Under `npm run`,
+// npm_execpath names npm-cli.js and npx-cli.js sits beside it, so run those
+// with this node instead. Run directly, fall back to the npm the Windows
+// installer bundles next to node.exe.
+function tool(name, args) {
+  if (process.platform !== "win32") return [name, args];
+  const npmBin = process.env.npm_execpath
+    ? path.dirname(process.env.npm_execpath)
+    : path.join(path.dirname(process.execPath), "node_modules", "npm", "bin");
+  return [process.execPath, [path.join(npmBin, `${name}-cli.js`), ...args]];
+}
+
 function run(command, args, options = {}) {
-  return spawnSync(command, args, {
+  return spawnSync(...tool(command, args), {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     ...options,
@@ -74,8 +87,7 @@ function run(command, args, options = {}) {
 /** `npm pack` a workspace and return the absolute tarball path. */
 function pack(workspaceDir, destination) {
   const stdout = execFileSync(
-    "npm",
-    ["pack", "--pack-destination", destination, "--silent"],
+    ...tool("npm", ["pack", "--pack-destination", destination, "--silent"]),
     { cwd: workspaceDir, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }
   );
   // `npm pack --silent` still prints the filename; take the last non-empty
