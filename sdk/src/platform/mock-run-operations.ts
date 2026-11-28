@@ -32,6 +32,7 @@ const openInput = z.object({
     .optional()
     .describe("The version to pin. Defaults to the head. Later saves do not change the run."),
   platformRunId: text
+    .max(200)
     .optional()
     .describe("The ID of the test or evaluation run this belongs to, when one exists, so the two can be matched."),
 });

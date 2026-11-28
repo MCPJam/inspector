@@ -219,4 +219,10 @@ describe("results match the shared surface fixture", () => {
     expect(runBodies).toEqual([{ expectedEpoch: 1 }]);
     expect(await run(closeMockRunOperation, { mock: "markets (mock)", runId: "run-1" }, client)).toEqual(withProject(fixture.closed));
   });
+
+  it("takes a platform run ID of up to 200 characters, as the route does", () => {
+    const open = (platformRunId: string) => openMockRunOperation.inputSchema.safeParse({ mock: "m", platformRunId }).success;
+    expect(open("r".repeat(200))).toBe(true);
+    expect(open("r".repeat(201))).toBe(false);
+  });
 });

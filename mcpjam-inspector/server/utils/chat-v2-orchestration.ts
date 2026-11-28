@@ -1332,7 +1332,7 @@ export async function prepareChatV2(
     ?.flatMap((id) => selectedGroups?.[id]?.map((c) => c.key) ?? [id])
     .filter((id) => mcpClientManager.hasServer(id));
   // What a server sends while its tool runs reaches the call's card.
-  if (knownSelectedServers) forwardToolLogs(mcpClientManager, knownSelectedServers);
+  forwardToolLogs(mcpClientManager, knownSelectedServers);
 
   // `undefined` for every default turn, which is what keeps those turns on the
   // pre-existing no-options overload. See `mcpToolOptionsFor`.

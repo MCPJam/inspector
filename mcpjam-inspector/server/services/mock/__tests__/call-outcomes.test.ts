@@ -114,6 +114,45 @@ describe("the reporter", () => {
     expect(refused.sent).toHaveLength(1);
   });
 
+  it("holds at most 500 of a caller's outcomes while its reports hang, and takes more once they settle", async () => {
+    const hung: Array<() => void> = [];
+    const sizes: number[] = [];
+    const fetchStub = ((_url: string, init: RequestInit) => {
+      sizes.push(JSON.parse(init.body as string).outcomes.length);
+      return new Promise<Response>((resolve) => hung.push(() => resolve(new Response("{}"))));
+    }) as unknown as typeof fetch;
+    const reporter = new MockOutcomeReporter({ fetch: fetchStub });
+    const releaseAll = () => hung.forEach((release) => release());
+    for (let i = 0; i < 550; i++) reporter.record("ann", who, outcomeOf(mark()));
+    // Ten full batches are out; the last 50 outcomes were dropped, not sent as an eleventh.
+    expect(sizes).toEqual(Array(10).fill(MAX_OUTCOMES_PER_BATCH));
+    // Another caller is not held back by ann's.
+    reporter.record("bob", { ...who, bearerToken: "bob-token" }, outcomeOf(mark()));
+    let flushed = reporter.flush();
+    releaseAll();
+    await flushed;
+    expect(sizes).toEqual([...Array(10).fill(MAX_OUTCOMES_PER_BATCH), 1]);
+    // Ann's sends have settled, so ann's outcomes are taken again.
+    reporter.record("ann", who, outcomeOf(mark()));
+    flushed = reporter.flush();
+    releaseAll();
+    await flushed;
+    expect(sizes).toEqual([...Array(10).fill(MAX_OUTCOMES_PER_BATCH), 1, 1]);
+  });
+
+  it.each([200, 500])("releases the body of a report answered %i", async (status) => {
+    let released = false;
+    const body = new ReadableStream({
+      cancel: () => {
+        released = true;
+      },
+    });
+    const reporter = new MockOutcomeReporter({ fetch: (async () => new Response(body, { status })) as typeof fetch });
+    reporter.record("ann", who, outcomeOf(mark()));
+    await reporter.flush();
+    expect(released).toBe(true);
+  });
+
   it("puts only ids and closed words in an entry", () => {
     const entry = outcomeOf({
       ...mark({ source: "forwarded", realTool: "real_echo", realServerId: "real1" }),

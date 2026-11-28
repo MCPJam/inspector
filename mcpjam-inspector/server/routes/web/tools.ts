@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { isMCPTasksWireError } from "@mcpjam/sdk";
+import { operationKeyMeta } from "@mcpjam/sdk/mocks";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
   mapEphemeralServerFailure,
@@ -183,19 +184,23 @@ tools.post("/execute", async (c) =>
         // CreateTaskResult must be in hand before the `finally` disconnect.
         // Durability past that point is the MCP server's spec obligation —
         // the task must be readable via `tasks/get` from a fresh connection.
+        // A mock reads the key from the request's `_meta`, on a task call too;
+        // any other server ignores it.
+        const metadata = body.operationKey
+          ? operationKeyMeta(body.operationKey)
+          : undefined;
         const result = body.allowTaskResult
           ? await manager.executeTool(
               body.serverId,
               body.toolName,
               body.parameters,
-              { allowTaskResult: true },
+              { allowTaskResult: true, metadata },
             )
           : await manager.executeTool(
               body.serverId,
               body.toolName,
               body.parameters,
-              undefined,
-              body.taskOptions,
+              { metadata, task: body.taskOptions },
             );
         const created = detectCreatedTask(manager, body.serverId, result);
         if (created) {

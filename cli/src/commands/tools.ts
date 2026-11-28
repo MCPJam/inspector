@@ -907,6 +907,15 @@ export function registerToolsCommands(program: Command): void {
           "reproduce a header mismatch, or drop --mcp-header.",
       );
     }
+    // The same holds for `_meta`: a key the task path dropped would let a
+    // retried write apply twice.
+    if (options.task && operationKey) {
+      throw usageError(
+        "--operation-key cannot be used together with --task: the task-augmented " +
+          "call path does not carry the key. Drop --task to make the write safe " +
+          "to retry, or drop --operation-key.",
+      );
+    }
 
     // Every task-only flag is refused without its enabling flag. Accepting one
     // silently would let a misspelled or half-finished task invocation run an

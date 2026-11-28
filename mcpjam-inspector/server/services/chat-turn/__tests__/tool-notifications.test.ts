@@ -110,6 +110,7 @@ describe("forwardToolLogs", () => {
       onLogMessage: vi.fn((_id: string, h: (n: unknown) => void) => {
         handlers.push(h);
       }),
+      listServers: () => ["a", "b"],
     };
     forwardToolLogs(manager, ["a", "b"]);
     forwardToolLogs(manager, ["a"]);
@@ -127,6 +128,18 @@ describe("forwardToolLogs", () => {
       level: "warning",
       text: '{"a":1}',
     });
+  });
+
+  it("forwards every server for a turn with no selection, and none for an empty one", () => {
+    const manager = {
+      setPerRequestLogLevel: vi.fn(),
+      onLogMessage: vi.fn(),
+      listServers: () => ["a", "b"],
+    };
+    forwardToolLogs(manager, []);
+    expect(manager.onLogMessage).not.toHaveBeenCalled();
+    forwardToolLogs(manager, undefined);
+    expect(manager.onLogMessage.mock.calls.map(([id]) => id)).toEqual(["a", "b"]);
   });
 
   it("reports no owner for progress that no call is running", () => {

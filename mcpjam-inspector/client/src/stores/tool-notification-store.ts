@@ -9,6 +9,13 @@ import type { ToolNotification } from "@/shared/tool-notification";
  */
 export const TOOL_LOG_LINES_KEPT = 20;
 
+/**
+ * Calls whose notes are kept. A call's notes show only while it runs, and a
+ * running call keeps being heard from, so the calls dropped are those quiet
+ * longest: finished, cancelled or abandoned ones.
+ */
+export const TOOL_RUNS_KEPT = 100;
+
 export interface ToolRunNotes {
   progress?: { progress: number; total?: number; message?: string };
   logs: Array<{ level: string; logger?: string; text: string }>;
@@ -24,7 +31,8 @@ export const useToolNotificationStore = create<ToolNotificationState>(
     runs: {},
     apply: (notification) =>
       set((state) => {
-        const run = state.runs[notification.toolCallId] ?? { logs: [] };
+        const { [notification.toolCallId]: run = { logs: [] }, ...others } =
+          state.runs;
         const next: ToolRunNotes =
           notification.kind === "progress"
             ? {
@@ -46,7 +54,14 @@ export const useToolNotificationStore = create<ToolNotificationState>(
                   },
                 ].slice(-TOOL_LOG_LINES_KEPT),
               };
-        return { runs: { ...state.runs, [notification.toolCallId]: next } };
+        // The call just heard from goes last, so the first are the quietest.
+        const earlier = Object.entries(others);
+        const kept = earlier.slice(
+          Math.max(0, earlier.length - (TOOL_RUNS_KEPT - 1)),
+        );
+        return {
+          runs: { ...Object.fromEntries(kept), [notification.toolCallId]: next },
+        };
       }),
   }),
 );
