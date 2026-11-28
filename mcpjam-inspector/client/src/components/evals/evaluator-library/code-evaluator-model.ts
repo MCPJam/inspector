@@ -84,6 +84,15 @@ export function thresholdProblem(threshold: number): string | undefined {
     : "Set a passing score above 0 and at most 1.";
 }
 
+/** What Test on a past iteration needs: a file that runs, and a score bar. */
+export function testableProblem(draft: CodeEvaluatorDraft): string | undefined {
+  return (
+    fileNameProblem(draft.fileName) ??
+    scriptProblem(draft.script) ??
+    thresholdProblem(draft.threshold)
+  );
+}
+
 /**
  * Why the suite can't take this draft, field by field. `others` are the
  * suite's other evaluators and `scripts` its setup and cleanup scripts, which

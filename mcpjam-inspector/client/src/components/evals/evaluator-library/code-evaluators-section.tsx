@@ -101,6 +101,7 @@ export function CodeEvaluatorsSection({
           others={evaluators.filter((item) => item.id !== editing.id)}
           scripts={codeEvaluators.scripts}
           requiredRefusal={requiredRoleRefusal(codeEvaluators.gradingMode)}
+          test={codeEvaluators.test}
           onCancel={() => setEditingId(null)}
           onSave={(next) => {
             onChange(

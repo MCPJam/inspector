@@ -139,6 +139,7 @@ export function SuiteEvaluatorLibrary({
                   requiredRefusal={requiredRoleRefusal(
                     codeEvaluators.gradingMode,
                   )}
+                  test={codeEvaluators.test}
                   onCancel={cancel}
                   onSave={(evaluator) => add({ codeEvaluators: [evaluator] })}
                   onDirtyChange={onDirtyChange}

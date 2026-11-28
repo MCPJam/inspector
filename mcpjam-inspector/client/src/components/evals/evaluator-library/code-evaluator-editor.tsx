@@ -17,6 +17,10 @@ import {
   type CodeEvaluatorDraft,
 } from "./code-evaluator-model";
 import { CodeEvaluatorStarterPicker } from "./code-evaluator-starter-picker";
+import {
+  CodeEvaluatorTestPanel,
+  type CodeEvaluatorTestTarget,
+} from "./code-evaluator-test-panel";
 import { draftChanged, EvaluatorEditorLayout } from "./evaluator-editor-layout";
 
 /** What each role means, in the words the scorer tables use. */
@@ -28,7 +32,8 @@ const ROLE_MEANING = {
 
 /**
  * Writes or edits one code evaluator, in the library dialog or inline in
- * suite settings. `requiredRefusal` says why Required isn't offered.
+ * suite settings. `requiredRefusal` says why Required isn't offered, and
+ * `test`, where to try the draft on a past iteration from the docked tray.
  */
 export function CodeEvaluatorEditor({
   inDialog = false,
@@ -36,6 +41,7 @@ export function CodeEvaluatorEditor({
   others,
   scripts,
   requiredRefusal,
+  test,
   onCancel,
   onSave,
   onDirtyChange,
@@ -47,6 +53,7 @@ export function CodeEvaluatorEditor({
   others: readonly CodeEvaluator[];
   scripts: SuiteScripts | undefined;
   requiredRefusal?: string;
+  test?: CodeEvaluatorTestTarget;
   onCancel: () => void;
   /** Saves the evaluator, or says why the suite refused it. */
   onSave: (evaluator: CodeEvaluator) => string | undefined;
@@ -90,6 +97,15 @@ export function CodeEvaluatorEditor({
       inlineClassName="mt-2 flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3"
       action={evaluator ? "Save" : "Add evaluator"}
       error={tried ? (problem ?? refusal) : undefined}
+      tray={
+        test ? (
+          <CodeEvaluatorTestPanel
+            target={test}
+            draft={draft}
+            evaluatorId={evaluator?.id}
+          />
+        ) : undefined
+      }
       onCancel={onCancel}
       onSubmit={save}
     >

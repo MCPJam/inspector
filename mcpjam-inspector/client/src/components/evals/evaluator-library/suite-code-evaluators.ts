@@ -22,6 +22,7 @@ import {
   CODE_EVALUATOR_LIMIT_COPY,
   type CodeEvaluator,
 } from "./code-evaluator-model";
+import type { CodeEvaluatorTestTarget } from "./code-evaluator-test-panel";
 
 /** Lowest to highest, as the backend orders them. */
 const GRADING_MODES = ["off", "shadow", "dual_write", "enforce"] as const;
@@ -55,6 +56,8 @@ export type SuiteCodeEvaluators = {
   gradingMode: SuiteGradingMode;
   /** Setup and cleanup scripts share the evaluators' size cap. */
   scripts: SuiteScripts | undefined;
+  /** For Test on a past iteration; absent for a suite outside a project. */
+  test?: CodeEvaluatorTestTarget;
 };
 
 /** The suite settings draft's code evaluators, for the library and the list. */
@@ -64,7 +67,10 @@ export function suiteCodeEvaluators({
   dispatch,
   gate,
 }: {
-  suite: Pick<EvalSuite, "gradingEngine" | "verdictPolicyVersion">;
+  suite: Pick<
+    EvalSuite,
+    "_id" | "projectId" | "gradingEngine" | "verdictPolicyVersion"
+  >;
   draft: SuiteSettingsDraft;
   dispatch: Dispatch<SuiteSettingsAction>;
   gate: CodeGradingGate;
@@ -82,6 +88,16 @@ export function suiteCodeEvaluators({
     gate,
     gradingMode: suiteGradingMode(suite),
     scripts: draft.current.scripts,
+    // The test runs with the network the draft would save.
+    ...(suite.projectId
+      ? {
+          test: {
+            projectId: suite.projectId,
+            suiteId: suite._id,
+            network: draft.current.grading?.network === "web" ? "web" : "none",
+          },
+        }
+      : {}),
   };
 }
 
