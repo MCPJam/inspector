@@ -73,6 +73,11 @@ export type ErrorCardProps = {
    */
   onOpenChange?: (open: boolean) => void;
   /**
+   * The heading over the raw text, in the panel and in Copy. "Raw error"
+   * fits a thrown error; a setup script's output is "Script output".
+   */
+  rawLabel?: string;
+  /**
    * Optional extra class to merge into the root container. Lets callers
    * tighten spacing without re-styling the whole card.
    */
@@ -180,7 +185,7 @@ export function severityStyles(severity: NormalizedError["severity"]) {
  * who just read the headline; a bug report wants the literal string that came
  * off the wire regardless, so this keeps every field.
  */
-function copyText(normalized: NormalizedError): string {
+function copyText(normalized: NormalizedError, rawLabel: string): string {
   const lines = [normalized.title, normalized.oneLine];
   if (normalized.likelyCauses.length > 0) {
     lines.push(
@@ -198,7 +203,7 @@ function copyText(normalized: NormalizedError): string {
   }
   lines.push(
     "",
-    `Raw error: ${normalized.rawMessage}${
+    `${rawLabel}: ${normalized.rawMessage}${
       normalized.rawCode !== undefined ? ` (code: ${normalized.rawCode})` : ""
     }`,
   );
@@ -345,8 +350,9 @@ function SectionBody({ items }: { items: string[] }) {
  * made ordinary prose look like corrupted output.
  */
 function MonoBlock({ children }: { children: React.ReactNode }) {
+  // Ligatures off: a script's `!=` must not render as `≠`.
   return (
-    <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
+    <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground [font-variant-ligatures:none]">
       {children}
     </div>
   );
@@ -361,6 +367,7 @@ export function ErrorCard({
   defaultOpen = false,
   open,
   onOpenChange,
+  rawLabel = "Raw error",
   className,
 }: ErrorCardProps) {
   const normalized = useMemo(() => resolveNormalized(error), [error]);
@@ -404,7 +411,7 @@ export function ErrorCard({
   );
   const handleCopy = async () => {
     // `copyToClipboard` reports failure by returning false, not by throwing.
-    const copied = await copyToClipboard(copyText(normalized));
+    const copied = await copyToClipboard(copyText(normalized, rawLabel));
     setCopyState(copied ? "copied" : "failed");
     if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
     copyResetTimer.current = setTimeout(() => setCopyState("idle"), 2000);
@@ -497,7 +504,7 @@ export function ErrorCard({
       ) : null}
       {showRaw ? (
         <div>
-          <SectionLabel>Raw error</SectionLabel>
+          <SectionLabel>{rawLabel}</SectionLabel>
           <MonoBlock>
             {normalized.rawMessage}
             {normalized.rawCode !== undefined ? (

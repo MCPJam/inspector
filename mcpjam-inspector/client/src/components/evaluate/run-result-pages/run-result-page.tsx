@@ -53,6 +53,7 @@ export function RunResultPage({
   projectId,
   decisionSummaryEnabled,
   onEditCase,
+  onEditScripts,
   onCrumbsChange,
 }: {
   suiteId: string;
@@ -70,6 +71,8 @@ export function RunResultPage({
   projectId: string | null | undefined;
   decisionSummaryEnabled: boolean;
   onEditCase?: (testCaseId: string) => void;
+  /** Opens suite settings from a failed setup or cleanup script's card. */
+  onEditScripts?: () => void;
   onCrumbsChange?: (crumbs: RunResultCrumbs | null) => void;
 }) {
   const enabled = useRunResultPagesEnabled();
@@ -235,6 +238,7 @@ export function RunResultPage({
           })}
           onRetryChain={chains.retry}
           onEditCase={editCase}
+          onEditScripts={onEditScripts}
           pager={
             pager && (
               <IterationPager

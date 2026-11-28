@@ -58,6 +58,7 @@ import { useRunErrorBreakdownToast } from "./run-error-breakdown";
 import { buildRunErrorBreakdown } from "./run-error-breakdown-model";
 import { useCaseResultLinks } from "./run-result-pages/result-page-links";
 import { useRunScrollMemory } from "./run-result-pages/run-view-memory";
+import { RunScriptNotices } from "../evals/code-grading/script-failure-cards";
 
 export function EvaluateRunContent(
   props: Parameters<typeof SingleRunContent>[0],
@@ -88,6 +89,7 @@ export function SingleRunContent({
   onOpenIteration,
   onEditCase,
   onEditEvaluator,
+  onEditScripts,
 }: {
   projectId: string | null | undefined;
   run: EvalSuiteRun;
@@ -106,6 +108,8 @@ export function SingleRunContent({
   }) => void;
   onEditCase?: (testCaseId: string) => void;
   onEditEvaluator?: (testCaseId: string) => void;
+  /** Opens suite settings from a failed run setup or cleanup script's card. */
+  onEditScripts?: () => void;
   fallbackBody?: ReactNode;
 }) {
   // Terminal only, matching `RunDecisionSummarySection`: a running row has no
@@ -431,6 +435,7 @@ export function SingleRunContent({
           ) : null
         }
       />
+      <RunScriptNotices run={run} onEditScripts={onEditScripts} />
 
       {changeSummary ? (
         <p
