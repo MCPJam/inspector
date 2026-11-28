@@ -2,10 +2,13 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
 import { PlaygroundTerminalPresentationProvider } from "@/contexts/playground-terminal-presentation";
+import type { PreferencesState } from "@/stores/preferences/preferences-store";
 import { UserMessageBubble } from "../user-message-bubble";
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: (selector: any) => selector({ themeMode: "light" }),
+  usePreferencesStore: <T,>(
+    selector: (state: Pick<PreferencesState, "themeMode">) => T,
+  ) => selector({ themeMode: "light" }),
 }));
 
 describe("UserMessageBubble in a Playground terminal client", () => {
@@ -24,6 +27,24 @@ describe("UserMessageBubble in a Playground terminal client", () => {
     expect(
       screen.getByText("Find AirPods").closest("[data-terminal-client]"),
     ).toHaveAttribute("data-terminal-client", hostStyle);
+  });
+
+  it("keeps space between the text parts of one prompt", () => {
+    render(
+      <ScenarioHostStyleProvider value="claude-code">
+        <PlaygroundTerminalPresentationProvider value>
+          <UserMessageBubble>
+            <p>First part</p>
+            <p>Second part</p>
+          </UserMessageBubble>
+        </PlaygroundTerminalPresentationProvider>
+      </ScenarioHostStyleProvider>,
+    );
+    const first = screen.getByText("First part");
+    expect(first.parentElement).toBe(
+      screen.getByText("Second part").parentElement,
+    );
+    expect(first.parentElement).toHaveClass("space-y-3");
   });
 
   it("keeps the chat bubble outside Playground", () => {
