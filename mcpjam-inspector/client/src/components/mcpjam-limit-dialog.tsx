@@ -10,7 +10,7 @@ import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useConvexAuth } from "convex/react";
 import { useFeatureFlagVariantKey } from "posthog-js/react";
 import { useLockedFlagVariant } from "@/hooks/use-locked-flag-variant";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   canManageOrgCredits,
   useOrganizationQueries,
@@ -242,7 +242,18 @@ export function MCPJamLimitDialog() {
     organizationId: openBillingOrgId,
     origin: "credits",
     limitKind: "credits",
+    inlineErrors: true,
   });
+  const [checkoutFailed, setCheckoutFailed] = useState(false);
+  // Bumped on every open, close and organization change, so a checkout started
+  // from an earlier opening or organization can neither redirect nor leave its
+  // failure on the current wall. A failure already shown belongs to the old
+  // organization, so it goes too.
+  const checkoutAttemptRef = useRef(0);
+  useEffect(() => {
+    checkoutAttemptRef.current += 1;
+    setCheckoutFailed(false);
+  }, [showTopupDialog, openBillingOrgId]);
   const {
     recipients: requestRecipients,
     isLoading: isLoadingRequestRecipients,
@@ -280,12 +291,24 @@ export function MCPJamLimitDialog() {
     !creditsUpgrade.canManageBilling;
   const creditsRequestAction =
     isKnownNonManager && !isFreeEffectivePlan ? "buyCredits" : "upgrade";
+  // Only an owner on Free can buy the plan from here. The swarm variant keeps
+  // its plans link: a run that stopped partway needs the comparison first.
+  const showCreditsCheckout =
+    isFreeEffectivePlan &&
+    !isSwarmWall &&
+    !isKnownNonManager &&
+    creditsUpgrade.canManageBilling;
   // Names owners only, because the one action this wall offers is an email to
   // the resolved owners. Admins can buy credits but cannot upgrade, so naming
   // them here promised a recipient the button never writes to — and, on Free,
   // implied admins could upgrade at all.
+  // With a checkout button on screen, the benefit names the plan it buys.
   const upgradeBenefit = creditUpgradeBenefit(
-    creditsUpgrade.creditUpgradePlans,
+    showCreditsCheckout
+      ? creditsUpgrade.creditUpgradePlans.filter(
+          (plan) => plan.plan === creditsUpgrade.targetPlan,
+        )
+      : creditsUpgrade.creditUpgradePlans,
   );
   const memberDescription = isFreeEffectivePlan
     ? `${upgradeBenefit} Ask an owner to upgrade.`
@@ -327,6 +350,7 @@ export function MCPJamLimitDialog() {
   useEffect(() => {
     if (!showTopupDialog) {
       creditsImpressionTrackedRef.current = false;
+      setCheckoutFailed(false);
       return;
     }
     if (
@@ -360,6 +384,8 @@ export function MCPJamLimitDialog() {
           ? requestRecipients.length > 0
             ? "request_owner"
             : "none"
+          : showCreditsCheckout
+          ? "checkout"
           : isFreeEffectivePlan
           ? "explore_plans"
           : "buy_credits",
@@ -390,6 +416,7 @@ export function MCPJamLimitDialog() {
     isSwarmWall,
     limitSurface,
     requestRecipients.length,
+    showCreditsCheckout,
     showCreditsUpgradeRequest,
     showTopupDialog,
     showCreditWall,
@@ -433,6 +460,31 @@ export function MCPJamLimitDialog() {
   const handleTopUp = () => navigateToBilling("buy_credits");
   const handleBYOK = () => navigateToBilling("byok");
   const handleExplorePlans = () => navigateToBilling("explore_plans");
+  const handleCheckout = async () => {
+    setCheckoutFailed(false);
+    const checkoutContext = {
+      ...creditEventContext,
+      organization_id: billingOrgId,
+      billing_interval: creditsUpgrade.interval,
+    };
+    // Sent before start(): a successful start navigates the tab away, and an
+    // event queued after that may never leave the page.
+    track("plan_limit_checkout_clicked", checkoutContext);
+    const attempt = checkoutAttemptRef.current;
+    const stillWanted = () => checkoutAttemptRef.current === attempt;
+    const result = await creditsUpgrade.start({ stillWanted });
+    if (!stillWanted()) return;
+    // The desktop app hands checkout to the system browser and asks to close.
+    if (result.shouldDismiss) dismiss();
+    if (result.failure) {
+      setCheckoutFailed(true);
+      track("plan_limit_checkout_failed", {
+        ...checkoutContext,
+        outcome: "checkout_failed",
+        failure_reason: result.failure,
+      });
+    }
+  };
   const handleCreditsDismiss = () => {
     dismiss();
     track("plan_limit_dialog_dismissed", {
@@ -460,6 +512,27 @@ export function MCPJamLimitDialog() {
       {showCreditWall && (
         <CreditsLimitDialogView
           engagementContext={engagementContext}
+          checkout={
+            showCreditsCheckout
+              ? {
+                  picker: {
+                    interval: creditsUpgrade.interval,
+                    onIntervalChange: creditsUpgrade.setInterval,
+                    annualPriceLabel: creditsUpgrade.annualPriceLabel,
+                    monthlyPriceLabel: creditsUpgrade.monthlyPriceLabel,
+                    annualDiscountPct: creditsUpgrade.annualDiscountPct,
+                    annualSupported: creditsUpgrade.annualSupported,
+                    monthlySupported: creditsUpgrade.monthlySupported,
+                    priceUnit: creditsUpgrade.priceUnit,
+                    teamName: creditsUpgrade.teamName,
+                    isStarting: creditsUpgrade.isStarting,
+                    isLoadingPrices: creditsUpgrade.isLoadingPrices,
+                    onUpgrade: () => void handleCheckout(),
+                  },
+                  failed: checkoutFailed,
+                }
+              : null
+          }
           isFreePlan={isFreeEffectivePlan}
           // A swarm stops partway, often with credits still left, so its title
           // says the run cannot finish rather than that the balance is empty.

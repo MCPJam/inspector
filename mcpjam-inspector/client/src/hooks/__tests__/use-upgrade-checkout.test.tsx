@@ -156,6 +156,54 @@ describe("useUpgradeCheckout", () => {
     );
   });
 
+  it("reports why checkout did not open, without a toast when the caller says so", async () => {
+    billingState.planCatalog = planCatalog(["annual"]);
+    startPlanChange.mockRejectedValue(new Error("Stripe is down"));
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org-1",
+        origin: "credits",
+        limitKind: "credits",
+        inlineErrors: true,
+      }),
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.start>>;
+    await act(async () => {
+      outcome = await result.current.start();
+    });
+
+    expect(outcome!).toEqual({
+      redirected: false,
+      shouldDismiss: false,
+      failure: "start_failed",
+    });
+    expect(toastError).not.toHaveBeenCalled();
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_upgrade_failed",
+      expect.objectContaining({ error_kind: "start_plan_change_failed" }),
+    );
+  });
+
+  it("reports a missing organization as a failed start", async () => {
+    billingState.planCatalog = planCatalog(["annual"]);
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: null,
+        origin: "credits",
+        limitKind: "credits",
+      }),
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.start>>;
+    await act(async () => {
+      outcome = await result.current.start();
+    });
+
+    expect(outcome!.failure).toBe("no_organization");
+    expect(startPlanChange).not.toHaveBeenCalled();
+  });
+
   it("blocks checkout when the catalog says the plan has no checkout", async () => {
     billingState.planCatalog = planCatalog(null);
     const { result } = renderHook(() =>
@@ -231,11 +279,15 @@ describe("useUpgradeCheckout", () => {
       outcome = await result.current.start();
     });
 
-    expect(outcome!).toEqual({ redirected: false, shouldDismiss: false });
+    expect(outcome!).toEqual({
+      redirected: false,
+      shouldDismiss: false,
+      failure: "prices_loading",
+    });
     expect(startPlanChange).not.toHaveBeenCalled();
   });
 
-  it("holds checkout when the catalog resolved without a Team entry", async () => {
+  it("reports the plan as unavailable when the catalog resolved without a Team entry", async () => {
     // Distinct from the loading case above: nothing is in flight, there is
     // simply no plan to sell. The `!teamEntry` guard is the one that stops it.
     billingState.planCatalog = undefined;
@@ -253,8 +305,38 @@ describe("useUpgradeCheckout", () => {
       outcome = await result.current.start();
     });
 
-    expect(outcome!).toEqual({ redirected: false, shouldDismiss: false });
+    expect(outcome!).toEqual({
+      redirected: false,
+      shouldDismiss: false,
+      failure: "plan_unavailable",
+    });
     expect(startPlanChange).not.toHaveBeenCalled();
+  });
+
+  it("stays on the page when the caller no longer wants checkout", async () => {
+    billingState.planCatalog = planCatalog(["annual"]);
+    startPlanChange.mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123",
+      subscription: { plan: "team" },
+    });
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org-1",
+        origin: "credits",
+        limitKind: "credits",
+      }),
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.start>>;
+    await act(async () => {
+      outcome = await result.current.start({ stillWanted: () => false });
+    });
+
+    expect(outcome!).toEqual({ redirected: false, shouldDismiss: false });
+    expect(
+      window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-1"),
+    ).toBeNull();
   });
 
   it("hands checkout to the browser on desktop instead of navigating in place", async () => {
@@ -297,6 +379,39 @@ describe("useUpgradeCheckout", () => {
       expect(window.sessionStorage.getItem("mcpjam.upgradeReturnToken")).toBe(
         null,
       );
+    } finally {
+      delete (window as { isElectron?: boolean }).isElectron;
+      openSpy.mockRestore();
+    }
+  });
+
+  it("opens no browser on desktop when the caller no longer wants checkout", async () => {
+    billingState.planCatalog = planCatalog(["annual"]);
+    startPlanChange.mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123",
+      subscription: { plan: "team" },
+    });
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    (window as { isElectron?: boolean }).isElectron = true;
+
+    try {
+      const { result } = renderHook(() =>
+        useUpgradeCheckout({
+          organizationId: "org-1",
+          origin: "credits",
+          limitKind: "credits",
+        }),
+      );
+
+      let outcome: Awaited<ReturnType<typeof result.current.start>>;
+      await act(async () => {
+        outcome = await result.current.start({ stillWanted: () => false });
+      });
+
+      expect(outcome!).toEqual({ redirected: false, shouldDismiss: false });
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(toastInfo).not.toHaveBeenCalled();
     } finally {
       delete (window as { isElectron?: boolean }).isElectron;
       openSpy.mockRestore();

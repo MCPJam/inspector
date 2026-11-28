@@ -506,6 +506,17 @@ export const ANALYTICS_EVENTS = {
   plan_limit_upgrade_failed: { source: "client" },
   plan_limit_upgrade_resolved: { source: "client" },
   plan_limit_upgrade_returned: { source: "client" },
+  // The Free credit wall's checkout button, sent on click before the redirect.
+  // A start that can't reach Stripe also sends the failure event with its
+  // `failure_reason`. These are the credit wall's click-level events, not a
+  // second funnel: the same attempt also goes through `useUpgradeCheckout`,
+  // whose `plan_limit_upgrade_*` events (with `origin: "credits"`) are the
+  // checkout funnel of record across every wall. Count conversion from those,
+  // and never add the two families together. `checkout_clicked` can exceed
+  // `upgrade_clicked`, because a start refused before reaching Stripe (no
+  // organization, prices loading, plan unavailable) sends only the former.
+  plan_limit_checkout_clicked: { source: "client" },
+  plan_limit_checkout_failed: { source: "client" },
   plan_limit_dialog_dismissed: { source: "client" },
   plan_limit_enterprise_cta_clicked: { source: "client" },
   plan_limit_upgrade_requested: { source: "client" },
