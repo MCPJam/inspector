@@ -114,7 +114,7 @@ describe("goal-run client actions", () => {
       choose,
       turnSignal: () => signal,
     });
-    const scoped = { _serverId: "fixture", needsApproval: true, execute };
+    const scoped = { _serverId: "fixture", _mcpToolName: "raw_tool_name", needsApproval: true, execute };
     const native = { needsApproval: true, execute };
     const policyGated = { ...scoped, needsApproval: () => true };
     const tools = withPersonaToolApprovals(
@@ -137,10 +137,26 @@ describe("goal-run client actions", () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(tools.native).toBe(native);
     expect(tools.elsewhere.needsApproval).toBe(true);
-    expect(tools.policyGated).toBe(policyGated);
-    expect(driver.takeReceipts().map(({ outcome }) => outcome)).toEqual([
-      "denied",
-      "approved",
+    expect(tools.policyGated.needsApproval).toBe(policyGated.needsApproval);
+    expect(driver.takeReceipts()).toMatchObject([
+      { outcome: "denied", toolName: "raw_tool_name", invocationId: "tool-1" },
+      { outcome: "approved", toolName: "raw_tool_name", invocationId: "tool-2" },
     ]);
+  });
+  it("does not attach a widget's same-name question to an active model invocation", async () => {
+    const driver = createPersonaClientDriver({
+      choose: async () => '{"action":"decline"}',
+      turnSignal: () => new AbortController().signal,
+    });
+    const call = { serverId: "fixture", toolName: "open_form" };
+    const question = { requestId: "ask", serverId: "fixture", message: "Continue?", schema: {} };
+    await driver.withInvocation({ ...call, id: "opening" }, async () => {
+      await driver.elicitationCallback(question);
+      await driver.withInvocation(call, () => driver.elicitationCallback(question));
+    });
+    const [opening, widget] = driver.takeReceipts();
+    expect(opening).toMatchObject({ invocationId: "opening", toolName: "open_form" });
+    expect(widget).toMatchObject({ toolName: "open_form", kind: "question" });
+    expect(widget?.invocationId).toBeUndefined();
   });
 });

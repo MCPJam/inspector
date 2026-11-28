@@ -1,3 +1,4 @@
+import { desanitizeFromConvexTransport } from "./convex-sanitize.js";
 import { viewToolEvidenceForStep } from "./view-tool-evidence.js";
 // Phase-4 PR2 (plan: please-do-a-sequential-fail-fast-verdict.md).
 //
@@ -197,7 +198,7 @@ export function buildLocalStepHandlers(
           pinnedToolCall: {
             serverName: step.serverName,
             toolName: step.toolName,
-            arguments: step.arguments,
+            arguments: desanitizeFromConvexTransport(step.arguments),
           },
         },
         turnOrdinal,
@@ -385,7 +386,7 @@ export function buildHostedStepHandlers(
     const pinned: PinnedToolCall = {
       serverName: step.serverName,
       toolName: step.toolName,
-      arguments: step.arguments,
+      arguments: desanitizeFromConvexTransport(step.arguments),
     };
     try {
       // Mirror the local pinned branch's pre-steps; the executor already

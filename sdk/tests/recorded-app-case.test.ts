@@ -50,6 +50,11 @@ describe("compileRecordedAppCase", () => {
     ]);
   });
 
+  it("rejects a sequence above the browser budget before saving it", () => {
+    expect(() => compile(Array.from({ length: 12 }, (_, stepIndex) => ({ ...click, stepIndex }))))
+      .toThrow(/at most 12 clicks and assertions/);
+  });
+
   it("refuses opening inputs redacted in the transcript", () => {
     expect(() =>
       compile([click], { account: { id: "[secret:ACCOUNT]" } })

@@ -26,26 +26,12 @@ const recording = {
   truncated: false,
 };
 
-function setup(clientActions?: ClientActionReceipt[]) {
+const openingArguments = { title: "Fixture", age: { $gt: 30 }, _meta: { group: "demo" } };
+
+function setup(clientActions?: ClientActionReceipt[], promptIndex = 0, otherCall?: string) {
   const requests = vi.fn(async (target: unknown) => {
     const url = new URL(String(target));
     const sessionId = url.pathname.split("/").at(-2);
-    if (!url.pathname.endsWith("/trace")) {
-      return Response.json({
-        messages: [
-          {
-            role: "assistant",
-            content: [
-              {
-                type: "tool-call",
-                toolCallId: "open-1",
-                input: { title: "Fixture" },
-              },
-            ],
-          },
-        ],
-      });
-    }
     if (sessionId === "missing") {
       return Response.json({ code: "NOT_FOUND" }, { status: 404 });
     }
@@ -58,6 +44,13 @@ function setup(clientActions?: ClientActionReceipt[]) {
       turnCount: 0,
       ...(sessionId === "counted" ? { appRecording: recording } : {}),
       ...(sessionId === "counted" && clientActions ? { clientActions } : {}),
+      ...(url.searchParams.get("openingToolCallId") === "open-1" && {
+        recordedAppOpening: {
+          promptIndex,
+          arguments: openingArguments,
+          toolCallIds: ["open-1", ...(clientActions?.some((r) => r.kind === "approval" && r.outcome === "denied") ? ["discard-1"] : []), ...(otherCall ? [otherCall] : [])],
+        },
+      }),
     });
   });
   return {
@@ -92,7 +85,7 @@ describe("recorded app operations", () => {
         kind: "toolCall",
         serverId: "replacement",
         toolName: "open_form",
-        arguments: { title: "Fixture" },
+        arguments: openingArguments,
       },
       { kind: "interact", action: { kind: "click" } },
       { kind: "assert" },
@@ -100,6 +93,47 @@ describe("recorded app operations", () => {
     const url = new URL(String(requests.mock.calls[0]?.[0]));
     expect(url.searchParams.get("includeAppRecording")).toBe("true");
     expect(url.searchParams.get("includeSpans")).toBe("false");
+    expect(url.searchParams.get("openingToolCallId")).toBe("open-1");
+  });
+
+  it("refuses a recording when the opening or click sequence depends on another model action", async () => {
+    const input = {
+      sessionId: "counted", toolCallId: "open-1", title: "Save form", caseId: "case-1",
+      serverName: "Forms",
+      assertions: [{ kind: "textVisible" as const, toolName: "open_form", text: "Saved" }],
+    };
+    for (const { client } of [setup(undefined, 1), setup(undefined, 0, "another-tool")]) {
+      await expect(compileRecordedAppCaseOperation.execute(input, { client }))
+        .rejects.toThrow(/additional model actions/);
+    }
+  });
+
+  it("binds questions to the opening invocation even when a widget calls the same tool", async () => {
+    const first = "12345678-1234-4234-a234-000000000011";
+    const second = "12345678-1234-4234-a234-000000000012";
+    const receipt = {
+      order: 0, id: first, kind: "question", outcome: "accepted", actor: "persona",
+      surface: "client", toolName: "open_form", serverId: "original", startedAt: 50, elapsedMs: 1,
+      invocationId: "open-1",
+    } as const;
+    const input = {
+      sessionId: "counted", toolCallId: "open-1", title: "Save form", caseId: "case-1",
+      serverName: "Forms",
+      assertions: [{ kind: "textVisible" as const, toolName: "open_form", text: "Saved" }],
+      questionReplies: {
+        [first]: { message: "Pick a size", action: "accept" as const, content: { size: "small" } },
+        [second]: { message: "Pick a size", action: "decline" as const },
+      },
+    };
+    const next = { ...receipt, order: 1, id: second, outcome: "declined" } as const;
+    await expect(compileRecordedAppCaseOperation.execute(input, {
+      client: setup([receipt, { ...next, invocationId: "widget-call" }]).client,
+    })).rejects.toThrow(second);
+    await expect(compileRecordedAppCaseOperation.execute(input, {
+      client: setup([receipt, next]).client,
+    })).resolves.toMatchObject({
+      case: { inputAnswers: [{ action: "accept" }, { action: "decline" }] },
+    });
   });
 
   it("counts coverage for missing and ungraded sessions without duplicating actions", async () => {
@@ -151,6 +185,7 @@ describe("recorded app operations", () => {
         kind: "question",
         outcome: "accepted",
         toolName: "open_form",
+        invocationId: "open-1",
       },
     ]);
     const input = {

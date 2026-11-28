@@ -4,6 +4,8 @@ import {
 } from "./suite-file.js";
 import type { InteractStep, ToolCallStep, WidgetAssertion } from "./steps.js";
 
+export const MAX_RECORDED_APP_BROWSER_STEPS = 12;
+
 export interface RecordedAppAction {
   toolCallId: string;
   stepIndex: number;
@@ -76,6 +78,9 @@ export function compileRecordedAppCase(input: {
         },
       },
     });
+  }
+  if (clicks.length + input.assertions.length > MAX_RECORDED_APP_BROWSER_STEPS) {
+    throw new Error(`A recorded app case can use at most ${MAX_RECORDED_APP_BROWSER_STEPS} clicks and assertions in total.`);
   }
   if (!clicks.length || !input.assertions.length) {
     throw new Error(

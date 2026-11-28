@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   createStrictElicitationContentValidator,
   redactSensitiveValue,
@@ -27,6 +28,8 @@ type Question = {
   toolName?: string;
 };
 
+type Invocation = { serverId: string; toolName: string; id?: string };
+
 const replyOutcome = {
   accept: "accepted",
   decline: "declined",
@@ -54,33 +57,30 @@ export function withPersonaToolApprovals(
   tools: ToolSet,
   selectedServerIds: readonly string[],
   driver: PersonaClientDriver,
+  requireToolApproval = true,
 ): ToolSet {
   const selected = new Set(selectedServerIds);
   return Object.fromEntries(
     Object.entries(tools).map(([name, tool]) => {
-      const { _serverId: serverId } = tool as {
+      const { _serverId: serverId, _mcpToolName: toolName = name } = tool as {
         _serverId?: string;
+        _mcpToolName?: string;
       };
       const execute = tool.execute;
-      if (
-        !serverId ||
-        !selected.has(serverId) ||
-        tool.needsApproval !== true ||
-        !execute
-      )
-        return [name, tool];
+      if (!serverId || !selected.has(serverId) || !execute) return [name, tool];
+      const ask = requireToolApproval && tool.needsApproval === true;
       return [
         name,
         {
           ...tool,
-          needsApproval: false,
+          ...(ask ? { needsApproval: false } : {}),
           execute: async (
             input: unknown,
             options: Parameters<typeof execute>[1],
           ) => {
             if (
-              !(await driver.approve(
-                name,
+              ask && !(await driver.approve(
+                toolName,
                 serverId,
                 options?.toolCallId,
                 options?.abortSignal,
@@ -95,7 +95,10 @@ export function withPersonaToolApprovals(
               };
             }
             options?.abortSignal?.throwIfAborted();
-            return execute(input, options);
+            return driver.withInvocation(
+              { serverId, toolName, id: options?.toolCallId },
+              () => execute(input, options),
+            );
           },
         },
       ];
@@ -114,6 +117,28 @@ export function createPersonaClientDriver(options: {
   let dispatched = 0;
   const seenApprovals = new Set<string>();
   const receipts: ClientActionReceipt[] = [];
+  const invocationContext = new AsyncLocalStorage<Invocation>();
+  const active = new Set<Invocation>();
+
+  async function withInvocation<T>(invocation: Invocation, execute: () => T | Promise<T>): Promise<T> {
+    active.add(invocation);
+    try {
+      return await invocationContext.run(invocation, execute);
+    } finally {
+      active.delete(invocation);
+    }
+  }
+
+  function invocationFor(serverId?: string, toolName?: string): Invocation | undefined {
+    const current = invocationContext.getStore();
+    if (current?.serverId === serverId && current && active.has(current)) {
+      return !toolName || current.toolName === toolName ? current : undefined;
+    }
+    // Legacy transports can dispatch a question outside the call's async chain.
+    const matches = [...active].filter((call) => call.serverId === serverId);
+    const only = matches.length === 1 ? matches[0] : undefined;
+    return only && (!toolName || only.toolName === toolName) ? only : undefined;
+  }
 
   async function decide<T>(args: {
     request: PersonaClientRequest;
@@ -198,10 +223,12 @@ export function createPersonaClientDriver(options: {
     signal?: AbortSignal,
   ): Promise<InputReply> {
     const { message, schema, serverId, toolName, mode } = question;
+    const invocation = invocationFor(serverId, toolName);
     return decide<InputReply>({
       request: { kind: "question", message, schema },
       serverId,
-      toolName,
+      toolName: toolName ?? invocation?.toolName,
+      invocationId: invocation?.id,
       signal,
       supported:
         mode !== "url" &&
@@ -245,6 +272,7 @@ export function createPersonaClientDriver(options: {
   };
 
   return {
+    withInvocation,
     elicitationCallback,
     taskHandlers,
     collectorFor(serverId: string): MrtrInputCollector {

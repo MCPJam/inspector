@@ -1,3 +1,4 @@
+import { MAX_RECORDED_APP_BROWSER_STEPS } from "@mcpjam/sdk/contract";
 import { HarnessViewDocument } from "./browser-harness/view-document.js";
 import { PluginWorkspaceRecorder } from "./plugin-workspace-recorder.js";
 import type { PluginWorkspaceRecording } from "../../shared/plugin-workspace-recording.js";
@@ -366,7 +367,7 @@ export interface HarnessBudgets {
 }
 
 export const DEFAULT_HARNESS_BUDGETS: HarnessBudgets = {
-  maxBrowserStepsPerWidget: 12,
+  maxBrowserStepsPerWidget: MAX_RECORDED_APP_BROWSER_STEPS,
   screenshotMaxBytes: 256 * 1024,
   settleTimeoutMs: 2000,
   renderTimeoutMs: 3000,
@@ -1556,7 +1557,7 @@ export class McpAppBrowserHarness {
    *  in priority order testId → role → text → css; `nth` disambiguates matches. */
   private resolveScriptedLocator(target: ElementLocator): Locator {
     const frame = target.scope === "host"
-      ? this.page!.locator("#mcpjam-widget-root")
+      ? this.page!.locator("#mcpjam-widget-root [data-app-host-chrome]")
       : this.widgetFrame();
     let loc: Locator;
     if (target.testId) {

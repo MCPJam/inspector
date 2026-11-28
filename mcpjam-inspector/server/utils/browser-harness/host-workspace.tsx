@@ -57,7 +57,9 @@ export function mountHarnessWorkspace(container: HTMLElement) {
               transcript={
                 <div className="run-conversation">
                   {!appOpen && (
-                    <button type="button" onClick={() => openApp()}>Show app</button>
+                    <div data-app-host-chrome>
+                      <button type="button" onClick={() => openApp()}>Show app</button>
+                    </div>
                   )}
                   <div className="run-transcript">
                     {messages.map((message, index) =>
@@ -87,7 +89,7 @@ export function mountHarnessWorkspace(container: HTMLElement) {
                       App is displayed in the workspace.
                     </span>
                   </div>
-                  <div className="run-composer">
+                  <div className="run-composer" data-app-host-chrome>
                     <div
                       className={hostComposerClasses(
                         presentation.hostStyle,
@@ -109,7 +111,7 @@ export function mountHarnessWorkspace(container: HTMLElement) {
               }
               appPanel={
                 <div className="run-app-panel">
-                  <div className="run-app-heading">
+                  <div className="run-app-heading" data-app-host-chrome>
                     <button type="button" onClick={closeApp}>Back to chat</button>
                   </div>
                   <div

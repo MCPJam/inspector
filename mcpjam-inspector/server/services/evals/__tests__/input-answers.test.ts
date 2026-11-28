@@ -66,6 +66,25 @@ describe("the resolver", () => {
     });
   });
 
+  it("consumes duplicate messages in saved order for each pinned invocation", async () => {
+    const resolver = createInputAnswerResolver({
+      answers: [
+        { tool: "cleanup", message: "Confirm", action: "accept", content: { confirmation: "first" } },
+        { tool: "cleanup", message: "Confirm", action: "accept", content: { confirmation: "second" } },
+      ],
+    });
+    const question = { requestId: "ask", serverId: "files", message: "Confirm", schema: {} };
+    await withInputAnswerResolverScope(resolver, async () => {
+      for (let call = 0; call < 2; call++) {
+        await withToolCallScope({ tool: "cleanup", serverId: "files", orderedAnswers: true }, async () => {
+          expect(await resolver.elicitationCallback(question)).toMatchObject({ content: { confirmation: "first" } });
+          expect(await resolver.elicitationCallback(question)).toMatchObject({ content: { confirmation: "second" } });
+          expect(await resolver.elicitationCallback(question)).toEqual({ action: "decline" });
+        });
+      }
+    });
+  });
+
   it("takes the tool from the operation on the 2026-07-28 collector, and the exchange is told to the call", async () => {
     const resolver = createInputAnswerResolver({ answers });
     resolver.useServerNames({ srv1: "files" });

@@ -253,7 +253,7 @@ export async function runPinnedTurn(
         tool: pinned.toolName,
         serverId: resolvedServerKey,
         ...(expectedQuestions !== undefined
-          ? { record: (exchange) => {
+          ? { orderedAnswers: true, record: (exchange) => {
               if (exchange.kind === "question")
                 questionReplies.push(exchange.mode === "form" ? exchange.replyIndex : undefined);
             } }

@@ -1131,6 +1131,14 @@ export async function runSyntheticHostSession(
       enableComputerUse: true,
       enableViewTools: true,
       mcpClientManager: manager,
+      ...(clientDriver && manager
+        ? {
+            callWidgetTool: (serverId, toolName, args) =>
+              clientDriver.withInvocation({ serverId, toolName }, () =>
+                manager!.executeTool(serverId, toolName, args),
+              ),
+          }
+        : {}),
       logScope: "sessionSimulation",
       hostCapabilities: runtime.hostCapabilities,
       // Live view: a frame per action, at CAPTURE time. Only wired when this
@@ -1184,7 +1192,7 @@ export async function runSyntheticHostSession(
 
       const recentActions: string[] = [];
       let next: Awaited<ReturnType<typeof nextPersonaTurn>>;
-      do {
+      for (;;) {
         turnDeadline.signal.throwIfAborted();
         const controls =
           enablePersonaAppClicks && turn > 0 && recentActions.length < 5
@@ -1204,7 +1212,11 @@ export async function runSyntheticHostSession(
           },
           admissionOptions,
         );
-        if (next.clickIndex === undefined || recentActions.length >= 5) break;
+        if (next.clickIndex === undefined) break;
+        if (controls.length === 0) {
+          next = { message: "", endSession: false };
+          break;
+        }
         turnDeadline.signal.throwIfAborted();
         const control = controls[next.clickIndex];
         const outcome = control && await browser.clickPersonaAppControl(control);
@@ -1213,12 +1225,11 @@ export async function runSyntheticHostSession(
             ? controlLabels[next.clickIndex]!
             : `Failed to click ${controlLabels[next.clickIndex] ?? "an unavailable control"}`.slice(0, 200),
         );
-      } while (next.continueControls);
-
-      if (
-        recentActions.length &&
-        (next.continueControls || (!next.endSession && !next.message.trim()))
-      ) break;
+        if (outcome?.ok && !next.continueControls && (next.endSession || next.message.trim())) break;
+      }
+      if (recentActions.length && browserArtifacts?.enqueueClientActions) {
+        browserArtifacts.enqueueClientActions(lastPromptIndex, clientDriver?.takeReceipts() ?? []);
+      }
 
       if (next.endSession) {
         if (turn === 0) {
@@ -1286,8 +1297,8 @@ export async function runSyntheticHostSession(
             // `computer` / `finish_widget` merge into the advertised set; the
             // prepareAdvertisedTools hook hides them until a widget is mounted.
             tools: {
-              ...(clientDriver && !harness && requireToolApproval
-                ? withPersonaToolApprovals(prepared.allTools, selectedServerIds, clientDriver)
+              ...(clientDriver && !harness
+                ? withPersonaToolApprovals(prepared.allTools, selectedServerIds, clientDriver, requireToolApproval)
                 : prepared.allTools),
               ...browser!.computerWidgetTools,
               ...browser!.viewTools,
@@ -1460,8 +1471,6 @@ export async function runSyntheticHostSession(
       messageHistory = updatedHistory;
       const assistantText = extractAssistantText(updatedHistory);
       lastTranscript.push({ role: "assistant", content: assistantText });
-      const clientActions = clientDriver?.takeReceipts();
-
       if (!turnTrace && !drainedTurnTimedOut) {
         if (failedTurn) throw failedTurn;
         // No-trace turns outside a timeout skip transcript persistence. Their
@@ -1482,6 +1491,8 @@ export async function runSyntheticHostSession(
         }
         continue;
       }
+
+      const clientActions = turnTrace ? clientDriver?.takeReceipts() : undefined;
 
       // Mirror chat-v2's per-turn persistence so the Trace tab and the
       // tool-snapshot/serverInspections fan-out work identically for
@@ -1758,6 +1769,7 @@ export async function runSyntheticHostSession(
   } finally {
     turnDeadline?.dispose();
     sessionDeadline.dispose();
+    browserArtifacts?.enqueueClientActions?.(lastPromptIndex, clientDriver?.takeReceipts() ?? []);
     // Tear down the browser harness (and its headless Chromium, if launched)
     // before the manager: the harness's widget bridge dispatches tools/call
     // through the manager, so it must die first.

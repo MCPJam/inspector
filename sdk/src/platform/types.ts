@@ -831,7 +831,14 @@ export interface PlatformChatSessionTraceEvent {
   triggerId?: string;
 }
 
+export interface RecordedAppOpening {
+  promptIndex: number;
+  toolCallIds: string[];
+  arguments?: Record<string, unknown>;
+}
+
 export interface PlatformChatSessionTrace {
+  recordedAppOpening?: RecordedAppOpening;
   appRecording?: RecordedAppTrace;
   clientActions?: ClientActionReceipt[];
   projectId?: string | null;

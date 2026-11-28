@@ -56,10 +56,11 @@ async function projectIdFor(
 async function readRecording(
   context: PlatformOperationContext,
   sessionId: string,
-  projectId?: string
+  projectId?: string,
+  openingToolCallId?: string
 ) {
   const trace = await context.client.getChatSessionTrace(
-    { sessionId, projectId, includeSpans: false, includeAppRecording: true },
+    { sessionId, projectId, includeSpans: false, includeAppRecording: true, openingToolCallId },
     { signal: context.signal }
   );
   return {
@@ -69,48 +70,6 @@ async function readRecording(
         ? undefined
         : recordedAppTraceSchema.parse(trace.appRecording),
   };
-}
-
-const toolCallPartSchema = z.object({
-  type: z.literal("tool-call"),
-  toolCallId: id,
-  input: z.record(z.string(), z.unknown()),
-});
-
-async function readRecordedArguments(
-  context: PlatformOperationContext,
-  sessionId: string,
-  toolCallId: string,
-  projectId?: string
-) {
-  let offset = 0;
-  // Each detail response bounds its transcript window to 200 messages.
-  for (let page = 0; page < 5; page++) {
-    const trace = await context.client.getChatSession(
-      { sessionId, projectId, afterMessageIndex: offset, limit: 200 },
-      { signal: context.signal }
-    );
-    if (trace.transcriptUnavailable) break;
-    for (const message of trace.messages) {
-      if (message.role !== "assistant" || !Array.isArray(message.content))
-        continue;
-      for (const part of message.content) {
-        const parsed = toolCallPartSchema.safeParse(part);
-        if (parsed.success && parsed.data.toolCallId === toolCallId) {
-          return parsed.data.input;
-        }
-      }
-    }
-    if (
-      trace.nextMessageIndex === undefined ||
-      trace.nextMessageIndex <= offset
-    )
-      break;
-    offset = trace.nextMessageIndex;
-  }
-  throw operationInputError(
-    "The opening call arguments are missing or truncated. Supply replay arguments."
-  );
 }
 
 type CompiledRecordedAppCase = {
@@ -145,7 +104,8 @@ export const compileRecordedAppCaseOperation: PlatformOperation<
     const { trace, recording } = await readRecording(
       context,
       input.sessionId,
-      projectId
+      projectId,
+      input.toolCallId
     );
     if (!recording)
       throw operationInputError(
@@ -162,7 +122,8 @@ export const compileRecordedAppCaseOperation: PlatformOperation<
       throw operationInputError(
         "No rendered app matches that tool call in this session."
       );
-    const questionAndApproval = trace.clientActions ?? [];
+    const questionAndApproval = [...(trace.clientActions ?? [])]
+      .sort((left, right) => left.order - right.order);
     const approvals = questionAndApproval.filter(
       ({ kind }) => kind === "approval"
     );
@@ -188,6 +149,17 @@ export const compileRecordedAppCaseOperation: PlatformOperation<
         );
       }
     }
+    const openingEvidence = trace.recordedAppOpening;
+    const allowedCallIds = new Set([input.toolCallId, ...denied.map((receipt) => receipt.invocationId)]);
+    if (
+      !openingEvidence ||
+      openingEvidence.toolCallIds.some((id) => !allowedCallIds.has(id)) ||
+      recording.actions.some((step) => step.promptIndex !== openingEvidence.promptIndex)
+    ) {
+      throw operationInputError(
+        "The recording needs a readable opening turn with no additional model actions. Record and replay the app in a single interaction phase."
+      );
+    }
     const questions = questionAndApproval.filter(
       ({ kind }) => kind === "question"
     );
@@ -198,6 +170,11 @@ export const compileRecordedAppCaseOperation: PlatformOperation<
         decline: "declined",
         cancel: "cancelled",
       } as const;
+      if (receipt.invocationId !== input.toolCallId) {
+        throw operationInputError(
+          `Question ${receipt.id} did not come from the opening call. Only questions with a recorded opening invocation can be replayed.`
+        );
+      }
       if (
         !receipt.serverId ||
         receipt.serverId !== app.serverId ||
@@ -221,22 +198,13 @@ export const compileRecordedAppCaseOperation: PlatformOperation<
       throw operationInputError(
         "The saved replies must name the recorded questions."
       );
-    if (
-      new Set(inputAnswers.map((reply) => reply.message)).size !==
-      inputAnswers.length
-    )
-      throw operationInputError(
-        "Give each saved reply a distinct question matcher."
-      );
     const authored = inputAnswersSchema.parse(inputAnswers);
-    const args =
-      input.arguments ??
-      (await readRecordedArguments(
-        context,
-        input.sessionId,
-        input.toolCallId,
-        projectId
-      ));
+    const args = input.arguments ?? openingEvidence.arguments;
+    if (!args) {
+      throw operationInputError(
+        "The opening call arguments are missing or truncated. Supply replay arguments."
+      );
+    }
     const testCase = compileRecordedAppCase({
       id: input.caseId,
       title: input.title,

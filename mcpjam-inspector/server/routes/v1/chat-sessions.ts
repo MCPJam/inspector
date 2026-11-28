@@ -58,6 +58,7 @@ import { v1Resource } from "./envelope.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { fetchJsonBlob } from "./blob-read.js";
 import { publicArtifactLink } from "./artifact-links.js";
+import { projectRecordedAppOpening } from "./recorded-app-opening.js";
 import { projectMessages } from "./chat-session-payloads.js";
 import { registerChatSessionTurnRoute } from "./chat-session-turn.js";
 
@@ -98,6 +99,7 @@ type SessionRow = {
   chatSessionId?: string;
   projectId?: string;
   origin?: string;
+  synthetic?: boolean;
   modelId?: string;
   version?: number;
   startedAt?: number;
@@ -395,6 +397,7 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     DEFAULT_TRACE_TURNS;
   const includeSpans = boolQuery(c, "includeSpans") ?? true;
   const includeAppRecording = boolQuery(c, "includeAppRecording") ?? false;
+  const openingToolCallId = c.req.query("openingToolCallId");
 
   let rows: TurnTraceRow[];
   try {
@@ -476,6 +479,11 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
       }));
     }
   }
+  const recordedAppOpening =
+    session.synthetic === true && openingToolCallId &&
+    appRecording?.apps.some((app) => app.toolCallId === openingToolCallId)
+      ? projectRecordedAppOpening((await loadTranscript(session)).messages, openingToolCallId)
+      : undefined;
   const turns = await Promise.all(
     selected.map(async (row) => {
       const screenshots = artifacts
@@ -556,6 +564,7 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     projectId: session.projectId ?? null,
     traceVersion: 1,
     ...(appRecording ? { appRecording } : {}),
+    ...(recordedAppOpening ? { recordedAppOpening } : {}),
     ...(clientActions.size
       ? { clientActions: [...clientActions.values()].sort((left, right) => left.order - right.order) }
       : {}),

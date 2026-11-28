@@ -205,6 +205,7 @@ export type {
   PlatformWidgetRender,
   PlatformChatSessionDetail,
   PlatformChatSessionTrace,
+  RecordedAppOpening,
   PlatformChatMessage,
   PlatformChatTurn,
   PlatformToolMode,

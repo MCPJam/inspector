@@ -16,6 +16,7 @@
  * capture-before-teardown ordering is only correct if the CORE owns it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PersonaClientDriver } from "../persona-client-driver.js";
 import type { ModelMessage } from "ai";
 
 const runAssistantTurnMock = vi.fn();
@@ -427,7 +428,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     });
     for (let i = 0; i < 5; i++) {
       args.nextPersonaTurn.mockResolvedValueOnce({
-        message: "", clickIndex: 0, continueControls: true, endSession: false,
+        message: "this text assumes the click worked", clickIndex: 0, endSession: false,
       });
     }
     args.nextPersonaTurn.mockResolvedValue({
@@ -440,6 +441,58 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     expect(args.nextPersonaTurn).toHaveBeenLastCalledWith(expect.any(Array), [],
       Array(5).fill("Failed to click button: Save"),
     );
+  });
+
+  it("fails when the final text-only decision asks for another click", async () => {
+    const context = buildFakeBrowserContext({ computerUse: true });
+    const control = { toolCallId: "app-call", role: "button", name: "Save" };
+    const click = vi.fn().mockResolvedValue({ ok: false });
+    createBrowserSessionContextMock.mockReturnValue({
+      ...context, listPersonaAppControls: vi.fn().mockResolvedValue([control]),
+      clickPersonaAppControl: click,
+    });
+    const args = baseAdapter();
+    args.nextPersonaTurn.mockReset()
+      .mockResolvedValueOnce({ message: "open the form", endSession: false })
+      .mockResolvedValue({ message: "", clickIndex: 0, continueControls: true, endSession: false });
+    expect(await runSyntheticHostSession({ ...args, enablePersonaAppClicks: true }))
+      .toMatchObject({ outcome: "failed", errorReason: "persona_empty_message" });
+    expect(click).toHaveBeenCalledTimes(5);
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps questions asked during the last click without starting another assistant turn", async () => {
+    const context = buildFakeBrowserContext({ computerUse: true });
+    const control = { toolCallId: "app-call", role: "button", name: "Save" };
+    let clientDriver: PersonaClientDriver | undefined;
+    createBrowserSessionContextMock.mockReturnValue({
+      ...context, listPersonaAppControls: vi.fn().mockResolvedValue([control]),
+      clickPersonaAppControl: async () => {
+        await clientDriver?.elicitationCallback({
+          requestId: "ask", serverId: "server-1", message: "Confirm", schema: {},
+        });
+        return { ok: true };
+      },
+    });
+    const args = baseAdapter();
+    args.nextPersonaTurn.mockReset()
+      .mockResolvedValueOnce({ message: "open the form", endSession: false })
+      .mockResolvedValueOnce({ message: "", endSession: true, clickIndex: 0 });
+    const enqueueClientActions = vi.fn();
+    expect(await runSyntheticHostSession({
+      ...args,
+      enablePersonaAppClicks: true,
+      managerFactory: (driver) => {
+        clientDriver = driver;
+        return args.managerFactory();
+      },
+      nextPersonaClientAction: async () => '{"action":"decline"}',
+      browserArtifacts: { ...buildFakeOutbox(), enqueueClientActions },
+    })).toMatchObject({ outcome: "succeeded" });
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+    expect(enqueueClientActions).toHaveBeenCalledWith(0, [
+      expect.objectContaining({ kind: "question", outcome: "declined" }),
+    ]);
   });
 
   it("rejects an empty persona message without calling the assistant", async () => {
