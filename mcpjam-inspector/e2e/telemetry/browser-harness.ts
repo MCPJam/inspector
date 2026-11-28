@@ -147,6 +147,12 @@ export async function installEgressRecorder(
     recorder.diagnostics.push(`pageerror: ${error.message}`),
   );
   await page.addInitScript(pinRandomScript);
+  // The document is served from `page.route`, not the server that writes the
+  // consent answer; stand in for a visitor outside the consent regions so the
+  // SDKs run and the egress proof has traffic to inspect.
+  await page.addInitScript(
+    "window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = false;",
+  );
   await page.context().addCookies([
     {
       name: "workos-has-session",

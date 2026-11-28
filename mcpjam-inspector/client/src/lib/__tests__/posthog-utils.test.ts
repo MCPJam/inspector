@@ -71,6 +71,7 @@ describe("PosthogUtils", () => {
   it("registers static telemetry properties on PostHog load", () => {
     const posthog = {
       register: vi.fn(),
+      clear_opt_in_out_capturing: vi.fn(),
     };
 
     options.loaded(posthog);
@@ -88,6 +89,7 @@ describe("PosthogUtils", () => {
   it("sets deployment + platform as FLAG person properties, not just super properties", () => {
     const posthog = {
       register: vi.fn(),
+      clear_opt_in_out_capturing: vi.fn(),
       setPersonPropertiesForFlags: vi.fn(),
     };
     options.loaded(posthog);
@@ -103,7 +105,7 @@ describe("PosthogUtils", () => {
   it("does not throw when posthog-js has no setPersonPropertiesForFlags", () => {
     // A partial stand-in (or a host pinning an older posthog-js): flag
     // targeting degrades, analytics init must still complete.
-    const posthog = { register: vi.fn() };
+    const posthog = { register: vi.fn(), clear_opt_in_out_capturing: vi.fn() };
     expect(() => options.loaded(posthog)).not.toThrow();
     expect(posthog.register).toHaveBeenCalled();
   });
@@ -113,7 +115,7 @@ describe("PosthogUtils", () => {
     vi.resetModules();
     const { options: hostedOptions } = await import("../PosthogUtils");
 
-    const posthog = { register: vi.fn() };
+    const posthog = { register: vi.fn(), clear_opt_in_out_capturing: vi.fn() };
     hostedOptions.loaded(posthog);
 
     expect(posthog.register).toHaveBeenCalledWith(
@@ -165,7 +167,9 @@ describe("PosthogUtils", () => {
 
     const opts = getPostHogOptions() as Record<string, unknown>;
 
-    expect(opts.opt_out_capturing_by_default).toBeUndefined();
+    // False, not absent: the consent getter answers for a visitor outside
+    // the consent regions (lib/analytics-consent.ts).
+    expect(opts.opt_out_capturing_by_default).toBe(false);
   });
 
   describe("replay + exception capture surface matrix", () => {

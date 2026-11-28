@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { StrictMode, useLayoutEffect } from "react";
 import { usePostHogIdentify } from "../usePostHogIdentify";
+import { setAnalyticsConsent } from "@/lib/analytics-consent";
 
 const mockState = vi.hoisted(() => ({
   posthog: {
@@ -11,6 +12,11 @@ const mockState = vi.hoisted(() => ({
     reset: vi.fn(),
     setPersonPropertiesForFlags: vi.fn(),
     updateFlags: vi.fn(),
+    opt_in_capturing: vi.fn(),
+    opt_out_capturing: vi.fn(),
+    is_capturing: vi.fn(() => true),
+    clear_opt_in_out_capturing: vi.fn(),
+    set_config: vi.fn(),
   },
   identity: "full" as "full" | "id_only" | undefined,
   /** Whether the answer is held for the current actor. */
@@ -50,6 +56,7 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: mockState.detectPlatform,
+  isPostHogDisabled: false,
 }));
 
 vi.mock("@/lib/config", () => ({
@@ -99,6 +106,26 @@ describe("usePostHogIdentify", () => {
     mockState.revision = 0;
     mockState.telemetryActor = undefined;
     mockState.detectPlatform.mockReturnValue("mac");
+    window.localStorage.removeItem("mcpjam-analytics-consent");
+  });
+
+  it("sends the current actor's profile again once the visitor consents", () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    mockState.actorKey = "user_123";
+    mockState.auth.user = { id: "user_123", email: "member@example.test" };
+    // posthog-js drops this identify: the visitor has not answered yet.
+    renderHook(usePostHogIdentify);
+    expect(mockState.posthog.identify).toHaveBeenCalledTimes(1);
+    expect(mockState.posthog.capture).not.toHaveBeenCalled();
+
+    act(() => setAnalyticsConsent(mockState.posthog, "granted"));
+
+    expect(mockState.posthog.capture).toHaveBeenCalledTimes(1);
+    expect(mockState.posthog.capture).toHaveBeenCalledWith(
+      "$set",
+      {},
+      { $set: expect.objectContaining({ email: "member@example.test" }) },
+    );
   });
 
   it("retries once per permitted revision and never carries profiles across actors", () => {

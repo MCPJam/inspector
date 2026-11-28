@@ -5,6 +5,7 @@ const replayIntegration = vi.fn(() => ({ name: "Replay" }));
 const browserTracingIntegration = vi.fn(() => ({ name: "BrowserTracing" }));
 const getClient = vi.fn();
 const addIntegration = vi.fn();
+const captureException = vi.fn();
 const captureMessage = vi.fn();
 const addEventProcessor = vi.fn();
 const withScope = vi.fn((callback: (scope: unknown) => void) => callback({ addEventProcessor }));
@@ -15,6 +16,7 @@ vi.mock("@sentry/react", () => ({
   browserTracingIntegration,
   getClient,
   addIntegration,
+  captureException,
   captureMessage,
   withScope,
 }));
@@ -364,6 +366,44 @@ describe("syncSentryReplay", () => {
     expect(replay.start).toHaveBeenCalledTimes(1);
   });
 
+  describe("analytics consent", () => {
+    afterEach(() => {
+      window.localStorage.clear();
+    });
+
+    it("never constructs the recorder before a visitor who needs consent allows it", async () => {
+      window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+      getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+      const { syncSentryReplay } = await loadAt("full");
+
+      syncSentryReplay("/servers");
+      expect(addIntegration).not.toHaveBeenCalled();
+    });
+
+    it("stops a running replay when consent is withdrawn and resumes it on a new grant", async () => {
+      window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+      window.localStorage.setItem("mcpjam-analytics-consent", "granted");
+      const { initSentry } = await loadAt("full");
+      const { setAnalyticsConsent } = await import("../analytics-consent");
+      const replay = stubReplay(true);
+      initSentry();
+      const posthog = {
+        opt_in_capturing: vi.fn(),
+        opt_out_capturing: vi.fn(),
+        is_capturing: vi.fn(() => false),
+        clear_opt_in_out_capturing: vi.fn(),
+        set_config: vi.fn(),
+      };
+
+      setAnalyticsConsent(posthog, "denied");
+      expect(replay.stop).toHaveBeenCalledTimes(1);
+      expect(replay.start).not.toHaveBeenCalled();
+
+      setAnalyticsConsent(posthog, "granted");
+      expect(replay.start).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("is a no-op on a self-hosted build", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
     vi.resetModules();
@@ -506,6 +546,106 @@ describe("syncSentryReplay, a quick in-and-out", () => {
   });
 });
 
+describe("Sentry Replay waits for analytics consent", () => {
+  const CONSENT_KEY = "mcpjam-analytics-consent";
+  const posthog = {
+    opt_in_capturing: vi.fn(),
+    opt_out_capturing: vi.fn(),
+    is_capturing: vi.fn(() => false),
+    clear_opt_in_out_capturing: vi.fn(),
+    set_config: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal("__APP_VERSION__", "2.34.0-test");
+    vi.stubGlobal("__BUILD_SURFACE__", "npm");
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("VITE_DISABLE_POSTHOG_LOCAL", "false");
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    window.localStorage.removeItem(CONSENT_KEY);
+    init.mockClear();
+    getClient.mockReset();
+    addIntegration.mockReset();
+    replayIntegration.mockClear();
+    captureException.mockClear();
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    window.localStorage.removeItem(CONSENT_KEY);
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  /** An initialized `../sentry` at `full`, with the consent store it reads. */
+  async function initAtFull() {
+    await allowFullContext();
+    const sentry = await import("../sentry");
+    sentry.initSentry();
+    return {
+      ...sentry,
+      ...(await import("../analytics-consent")),
+      ...(await import("../session-privacy")),
+    };
+  }
+
+  it("does not construct the recorder after the visitor declines", async () => {
+    getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+    const { syncSentryReplay, setAnalyticsConsent } = await initAtFull();
+
+    setAnalyticsConsent(posthog, "denied");
+    syncSentryReplay("/servers");
+
+    expect(addIntegration).not.toHaveBeenCalled();
+  });
+
+  it("constructs it as soon as the visitor allows analytics", async () => {
+    getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+    const { syncSentryReplay, setAnalyticsConsent, SENTRY_REPLAY_OPTIONS } =
+      await initAtFull();
+    syncSentryReplay("/servers");
+
+    setAnalyticsConsent(posthog, "granted");
+
+    expect(replayIntegration).toHaveBeenCalledWith(SENTRY_REPLAY_OPTIONS);
+    expect(addIntegration).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a withdrawn replay stopped across a navigation until a new grant", async () => {
+    window.localStorage.setItem(CONSENT_KEY, "granted");
+    const replay = stubReplay(true);
+    replay.stop.mockImplementation(() =>
+      replay.getReplayId.mockReturnValue(undefined),
+    );
+    const { syncSentryReplay, setAnalyticsConsent } = await initAtFull();
+    syncSentryReplay("/servers");
+    expect(replay.stop).not.toHaveBeenCalled();
+
+    setAnalyticsConsent(posthog, "denied");
+    expect(replay.stop).toHaveBeenCalledTimes(1);
+    expect(replay.start).not.toHaveBeenCalled();
+
+    syncSentryReplay("/tools");
+    expect(replay.start).not.toHaveBeenCalled();
+
+    setAnalyticsConsent(posthog, "granted");
+    expect(replay.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports errors without consent", async () => {
+    getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+    const { captureSentryException } = await initAtFull();
+    const error = new Error("boom");
+
+    captureSentryException(error);
+
+    expect(init).toHaveBeenCalledTimes(1);
+    expect(init.mock.calls[0][0].enabled).toBe(true);
+    expect(captureException).toHaveBeenCalledWith(error, undefined);
+    expect(replayIntegration).not.toHaveBeenCalled();
+  });
+});
 
 it("removes OAuth callback URLs and breadcrumbs from recovery alerts only", async () => {
   const { captureSentryMessage } = await import("../sentry");

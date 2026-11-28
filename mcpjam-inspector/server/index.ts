@@ -32,11 +32,7 @@ import {
   applyInspectorUserAgent,
   withDefaultUserAgent,
 } from "./utils/outbound-user-agent.js";
-import {
-  getInspectorClientRuntimeConfigScript,
-  loadInspectorEnv,
-  warnOnConvexDevMisconfiguration,
-} from "./env";
+import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env";
 import { startTelemetryCanary } from "./utils/telemetry-canary.js";
 import { initServerSentry } from "./sentry.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
@@ -254,6 +250,7 @@ import {
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { buildHealthMeta } from "./utils/health-payload.js";
+import { injectDocumentConfigScripts } from "./utils/document-head-scripts.js";
 import { createWebReconnectRoutes } from "./services/web-clients/recovery/reconnect-route.js";
 
 // Utility function to extract MCP server config from environment variables
@@ -916,13 +913,7 @@ if (process.env.NODE_ENV === "production") {
       // response's nonce (see middleware/security-headers.ts).
       const scriptNonce = documentScriptNonce(c);
 
-      const runtimeConfigScript = getInspectorClientRuntimeConfigScript();
-      if (runtimeConfigScript) {
-        htmlContent = htmlContent.replace(
-          "</head>",
-          `${withScriptNonce(runtimeConfigScript, scriptNonce)}</head>`,
-        );
-      }
+      htmlContent = injectDocumentConfigScripts(htmlContent, c, scriptNonce);
 
       // Inject MCP server config if provided via CLI
       const mcpConfig = getMCPConfigFromEnv();

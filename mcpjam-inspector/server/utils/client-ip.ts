@@ -121,6 +121,17 @@ export function getSpendClientIp(c: Context): string | null {
   return edgeAttestationConfigured() ? getAttestedClientIp(c) : getClientIp(c);
 }
 
+// Cloudflare's country for the visitor: ISO 3166-1 alpha-2, or XX (unknown)
+// and T1 (Tor). Null when the request did not come through a trusted edge.
+// Behind the ingress MCPJAM_TRUSTED_CLIENT_IP_HEADER names, a cf-ipcountry is
+// one the client sent, so only the edge secret vouches for it.
+export function getAttestedCountry(c: Context): string | null {
+  const country = c.req.header("cf-ipcountry")?.trim().toUpperCase();
+  if (!country) return null;
+  if (edgeAttestationConfigured()) return edgeAuthenticated(c) ? country : null;
+  return resolveTrustedClientIpHeader() ? null : country;
+}
+
 export function getAttestedClientIp(c: Context): string | null {
   const cfConnectingIp = c.req.header("cf-connecting-ip")?.trim();
   if (edgeAttestationConfigured()) {

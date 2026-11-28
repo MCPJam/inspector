@@ -60,11 +60,16 @@ class BridgedSignalRequest extends RealmRequest {
 }
 globalThis.Request = BridgedSignalRequest;
 
+// Tests run as a visitor the server found outside the consent regions, so
+// PostHog starts as it does in production for them. Consent tests override it.
+window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = false;
+
 // Cleanup after each test to prevent state leakage
 afterEach(() => {
   vi.useRealTimers();
   cleanup();
   vi.clearAllMocks();
+  window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = false;
 });
 
 // Radix's FocusScope dispatches a focus event from a setTimeout after it

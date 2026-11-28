@@ -13,6 +13,11 @@ import { getRuntimeDoNotTrack } from "./runtime-config";
 import { scrubSensitiveUrl } from "../../../shared/credential-url";
 import { stampPostHogEvent } from "./telemetry-context";
 import {
+  followAnalyticsConsentAcrossTabs,
+  hasAnalyticsConsent,
+  predatesAnalyticsConsent,
+} from "./analytics-consent";
+import {
   isErrorCaptureSurface,
   MASKED_SESSION_RECORDING_OPTIONS,
   shouldMaskAnalytics,
@@ -230,6 +235,16 @@ export function getPageviewCaptureOptions(
   };
 }
 
+// A dead click or swipe posthog-js reports after a delay carries the time of
+// the gesture; one made before the current grant is dropped.
+function deadClickBeforeConsent(event: CaptureResult | null): boolean {
+  if (event?.event !== "$dead_click" && event?.event !== "$dead_swipe") {
+    return false;
+  }
+  const at: unknown = event.properties?.[`${event.event}_event_timestamp`];
+  return typeof at === "number" && predatesAnalyticsConsent(at);
+}
+
 export const options = {
   api_host: getPostHogApiHost(),
   // Toolbar/app links must point at PostHog itself once api_host is proxied.
@@ -238,6 +253,19 @@ export const options = {
   ...getPageviewCaptureOptions(),
   ...SERVER_EVALUATED_FLAG_OPTIONS,
   person_profiles: "always" as const,
+  // A visitor who must opt in (lib/analytics-consent.ts) and has not starts
+  // opted out: no events, no replay and nothing stored until they accept.
+  get opt_out_capturing_by_default() {
+    return !hasAnalyticsConsent();
+  },
+  get opt_out_persistence_by_default() {
+    return !hasAnalyticsConsent();
+  },
+  // Conversations ignores opt-out outside cookieless mode and writes a widget
+  // session id to localStorage, so it stays off until consent.
+  get disable_conversations() {
+    return !hasAnalyticsConsent();
+  },
   // Fetch keeps the SDK bearer and the live-policy guard on unload batches.
   disable_beacon: true,
   // Capture records policy only; the relay owns the final vendor serializer.
@@ -245,6 +273,10 @@ export const options = {
     dropInjectedScriptException,
     stampPostHogEvent,
     (event: CaptureResult | null) => { scrubPostHogPersistence(); return event; },
+    // A withdrawal the browser would not store leaves posthog-js reading the
+    // earlier stored grant, so it keeps capturing; the page's choice wins here.
+    (event: CaptureResult | null) =>
+      hasAnalyticsConsent() && !deadClickBeforeConsent(event) ? event : null,
   ],
   // Fragments carry access tokens (`#token=`) and OAuth implicit responses;
   // no event, replay URL or heatmap needs one.
@@ -252,9 +284,10 @@ export const options = {
 
   // Rageclick's quieter sibling: a click on something that looks
   // interactive and does nothing. Cheap (no extra network calls) and safe
-  // on every platform, so it is not gated like replay/exceptions.
+  // on every platform, so it is not gated like replay/exceptions. It reports
+  // seconds after the click, so it observes only with consent.
   get capture_dead_clicks() {
-    return !shouldMaskAnalytics();
+    return !shouldMaskAnalytics() && hasAnalyticsConsent();
   },
   get autocapture() {
     return !shouldMaskAnalytics();
@@ -265,8 +298,9 @@ export const options = {
   get disable_surveys() {
     return shouldMaskAnalytics();
   },
+  // Heatmaps buffer clicks until a flush, so they collect only with consent.
   get enable_heatmaps() {
-    return !shouldMaskAnalytics();
+    return !shouldMaskAnalytics() && hasAnalyticsConsent();
   },
 
   // Getters, not eager calls. `options` is a module-scope literal, so calling
@@ -300,6 +334,7 @@ export const options = {
   loaded: (posthog: any) => {
     persistedPostHog = posthog;
     scrubPostHogPersistence(posthog);
+    followAnalyticsConsentAcrossTabs(posthog);
     posthog.register({
       environment: import.meta.env.MODE, // "development" or "production"
       platform: detectPlatform(),
@@ -393,6 +428,10 @@ export const getPostHogOptions = (
         // not a config field, so passing it here was silently ignored and dev
         // events flowed into prod PostHog from 2026-03-12 until this fix.
         opt_out_capturing_by_default: true,
+        // A grant posthog-js stored while this origin ran an enabled build
+        // would override the default above. Its own key keeps the disable
+        // authoritative.
+        consent_persistence_name: `__ph_opt_in_out_disabled_${POSTHOG_PROJECT_KEY}`,
         // Nothing is sent from here by default, but anything that opts in
         // later still goes through the same scrubber.
         before_send: [

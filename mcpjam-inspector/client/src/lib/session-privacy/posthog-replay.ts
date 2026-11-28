@@ -17,6 +17,10 @@ import {
   shouldMaskAnalytics,
 } from "./level";
 import { maskReplayRequest, maskReplayRequestFull } from "./replay-network";
+import {
+  hasAnalyticsConsent,
+  subscribeAnalyticsConsent,
+} from "../analytics-consent";
 
 export type PostHogProfile = "full" | "masked";
 
@@ -106,11 +110,15 @@ export function posthogPrivacyConfig(
         session_recording: SESSION_RECORDING_OPTIONS,
         disable_session_recording: true,
         autocapture: true,
-        capture_dead_clicks: true,
+        // Dead clicks are reported after a delay, so the observer runs only
+        // with consent.
+        capture_dead_clicks: hasAnalyticsConsent(),
         rageclick: true,
         capture_exceptions: isErrorCaptureSurface(),
         disable_surveys: false,
-        enable_heatmaps: true,
+        // Heatmaps buffer clicks until a flush, so they collect only with
+        // consent.
+        enable_heatmaps: hasAnalyticsConsent(),
         // Pinned rather than left to the project setting: console output can
         // carry the same conversation text the replay masks.
         enable_recording_console_log: false,
@@ -130,6 +138,17 @@ let posthogProfile: PostHogProfile | null = null;
 let posthogRecording = false;
 /** The client `syncSessionRecording` last drove, for the navigation guard. */
 let lastPostHogClient: PostHogRecorder | null = null;
+
+// A consent change moves heatmaps and dead clicks with it on the full
+// profile. Turning heatmaps off drops the clicks they hold.
+subscribeAnalyticsConsent(() => {
+  if (posthogProfile !== "full") return;
+  const consented = hasAnalyticsConsent();
+  lastPostHogClient?.set_config?.({
+    enable_heatmaps: consented,
+    capture_dead_clicks: consented,
+  });
+});
 
 /** The PostHog client the recorders were last synced with, if any. */
 export function lastSyncedPostHogClient(): PostHogRecorder | null {

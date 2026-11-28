@@ -15,10 +15,16 @@ import {
 import { SignOutBoundary } from "./components/SignOutBoundary";
 import { AppRouterProvider } from "./router";
 import "./index.css";
-import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
+import {
+  getPostHogKey,
+  getPostHogOptions,
+  isPostHogDisabled,
+} from "./lib/PosthogUtils.js";
+import { prepareAnalyticsConsentStorage } from "./lib/analytics-consent";
 import { preloadPosthogBundledExtensions } from "./lib/posthog-bundled-extensions";
 import { loadBootstrapFeatureFlags } from "./lib/server-feature-flags";
 import { PostHogProvider } from "posthog-js/react";
+import { AnalyticsConsentBanner } from "./components/legal/AnalyticsConsent";
 import { AuthKitProvider } from "@workos-inc/authkit-react";
 import { WorkosAuthUnavailableDialog } from "./components/auth/WorkosAuthUnavailableDialog";
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
@@ -547,6 +553,7 @@ if (isInIframe) {
       loadBootstrapFeatureFlags(),
     ]);
 
+    if (!isPostHogDisabled) prepareAnalyticsConsentStorage(getPostHogKey());
     root.render(
       <StrictMode>
         {/* OUTSIDE PostHogProvider on purpose: a crash while the provider
@@ -558,6 +565,7 @@ if (isInIframe) {
             options={getPostHogOptions(serverFeatureFlags)}
           >
             {Providers}
+            <AnalyticsConsentBanner />
           </PostHogProvider>
         </ErrorBoundary>
       </StrictMode>,

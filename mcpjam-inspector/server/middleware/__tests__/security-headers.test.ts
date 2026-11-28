@@ -42,6 +42,9 @@ const {
   securityHeadersMiddleware,
   withScriptNonce,
 } = await import("../security-headers.js");
+const { injectDocumentConfigScripts } = await import(
+  "../../utils/document-head-scripts.js"
+);
 
 function createApp(): Hono {
   const app = new Hono();
@@ -367,10 +370,22 @@ describe.each(["index.ts", "app.ts"])("server/%s document handler", (file) => {
       expect(source.slice(0, literal.index)).toMatch(/withScriptNonce\(\s*$/);
     }
     expect(source).toMatch(
-      /withScriptNonce\(runtimeConfigScript, scriptNonce\)/,
+      /injectDocumentConfigScripts\(\w+, c, scriptNonce\)/,
     );
     expect(source).toMatch(
       /withScriptNonce\(\s*buildGuestBootstrapScript\(session\),\s*scriptNonce,?\s*\)/,
+    );
+  });
+});
+
+describe("injectDocumentConfigScripts", () => {
+  it("writes the consent script with the nonce", async () => {
+    const app = new Hono().get("/", (c) =>
+      c.text(injectDocumentConfigScripts("<head></head>", c, "n")),
+    );
+    const html = await (await app.request("/")).text();
+    expect(html).toContain(
+      '<script nonce="n">window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__=true;</script></head>',
     );
   });
 });
