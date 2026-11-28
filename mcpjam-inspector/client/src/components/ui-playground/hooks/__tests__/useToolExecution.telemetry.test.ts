@@ -81,4 +81,71 @@ describe("useToolExecution tool_call_completed", () => {
     expect(completedEvents()).toHaveLength(1);
     expect(completedEvents()[0][1]).toMatchObject({ is_error: true });
   });
+
+  async function runTool(setToolOutput: (output: unknown) => void = vi.fn()) {
+    const { result } = renderHook(
+      () =>
+        useToolExecution({
+          serverName: "srv-1",
+          selectedTool: "get_weather",
+          toolsMetadata: {},
+          formFields: [],
+          setIsExecuting: vi.fn(),
+          setExecutionError: vi.fn(),
+          setToolOutput,
+          setToolResponseMetadata: vi.fn(),
+        }),
+      { wrapper },
+    );
+    let outcome:
+      Awaited<ReturnType<typeof result.current.executeTool>> | undefined;
+    await act(async () => {
+      outcome = await result.current.executeTool({ parameters: {} });
+    });
+    return outcome;
+  }
+
+  it("reports a failed call when the server asks for elicitation", async () => {
+    mockExecuteToolApi.mockResolvedValueOnce({
+      status: "elicitation_required",
+      executionId: "exec-1",
+      requestId: "req-1",
+      request: { message: "Pick one", requestedSchema: {} },
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+
+    const outcome = await runTool();
+
+    expect(outcome?.ok).toBe(false);
+    expect(completedEvents()).toHaveLength(1);
+    expect(completedEvents()[0][1]).toMatchObject({ is_error: true });
+  });
+
+  it("reports a successful call when the server creates a task, as the Tools tab does", async () => {
+    mockExecuteToolApi.mockResolvedValueOnce({
+      status: "task_created",
+      task: { taskId: "task-1", status: "working" },
+    });
+
+    const outcome = await runTool();
+
+    expect(outcome?.ok).toBe(false);
+    expect(completedEvents()).toHaveLength(1);
+    expect(completedEvents()[0][1]).toMatchObject({ is_error: false });
+  });
+
+  it("reports the server's success once when storing the result throws", async () => {
+    mockExecuteToolApi.mockResolvedValueOnce({
+      status: "completed",
+      result: { content: [{ type: "text", text: "sunny" }] },
+    });
+
+    const outcome = await runTool(() => {
+      throw new Error("store failed");
+    });
+
+    expect(outcome?.ok).toBe(false);
+    expect(completedEvents()).toHaveLength(1);
+    expect(completedEvents()[0][1]).toMatchObject({ is_error: false });
+  });
 });

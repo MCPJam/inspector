@@ -399,6 +399,10 @@ export function useToolExecution({
         }
 
         if (response.status === "elicitation_required") {
+          // The playground cannot answer the elicitation, so the call ends
+          // here without a result.
+          trackToolCallCompleted({ source: "tools_tab", isError: true });
+          reported = true;
           const error =
             "Tool requires elicitation, which is not supported in the UI Playground yet.";
           setExecutionError(error);
@@ -412,6 +416,9 @@ export function useToolExecution({
         }
 
         if (response.status === "task_created") {
+          // As in the Tools tab: the server accepted the call as a task.
+          trackToolCallCompleted({ source: "tools_tab", isError: false });
+          reported = true;
           const error =
             "Task-based tool execution is not supported in the UI Playground yet.";
           setExecutionError(error);
@@ -425,6 +432,13 @@ export function useToolExecution({
         }
 
         const result = response.result;
+        // Report the server's outcome before local post-processing, which
+        // can throw and must not turn a server success into an error event.
+        trackToolCallCompleted({
+          source: "tools_tab",
+          isError: result.isError === true,
+        });
+        reported = true;
         const modelOutput = await resolveModelOutputForToolResult(
           result,
           effectiveServerName,
@@ -439,11 +453,6 @@ export function useToolExecution({
           modelOutput,
         );
 
-        trackToolCallCompleted({
-          source: "tools_tab",
-          isError: result.isError === true,
-        });
-        reported = true;
         // Log successful tool execution
         track("app_builder_tool_executed", {
           location: "app_builder_tab",
