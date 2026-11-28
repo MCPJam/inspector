@@ -75,7 +75,12 @@ export function SetupFailedIteration({
   onEditScripts?: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-4" data-testid="iteration-setup-failed">
+    // Bounded and scrolling: it replaces the tabbed report inside the page's
+    // fixed-height region, and long script output must stay reachable.
+    <div
+      className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto"
+      data-testid="iteration-setup-failed"
+    >
       <ScriptFailureCards
         failures={failures}
         onEditScripts={onEditScripts}
@@ -91,9 +96,12 @@ export function SetupFailedIteration({
 /** Run setup and cleanup failures, on the run page. */
 export function RunScriptNotices({
   run,
+  label,
   onEditScripts,
 }: {
   run: { scriptResults?: unknown };
+  /** Which run these are, when the page shows several. */
+  label?: string;
   onEditScripts?: () => void;
 }) {
   const failures = runScriptFailures(run);
@@ -103,6 +111,9 @@ export function RunScriptNotices({
       className="flex flex-col gap-2 px-5 pb-3"
       data-testid="run-script-notices"
     >
+      {label ? (
+        <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      ) : null}
       <ScriptFailureCards failures={failures} onEditScripts={onEditScripts} />
     </div>
   );
