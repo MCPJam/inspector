@@ -76,6 +76,19 @@ describe("pageOf", () => {
       pageOf(items, "not-a-cursor!", 2, { invalidCursor: () => own })
     ).toThrow(own);
   });
+
+  it("refuses any cursor when the list does not page, even one a paged list issued", () => {
+    const issued = pageOf(items, undefined, 2).nextCursor;
+    expect(() => pageOf(items, issued, undefined)).toThrow(/not valid for this list/);
+    const own = new Error("own refusal");
+    expect(() => pageOf(items, issued, undefined, { invalidCursor: () => own })).toThrow(own);
+  });
+
+  it("refuses a page size that is not a whole number from 1", () => {
+    for (const size of [0, -1, 0.5, Number.NaN]) {
+      expect(() => pageOf(items, undefined, size)).toThrow(RangeError);
+    }
+  });
 });
 
 describe("checkStructuredOutput", () => {

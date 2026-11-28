@@ -36,7 +36,8 @@ export interface PageOptions {
 /**
  * One page of a list the server builds itself. Without a page size the whole
  * list is the page. A cursor the server did not issue is refused by name, so a
- * client that kept one from before the list changed starts it again.
+ * client that kept one from before the list changed starts it again; a list
+ * without a page size issues none, so it refuses every cursor.
  */
 export function pageOf<T>(
   items: T[],
@@ -44,10 +45,13 @@ export function pageOf<T>(
   pageSize: number | undefined,
   options: PageOptions = {}
 ): { items: T[]; nextCursor?: string } {
-  if (pageSize === undefined) return { items };
+  // Any other size gives a page that never moves on or a cursor no call accepts.
+  if (pageSize !== undefined && !(Number.isInteger(pageSize) && pageSize >= 1)) {
+    throw new RangeError(`A page size must be a whole number from 1, not ${pageSize}.`);
+  }
   let offset = 0;
   if (cursor !== undefined) {
-    const decoded = decodeCursor(cursor);
+    const decoded = pageSize === undefined ? undefined : decodeCursor(cursor);
     if (decoded === undefined || decoded > items.length) {
       throw (
         options.invalidCursor?.() ??
@@ -59,6 +63,7 @@ export function pageOf<T>(
     }
     offset = decoded;
   }
+  if (pageSize === undefined) return { items };
   const end = offset + pageSize;
   return {
     items: items.slice(offset, end),
