@@ -38,6 +38,21 @@ function isLocalEvalVenue(body: unknown): body is LocalEvalVenue {
   );
 }
 
+async function readVenue(query: string, signal: AbortSignal): Promise<LocalEvalVenueResult> {
+  const response = await authFetch(`/api/mcp/local-harness/eval-venue?${query}`, { signal });
+  if (response.status === 404) return { ok: false, turnedOff: true, status: 404 };
+  if (!response.ok) return { ok: false, turnedOff: false, status: response.status };
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (error) {
+    if (signal.aborted) throw error;
+    // Not JSON: the check failed, and the sheet offers Retry.
+    return { ok: false, turnedOff: false, status: response.status };
+  }
+  return isLocalEvalVenue(body) ? { ok: true, venue: body } : { ok: false, turnedOff: false, status: response.status };
+}
+
 export async function fetchLocalHarnessEvalVenue(
   harnessId: LocalHarnessClientId,
   projectId: string,
@@ -48,9 +63,9 @@ export async function fetchLocalHarnessEvalVenue(
   const timer = setTimeout(() => request.abort(), CHECK_TIMEOUT_MS);
   const forward = () => request.abort();
   signal?.addEventListener("abort", forward, { once: true });
-  let response: Response;
+  // The limit covers reading the body too: a server can send its headers and stall.
   try {
-    response = await authFetch(`/api/mcp/local-harness/eval-venue?${query}`, { signal: request.signal });
+    return await readVenue(query, request.signal);
   } catch (error) {
     if (signal?.aborted) throw error;
     return { ok: false, turnedOff: false };
@@ -58,14 +73,4 @@ export async function fetchLocalHarnessEvalVenue(
     clearTimeout(timer);
     signal?.removeEventListener("abort", forward);
   }
-  if (response.status === 404) return { ok: false, turnedOff: true, status: 404 };
-  if (!response.ok) return { ok: false, turnedOff: false, status: response.status };
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    // Not JSON: the check failed, and the sheet offers Retry.
-    return { ok: false, turnedOff: false, status: response.status };
-  }
-  return isLocalEvalVenue(body) ? { ok: true, venue: body } : { ok: false, turnedOff: false, status: response.status };
 }

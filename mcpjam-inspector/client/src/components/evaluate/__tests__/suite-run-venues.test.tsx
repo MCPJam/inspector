@@ -25,6 +25,18 @@ describe("where each client in the run runs", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
+  it("announces where a client runs once its check answers", () => {
+    const row = { harnessId: "claude-code", name: "Claude Code" } as const;
+    const { container, rerender } = render(
+      <SuiteRunVenues disabled={false} venues={venues([{ ...row, state: { kind: "checking" } }])} />,
+    );
+    // The live region is there before the answer, so screen readers hear the change.
+    const region = container.querySelector('[aria-live="polite"]');
+    expect(region?.textContent).toBe("");
+    rerender(<SuiteRunVenues disabled={false} venues={venues([{ ...row, state: { kind: "local" } }])} />);
+    expect(region?.textContent).toContain("Runs on this machine");
+  });
+
   it("offers setup with what one click allows beside it", () => {
     const state = venues([
       {

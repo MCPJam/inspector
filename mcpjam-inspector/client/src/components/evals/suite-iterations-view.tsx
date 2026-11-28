@@ -3261,10 +3261,7 @@ export function SuiteIterationsView({
                           ? "Run all stays off until cloud sandboxes are reachable."
                           : "Open the suite on MCPJam to run it. Run all is off here because local runs would fail their setup."}
                         {...(HOSTED_MODE ? {} : {
-                          action: {
-                            label: "Open on MCPJam",
-                            onClick: () => window.open(suiteOnMcpjamUrl(suite._id), "_blank", "noopener,noreferrer"),
-                          },
+                          action: { label: "Open on MCPJam", href: suiteOnMcpjamUrl(suite._id) },
                         })}
                       />
                     </div>

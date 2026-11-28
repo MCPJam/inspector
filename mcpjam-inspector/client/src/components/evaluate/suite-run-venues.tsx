@@ -112,14 +112,19 @@ export function SuiteRunVenues({
     ["refused", "setting-up", "setup-failed"].includes(state.kind),
   );
   if (!rows.length) return null;
+  const local = rows.filter(({ state }) => state.kind === "local");
+  const cloud = rows.filter(({ state }) => state.kind === "cloud");
   return (
-    <section aria-label="Where each client runs" data-testid="suite-run-venues" className="space-y-2">
-      <VenueLine icon={Laptop} label="Runs on this machine" rows={rows.filter(({ state }) => state.kind === "local")} />
-      <VenueLine icon={Cloud} label="Runs in the cloud" rows={rows.filter(({ state }) => state.kind === "cloud")} />
+    <section aria-label="Where each client runs" data-testid="suite-run-venues">
+      {/* Mounted while the checks run, so a client found to run here or in the cloud is announced. */}
+      <div aria-live="polite" className="space-y-2">
+        <VenueLine icon={Laptop} label="Runs on this machine" rows={local} />
+        <VenueLine icon={Cloud} label="Runs in the cloud" rows={cloud} />
+      </div>
       {problems.length ? (
         <div
           role="status"
-          className="divide-y divide-warning/30 rounded-lg border border-warning/45 bg-warning/10 px-3 text-xs"
+          className={`${local.length + cloud.length ? "mt-2 " : ""}divide-y divide-warning/30 rounded-lg border border-warning/45 bg-warning/10 px-3 text-xs`}
         >
           {problems.map((row) => (
             <VenueProblem

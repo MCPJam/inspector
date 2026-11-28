@@ -51,6 +51,21 @@ describe("asking where an eval runs", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     await expect(answer).resolves.toEqual({ ok: false, turnedOff: false });
   });
+
+  it("gives up on a check whose headers arrive but whose body never finishes", async () => {
+    vi.useFakeTimers();
+    authFetch.mockImplementation((_url?: unknown, init?: { signal?: AbortSignal }) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted")))),
+      }),
+    );
+    const answer = fetchLocalHarnessEvalVenue("claude-code", "p");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(answer).resolves.toEqual({ ok: false, turnedOff: false });
+  });
 });
 
 describe("a launch refusal's reason", () => {

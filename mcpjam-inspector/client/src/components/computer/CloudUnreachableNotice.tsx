@@ -17,6 +17,9 @@ export const EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE =
 export const EVAL_REPLAY_SNAPSHOT_CLOUD_UNREACHABLE_MESSAGE =
   "This run replays from its pinned sandbox image, but this inspector can't run MCPJam cloud sandboxes.";
 
+const ACTION_CLASS =
+  "mt-2 inline-flex items-center rounded border border-border bg-background px-2 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
 /**
  * Preflight band for a cloud-only surface whose sandbox execution this
  * inspector cannot provide (`ephemeralCloudAvailable === false`) — shown
@@ -40,8 +43,11 @@ export function CloudUnreachableNotice({
    * colour or glyph. Defaults to `warning` so existing callers keep theirs.
    */
   tone?: CloudBlockTone;
-  /** Omit unless it actually resolves this — a merely-related link is worse than none. */
-  action?: { label: string; onClick: () => void };
+  /**
+   * Omit unless it actually resolves this — a merely-related link is worse than none.
+   * `href` opens another page in a new tab; `onClick` acts in place.
+   */
+  action?: { label: string } & ({ onClick: () => void; href?: never } | { href: string; onClick?: never });
   "data-testid"?: string;
 }) {
   const isWarning = tone === "warning";
@@ -72,12 +78,24 @@ export function CloudUnreachableNotice({
         {detail ? (
           <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
         ) : null}
-        {action ? (
+        {action?.href !== undefined ? (
+          // A link, not a button: a disabled settings fieldset around the
+          // notice disables buttons but not links.
+          <a
+            href={action.href}
+            target="_blank"
+            rel="noreferrer"
+            data-testid={`${rootTestId}-action`}
+            className={ACTION_CLASS}
+          >
+            {action.label}
+          </a>
+        ) : action ? (
           <button
             type="button"
             onClick={action.onClick}
             data-testid={`${rootTestId}-action`}
-            className="mt-2 inline-flex items-center rounded border border-border bg-background px-2 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={ACTION_CLASS}
           >
             {action.label}
           </button>
