@@ -74,6 +74,36 @@ describe("Setup failed", () => {
     expect(noBox.error.rawMessage).toBe("no capacity");
   });
 
+  it("points at running again, not at the script, when it couldn't start", () => {
+    const [setup] = iterationScriptFailures({
+      metadata: {
+        iterationScripts: {
+          setup: { status: "error", output: "", error: "no capacity" },
+        },
+      },
+    });
+    expect(setup.error.title).toBe(
+      "Couldn't set up this iteration: MCPJam couldn't start the script. Run the suite again.",
+    );
+    expect(setup.error.nextSteps).toEqual([
+      "Run the suite again. If the script still can't start, contact support.",
+    ]);
+    expect(setup.error.origin).toBe("mcpjam");
+
+    const [cleanup] = runScriptFailures({
+      scriptResults: {
+        runCleanup: { status: "error", output: "", error: "no capacity" },
+      },
+    });
+    expect(cleanup.error.title).toBe(
+      "Couldn't clean up after this run: MCPJam couldn't start the script. The next run cleans up as usual.",
+    );
+    expect(cleanup.error.nextSteps).toEqual([
+      "Nothing to change. The next run cleans up as usual.",
+    ]);
+    expect(cleanup.error.origin).toBe("mcpjam");
+  });
+
   it("redacts a secret the script printed", () => {
     const [failure] = iterationScriptFailures({
       metadata: {
