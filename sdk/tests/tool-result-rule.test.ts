@@ -174,6 +174,35 @@ describe("projectToolResultByRule — what each measured client shows", () => {
     });
   });
 
+  it("shows a text resource with an image type as JSON, and leaves hosts without a rule unchanged", async () => {
+    const svg = {
+      content: [
+        {
+          type: "resource",
+          resource: {
+            uri: "file:///logo.svg",
+            mimeType: "image/svg+xml",
+            text: "<svg/>",
+          },
+        },
+      ],
+    } as unknown as CallToolResult;
+    expect(await projectToolResultByRule(svg, "fallback")).toEqual({
+      type: "text",
+      value:
+        '{"type":"resource","resource":{"uri":"file:///logo.svg","mimeType":"image/svg+xml","text":"<svg/>"}}',
+    });
+    expect(await projectMcpToolResultForModel(svg, undefined, {})).toEqual({
+      type: "content",
+      value: [
+        {
+          type: "text",
+          text: "[image omitted: missing base64 data (image/svg+xml)]",
+        },
+      ],
+    });
+  });
+
   it("keeps the omission marker for a binary embedded resource", async () => {
     const result = {
       content: [

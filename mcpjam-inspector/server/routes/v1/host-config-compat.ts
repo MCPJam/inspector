@@ -53,3 +53,36 @@ export function hostConfigForCaller(
     ? config
     : withoutModelVisibleStructuredContent(config);
 }
+
+/**
+ * The policy a write stores for a caller that read the config without the
+ * rule. That caller never saw the rule, so a policy it sends, or clears,
+ * keeps the stored one unless it names a rule itself.
+ */
+export function policyKeepingStoredRule(
+  c: Context,
+  policy: Record<string, unknown> | null | undefined,
+  storedConfig: Record<string, unknown>,
+): Record<string, unknown> | null | undefined {
+  const stored = storedConfig.modelVisibleMcpToolResults;
+  const rule = isRecord(stored) ? stored.structuredContent : undefined;
+  if (rule === undefined || acceptsModelVisibleStructuredContent(c)) {
+    return policy;
+  }
+  if (isRecord(policy) && "structuredContent" in policy) return policy;
+  return { ...(isRecord(policy) ? policy : {}), structuredContent: rule };
+}
+
+/** A whole config to write, with {@link policyKeepingStoredRule} applied. */
+export function configKeepingStoredRule(
+  c: Context,
+  config: Record<string, unknown>,
+  storedConfig: Record<string, unknown>,
+): Record<string, unknown> {
+  const policy = config.modelVisibleMcpToolResults;
+  if (policy !== undefined && !isRecord(policy)) return config;
+  const kept = policyKeepingStoredRule(c, policy, storedConfig);
+  return kept === policy
+    ? config
+    : { ...config, modelVisibleMcpToolResults: kept };
+}

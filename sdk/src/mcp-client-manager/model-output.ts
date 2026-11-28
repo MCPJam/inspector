@@ -577,6 +577,13 @@ export async function mapMcpContentBlocksForModel(
     }
 
     if (isEmbeddedImageResourceBlock(block)) {
+      // The caller's renderer sees it first: an image type with a `text`
+      // payload (an SVG, say) is a text resource, not image data.
+      const rendered = renderOtherBlock(block);
+      if (rendered) {
+        value.push(rendered);
+        continue;
+      }
       value.push(
         policy.embeddedResources.blob.image
           ? mapEmbeddedResourceBlock(block, budget)
