@@ -5,7 +5,9 @@ and install dependencies with `npm install --legacy-peer-deps`.
 
 ## Working here
 
-- Before editing `mcpjam-inspector/`, read `mcpjam-inspector/AGENTS.md`.
+- Before editing `mcpjam-inspector/`, read `mcpjam-inspector/AGENTS.md`. Before
+  editing `sdk/` or the inspector's `client/`, `server/` or `shared/`, also read
+  the `AGENTS.md` in that directory.
 - Reuse this task's worktree or create one before editing.
 - Before writing code beyond a small fix, confirm the Kestral task, spec and
   plan (the PR template's first section). If the spec is missing or unclear,

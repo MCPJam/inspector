@@ -1,66 +1,90 @@
 // @ts-check
 import tsParser from "@typescript-eslint/parser";
 import reactHooks from "eslint-plugin-react-hooks";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // One layer per directory. `shared` is loaded by the browser and by Node, so
 // it can depend on neither side. The SDK is a package: a relative path into
 // its source skips the entry points its consumers are held to.
+// A `dir` target is relative to this file and a `specifier` target matches a
+// bare specifier. A relative specifier is resolved against the importing file
+// before it is classified, so `../shared/../client/x` from shared/ is caught
+// and `../../client/../server/x` from server/ is not.
 const SDK_BY_PATH = {
-  regex: "^(\\.\\./)+sdk/src/",
+  dir: "../sdk/src",
   message:
     "Import the SDK by package name (`@mcpjam/sdk` or `@mcpjam/sdk/<subpath>`), not by a relative path into sdk/src.",
 };
 const SERVER_BY_PATH = {
-  regex: "^(\\.\\./)+server/",
+  dir: "server",
   message:
     "Client and shared code cannot import the server. Move what both sides need into shared/.",
 };
 const CLIENT_BY_PATH = {
-  regex: "^(\\.\\./)+client/",
+  dir: "client",
   message:
     "Server and shared code cannot import the client. Move what both sides need into shared/.",
 };
 const NODE_BUILTIN = {
-  regex: "^node:",
+  specifier: "^node:",
   message:
     "shared/ also runs in the browser, so it cannot import Node built-ins. Put this in server/.",
 };
 // Tests are left out: a parity test has to load both sides it compares.
 const TESTS = ["**/__tests__/**", "**/*.test.{ts,tsx}"];
-// no-restricted-imports only sees static imports, so `import("../server/x")`
-// would cross a layer unseen. This applies the same patterns to import().
-// It is a rule of its own because no-restricted-syntax is already configured
-// for server/routes, and a later config's options replace an earlier one's.
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+// no-restricted-imports matches the spelling of a specifier, not the module it
+// names, and never sees import(). This rule resolves static imports,
+// re-exports and literal import() alike. It is a plugin rule because
+// no-restricted-syntax is already configured for server/routes, and a later
+// config's options replace an earlier one's.
 const layers = {
   rules: {
-    "no-restricted-dynamic-imports": {
+    "no-cross-layer-imports": {
       meta: { type: "problem", schema: false },
       create(context) {
-        const patterns = context.options.map(({ regex, message }) => ({
-          regex: new RegExp(regex),
+        const fromDir = path.dirname(context.filename);
+        const targets = context.options.map(({ dir, specifier, message }) => ({
+          dir,
+          specifier: specifier === undefined ? undefined : new RegExp(specifier),
           message,
         }));
+        const check = (source) => {
+          const spec =
+            source?.type === "Literal"
+              ? source.value
+              : source?.type === "TemplateLiteral" &&
+                  source.expressions.length === 0
+                ? source.quasis[0].value.cooked
+                : undefined;
+          if (typeof spec !== "string") return;
+          const target = spec.startsWith(".")
+            ? path
+                .relative(ROOT, path.resolve(fromDir, spec))
+                .split(path.sep)
+                .join("/")
+            : undefined;
+          const match = targets.find(({ dir, specifier }) =>
+            specifier
+              ? specifier.test(spec)
+              : target !== undefined &&
+                (target === dir || target.startsWith(`${dir}/`)),
+          );
+          if (match) context.report({ node: source, message: match.message });
+        };
         return {
-          ImportExpression({ source }) {
-            const path =
-              source.type === "Literal"
-                ? source.value
-                : source.type === "TemplateLiteral" &&
-                    source.expressions.length === 0
-                  ? source.quasis[0].value.cooked
-                  : undefined;
-            if (typeof path !== "string") return;
-            const match = patterns.find(({ regex }) => regex.test(path));
-            if (match) context.report({ node: source, message: match.message });
-          },
+          ImportDeclaration: ({ source }) => check(source),
+          ExportNamedDeclaration: ({ source }) => check(source),
+          ExportAllDeclaration: ({ source }) => check(source),
+          ImportExpression: ({ source }) => check(source),
         };
       },
     },
   },
 };
-const restrictImports = (...patterns) => ({
-  "no-restricted-imports": ["error", { patterns }],
-  "layers/no-restricted-dynamic-imports": ["error", ...patterns],
+const restrictImports = (...targets) => ({
+  "layers/no-cross-layer-imports": ["error", ...targets],
 });
 
 // Violations that predate a rule are recorded in eslint-suppressions.json, so

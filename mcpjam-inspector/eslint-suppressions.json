@@ -9,11 +9,6 @@
       "count": 1
     }
   },
-  "client/src/components/ChatTabV2.tsx": {
-    "react-hooks/exhaustive-deps": {
-      "count": 2
-    }
-  },
   "client/src/components/CiEvalsTab.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 1
@@ -788,7 +783,7 @@
     }
   },
   "server/routes/v1/eval-backtest.ts": {
-    "no-restricted-imports": {
+    "layers/no-cross-layer-imports": {
       "count": 2
     }
   },
@@ -923,7 +918,7 @@
     }
   },
   "server/services/evals/assertion-backtest.ts": {
-    "no-restricted-imports": {
+    "layers/no-cross-layer-imports": {
       "count": 1
     }
   },
@@ -988,12 +983,12 @@
     }
   },
   "shared/sentry-build-metadata.ts": {
-    "no-restricted-imports": {
+    "layers/no-cross-layer-imports": {
       "count": 3
     }
   },
   "shared/strict-server-analytics.ts": {
-    "no-restricted-imports": {
+    "layers/no-cross-layer-imports": {
       "count": 1
     }
   }
