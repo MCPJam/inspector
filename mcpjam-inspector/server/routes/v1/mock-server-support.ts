@@ -5,7 +5,16 @@
  * how a backend refusal becomes a public error.
  */
 import type { Tool } from "@modelcontextprotocol/server";
-import { changeEntries, checkSavedOutputs, validateMockDefinition, type MockDefinition, type MockIssue } from "@mcpjam/sdk/mocks";
+import {
+  changeEntries,
+  checkSavedOutputs,
+  findInvalidSchemas,
+  findUncallableInputs,
+  validateMockDefinition,
+  type MockDefinition,
+  type MockIssue,
+  type RealToolInputShape,
+} from "@mcpjam/sdk/mocks";
 import type { PlatformMockCounts } from "@mcpjam/sdk/platform";
 import { MOCK_SERVERS_FLAG } from "../../../shared/mock-address.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
@@ -64,6 +73,29 @@ export function validatedDefinition(input: unknown): MockDefinition {
   const outputIssues = checkSavedOutputs(checked.definition);
   if (outputIssues.length > 0) throw invalidDefinition(outputIssues);
   return checked.definition;
+}
+
+/**
+ * Refuses a definition that cannot be served, before the backend sees it:
+ * - a change that leaves a real tool impossible to call (a parameter the real
+ *   tool requires that the client can no longer send, or one it would refuse),
+ *   checked against the listing the version is saved with: the base's on
+ *   create, the version's saved listing on a patch or a save. With no listing
+ *   there is nothing to check this against, so the save goes on;
+ * - a tool whose input or output schema is not valid JSON Schema (named by its
+ *   field path), which no client could read.
+ */
+export function assertCallable(definition: MockDefinition, tools: RealToolInputShape[] | undefined): void {
+  const issues = [
+    ...findInvalidSchemas(definition),
+    ...(tools ? findUncallableInputs(definition, tools) : []),
+  ];
+  if (issues.length > 0) throw invalidDefinition(issues);
+}
+
+/** The tools of a saved listing (the text B1 stores with a version), or undefined when there is none. */
+export function savedTools(listingJson: string | undefined): RealToolInputShape[] | undefined {
+  return listingJson === undefined ? undefined : (JSON.parse(listingJson) as { tools?: RealToolInputShape[] }).tools;
 }
 
 /**

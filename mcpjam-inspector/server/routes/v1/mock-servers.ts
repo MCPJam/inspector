@@ -20,7 +20,9 @@ import { readMockPage, readQuery, writeSummary } from "./mock-server-reads.js";
 import { readMockPolicy, readProjectPolicy, writeProjectPolicy } from "./mock-policy-backend.js";
 import {
   applyMergePatch,
+  assertCallable,
   discoveryOf,
+  savedTools,
   translateMockWriteError,
   validatedDefinition,
 } from "./mock-server-support.js";
@@ -73,6 +75,7 @@ mockServers.post("/projects/:projectId/mock-servers", async (c) => {
   // can list it later while forwarding is blocked, without contacting the base.
   const real = body.serverId ? await readRealServer(c, projectId, body.serverId) : undefined;
   const discoveryJson = real ? discoveryOf(real) : undefined;
+  assertCallable(definition, real?.tools);
   let created: { mockId: string; version: number; contentHash: string; created: boolean; loosened?: PlatformMockLoosened[] };
   try {
     created = await createConvexClient(await bearerOf(c)).mutation(fn.create, {
@@ -113,6 +116,7 @@ mockServers.post("/projects/:projectId/mock-servers/:mockId/versions", async (c)
   const definition = validatedDefinition(
     body.patch !== undefined ? applyMergePatch(JSON.parse(head.definitionJson), body.patch) : body.definition,
   );
+  assertCallable(definition, savedTools(head.discovery?.listingJson));
   let result: { version: number; contentHash: string; created: boolean; loosened?: PlatformMockLoosened[] };
   try {
     result = await createConvexClient(await bearerOf(c)).mutation(fn.save, {
