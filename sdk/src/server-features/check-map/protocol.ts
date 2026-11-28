@@ -67,7 +67,10 @@ export const PROTOCOL_CHECK_FEATURES = {
     "lifecycle.missing-client-capability-error",
     "mrtr.declared-capabilities-only",
   ],
-  "modern-no-session-id": ["transport-behavior.stateless-sessions"],
+  // Passes whether or not the server sends a session id (that is advice), so
+  // a pass cannot show the "No sessions" row. The row's own probe reads the
+  // header.
+  "modern-no-session-id": "excluded",
   // A pass means several removed methods are gone; no single row owns that,
   // and mapping it to a removed feature would mark the feature supported.
   "modern-removed-methods-not-found": "excluded",

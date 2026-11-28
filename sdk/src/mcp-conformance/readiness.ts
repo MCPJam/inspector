@@ -30,6 +30,7 @@ import {
 import {
   legacyInitialize,
 } from "./legacy-handshake.js";
+import { noSessionIdAdvice } from "./session-id-advice.js";
 import {
   SERVER_INFO_META_KEY,
   isWellFormedIdentity,
@@ -753,6 +754,7 @@ export async function collectRawAdvice(
       () => protocolVersionHeaderAdvice(ctx),
     ],
     ["readiness-server-identity", () => serverIdentityAdvice(ctx)],
+    ["readiness-no-session-id", () => noSessionIdAdvice(ctx)],
     ["readiness-log-level-filtering", () => logLevelFilteringAdvice(ctx)],
   ];
   // An advice left out never sends its probe, not just its result.
