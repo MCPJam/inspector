@@ -484,6 +484,28 @@ describe("problem details", () => {
     );
   });
 
+  it("finds a sampled problem's caveat by the candidate id it shares", async () => {
+    renderPanel({
+      problemsView: view({ problems: [problem()] }),
+      provenance: [
+        {
+          candidateId: "obs_lookup",
+          groupKind: "tool_failure",
+          basis: "measured",
+          mechanismBasis: "sampled",
+          populationCaveat: "Seen in sampled exemplars only.",
+          affectedIterationIds: ["it_1"],
+        },
+      ],
+    });
+    await userEvent
+      .setup()
+      .click(screen.getByTestId("problem-details-toggle"));
+    expect(
+      await screen.findByTestId("problem-sampling-caveat"),
+    ).toHaveTextContent("Seen in sampled exemplars only.");
+  });
+
   it("names each explanation's supporting iterations and citations", () => {
     render(<ProblemDetailsContent problem={problem()} />);
     expect(

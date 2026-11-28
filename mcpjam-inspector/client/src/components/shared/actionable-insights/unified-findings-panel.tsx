@@ -1,5 +1,4 @@
 /** Product findings view: a lead problem/fix, and evidence drawers. */
-import { mechanismCaveat } from "./finding-provenance";
 import { useMemo } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -15,6 +14,7 @@ import {
 } from "@/lib/insights-envelope-api";
 import type { FindingPromptContext } from "./finding-prompts";
 import { FindingText } from "./finding-text";
+import { mechanismCaveat } from "./finding-provenance";
 import { FindingsList, ProblemsList } from "./findings-list";
 import type { FindingEvidenceLocator } from "./finding-evidence";
 import type { AffectedIterationRow } from "./affected-iterations-list";
