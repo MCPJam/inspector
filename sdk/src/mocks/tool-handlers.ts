@@ -29,7 +29,9 @@ import type { MockObserver } from "./mock-observer.js";
 import { pageOf } from "./paging.js";
 import { callerLogLevel, relayDuringCall } from "./relay.js";
 import { planToolCall, resolveMockTools } from "./resolve-tools.js";
+import type { MockRecords } from "./record-store.js";
 import { answerItself, toolErrorResult } from "./self-answer.js";
+import { answerFromState } from "./state-answer.js";
 
 export interface ToolHandlerContext {
   definition: MockDefinition;
@@ -41,6 +43,8 @@ export interface ToolHandlerContext {
   notifierFor: (ctx: ServerContext | undefined) => MockNotifier;
   /** Where the tasks of `task` cases live; without it such a case answers in place. */
   tasks?: MockTasks;
+  /** Where the records of `state` tools live; without it such a tool answers with an error. */
+  records?: MockRecords;
 }
 
 /** The host's answer, or a refusal when the host could not give one. */
@@ -169,6 +173,21 @@ export function registerToolHandlers(
         await real.listTools({ signal: ctx.mcpReq.signal })
       );
       if (issues.length > 0) throw bindingError(issues);
+    }
+    const state = entry?.state;
+    if (state) {
+      const realTools = await real.listTools({ signal: ctx.mcpReq.signal });
+      return answerFromState({
+        tool: resolveMockTools(definition, realTools).tools.find(
+          (tool) => tool.name === name
+        ),
+        name,
+        state,
+        input: request.params.arguments ?? {},
+        meta: request.params._meta,
+        records: c.records,
+        observer,
+      });
     }
     if (answer?.from === "saved") {
       const realTools = await real.listTools({ signal: ctx.mcpReq.signal });

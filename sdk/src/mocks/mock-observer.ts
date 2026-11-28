@@ -6,12 +6,13 @@
  */
 
 /**
- * Where the answer came from: a saved case (`saved`), the real tool
+ * Where the answer came from: a saved case (`saved`), a record operation (`state`), the real tool
  * (`forwarded`), a refusal to call the real server (`blocked`), or a call no
  * saved case answers on a mock that has no real tool to fall back to
  * (`unmatched`).
  */
-export type MockCallSource = "saved" | "forwarded" | "blocked" | "unmatched";
+export type MockCallSource =
+  "saved" | "state" | "forwarded" | "blocked" | "unmatched";
 
 /** Why a mock refused a call itself, when the call was refused. */
 export type MockRefusal =
@@ -19,6 +20,8 @@ export type MockRefusal =
   | "invalid_output"
   /** A saved case asks a question and the caller's revision cannot be asked one. */
   | "input_unavailable"
+  /** A record operation the store refused: a missing or existing key, a stale epoch, a conflicting operation key. */
+  | "record_refused"
   | MockForwardBlockReason;
 
 /** Why a forward was not made; the real-server interface says it. */

@@ -17,7 +17,7 @@ import {
 
 export const MOCK_CALLS_HEADER = "x-mcpjam-mock-calls";
 const MAX_MARKS_PER_RESPONSE = 20;
-const SOURCES: ReadonlySet<string> = new Set<MockCallSource>(["saved", "forwarded", "blocked", "unmatched"]);
+const SOURCES: ReadonlySet<string> = new Set<MockCallSource>(["saved", "state", "forwarded", "blocked", "unmatched"]);
 
 type Sink = (marks: readonly MockCallMark[]) => void;
 const sinkScope = new AsyncLocalStorage<Sink>();

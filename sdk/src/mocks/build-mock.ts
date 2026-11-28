@@ -26,6 +26,7 @@ import {
   MODERN_REVISION,
   revisionOf,
 } from "./revision.js";
+import type { MockRecords } from "./record-store.js";
 import type { MockObserver } from "./mock-observer.js";
 import {
   methodUnavailableError,
@@ -196,6 +197,12 @@ export interface BuildMockOptions {
    */
   tasks?: MockTasks;
   /**
+   * Where the records of tools that declare `state` live, and which copy this
+   * request works on (the saved version's, or a run's at its epoch). Without
+   * it such a tool answers with an error naming the missing records.
+   */
+  records?: MockRecords;
+  /**
    * Where 2026-07-28 change notifications go (`subscriptions/listen` streams
    * subscribe to it). Share one across the requests of a caller so a stream
    * open on one request hears a change a call on another raised; left out,
@@ -258,6 +265,7 @@ async function buildServer(
     revision,
     notifierFor: (ctx?: ServerContext) => notifierFor(era, bus, ctx),
     tasks,
+    records: options.records,
   };
   if (mockCapabilities.tools) registerToolHandlers(server, context);
   const itemContext = {

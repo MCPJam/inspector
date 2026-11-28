@@ -3,6 +3,7 @@ import type { MockCapIssueCode } from "./definition-caps.js";
 import { MAX_SAVED_CASES, MOCK_CAPABILITY_KEYS } from "./definition-types.js";
 import type { MockDefinition } from "./definition-types.js";
 import { checkItems } from "./validate-items.js";
+import { checkSeed, checkToolState } from "./validate-state.js";
 import { checkCaseSteps, checkCompletions } from "./validate-steps.js";
 
 export type MockIssueCode =
@@ -31,6 +32,7 @@ const TOP_FIELDS = [
   "capabilities",
   "pageSize",
   "tools",
+  "seed",
   "prompts",
   "resources",
   "resourceTemplates",
@@ -48,6 +50,7 @@ const TOOL_FIELDS = [
   "_meta",
   "params",
   "answer",
+  "state",
 ];
 const PARAM_FIELDS = ["hidden", "fixed", "description"];
 const ANSWER_FIELDS = ["from", "tool", "arguments"];
@@ -434,6 +437,18 @@ class Check {
     if ("_meta" in value) this.object(value._meta, at(path, "_meta"));
     if ("params" in value) this.params(value.params, at(path, "params"));
     if ("answer" in value) this.answer(value.answer, at(path, "answer"));
+    if ("state" in value) {
+      checkToolState(value.state, at(path, "state"), (i) =>
+        this.add(i.code, i.path, i.message)
+      );
+      if (isObj(value.answer) && value.answer.from === "saved") {
+        this.add(
+          "param_conflict",
+          path,
+          `Tool "${name}" has both a saved answer and a state declaration, so one call would have two answers. Remove answer, or remove state.`
+        );
+      }
+    }
   }
 
   /** A list of MCP Icons. */
@@ -542,6 +557,8 @@ export function validateMockDefinition(raw: unknown): MockValidationResult {
       for (const [name, tool] of Object.entries(input.tools))
         c.tool(name, tool, at("tools", name));
     }
+    if ("seed" in input)
+      checkSeed(input.seed, "seed", (i) => c.add(i.code, i.path, i.message));
     checkItems(input, (issue) => c.add(issue.code, issue.path, issue.message));
     checkCompletions(input, (code, path, message) =>
       c.add(code, path, message)
