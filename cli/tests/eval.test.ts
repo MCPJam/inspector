@@ -288,8 +288,13 @@ interface EvalFixtureOptions {
     hosts?: Array<{ id: string; name: string }>;
   };
   /** Target ids the grouped-launch endpoint should report as failures. */
-  groupFailures?: Record<string, { code: string; message: string }>;
+  groupFailures?: Record<
+    string,
+    { code: string; message: string; recovery?: unknown }
+  >;
   runCaseResult?: "passed" | "failed" | "inconclusive" | null;
+  /** The `creditRecovery` a credit stop left on `run-case`. */
+  runCaseCreditRecovery?: Record<string, unknown>;
   /** The execution record `run-case`'s iteration carries (absent: none). */
   runCaseExecution?: Record<string, unknown>;
   /** Non-terminal keeps `--wait` polling until its deadline. */
@@ -1091,6 +1096,9 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           createdAt: 10,
           completedAt: 20,
           ...(options.runAccounts ? { accounts: options.runAccounts } : {}),
+          ...(options.runCaseCreditRecovery
+            ? { creditRecovery: options.runCaseCreditRecovery }
+            : {}),
           ...(policy2
             ? {
                 verdictPolicyVersion: 2,
@@ -6618,6 +6626,159 @@ test("eval run exits non-zero and names each failure on a partial fan-out", asyn
     assert.match(run.stdout, /View: .*\/runs\/run-group-1/);
     assert.match(run.stderr, /Failed: ChatGPT — VALIDATION_ERROR: no servers/);
   } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 6 and replays the group for its credit-refused target", async () => {
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      hosts: [
+        { id: "host-claude", name: "Claude" },
+        { id: "host-chatgpt", name: "ChatGPT" },
+      ],
+    },
+    groupFailures: {
+      "host-chatgpt": {
+        code: "FORBIDDEN",
+        message: "Out of credits.",
+        recovery: {
+          version: 1,
+          reason: "allowance_exhausted",
+          action: "buy_credits",
+          actor: "caller",
+          url: "https://app.mcpjam.com/billing",
+        },
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--all-targets",
+          "--wait",
+          "--idempotency-key",
+          "k1",
+          "--format",
+          "human"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    // The launch was partial (4 alone), but the failure is one a person can
+    // clear, so the block wins.
+    assert.equal(run.result.exitCode, 6);
+    assert.match(
+      run.stdout,
+      /Recovery: Buy credits to keep going: https:\/\/app\.mcpjam\.com\/billing\n/
+    );
+    assert.match(
+      run.stdout,
+      /Resume: mcpjam cloud eval run --suite suite-1 --project proj-alpha --client host-claude --client host-chatgpt --wait --idempotency-key k1 --resume\n/
+    );
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait --reporter prints a credit stop's resume on stderr", async () => {
+  const fixture = await startEvalFixture({
+    runCaseStatus: "failed",
+    runCaseResult: "failed",
+    runCaseCreditRecovery: {
+      version: 1,
+      reason: "allowance_exhausted",
+      action: "buy_credits",
+      actor: "caller",
+      url: "https://app.mcpjam.com/billing",
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--reporter",
+          "json-summary"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 6, run.stderr);
+    assert.equal(JSON.parse(run.stdout).kind, "eval-run");
+    assert.match(
+      run.stderr,
+      /Recovery: Buy credits to keep going: https:\/\/app\.mcpjam\.com\/billing\n/
+    );
+    assert.match(
+      run.stderr,
+      /Resume: mcpjam cloud eval run --suite suite-1 --project proj-alpha --wait --reporter json-summary --resume --resume-from run-case\n/
+    );
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --resume-from refused for credits is still blocked and starts nothing", async () => {
+  const fixture = await startEvalFixture({
+    singleRunLaunchError: {
+      code: "FORBIDDEN",
+      message: "Out of credits.",
+      status: 403,
+      details: {
+        recovery: {
+          version: 1,
+          reason: "allowance_exhausted",
+          action: "buy_credits",
+          actor: "caller",
+          url: "https://app.mcpjam.com/billing",
+        },
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--idempotency-key",
+          "launch-1",
+          "--resume-from",
+          "run-original",
+          "--format",
+          "human"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 6, run.stderr);
+    assert.match(
+      run.stderr,
+      /Still blocked: Buy credits to keep going: https:\/\/app\.mcpjam\.com\/billing\n/
+    );
+    assert.doesNotMatch(run.stderr, /Resume:/);
+  } finally {
+    process.exitCode = 0;
     await fixture.close();
   }
 });

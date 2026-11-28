@@ -1635,6 +1635,60 @@ export async function fetchSuiteRunServerSelection(
 type RunDoc = Record<string, any>;
 type IterationDoc = Record<string, any>;
 
+/** A run in the path's project, read with the caller's token. */
+async function readSourceRun(
+  convexAuthToken: string,
+  projectId: string,
+  runId: string,
+): Promise<RunDoc> {
+  let sourceRun: RunDoc | null;
+  try {
+    sourceRun = await createConvexClient(convexAuthToken).query(
+      "testSuites:getTestSuiteRun" as any,
+      { runId },
+    );
+  } catch (error) {
+    throw translateConvexReadError(
+      error,
+      scopedEvalReadOptions("Eval run not found"),
+    );
+  }
+  requireProjectMatch(sourceRun, projectId, "Eval run");
+  return sourceRun!;
+}
+
+/**
+ * The target a resume that names none runs on, picked the way the backend's
+ * `resumeTargetOf` picks it: the source run's environment, launched like an
+ * ephemeral one when the suite no longer lists it, or the source run's host
+ * while it is one of several still attached. This route connects the run's
+ * servers before the backend sees the launch, so it has to agree.
+ */
+function resumeTargetFor(
+  suite: SuiteDoc,
+  sourceRun: RunDoc,
+): {
+  environmentId?: string;
+  ephemeralEnvironment?: true;
+  namedHostId?: string;
+} {
+  const environmentId = sourceRun.configSnapshot?.environmentRef?.environmentId;
+  if (environmentId) {
+    return suiteEnvironmentIds(suite).includes(String(environmentId))
+      ? { environmentId: String(environmentId) }
+      : { environmentId: String(environmentId), ephemeralEnvironment: true };
+  }
+  const hostId = sourceRun.namedHostId;
+  const hostIds: string[] = Array.isArray(suite.hostAttachments)
+    ? suite.hostAttachments.map((host: { namedHostId: unknown }) =>
+        String(host.namedHostId),
+      )
+    : [];
+  return hostId && hostIds.length > 1 && hostIds.includes(String(hostId))
+    ? { namedHostId: String(hostId) }
+    : {};
+}
+
 /**
  * Which project environment a run actually executed against, read from the
  * IMMUTABLE snapshot the run was stamped with — not from the suite's current
@@ -4753,6 +4807,32 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   // same swap `runEphemeralConnection` does for the synchronous routes.
   const convexAuthToken = await getConvexBearerForRequest(c);
 
+  // A resume that names no target runs where the stopped run ran. Picked from
+  // the source run so this route neither refuses a multi-environment suite nor
+  // connects, and sends, an attachment the stopped run never used.
+  if (
+    body.resumeFromRunId &&
+    body.suiteId &&
+    !body.environmentId &&
+    !body.namedHostId &&
+    !body.serverIds?.length &&
+    !body.hosts?.length &&
+    body.ephemeralEnvironment !== true
+  ) {
+    Object.assign(
+      body,
+      resumeTargetFor(
+        await readSuiteInProject(
+          convexAuthToken,
+          projectId,
+          body.suiteId,
+          "preflight",
+        ),
+        await readSourceRun(convexAuthToken, projectId, body.resumeFromRunId),
+      ),
+    );
+  }
+
   const { environmentId, environmentLaunch, serverIds, serverNames } =
     await resolveLaunchServers({
       convexAuthToken,
@@ -6061,19 +6141,8 @@ evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
   const refusal = rerunPreviewRefusal(preview);
   if (refusal) throw refusal;
 
-  let sourceRun: RunDoc | null;
-  try {
-    sourceRun = await readClient.query("testSuites:getTestSuiteRun" as any, {
-      runId,
-    });
-  } catch (error) {
-    throw translateConvexReadError(
-      error,
-      scopedEvalReadOptions("Eval run not found"),
-    );
-  }
-  requireProjectMatch(sourceRun, projectId, "Eval run");
-  const suiteId = String(sourceRun!.suiteId);
+  const sourceRun = await readSourceRun(token, projectId, runId);
+  const suiteId = String(sourceRun.suiteId);
 
   // The servers the SOURCE run executed against — the same derivation the
   // description-experiment arms use for their snapshot replays.

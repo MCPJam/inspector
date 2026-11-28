@@ -191,18 +191,25 @@ import {
   classifyWaitErrorExitCode,
   evalRunWaitExitCode,
   worstOf,
+  EVAL_RUN_BLOCKED_EXIT_CODE,
   type EvalRunWaitRunOutcome,
 } from "../lib/eval-run-exit-code.js";
+import { creditRecoveryOfCliError } from "../lib/eval-resume.js";
+import {
+  creditBlocksJsonFields,
+  launchCreditExitCode,
+  readRunCreditStops,
+  refusedLaunchCreditBlock,
+  refusedTargetCreditBlocks,
+  stoppedRunCreditBlock,
+  writeCreditBlocks,
+} from "../lib/eval-credit-blocks.js";
 import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
 import {
   decisionSummaryFromIterations,
   readEvalRunDecisionSummary,
 } from "../lib/eval-decision-summary.js";
-import {
-  creditRecoveryOfIterations,
-  readEvalRunCreditRecovery,
-  type EvalRunDecisionSummary,
-} from "@mcpjam/sdk";
+import { isCreditBlock, type EvalRunDecisionSummary } from "@mcpjam/sdk";
 import {
   comparePolicyFromOptions,
   compareGateInputFrom,
@@ -3602,6 +3609,14 @@ export function registerEvalCommands(program: Command): void {
       "--idempotency-key <key>",
       "Retry key for a lost launch response; for --file, one is minted and printed when omitted"
     )
+    .option(
+      "--resume",
+      "Run this as the resume of a credit-blocked launch. If it is refused again, print `Still blocked` and exit 6 — never retried automatically."
+    )
+    .option(
+      "--resume-from <runId>",
+      "Resume a run MCPJam credits stopped partway: run only that run's unfinished cases. Implies --resume."
+    )
     .option("--wait", "Wait for every started run to reach a terminal status")
     .option(
       "--wait-timeout <ms>",
@@ -3705,6 +3720,8 @@ export function registerEvalCommands(program: Command): void {
           minPassRate?: number;
           matchOptions?: string;
           idempotencyKey?: string;
+          resume?: boolean;
+          resumeFrom?: string;
           wait?: boolean;
           waitTimeout?: string;
           reporter?: string;
@@ -3741,6 +3758,19 @@ export function registerEvalCommands(program: Command): void {
         }
         const approvals = parseApprovalFlags(options);
         const globalOptions = evalGlobalOptions(command);
+        // --resume-from implies --resume: both mean "this launch is itself a
+        // retry after a credit block". A second refusal under it is reported as
+        // `Still blocked` and never retried, so the CLI cannot spin.
+        const resumed =
+          options.resume === true || options.resumeFrom !== undefined;
+        // A resume runs the source run's own unfinished cases, so it cannot also
+        // fan out across targets. Caught here with a clear message rather than as
+        // an opaque schema rejection from the group launch endpoint.
+        if (options.resumeFrom !== undefined && options.allTargets) {
+          throw usageError(
+            "--resume-from cannot be combined with --all-targets; a resume reruns the stopped run's own unfinished cases."
+          );
+        }
         const reporter = parseReporterFormat(options.reporter);
         const waitTimeoutMs =
           options.waitTimeout !== undefined
@@ -3769,6 +3799,16 @@ export function registerEvalCommands(program: Command): void {
             throw error;
           }
         }
+        // A refused `--file -` launch resumes on its suite by id, and a suite
+        // launch with no `--case` runs every stored case, including the rows
+        // the file disabled. Its resume names the cases this launch ran.
+        let stdinRunCases: string[] | undefined;
+        // An approved launch replays from the file itself (approvals name its
+        // authored cases), so it keeps the file's own case choice.
+        const replayOptions = () =>
+          stdinRunCases && !approvals
+            ? { ...options, case: stdinRunCases }
+            : options;
         let result: RunEvalSuiteResult;
         try {
           result = await runPlatformCommand(
@@ -3823,6 +3863,9 @@ export function registerEvalCommands(program: Command): void {
                     onIdempotencyKey: (key) => {
                       process.stderr.write(`Eval idempotency key: ${key}\n`);
                     },
+                    onRunCases: (caseIds) => {
+                      if (options.file === "-") stdinRunCases = caseIds;
+                    },
                   },
                   {
                     source,
@@ -3862,6 +3905,9 @@ export function registerEvalCommands(program: Command): void {
                         : {}),
                       ...(options.idempotencyKey
                         ? { idempotencyKey: options.idempotencyKey }
+                        : {}),
+                      ...(options.resumeFrom
+                        ? { resumeFromRunId: options.resumeFrom }
                         : {}),
                       ...(approvals ? { approvals } : {}),
                       ...composeField(options),
@@ -3915,6 +3961,9 @@ export function registerEvalCommands(program: Command): void {
                     ...(options.idempotencyKey
                       ? { idempotencyKey: options.idempotencyKey }
                       : {}),
+                    ...(options.resumeFrom
+                      ? { resumeFromRunId: options.resumeFrom }
+                      : {}),
                     ...composeField(options),
                   },
                   {
@@ -3929,6 +3978,37 @@ export function registerEvalCommands(program: Command): void {
             { projectScope: resolved.projectScope }
           );
         } catch (error) {
+          // A credit refusal that names a person-must-act step (anything but
+          // `wait`) is a block, not a fault: no run was created, and the only
+          // honest output is the one step plus the command to resume once the
+          // user tops up. Handled here regardless of --wait, so `eval run`
+          // exits 6 the same way with or without it.
+          const launchRecovery =
+            error instanceof CliError
+              ? creditRecoveryOfCliError(error)
+              : undefined;
+          if (error instanceof CliError && isCreditBlock(launchRecovery)) {
+            const block = refusedLaunchCreditBlock(
+              error.details,
+              launchRecovery,
+              replayOptions()
+            );
+            if (globalOptions.format === "human") {
+              process.stderr.write(`${error.message}\n`);
+              writeCreditBlocks("human", [block], resumed, process.stderr);
+            } else {
+              writeResult(
+                {
+                  error: { code: error.code, message: error.message },
+                  creditRecovery: launchRecovery,
+                  ...creditBlocksJsonFields([block], resumed, true),
+                },
+                globalOptions.format
+              );
+            }
+            setProcessExitCode(EVAL_RUN_BLOCKED_EXIT_CODE);
+            return;
+          }
           // Launch-phase remap, --wait only: a thrown CliError whose exitCode
           // is not already 2 (usage error / invalid suite file — untouched)
           // gets reclassified by wire code. `toCliError` drops the HTTP
@@ -3950,19 +4030,33 @@ export function registerEvalCommands(program: Command): void {
           }
           throw error;
         }
+        // Fan-out targets credits refused: each gets its own resume command.
+        const refusedBlocks = refusedTargetCreditBlocks(
+          result,
+          replayOptions()
+        );
         // EXACTLY ONE JSON document on `--format json`: the receipt already
         // carries every run, so appending human lines to it would make the
         // stream unparseable for the CI callers that read it. The human-mode
         // block already printed from `onDisclosure`, ahead of the launch
         // itself — nothing to print again here.
         if (!options.wait) {
-          writeResult(result, globalOptions.format);
+          writeResult(
+            globalOptions.format === "json"
+              ? {
+                  ...result,
+                  ...creditBlocksJsonFields(refusedBlocks, resumed, false),
+                }
+              : result,
+            globalOptions.format
+          );
           writeRunGroupSummary(globalOptions.format, webOrigin, result);
+          writeCreditBlocks(globalOptions.format, refusedBlocks, resumed);
           // A partial or wholly failed fan-out is not a success. Exiting 0 would
-          // let a pipeline treat "1 of 3 runs never started" as a clean launch.
-          if (result.outcome !== "started") {
-            setProcessExitCode(1);
-          }
+          // let a pipeline treat "1 of 3 runs never started" as a clean launch;
+          // a target refused for credits a person must add exits 6 instead.
+          const launchCode = launchCreditExitCode(result, refusedBlocks);
+          if (launchCode !== 0) setProcessExitCode(launchCode);
           return;
         }
 
@@ -4085,15 +4179,12 @@ export function registerEvalCommands(program: Command): void {
                       runs[0]!
                     )
                   : undefined;
-              const soloRecovery =
-                result.targets.length === 1 && runs.length === 1
-                  ? await readEvalRunCreditRecovery(
-                      client,
-                      signal,
-                      result.project.id,
-                      runs[0]!
-                    )
-                  : undefined;
+              const creditStops = await readRunCreditStops(
+                client,
+                signal,
+                result.project.id,
+                runs
+              );
               // Deliberately does NOT throw on `waitErrors` here. Throwing from
               // inside the platform command skips the receipt below, and the
               // receipt is the only place the launched run ids are printed: a
@@ -4108,7 +4199,7 @@ export function registerEvalCommands(program: Command): void {
                 reportInputs: [] as StructuredEvalRunInput[],
                 iterationErrorCodes: new Map<string, string>(),
                 ...(soloSummary ? { decisionSummary: soloSummary } : {}),
-                ...(soloRecovery ? { creditRecovery: soloRecovery } : {}),
+                creditStops,
               };
             }
 
@@ -4166,17 +4257,31 @@ export function registerEvalCommands(program: Command): void {
                     },
                   })
                 : undefined;
-            // From the walk above, like the summary: no extra read.
-            const creditRecovery = solo
-              ? creditRecoveryOfIterations(solo.iterations)
-              : undefined;
+            // Read off the walk above where it succeeded, with no extra read.
+            const creditStops = await readRunCreditStops(
+              client,
+              signal,
+              result.project.id,
+              runs,
+              new Map(
+                reportInputs
+                  .filter((input) => input.iterationError === undefined)
+                  .map((input) => [
+                    input.run.id,
+                    {
+                      iterations: input.iterations,
+                      complete: input.iterationsComplete,
+                    },
+                  ])
+              )
+            );
             return {
               runs,
               waitErrors,
               reportInputs,
               iterationErrorCodes,
               ...(decisionSummary ? { decisionSummary } : {}),
-              ...(creditRecovery ? { creditRecovery } : {}),
+              creditStops,
             };
           },
           {
@@ -4231,11 +4336,34 @@ export function registerEvalCommands(program: Command): void {
             ),
           })
         );
-        const code = evalRunWaitExitCode({
-          launchOutcome: result.outcome,
-          runs: runOutcomes,
-          waitErrors: completion.waitErrors,
-        });
+        // A credit stop or refusal whose step a person must take (anything but
+        // `wait`) is a block: the run finalized `failed` (base code 5), or the
+        // target never launched (4), but the actionable outcome is "a person
+        // must add credits, then resume", so it merges to 6, per target. A
+        // `wait` recovery keeps the base code.
+        const soloRecovery =
+          result.targets.length === 1
+            ? completion.creditStops[0]?.recovery
+            : undefined;
+        const creditBlocks = [
+          ...refusedBlocks,
+          ...completion.creditStops
+            .filter((stop) => isCreditBlock(stop.recovery))
+            .map((stop) =>
+              stoppedRunCreditBlock(stop, {
+                ...options,
+                project: result.project.id,
+              })
+            ),
+        ];
+        const code = worstOf([
+          evalRunWaitExitCode({
+            launchOutcome: result.outcome,
+            runs: runOutcomes,
+            waitErrors: completion.waitErrors,
+          }),
+          ...(creditBlocks.length > 0 ? [EVAL_RUN_BLOCKED_EXIT_CODE] : []),
+        ]);
 
         // Captured, NOT thrown here: the receipt below (or the reporter
         // stdout) carries the only copy of the launched run ids, and a local
@@ -4257,6 +4385,9 @@ export function registerEvalCommands(program: Command): void {
         }
         if (reporter && report) {
           writeReporterResult(reporter, report);
+          // The report format has no field for a resume, so the step and its
+          // command go to stderr and stdout stays one parseable document.
+          writeCreditBlocks("human", creditBlocks, resumed, process.stderr);
         } else {
           writeResult(
             {
@@ -4274,8 +4405,15 @@ export function registerEvalCommands(program: Command): void {
               ...(globalOptions.format === "json" && completion.decisionSummary
                 ? { decisionSummary: completion.decisionSummary }
                 : {}),
-              ...(globalOptions.format === "json" && completion.creditRecovery
-                ? { creditRecovery: completion.creditRecovery }
+              ...(globalOptions.format === "json" && soloRecovery
+                ? { creditRecovery: soloRecovery }
+                : {}),
+              ...(globalOptions.format === "json"
+                ? creditBlocksJsonFields(
+                    creditBlocks,
+                    resumed,
+                    result.targets.length === 1
+                  )
                 : {}),
             },
             globalOptions.format
@@ -4293,7 +4431,15 @@ export function registerEvalCommands(program: Command): void {
             completion.decisionSummary,
             process.stdout
           );
-          writeCreditRecovery(globalOptions.format, completion.creditRecovery);
+          // A person-must-act block prints the one step and a command per
+          // blocked target to resume once the user tops up; `Still blocked`
+          // instead when this run was already a resume. Any other recovery (a
+          // `wait`) keeps the plain `Recovery:` line.
+          if (creditBlocks.length > 0) {
+            writeCreditBlocks(globalOptions.format, creditBlocks, resumed);
+          } else {
+            writeCreditRecovery(globalOptions.format, soloRecovery);
+          }
         }
 
         // Everything above has already been written — report file, reporter
@@ -4438,6 +4584,24 @@ export function registerEvalCommands(program: Command): void {
             quiet: globalOptions.quiet,
           }
         );
+        // A run MCPJam credits stopped and whose step a person must take is a
+        // block: the reader must resume it once the user tops up. The resume
+        // command reconstructs from the run record (suite + project + this run
+        // as the source); `status` carries no launch knobs, so it is the exact
+        // minimum that runs the unfinished cases.
+        const statusBlock = isCreditBlock(result.creditRecovery)
+          ? stoppedRunCreditBlock(
+              {
+                run: result.run,
+                recovery: result.creditRecovery,
+                ...(result.incompleteCases
+                  ? { incompleteCases: result.incompleteCases }
+                  : {}),
+              },
+              { project: result.project.id }
+            )
+          : undefined;
+        const statusResumeCommand = statusBlock?.resumeCommand;
         // The wire-shaped result is useful in JSON, but human output must not
         // leak raw decision enums (for example `argumentMismatch`) before the
         // label-aware summary below. The operation still returns the canonical
@@ -4449,11 +4613,15 @@ export function registerEvalCommands(program: Command): void {
                 const {
                   decisionSummary: _decisionSummary,
                   creditRecovery: _creditRecovery,
+                  resume: _resume,
+                  incompleteCases: _incompleteCases,
                   ...humanResult
                 } = result;
                 return humanResult;
               })()
-            : result;
+            : statusResumeCommand
+              ? { ...result, resumeCommand: statusResumeCommand }
+              : result;
         writeResult(resultForOutput, globalOptions.format);
         writeRunAccounts(globalOptions.format, [result.run], accountServerNames);
         writeJudgeSummary(globalOptions.format, result.run.judges);
@@ -4466,12 +4634,19 @@ export function registerEvalCommands(program: Command): void {
           process.stdout,
           { stages: options.stages === true }
         );
-        writeCreditRecovery(globalOptions.format, result.creditRecovery);
+        if (statusBlock) {
+          writeCreditBlocks(globalOptions.format, [statusBlock], false);
+        } else {
+          writeCreditRecovery(globalOptions.format, result.creditRecovery);
+        }
         writeRunLink(globalOptions.format, webOrigin, {
           projectId: result.project.id,
           suiteId: result.run.suiteId,
           runId: result.run.id,
         });
+        if (statusBlock) {
+          setProcessExitCode(EVAL_RUN_BLOCKED_EXIT_CODE);
+        }
       }
     );
 

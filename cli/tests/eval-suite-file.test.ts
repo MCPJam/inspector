@@ -1688,6 +1688,8 @@ async function startFileRunFixture(options?: {
   failCreateIndexes?: readonly number[];
   failUpdates?: boolean;
   failRun?: boolean;
+  /** The launch is refused for credits with this recovery. */
+  runCreditRefusal?: Record<string, unknown>;
 }): Promise<{
   baseUrl: string;
   authHeaders: string[];
@@ -2167,6 +2169,17 @@ async function startFileRunFixture(options?: {
         );
         return;
       }
+      if (options?.runCreditRefusal) {
+        res.statusCode = 403;
+        res.end(
+          JSON.stringify({
+            code: "FORBIDDEN",
+            message: "Out of credits.",
+            details: { recovery: options.runCreditRefusal },
+          })
+        );
+        return;
+      }
       const key =
         typeof body.idempotencyKey === "string" ? body.idempotencyKey : "";
       let runId = runsByKey.get(key);
@@ -2463,6 +2476,14 @@ describe("the upload contract guard", () => {
     assert.equal(validateVerdictPolicyDefaults(undefined), undefined);
   });
 });
+
+const BUY_CREDITS_RECOVERY = {
+  version: 1,
+  reason: "allowance_exhausted",
+  action: "buy_credits",
+  actor: "caller",
+  url: "https://app.mcpjam.com/billing",
+};
 
 describe("eval run --file", () => {
   test("invalid file exits 2 after auth and creates no run", async () => {
@@ -2801,6 +2822,142 @@ describe("eval run --file", () => {
         assert.equal(payload.error.details.idempotencyKey, key);
         assert.match(payload.error.message, new RegExp(key));
         assert.match(run.stderr, new RegExp(`Eval idempotency key: ${key}`));
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a launch refused for credits exits 6 with its recovery and resume", async () => {
+    const fixture = await startFileRunFixture({
+      runCreditRefusal: BUY_CREDITS_RECOVERY,
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 6, run.stderr);
+        const payload = JSON.parse(run.stdout);
+        assert.deepEqual(payload.creditRecovery, BUY_CREDITS_RECOVERY);
+        const key = (fixture.runBodies[0] as { idempotencyKey: string })
+          .idempotencyKey;
+        assert.match(
+          payload.resumeCommand,
+          new RegExp(`--idempotency-key ${key} --resume$`)
+        );
+      });
+    } finally {
+      process.exitCode = 0;
+      await fixture.close();
+    }
+  });
+
+  test("a refused --file - launch resumes on its suite with only the cases it ran", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+        { id: "row_c_parked", declaredId: "c_parked", title: "Parked" },
+      ],
+      runCreditRefusal: BUY_CREDITS_RECOVERY,
+    });
+    try {
+      const run = await runCli(
+        [
+          "cloud",
+          "eval",
+          "run",
+          "--file",
+          "-",
+          "--project",
+          "Alpha",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          fixture.baseUrl,
+          "--format",
+          "json",
+        ],
+        `${VALID_SUITE_FILE}  - id: c_parked\n    title: Parked\n    disabled: true\n    steps:\n      - id: step-1\n        kind: prompt\n        prompt: Parked for now.\n`
+      );
+      assert.equal(run.exitCode, 6, run.stderr);
+      const key = (fixture.runBodies[0] as { idempotencyKey: string })
+        .idempotencyKey;
+      assert.equal(
+        JSON.parse(run.stdout).resumeCommand,
+        `mcpjam cloud eval run --suite suite-file-1 --project proj-alpha --case row_c_refund --idempotency-key ${key} --resume`
+      );
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a refused --file - resume is still blocked and sends no file cases", async () => {
+    const fixture = await startFileRunFixture({
+      runCreditRefusal: BUY_CREDITS_RECOVERY,
+    });
+    try {
+      const run = await runCli(
+        [
+          "cloud",
+          "eval",
+          "run",
+          "--file",
+          "-",
+          "--project",
+          "Alpha",
+          "--resume-from",
+          "run-original",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          fixture.baseUrl,
+          "--format",
+          "json",
+        ],
+        VALID_SUITE_FILE
+      );
+      assert.equal(run.exitCode, 6, run.stderr);
+      const launched = fixture.runBodies[0] as Record<string, unknown>;
+      assert.equal(launched.resumeFromRunId, "run-original");
+      assert.equal(launched.caseIds, undefined);
+      const payload = JSON.parse(run.stdout);
+      assert.equal(payload.stillBlocked, true);
+      assert.equal(payload.resumeCommand, undefined);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a resume from a file leaves the case choice to the stopped run", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--resume-from",
+              "run-stopped"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        const launched = fixture.runBodies[0] as Record<string, unknown>;
+        assert.equal(launched.resumeFromRunId, "run-stopped");
+        assert.equal(launched.caseIds, undefined);
       });
     } finally {
       await fixture.close();

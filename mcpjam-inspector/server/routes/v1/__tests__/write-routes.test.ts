@@ -993,6 +993,73 @@ describe("v1 write routes", () => {
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
       });
 
+      describe("a resume that names no target", () => {
+        const SOURCE_RUN_ID = "runsrcxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        function mockResume(
+          attached: string[],
+          sourceEnvironmentId: string,
+        ): void {
+          mockConvexQueries({
+            "testSuites:getTestSuite": () => ({
+              ...SUITE_DOC,
+              environmentIds: attached,
+            }),
+            "testSuites:getTestSuiteRun": () => ({
+              ...RUN_DOC,
+              _id: SOURCE_RUN_ID,
+              status: "failed",
+              configSnapshot: {
+                environmentRef: { environmentId: sourceEnvironmentId },
+              },
+            }),
+            "projectEnvironments:getEnvironment": () => ({
+              environmentId: sourceEnvironmentId,
+              projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              name: "Staging",
+            }),
+            "projectEnvironments:listEnvironments": () => PROJECT_ENVIRONMENTS,
+            "projectEnvironments:resolveEnvironmentForLaunch": () =>
+              RESOLVED_ENVIRONMENT,
+            "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+          });
+        }
+
+        it.each([
+          [
+            "several attached environments",
+            [
+              "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            ],
+          ],
+          [
+            "a different single attachment",
+            ["env2xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          ],
+        ])(
+          "runs on the stopped run's environment with %s",
+          async (_label, attached) => {
+            mockHappyCreate();
+            mockResume(attached, "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+
+            const res = await request(
+              makeApp(),
+              "POST",
+              "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs",
+              {
+                suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+                resumeFromRunId: SOURCE_RUN_ID,
+              },
+            );
+
+            expect(res.status).toBe(202);
+            expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+              environmentId: "env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            });
+          },
+        );
+      });
+
       it("rejects a server override on an environment-based suite", async () => {
         mockHappyCreate();
         mockEnvSuite();
