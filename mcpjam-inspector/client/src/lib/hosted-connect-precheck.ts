@@ -20,7 +20,7 @@ export const DESKTOP_APP_DOWNLOAD_URL =
 
 const HAS_SCHEME = /^[a-z][a-z\d+.-]*:\/\//i;
 const BARE_HOST =
-  /^(?:localhost|(?:[a-z\d-]+\.)+[a-z\d-]+)(?::\d+)?(?:[/?#]|$)/i;
+  /^(?:localhost|(?:[a-z\d-]+\.)+[a-z\d-]+|\[[\da-f:.]+\])(?::\d+)?(?:[/?#]|$)/i;
 const SCRIPT_FILE = /^[^/:\s]+\.(?:[cm]?js|tsx?|py|sh|rb|exe)$/i;
 
 /** A bare host such as `mcp.example.com/mcp` is a URL missing its scheme. */
