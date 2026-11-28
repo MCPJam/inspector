@@ -111,7 +111,7 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/evals/suite-group-compare.tsx", 1],
   ["components/evals/suite-header.tsx", 1],
   ["components/evals/suite-hero-stats.tsx", 1],
-  ["components/evals/suite-iterations-view.tsx", 3],
+  ["components/evals/suite-iterations-view.tsx", 2],
   ["components/evals/suite-runs-chart-grid.tsx", 1],
   ["components/evals/suite-stage-facts-panel.tsx", 1],
   ["components/evals/suite-stage-facts.ts", 6],
