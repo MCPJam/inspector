@@ -21,11 +21,11 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { ConfiguredSuiteRunReview } from "./suite-run-matrix";
 import {
   hasBlockingPreflight,
-  RunPreflightNotices,
   scopePreflightToEnvironments,
   scopePreflightToHosts,
   type RunPreflightState,
 } from "./suite-run-preflight";
+import { RunPreflightNotices } from "./run-preflight-notices";
 import type { CaseRunLaunchOptions, EvalCase, EvalSuite } from "../evals/types";
 import {
   savedCaseTargets,

@@ -491,6 +491,14 @@ entirely, and errors belong adjacent to where they occurred. A message asking
 someone to select, enter or fix something belongs beside the control they are
 looking at.
 
+**One message per box.** When a surface has several warnings or errors at once,
+give each its own bordered notice, with the action that fixes it beside it. Never
+stack several messages in one shared box: a long block of unrelated sentences
+hides which one is blocking and which button belongs to which problem. The
+Set up run sheet's `PreflightNotice`
+(`mcpjam-inspector/client/src/components/evaluate/preflight-notice.tsx`) is the
+reference.
+
 ### Tone
 
 Don't blame the reader, and don't use "invalid" or "illegal" — NN/g names both.

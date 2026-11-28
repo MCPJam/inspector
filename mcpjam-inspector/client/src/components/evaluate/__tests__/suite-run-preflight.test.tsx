@@ -10,10 +10,10 @@ import {
   preflightTargets,
   readEnvironmentResolutions,
   runPreflight,
-  RunPreflightNotices,
   scopePreflightToHosts,
   scopePreflightToEnvironments,
 } from "../suite-run-preflight";
+import { RunPreflightNotices } from "../run-preflight-notices";
 import { SuiteRunReviewContent } from "../suite-run-review";
 import { plannedPreflight } from "../suite-run-matrix";
 import type { EvalCase, EvalSuite } from "../../evals/types";
@@ -426,6 +426,28 @@ describe("RunPreflightNotices", () => {
     expect(
       screen.getByText(/if no organization model fits/),
     ).toBeInTheDocument();
+  });
+
+  it("gives each message its own notice", () => {
+    render(
+      <RunPreflightNotices
+        preflight={{
+          disconnected: ["linear"],
+          removed: [],
+          refused: [],
+          disabledProviders: ["ollama"],
+          serverName: (ref) => ref,
+          connect: vi.fn(),
+          manageModels: vi.fn(),
+        }}
+      />,
+    );
+    const notices = screen.getAllByTestId("preflight-notice");
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toHaveTextContent(/linear isn't connected/);
+    expect(notices[0]).toHaveTextContent("Connect");
+    expect(notices[1]).toHaveTextContent(/Ollama isn't enabled/);
+    expect(notices[1]).toHaveTextContent("Manage models");
   });
 
   it("links a disabled provider to the org's model settings", async () => {
