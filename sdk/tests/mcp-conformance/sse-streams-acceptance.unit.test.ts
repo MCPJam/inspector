@@ -32,6 +32,8 @@ type Answer =
   // A stream that carries only a notification, never the response.
   | "no-answer"
   | "open-after-answer"
+  | "open-after-answer-with-partial-event"
+  | "partial-at-close"
   | "silent"
   // A stream that carries the response to some other request's id.
   | "wrong-id"
@@ -117,6 +119,12 @@ function server(answers: Answer[], protocolVersion: string) {
         return sse([notice]);
       case "open-after-answer":
         return sse([frame.slice(0, -1), frame.slice(-1)], true);
+      case "open-after-answer-with-partial-event":
+      case "partial-at-close":
+        return sse(
+          [frame, 'data: {"jsonrpc":"2.0","method":'],
+          answer === "open-after-answer-with-partial-event",
+        );
       case "silent":
         return sse([], true);
       case "wrong-id":
@@ -273,6 +281,26 @@ describe("Functional SSE Streams needs each stream to carry its own response", (
     });
     expect(result.details).not.toHaveProperty("advice");
   });
+
+  it.each(["2025-03-26", "2025-06-18", "2025-11-25"])(
+    "distinguishes a partial event at the deadline from a server cutoff on %s",
+    async (version) => {
+      const [atDeadline, atClose] = await Promise.all([
+        run(["sse", "open-after-answer-with-partial-event", "sse"], version),
+        run(["sse", "partial-at-close", "sse"], version),
+      ]);
+
+      expect(atDeadline).toMatchObject({
+        status: "passed",
+        details: { eventCounts: [1, 1, 1], unansweredStreams: [] },
+      });
+      expect(atClose).toMatchObject({
+        status: "skipped",
+        skipReason: "could-not-run",
+        error: { message: expect.stringContaining("was cut off") },
+      });
+    },
+  );
 
   it("warns when a stream stays silent until the deadline", async () => {
     const result = await run(["sse", "silent", "sse"]);

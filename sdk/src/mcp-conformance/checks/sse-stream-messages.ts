@@ -113,9 +113,11 @@ export function inspectSseStreamMessages(
         };
       }
     }
+    // Our deadline can leave a partial frame on a stream that was still open.
     cutOff ||=
-      (response.bodyError !== undefined && !response.bodyTimedOut) ||
-      (response.sse?.some((event) => !event.terminated) ?? false);
+      !response.bodyTimedOut &&
+      (response.bodyError !== undefined ||
+        (response.sse?.some((event) => !event.terminated) ?? false));
   }
 
   // Compare all streams first so a copied response is reported as a broadcast.
