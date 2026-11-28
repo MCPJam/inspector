@@ -1378,6 +1378,26 @@
     "spendNotice": false
   },
   {
+    "name": "compile_recorded_app_case",
+    "annotations": {
+      "title": "Compile a recorded MCP App into an eval case",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "summarize_recorded_app_actions",
+    "annotations": {
+      "title": "Summarize persona app actions across goal-run sessions",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    },
+    "spendNotice": false
+  },
+  {
     "name": "get_capabilities",
     "annotations": {
       "title": "Get what you may do in an MCPJam project",
