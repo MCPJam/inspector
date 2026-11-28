@@ -43,6 +43,13 @@ export function useCallbackPreference(
 
   const remember = (value: ReceiverChoice) => {
     if (!key) return;
+    // The next subscription on this server starts from what was just saved,
+    // even if storage is unavailable.
+    setSaved(
+      value.kind === "local"
+        ? defaultDraft
+        : { kind: "custom", url: value.baseUrl },
+    );
     try {
       if (value.kind === "local") window.localStorage.removeItem(key);
       else window.localStorage.setItem(key, value.baseUrl || "custom");
