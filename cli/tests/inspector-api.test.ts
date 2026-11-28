@@ -20,7 +20,7 @@ import {
   clearInspectorSessionTokenCache,
   ensureInspector,
   ensureInspectorBackend,
-  getNpxExecutable,
+  npxInvocation,
   normalizeInspectorFrontendUrl,
   normalizeInspectorBaseUrl,
   resolveInspectorBrowserBaseUrl,
@@ -943,10 +943,25 @@ test("resolveInspectorBrowserBaseUrl rejects discovered frontend when backend re
   );
 });
 
-test("getNpxExecutable resolves Windows batch shim", () => {
-  assert.equal(getNpxExecutable("win32"), "npx.cmd");
-  assert.equal(getNpxExecutable("darwin"), "npx");
-  assert.equal(getNpxExecutable("linux"), "npx");
+test("npxInvocation avoids spawning the Windows batch shim with an args array", () => {
+  const args = ["-y", "@mcpjam/inspector@latest", "--port", "6274"];
+  assert.deepEqual(npxInvocation(args, "win32", () => "npx-cli.js"), {
+    command: process.execPath,
+    args: ["npx-cli.js", ...args],
+    shell: false,
+  });
+  assert.deepEqual(npxInvocation(args, "win32", () => undefined), {
+    command: "npx.cmd -y @mcpjam/inspector@latest --port 6274",
+    args: [],
+    shell: true,
+  });
+  for (const platform of ["darwin", "linux"] as const) {
+    assert.deepEqual(npxInvocation(args, platform), {
+      command: "npx",
+      args,
+      shell: false,
+    });
+  }
 });
 
 test("stopInspector posts shutdown with session auth", async () => {

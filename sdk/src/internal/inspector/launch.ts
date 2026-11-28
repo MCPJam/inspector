@@ -8,8 +8,76 @@ import { isInspectorHealthy } from "./health.js";
 
 const STARTUP_LOG_MAX_BYTES = 1024 * 1024;
 
+export interface NpxInvocation {
+  command: string;
+  args: string[];
+  shell: boolean;
+}
+
+/**
+ * @deprecated Use `npxInvocation`. Published CLI versions still import this
+ * from `@mcpjam/sdk/internal/inspector`.
+ */
 export function getNpxExecutable(platform = process.platform): string {
   return platform === "win32" ? "npx.cmd" : "npx";
+}
+
+/**
+ * How to spawn npx. On Windows `npx` is the `npx.cmd` shim, and since Node's
+ * CVE-2024-27980 hardening spawning a `.cmd` without a shell throws EINVAL.
+ * So Windows runs npm's own `npx-cli.js` with the current Node, which needs
+ * no shell. Without it, the shim runs through cmd.exe as one command string:
+ * Node 24 deprecates passing an args array with `shell: true` (DEP0190).
+ * cmd.exe re-reads that string, so each argument is quoted, and characters
+ * cmd.exe still expands inside quotes are refused.
+ */
+export function npxInvocation(
+  args: readonly string[],
+  platform = process.platform,
+  findNpxCli: () => string | undefined = findBundledNpxCli,
+): NpxInvocation {
+  if (platform !== "win32") {
+    return { command: "npx", args: [...args], shell: false };
+  }
+  const npxCli = findNpxCli();
+  if (npxCli) {
+    return { command: process.execPath, args: [npxCli, ...args], shell: false };
+  }
+  return {
+    command: ["npx.cmd", ...args.map(quoteCmdArgument)].join(" "),
+    args: [],
+    shell: true,
+  };
+}
+
+// The Windows Node installer and nvm-windows put npm next to node.exe.
+function findBundledNpxCli(): string | undefined {
+  const npxCli = path.join(
+    path.dirname(process.execPath),
+    "node_modules",
+    "npm",
+    "bin",
+    "npx-cli.js",
+  );
+  return existsSync(npxCli) ? npxCli : undefined;
+}
+
+function quoteCmdArgument(arg: string): string {
+  if (/["%!\r\n]/.test(arg)) {
+    throw operationalError(
+      `Cannot pass ${JSON.stringify(arg)} to npx through cmd.exe safely.`,
+    );
+  }
+  if (/^[\w@./:=-]+$/.test(arg)) {
+    return arg;
+  }
+  // Backslashes before a quote are escapes to the argv parser, so a trailing
+  // backslash would swallow the closing quote and the next argument.
+  let end = arg.length;
+  while (end > 0 && arg[end - 1] === "\\") {
+    end--;
+  }
+  return `"${arg}${arg.slice(end)}"`;
 }
 
 export async function startInspector(
@@ -22,18 +90,28 @@ export async function startInspector(
   const startScriptPath = resolveStartScriptPath?.();
   const localStartScriptPath =
     startScriptPath && existsSync(startScriptPath) ? startScriptPath : undefined;
-  const args = localStartScriptPath
-    ? [localStartScriptPath, "--port", port, "--no-open"]
-    : ["-y", "@mcpjam/inspector@latest", "--port", port, "--no-open"];
-  const executable = localStartScriptPath
-    ? process.execPath
-    : getNpxExecutable();
+  const invocation: NpxInvocation = localStartScriptPath
+    ? {
+        command: process.execPath,
+        args: [localStartScriptPath, "--port", port, "--no-open"],
+        shell: false,
+      }
+    : npxInvocation([
+        "-y",
+        "@mcpjam/inspector@latest",
+        "--port",
+        port,
+        "--no-open",
+      ]);
   const logPath = getInspectorStartupLogPath();
   const logFd = openStartupLogFile(logPath);
 
   let child: ReturnType<typeof spawn>;
   try {
-    child = spawn(executable, args, {
+    child = spawn(invocation.command, invocation.args, {
+      shell: invocation.shell,
+      // Detached Windows children get their own console window otherwise.
+      windowsHide: true,
       cwd: localStartScriptPath
         ? path.dirname(localStartScriptPath)
         : process.cwd(),

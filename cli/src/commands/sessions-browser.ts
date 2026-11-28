@@ -103,7 +103,16 @@ export function registerSessionsBrowserCommands(sessions: Command): void {
     ).option("--command-id <id>", "Stable command ID for retries");
   bindOperation(
     addBrowserFlags(
-      addProjectOption(common(browser.command("open"), false))
+      addProjectOption(
+        common(
+          browser
+            .command("open")
+            .description(
+              "Open the session browser, or create a session with one when --session is omitted"
+            ),
+          false
+        )
+      )
     ).option(
       "--idempotency-key <key>",
       "Stable key when creating a new session"
@@ -127,7 +136,11 @@ export function registerSessionsBrowserCommands(sessions: Command): void {
     { defaultTimeoutMs: 360_000 }
   );
   bindOperation(
-    common(browser.command("navigate <url>")),
+    common(
+      browser
+        .command("navigate <url>")
+        .description("Load a URL in the session browser")
+    ),
     driveChatSessionBrowserOperation,
     (o: BrowserOptions, url): DriveChatSessionBrowserInput => ({
       op: "navigate",
@@ -138,7 +151,11 @@ export function registerSessionsBrowserCommands(sessions: Command): void {
     { defaultTimeoutMs: 360_000 }
   );
   bindOperation(
-    common(browser.command("act"))
+    common(
+      browser
+        .command("act")
+        .description("Run one action (click, type, scroll, ...) on the page")
+    )
       .requiredOption(
         "--verb <verb>",
         "click, type, press, scroll, hover, drag, select, or dialog/tab action"
@@ -161,7 +178,11 @@ export function registerSessionsBrowserCommands(sessions: Command): void {
     { defaultTimeoutMs: 360_000 }
   );
   bindOperation(
-    common(browser.command("invoke <toolKey>")).requiredOption(
+    common(
+      browser
+        .command("invoke <toolKey>")
+        .description("Call a tool the current page exposes")
+    ).requiredOption(
       "--input <json>",
       "Page tool input"
     ),
@@ -176,7 +197,11 @@ export function registerSessionsBrowserCommands(sessions: Command): void {
     { defaultTimeoutMs: 360_000 }
   );
   bindOperation(
-    common(browser.command("note <text>")),
+    common(
+      browser
+        .command("note <text>")
+        .description("Add a note to the session's browser history")
+    ),
     driveChatSessionBrowserOperation,
     (o: BrowserOptions, text): DriveChatSessionBrowserInput => ({
       op: "note",
@@ -186,15 +211,24 @@ export function registerSessionsBrowserCommands(sessions: Command): void {
     })
   );
   bindOperation(
-    common(browser.command("close")),
+    common(
+      browser.command("close").description("Close the session browser")
+    ),
     driveChatSessionBrowserOperation,
     (o: BrowserOptions): DriveChatSessionBrowserInput => ({
       op: "close",
       sessionId: o.session,
     })
   );
+  const observeDescriptions = {
+    observe: "Capture the page, a screenshot by default (wakes the desktop)",
+    trace: "List the commands run in the session browser",
+    artifact: "Get the screenshot URL for one command (needs --command-id)",
+  } as const;
   for (const op of ["observe", "trace", "artifact"] as const) {
-    const command = common(browser.command(op))
+    const command = common(
+      browser.command(op).description(observeDescriptions[op])
+    )
       .option("--mode <mode>", "Observation mode (default screenshot)")
       .option("--download <dir>", "Download screenshot to this directory");
     bindOperation(

@@ -36,6 +36,20 @@ test("parseJsonInputRecord accepts inline JSON and @file", async () => {
   });
 });
 
+test("parseJsonInputRecord accepts a UTF-8 byte-order mark in @file and stdin", async () => {
+  // Notepad and PowerShell's `Out-File -Encoding utf8` write this BOM.
+  const filePath = await writeJson('\uFEFF{"fromFile":true}\n');
+  assert.deepEqual(
+    new JsonInputContext().parseJsonInputRecord(`@${filePath}`, "Params"),
+    { fromFile: true },
+  );
+
+  const stdin = new JsonInputContext(() => '\uFEFF{"fromStdin":true}');
+  assert.deepEqual(stdin.parseJsonInputRecord("-", "Params"), {
+    fromStdin: true,
+  });
+});
+
 test("parseJsonInputValue accepts non-object JSON values", async () => {
   const context = new JsonInputContext();
   const filePath = await writeJson('"hello"\n');

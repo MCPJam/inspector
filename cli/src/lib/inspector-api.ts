@@ -22,7 +22,7 @@ export {
   buildInspectorAccessUrl,
   buildInspectorBrowserUrl,
   delay,
-  getNpxExecutable,
+  npxInvocation,
   normalizeInspectorFrontendUrl,
 } from "@mcpjam/sdk/internal/inspector";
 

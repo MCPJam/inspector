@@ -19,7 +19,12 @@ export {
 } from "./inspector/ensure.js";
 export { InspectorError, isInspectorError } from "./inspector/errors.js";
 export { resolveInspectorBrowserBaseUrl } from "./inspector/frontend.js";
-export { delay, getNpxExecutable } from "./inspector/launch.js";
+export {
+  delay,
+  getNpxExecutable,
+  npxInvocation,
+  type NpxInvocation,
+} from "./inspector/launch.js";
 export {
   clearInspectorSessionTokenCache,
   fetchInspectorSessionToken,
