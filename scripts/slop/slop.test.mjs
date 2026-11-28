@@ -255,6 +255,162 @@ describe("rules", () => {
     assert.equal(counts["history-comment"], 1);
   });
 
+  it("counts workaround comments, not ones that explain a decision", () => {
+    const counts = count(
+      [
+        "// Hack: the picker reads stale props.",
+        "/* Same vendor declaration workaround as schema.ts. */",
+        "// Yield one frame so React can flush the status update.",
+        "/** Wait for React to paint the new screen before measuring. */",
+        "// `requestAnimationFrame` defers the scroll one paint so it wins.",
+        "// For some reason the second call returns null.",
+        "const hack = workaround();",
+        "// Deliberately not cached: the token rotates.",
+        "// The retry is not a workaround for a flaky server.",
+        "// Renders a hackathon banner.",
+      ].join("\n"),
+    );
+    assert.equal(counts["workaround-comment"], 6);
+  });
+
+  // Each compromise pattern with a comment it should catch and the nearest
+  // neutral wording it must not.
+  const COMPROMISE_CASES = [
+    [
+      "belt-and-braces",
+      "// Belt and braces: the lister already drops symlinks.",
+      "// Digesting first is not belt-and-braces: timingSafeEqual throws.",
+    ],
+    [
+      "defensive guard",
+      "// Validators reject empty locators; defensive guard.",
+      "// Defensive copy so a caller mutating its array does not leak in.",
+    ],
+    [
+      "Defensive:",
+      "// Defensive: every disabled reason should be covered above.",
+      "// Read defensively: older hosts return a bare string.",
+    ],
+    [
+      "defensive check for a case that cannot happen",
+      "// Defensive check for null; it should never be null here.",
+      "// Defensive check for null",
+    ],
+    [
+      "defensive fallback just in case",
+      "// Defensive fallback just in case the API returns garbage.",
+      "// Defensive: skip if already defined (another runtime ran first).",
+    ],
+    [
+      "deliberately swallowed",
+      "// Deliberately swallowed, see the docblock.",
+      "// Deliberately not swallowed into state: the page shows it.",
+    ],
+    [
+      "deliberately loose",
+      " * Deliberately loose wire schema; zod validates later.",
+      " * Deliberately looser than the sk_ budget of 60/min.",
+    ],
+    [
+      "intentionally lossy",
+      " * Intentionally lossy: images are dropped.",
+      " * Intentionally narrow so the engine stays decoupled.",
+    ],
+    [
+      "deliberately duplicated",
+      " * Deliberately duplicated rather than imported.",
+      " * Deliberately a loopback allowlist rather than a denylist.",
+    ],
+    [
+      "deliberately ignore the error",
+      "// We deliberately ignore the error and keep the cached value.",
+      "// The server deliberately ignores client-sent price fields.",
+    ],
+    [
+      "swallowed on purpose",
+      "// Failures are swallowed on purpose.",
+      "// A failure is reported rather than swallowed.",
+    ],
+    [
+      "leading swallow",
+      "// swallow: analytics must not block the success path",
+      " * swallow every click in silence, which reads as broken.",
+    ],
+  ];
+
+  // A ` * ` line is only a comment inside a block comment.
+  const inComment = (line) =>
+    line.startsWith(" *") ? `/**\n${line}\n */` : line;
+
+  for (const [name, positive, negative] of COMPROMISE_CASES) {
+    it(`counts a "${name}" comment and skips its neutral neighbour`, () => {
+      const counts = (line) => count(inComment(line))["workaround-comment"];
+      assert.equal(counts(positive), 1, positive);
+      assert.equal(counts(negative), 0, negative);
+    });
+  }
+
+  it("does not count a workaround the comment says is avoided", () => {
+    const avoided =
+      "// Prevent a common logging workaround from becoming necessary.";
+    assert.equal(count(avoided)["workaround-comment"], 0);
+    const used = "// A common logging workaround: print and continue.";
+    assert.equal(count(used)["workaround-comment"], 1);
+  });
+
+  it("reads only real comments, not a // line inside a template", () => {
+    const template = "const s = `\n// hack around the parser\n`;\n";
+    assert.equal(count(template)["workaround-comment"], 0);
+    const jsx = "const v = <p>\n  // hack around the parser\n</p>;\n";
+    assert.equal(count(jsx, "sdk/src/a.tsx")["workaround-comment"], 0);
+    const closing = "function f() {\n  go();\n  // hack around the parser\n}\n";
+    assert.equal(count(closing)["workaround-comment"], 1);
+    const afterToken = [
+      'switch (a) {\n  case "b":\n    // hack around the parser\n    break;\n}',
+      "const o = {\n  a: 1,\n  // hack around the parser\n  b: 2,\n};\n",
+    ].join("\n");
+    assert.equal(count(afterToken)["workaround-comment"], 2);
+  });
+
+  it("exempts only a link to one upstream bug, not a tracker's docs", () => {
+    const docs =
+      "// Hack around the vendor bug: https://bugs.vendor.example/docs\n";
+    assert.equal(count(docs)["workaround-comment"], 1);
+    for (const link of [
+      "https://bugs.vendor.example/show_bug.cgi?id=4521",
+      "https://gitlab.com/vendor/lib/-/issues/88",
+      "https://crbug.com/40123",
+    ]) {
+      const exempt = `// Hack around the vendor bug: ${link}\n`;
+      assert.equal(count(exempt)["workaround-comment"], 0, link);
+    }
+  });
+
+  it("matches each line alone, so a claim split over two lines does not count", () => {
+    const split =
+      "// Defensive check for a missing state.\n// This cannot happen.\n";
+    assert.equal(count(split)["workaround-comment"], 0);
+    const joined =
+      "// Defensive check for a missing state; this cannot happen.\n";
+    assert.equal(count(joined)["workaround-comment"], 1);
+  });
+
+  it("does not count a workaround that links an upstream issue", () => {
+    const counts = count(
+      [
+        "// Workaround for a Radix focus bug:",
+        "// https://github.com/radix-ui/primitives/issues/1234",
+        "useThing();",
+        "// Workaround until our own fix lands:",
+        "// https://github.com/MCPJam/inspector/issues/99",
+        "useThing();",
+        "/* Wait for the browser to paint first; see",
+        " * https://crbug.com/40123 */",
+      ].join("\n"),
+    );
+    assert.equal(counts["workaround-comment"], 1);
+  });
+
   it("counts suppressions", () => {
     const counts = count(
       "// @ts-nocheck\n// @ts-ignore\n// @ts-expect-error\n/* eslint-disable no-console */\n",
