@@ -1,8 +1,9 @@
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
 import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
 import type { CustomJudge } from "@/components/shared/session-quality/judge-config";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
 import {
   hasCustomJudgesCapability,
@@ -10,7 +11,6 @@ import {
 } from "@/hooks/use-suite-capabilities";
 import type { EvalJudgeConfig } from "../types";
 import {
-  blankJudge,
   CUSTOM_JUDGE_COST_COPY,
   customJudgeLimits,
   judgePromptVariables,
@@ -22,6 +22,7 @@ import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import { findLibraryEvaluator } from "./library-catalog";
 import { libraryPauseMessages } from "./library-pause";
 import { CustomJudgePreview } from "./custom-judge-preview";
+import { draftChanged, EvaluatorEditorLayout } from "./evaluator-editor-layout";
 import { PromptEditor } from "./prompt-editor";
 import { VariableMappingTable } from "./variable-mapping-table";
 
@@ -38,15 +39,13 @@ export function CustomJudgesSection({
   const all = judgeConfig?.customJudges?.judges ?? [];
   const written = all.filter((j) => !j.evaluator);
   const [editing, setEditing] = useState<CustomJudge | null>(null);
-  const [isNew, setIsNew] = useState(false);
   const pauseMessage = libraryPauseMessages(judgeConfig, capabilities).judges;
   const change = (next: EvalJudgeConfig) => onJudgeConfigChange?.(next);
   const save = (judge: CustomJudge) => {
-    const next = isNew
-      ? [...all, judge]
-      : all.map((j) => (j.id === judge.id ? judge : j));
+    const next = all.map((j) => (j.id === judge.id ? judge : j));
     change(withJudges(judgeConfig, next));
     setEditing(null);
+    return undefined;
   };
   const remove = (id: string) =>
     change(
@@ -55,12 +54,14 @@ export function CustomJudgesSection({
         all.filter((j) => j.id !== id),
       ),
     );
-  const { maxJudges, maxPromptLength } = customJudgeLimits(capabilities);
-  const atMax = all.length >= maxJudges;
+  const { maxPromptLength } = customJudgeLimits(capabilities);
   // Nothing else in the app writes this switch, so turning judges back on
   // lives here.
   const off = judgeConfig?.customJudges?.enabled === false;
-  if (!enabled || !onJudgeConfigChange) return null;
+  // New judges come from the library's Judge prompt card; this section edits
+  // the ones the suite already wrote.
+  const shown = enabled && onJudgeConfigChange && (written.length || off);
+  if (!shown) return null;
   if (!hasCustomJudgesCapability(capabilities)) return null;
   const variables = capabilities?.judges?.custom?.variables ?? [];
   return (
@@ -92,36 +93,16 @@ export function CustomJudgesSection({
           >
             Turn on custom judges
           </Button>
-        ) : editing ? null : (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={atMax}
-            title={atMax ? `A suite can have ${maxJudges} judges.` : undefined}
-            onClick={() => {
-              setIsNew(true);
-              setEditing(blankJudge(all.map((j) => j.id)));
-            }}
-          >
-            <Plus aria-hidden />
-            Write a judge
-          </Button>
-        )}
+        ) : null}
       </div>
       {written.length ? (
         <ul className="divide-y divide-border">
           {written.map((judge) =>
-            editing?.id === judge.id && !isNew ? null : (
-              // Switching rows while a new judge is open would drop it unsaved.
+            editing?.id === judge.id ? null : (
               <JudgeRow
                 key={judge.id}
                 judge={judge}
-                editDisabled={Boolean(editing) && isNew}
-                onEdit={() => {
-                  setIsNew(false);
-                  setEditing(judge);
-                }}
+                onEdit={() => setEditing(judge)}
                 onRemove={() => remove(judge.id)}
               />
             ),
@@ -135,13 +116,8 @@ export function CustomJudgesSection({
           judge={editing}
           variables={variables}
           maxPromptLength={maxPromptLength}
-          isNew={isNew}
-          addBlockedReason={
-            isNew && atMax
-              ? `A suite can have ${maxJudges} judges. Remove one to add this judge.`
-              : undefined
-          }
-          others={all.filter((j) => isNew || j.id !== editing.id)}
+          isNew={false}
+          others={all.filter((j) => j.id !== editing.id)}
           onCancel={() => setEditing(null)}
           onSave={save}
         />
@@ -158,12 +134,10 @@ function outputSummary(judge: CustomJudge): string {
 
 function JudgeRow({
   judge,
-  editDisabled,
   onEdit,
   onRemove,
 }: {
   judge: CustomJudge;
-  editDisabled: boolean;
   onEdit: () => void;
   onRemove: () => void;
 }) {
@@ -185,7 +159,6 @@ function JudgeRow({
           size="sm"
           variant="ghost"
           aria-label={`Edit ${judge.label}`}
-          disabled={editDisabled}
           onClick={onEdit}
         >
           <Pencil aria-hidden />
@@ -204,32 +177,47 @@ function JudgeRow({
   );
 }
 
-function JudgeEditor({
+/**
+ * Writes or edits one judge, inline in suite settings or in the library
+ * dialog. `pauseMessage` says when the suite will not run it.
+ */
+export function JudgeEditor({
+  inDialog = false,
+  pauseMessage,
   suiteId,
   judge,
   variables,
   maxPromptLength,
   isNew,
-  addBlockedReason,
   others,
   onCancel,
   onSave,
+  onDirtyChange,
 }: {
+  inDialog?: boolean;
+  pauseMessage?: string;
   suiteId?: string;
   judge: CustomJudge;
   variables: readonly string[];
   /** The backend's `judges.custom.maxPromptLength`. */
   maxPromptLength: number;
   isNew: boolean;
-  /** Set when the suite filled up after this new judge was opened. */
-  addBlockedReason?: string;
   others: readonly CustomJudge[];
   onCancel: () => void;
-  onSave: (judge: CustomJudge) => void;
+  /** Saves the judge, or says why the suite refused it. */
+  onSave: (judge: CustomJudge) => string | undefined;
+  /** The dialog asks before closing over a changed draft. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const id = useId();
-  const [draft, setDraft] = useState(judge);
+  const [draft, setDraftState] = useState(judge);
+  const setDraft = (next: CustomJudge) => {
+    setDraftState(next);
+    onDirtyChange?.(draftChanged(next, judge));
+  };
   const [tried, setTried] = useState(false);
+  // Why the suite refused the save, when the draft itself was fine.
+  const [refusal, setRefusal] = useState<string>();
   // A judge added while this new one was open cannot clash with its ID.
   const taken = others.map((o) => o.id);
   const candidate = isNew ? withFreeId(draft, taken) : draft;
@@ -237,11 +225,30 @@ function JudgeEditor({
   const variableMappings = judgePromptVariables(variables);
   const threshold = draft.output.kind === "score" ? draft.output.threshold : 0.7;
   return (
-    <div className="mt-2 flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3">
+    <EvaluatorEditorLayout
+      inDialog={inDialog}
+      inlineClassName="mt-2 flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3"
+      action={isNew ? "Add judge" : "Save judge"}
+      error={tried ? (problem ?? refusal) : undefined}
+      onCancel={onCancel}
+      onSubmit={() => {
+        setTried(true);
+        if (!problem)
+          setRefusal(onSave({ ...candidate, label: candidate.label.trim() }));
+      }}
+    >
+      {inDialog ? (
+        <p className="text-sm text-muted-foreground">
+          {CUSTOM_JUDGE_COST_COPY}
+        </p>
+      ) : null}
+      {pauseMessage ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {pauseMessage}
+        </p>
+      ) : null}
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${id}-name`} className="text-xs font-medium">
-          Name
-        </label>
+        <Label htmlFor={`${id}-name`}>Name</Label>
         <Input
           id={`${id}-name`}
           value={draft.label}
@@ -256,14 +263,14 @@ function JudgeEditor({
         variables={variableMappings}
         maxLength={maxPromptLength}
       />
-      <details className="text-xs">
-        <summary className="mb-2 cursor-pointer text-muted-foreground">
-          Variable reference
-        </summary>
-        <VariableMappingTable variables={variableMappings} />
+      <details className="text-sm text-muted-foreground">
+        <summary className="w-fit cursor-pointer">Variable reference</summary>
+        <div className="mt-2">
+          <VariableMappingTable variables={variableMappings} />
+        </div>
       </details>
-      <div className="flex flex-col gap-1.5 text-xs">
-        <span className="font-medium">Result</span>
+      <div className="flex flex-col gap-2 text-sm">
+        <p className="font-medium">Result</p>
         <RadioGroup
           aria-label="Result"
           value={draft.output.kind}
@@ -274,7 +281,7 @@ function JudgeEditor({
                 kind === "score" ? { kind: "score", threshold } : { kind: "passfail" },
             })
           }
-          className="flex flex-wrap items-center gap-3"
+          className="flex flex-wrap items-center gap-x-4 gap-y-2"
         >
           <label htmlFor={`${id}-passfail`} className="flex items-center gap-1.5">
             <RadioGroupItem id={`${id}-passfail`} value="passfail" />
@@ -282,55 +289,38 @@ function JudgeEditor({
           </label>
           <label htmlFor={`${id}-score`} className="flex items-center gap-1.5">
             <RadioGroupItem id={`${id}-score`} value="score" />
-            Score from 0 to 1, passing at
+            Score from 0 to 1
           </label>
-          <Input
-            type="number"
-            aria-label="Passing score"
-            className="h-7 w-20"
-            min={0.05}
-            max={1}
-            step={0.05}
-            disabled={draft.output.kind !== "score"}
-            value={threshold}
-            onChange={(e) =>
-              setDraft({
-                ...draft,
-                output: { kind: "score", threshold: Number(e.target.value) },
-              })
-            }
-          />
         </RadioGroup>
+        {draft.output.kind === "score" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Label htmlFor={`${id}-threshold`}>Passing score</Label>
+            <Input
+              id={`${id}-threshold`}
+              type="number"
+              className="w-24"
+              min={0.05}
+              max={1}
+              step={0.05}
+              value={threshold}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  output: { kind: "score", threshold: Number(e.target.value) },
+                })
+              }
+            />
+          </div>
+        ) : null}
       </div>
       {suiteId ? (
         <CustomJudgePreview
           suiteId={suiteId}
           judge={draft}
           disabledReason={problem}
+          inDialog={inDialog}
         />
       ) : null}
-      {tried && (problem ?? addBlockedReason) ? (
-        <p role="alert" className="text-xs text-destructive">
-          {problem ?? addBlockedReason}
-        </p>
-      ) : null}
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          onClick={() => {
-            setTried(true);
-            if (!problem && !addBlockedReason) {
-              onSave({ ...candidate, label: candidate.label.trim() });
-            }
-          }}
-        >
-          {isNew ? "Add judge" : "Save judge"}
-        </Button>
-      </div>
-    </div>
+    </EvaluatorEditorLayout>
   );
 }

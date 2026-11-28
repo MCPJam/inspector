@@ -3,6 +3,7 @@ import {
   readFrozenCodeGrading,
   type FrozenCodeGrading,
 } from "./sandbox-phases/frozen-config.js";
+import { codeEvaluatorRunRefusalError } from "./sandbox-phases/run-refusal.js";
 import { asCapacityRouteError } from "../../utils/capacity-route-error.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
@@ -947,7 +948,7 @@ export const startSuiteRunWithRecorder = async ({
     if (rerunRefusal) {
       throw rerunRefusal;
     }
-    throw error;
+    throw codeEvaluatorRunRefusalError(error) ?? error;
   }
 
   const runId = response?.runId as string;

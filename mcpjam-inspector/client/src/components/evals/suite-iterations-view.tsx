@@ -2160,16 +2160,13 @@ export function SuiteIterationsView({
         <div className="shrink-0">
           <SuiteHeader
             settingsTabStrip={settingsTabs.strip}
+            onBackToSuite={
+              settingsTabs.enabled
+                ? undefined
+                : () => navigation.toSuiteOverview(suite._id)
+            }
             settingsActions={
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                <Button
-                  hidden={settingsTabs.enabled}
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => navigation.toSuiteOverview(suite._id)}
-                >
-                  Back to suite
-                </Button>
                 {editingDisabled ? null : draftChanges.length > 0 ? (
                   <SuiteSettingsCommitBar
                     layout="inline"

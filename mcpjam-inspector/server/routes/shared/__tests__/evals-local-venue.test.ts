@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   available: vi.fn(), query: vi.fn(), mutation: vi.fn(), action: vi.fn(),
   admission: vi.fn(() => ({ ok: true, harness: "claude-code" })),
-  run: vi.fn(), pinned: vi.fn(),
+  run: vi.fn(), pinned: vi.fn(), explain: vi.fn(),
 }));
+vi.mock("../../../services/evals/explain-harness-refusal.js", () => ({ explainEvalHarnessRefusal: mocks.explain }));
 vi.mock("convex/browser", () => ({ ConvexHttpClient: class {
   setAuth() {}
   query = mocks.query;
@@ -184,5 +185,29 @@ it("refuses a suite launch when its authorization project cannot be resolved", a
     convexAuthToken: "token", orgModelConfig: { providers: [] },
   } as any)).rejects.toThrow("project lookup unavailable");
   expect(mocks.mutation).not.toHaveBeenCalled();
+  expect(mocks.run).not.toHaveBeenCalled();
+});
+
+it("refuses a suite this machine can't run with the explained reason, on the run and in the error", async () => {
+  mocks.available.mockResolvedValue(false);
+  const refusal = { ok: false, harness: "claude-code", reason: "needs a cloud computer", kind: "computers-unconfigured" };
+  // The execution admission passes; the harness admission refuses.
+  mocks.admission.mockImplementationOnce(() => ({ ok: true, harness: "claude-code" }) as any);
+  mocks.admission.mockImplementationOnce(() => refusal as any);
+  const explained = "Couldn't run Claude Code on this machine because it isn't set up for this project. Set it up in the Playground, then run the eval again.";
+  mocks.explain.mockResolvedValue(explained);
+  await expect(prepareEvalRun({
+    listServers: () => ["s1"], hasServer: () => true, getConnectionStatus: () => "connected",
+    getServerNames: () => ({ s1: "s1" }), getServerReplayConfigs: () => [],
+    listTools: async () => ({ tools: [] }),
+  } as any, {
+    suiteId: "suite-1", suiteRerun: true, serverIds: ["s1"], tests: [], convexAuthToken: "token",
+    runtimeVenue: "local", orgModelConfig: { providers: [] },
+  } as any)).rejects.toThrow(explained);
+  // Explained with the launch's own token and the suite's project.
+  expect(mocks.explain).toHaveBeenCalledWith({ admission: refusal, bearer: "token", projectId: "project-1" });
+  expect(mocks.mutation).toHaveBeenCalledWith("testSuites:markSetupPendingIterationsFailed", { runId: "run-1", error: explained });
+  // The launch still checked the venue once, and nothing ran.
+  expect(mocks.available).toHaveBeenCalledTimes(1);
   expect(mocks.run).not.toHaveBeenCalled();
 });
