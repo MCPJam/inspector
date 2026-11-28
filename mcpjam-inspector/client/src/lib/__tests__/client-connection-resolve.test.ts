@@ -61,4 +61,25 @@ describe("resolveServerConnectionSettings — header precedence", () => {
       "X-Shared": "override",
     });
   });
+
+  it("deduplicates colliding header names case-insensitively with higher precedence layers winning", () => {
+    const resolved = resolveServerConnectionSettings(
+      { headers: { "x-shared": "server", "X-Server-Only": "server" } },
+      {
+        headers: { "X-Shared": "host", "x-host-colliding": "host-lower" },
+        requestTimeout: 10_000,
+      },
+      { headersOverride: { "X-Host-Colliding": "override-upper" } },
+    );
+
+    expect(resolved.headers).toEqual({
+      "X-Server-Only": "server",
+      "X-Shared": "host",
+      "X-Host-Colliding": "override-upper",
+    });
+    expect(new Headers(resolved.headers).get("x-shared")).toBe("host");
+    expect(new Headers(resolved.headers).get("x-host-colliding")).toBe(
+      "override-upper",
+    );
+  });
 });

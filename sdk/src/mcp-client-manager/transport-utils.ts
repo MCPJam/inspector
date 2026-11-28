@@ -16,6 +16,7 @@ import type { FeatureFrameTap } from "./feature-observer.js";
 // The send side and the Tracing verdict read ONE set, so a method added to the
 // SEP-2663 routing requirement cannot be sent-but-unjudged (or vice versa).
 import { TASK_ROUTED_METHODS } from "./mcp-header-mirror.js";
+import { deduplicateRequestHeaders } from "./transport-headers.js";
 
 /**
  * Normalizes headers from various formats (Headers, string[][], or plain object)
@@ -58,36 +59,36 @@ export function normalizeHeaders(
 export function getExistingAuthorization(
   headers: Record<string, string>
 ): string | undefined {
-  return headers["Authorization"] ?? headers["authorization"];
+  const keys = Object.keys(headers).filter(
+    (candidate) => candidate.toLowerCase() === "authorization",
+  );
+  const key = keys[keys.length - 1];
+  return key === undefined ? undefined : headers[key];
 }
 
 /**
- * Builds the requestInit object, merging accessToken into Authorization header if provided.
+ * Builds the requestInit object, deduplicating headers case-insensitively and
+ * merging accessToken into Authorization if provided. Protocol-version headers
+ * are left to the client transport, which sets them with Headers.set.
  *
  * @param accessToken - Optional access token for Bearer auth
  * @param requestInit - Optional existing requestInit config
- * @returns Merged requestInit with Authorization header if accessToken provided
+ * @returns Merged requestInit with deduplicated headers and Authorization header if accessToken provided
  */
 export function buildRequestInit(
   accessToken: string | undefined,
   requestInit: StreamableHTTPClientTransportOptions["requestInit"]
 ): StreamableHTTPClientTransportOptions["requestInit"] {
-  if (!accessToken) {
+  if (!accessToken && !requestInit?.headers) {
     return requestInit;
   }
 
   const existingHeaders = normalizeHeaders(requestInit?.headers);
   const existingAuth = getExistingAuthorization(existingHeaders);
 
-  // Remove any lowercase 'authorization' key to avoid duplicate headers
-  const { authorization: _, ...headersWithoutLowercaseAuth } = existingHeaders;
-
   return {
     ...requestInit,
-    headers: {
-      Authorization: existingAuth ?? `Bearer ${accessToken}`,
-      ...headersWithoutLowercaseAuth,
-    },
+    headers: deduplicateRequestHeaders(existingHeaders, accessToken, existingAuth),
   };
 }
 
