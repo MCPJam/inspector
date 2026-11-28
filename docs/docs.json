@@ -53,7 +53,8 @@
               "installation",
               "hosted/overview",
               "inspector/connecting-servers",
-              "inspector/mcp-support"
+              "inspector/mcp-support",
+              "run-tests-in-ci-cd"
             ]
           },
           {
