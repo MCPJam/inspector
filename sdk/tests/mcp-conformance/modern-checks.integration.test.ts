@@ -369,7 +369,10 @@ describe("modern logging conformance", () => {
     expect(filteringAdvice(result)).toBeUndefined();
   });
 
-  it("fails a supplied tool that produces no requested logs, and advises", async () => {
+  it("passes a supplied tool that sends no logs when asked, and advises", async () => {
+    // Sending logs is a MAY (2026-07-28 logging.mdx: the server "MAY send
+    // notifications/message"). The rule this check grades is that no log comes
+    // without a level, and the silent call already showed that.
     const serverUrl = await serve(
       createLoggingFixtureHandler({ mode: "silent" })
     );
@@ -381,13 +384,17 @@ describe("modern logging conformance", () => {
       checkTimeout: 10_000,
     }).run();
     const check = byId(result.checks, LOG_LEVEL_CHECK);
-    expect(check.status).toBe("failed");
-    expect(check.skipReason).toBeUndefined();
-    expect(check.error?.message).toBe("the supplied tool produced no logs.");
-    expect(check.details).toMatchObject({ logNotificationCountWithLevel: 0 });
-    expect(result.outcome).toBe("failed");
-    expect(filteringAdvice(result)?.details).toMatchObject({
+    expect(check.status).toBe("passed");
+    expect(check.error).toBeUndefined();
+    expect(check.details).toMatchObject({
       logNotificationCount: 0,
+      logNotificationCountWithLevel: 0,
+    });
+    expect(result.outcome).toBe("passed");
+    // The advice is where a silent tool shows up, and it costs no points.
+    expect(filteringAdvice(result)).toMatchObject({
+      informational: true,
+      details: { logNotificationCount: 0 },
     });
   });
 
@@ -473,7 +480,7 @@ describe("modern logging conformance", () => {
     );
     expect(report.outcome).toBe("passed");
   });
-  it("reports the supplied silent tool failure through runConformance", async () => {
+  it("reports a supplied silent tool as passed through runConformance", async () => {
     const serverUrl = await serve(
       createLoggingFixtureHandler({ mode: "silent" })
     );
@@ -490,11 +497,30 @@ describe("modern logging conformance", () => {
     const cases = report.reports.protocol!.groups.flatMap(
       (group) => group.cases
     );
-    expect(cases.find((test) => test.id === LOG_LEVEL_CHECK)).toMatchObject({
-      status: "failed",
-      error: "the supplied tool produced no logs.",
-    });
-    expect(report.outcome).toBe("failed");
+    const silent = cases.find((test) => test.id === LOG_LEVEL_CHECK);
+    expect(silent?.status).toBe("passed");
+    expect(silent?.error).toBeUndefined();
+    expect(report.outcome).toBe("passed");
+  });
+
+  it("still fails a log on the request that asked for none", async () => {
+    // The MUST side of the rule is unchanged by the silent-tool pass.
+    const serverUrl = await serve(
+      createLoggingFixtureHandler({ mode: "unrequested" })
+    );
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      protocolVersion: MODERN,
+      checkIds: [LOG_LEVEL_CHECK],
+      logProbe: { toolName: EMIT_LOG_TOOL_NAME },
+      checkTimeout: 10_000,
+    }).run();
+    const check = byId(result.checks, LOG_LEVEL_CHECK);
+    expect(check.status).toBe("failed");
+    expect(check.error?.message).toMatch(
+      /for a request that carried no modern log level$/
+    );
+    expect(check.details?.logNotificationCount).toBeGreaterThan(0);
   });
 });
 
