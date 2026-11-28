@@ -88,6 +88,18 @@ const CONSEQUENCE: Record<ScriptSlot, string> = {
   runCleanup: ". The run's results are unchanged.",
 };
 
+/** The card's title: what couldn't happen, and where to fix it. */
+const TITLE: Record<ScriptSlot, string> = {
+  runSetup:
+    "Couldn't set up this run. Fix the script under Setup and cleanup in suite settings.",
+  iterationSetup:
+    "Couldn't set up this iteration. Fix the script under Setup and cleanup in suite settings.",
+  iterationCleanup:
+    "Couldn't clean up after this iteration. Fix the script under Setup and cleanup in suite settings.",
+  runCleanup:
+    "Couldn't clean up after this run. Fix the script under Setup and cleanup in suite settings.",
+};
+
 /** The card for one script that didn't pass; `null` when it passed. */
 export function scriptFailure(
   slot: ScriptSlot,
@@ -100,13 +112,13 @@ export function scriptFailure(
     slot,
     error: {
       slug: setup ? "eval/script_setup_failed" : "eval/script_cleanup_failed",
-      title: setup ? "Setup failed" : "Cleanup failed",
+      title: TITLE[slot],
       oneLine: `The ${scriptSlotTitle(slot)} script ${whatHappened(result)}${CONSEQUENCE[slot]}`,
       likelyCauses: [],
       nextSteps: [
         setup
-          ? "Fix the script under Setup and cleanup in suite settings, then run the suite again."
-          : "Fix the script under Setup and cleanup in suite settings so the next run cleans up.",
+          ? "After you fix the script, run the suite again."
+          : "After you fix the script, the next run cleans up as usual.",
       ],
       docsAnchor: "/evaluate/troubleshooting",
       severity: setup ? "error" : "warning",
