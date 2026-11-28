@@ -125,6 +125,28 @@ describe("mcpjam-agent route failure capture", () => {
     });
   });
 
+  it("does not capture a turn whose caller left: the user pressing Stop", async () => {
+    const caller = new AbortController();
+    streamWebChatTurnMock.mockImplementation(async () => {
+      // `@hono/node-server` aborts the request's signal with this string.
+      caller.abort("Client connection prematurely closed.");
+      throw new WebRouteError(500, ErrorCode.INTERNAL_ERROR, "aborted");
+    });
+    const { app, token } = createWebTestApp();
+
+    await app.request("/api/web/mcpjam-agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(BODY),
+      signal: caller.signal,
+    });
+
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
   it("captures a deliberate 4xx the origin policy would decline, as routine", async () => {
     streamWebChatTurnMock.mockRejectedValue(
       new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "bad history"),

@@ -390,8 +390,11 @@ export function v1OnError(
   // no Ask MCPJam alert, while `captured: true` kept the backstop off it too.
   const mapped = mapErrorToV1(error, {
     boundary: "mcpjam_internal",
+    // The turn routes relay a disconnect into the same controller as their
+    // wall clock; only the request's own signal tells the two apart.
+    requestSignal: c.req.raw.signal,
     ...(isAgentRequestPath(c.req.path)
-      ? { capture: agentRouteCapture("v1.agent") }
+      ? { capture: agentRouteCapture("v1.agent", c.req.raw) }
       : {}),
   });
   const { headers, origin, slug, captured } = mapped;

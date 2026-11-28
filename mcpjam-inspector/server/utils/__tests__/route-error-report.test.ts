@@ -244,6 +244,108 @@ describe("reportRouteFailure", () => {
     expect(captureException).not.toHaveBeenCalled();
   });
 
+  it("never promotes an aborted request to an MCPJam failure", () => {
+    // A request aborted by its caller (a closed tab, a cancelled run) reaches
+    // the catch as an `AbortError`, which classifies `internal/unknown`; the
+    // internal boundary paged it as ours (INSPECTOR-ELECTRON-107).
+    const controller = new AbortController();
+    controller.abort();
+    const { origin } = reportRouteFailure(
+      "Error in /chat-v2",
+      controller.signal.reason,
+      { source: "web.chat-v2", hop: "mcpjam_internal" },
+    );
+
+    expect(origin).toBe("ambiguous");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("never promotes a frozen aborted request either", () => {
+    // A frozen error cannot carry the capture stamp, so it is reported through
+    // an `ensureStampable` wrapper whose own name is `Error`.
+    const controller = new AbortController();
+    controller.abort();
+    const { origin } = reportRouteFailure(
+      "Error in /chat-v2",
+      Object.freeze(controller.signal.reason),
+      { source: "web.chat-v2", hop: "mcpjam_internal" },
+    );
+
+    expect(origin).toBe("ambiguous");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  describe("a client disconnect on @hono/node-server", () => {
+    // node-server aborts `c.req.raw.signal` with a string, and `fetch` rejects
+    // with whatever the (combined) signal's reason is.
+    const CLOSED = "Client connection prematurely closed.";
+
+    it("does not promote the request signal's string reason", () => {
+      const inbound = new AbortController();
+      const combined = AbortSignal.any([
+        inbound.signal,
+        AbortSignal.timeout(60_000),
+      ]);
+      inbound.abort(CLOSED);
+      const { origin } = reportRouteFailure(
+        "Gateway test role check failed",
+        combined.reason,
+        {
+          source: "org-gateway-test.role-check",
+          hop: "mcpjam_internal",
+          requestSignal: inbound.signal,
+        },
+      );
+
+      expect(origin).toBe("ambiguous");
+      expect(captureException).not.toHaveBeenCalled();
+    });
+
+    it("does not promote it when it arrives as a cause", () => {
+      const inbound = new AbortController();
+      inbound.abort(CLOSED);
+      reportRouteFailure(
+        "Gateway test role check failed",
+        new TypeError("terminated", { cause: inbound.signal.reason }),
+        {
+          source: "org-gateway-test.role-check",
+          hop: "mcpjam_internal",
+          requestSignal: inbound.signal,
+        },
+      );
+
+      expect(captureException).not.toHaveBeenCalled();
+    });
+
+    it("STILL promotes our own deadline after the caller left", () => {
+      const inbound = new AbortController();
+      inbound.abort(CLOSED);
+      reportRouteFailure(
+        "Gateway test role check failed",
+        new DOMException("The operation timed out.", "TimeoutError"),
+        {
+          source: "org-gateway-test.role-check",
+          hop: "mcpjam_internal",
+          requestSignal: inbound.signal,
+        },
+      );
+
+      expect(captureException).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("STILL promotes a timeout on an internal hop", () => {
+    // `AbortSignal.timeout` fires a `TimeoutError`, which can be our own
+    // deadline running out; only an abort is the caller leaving.
+    reportRouteFailure(
+      "Error in /chat-v2",
+      new DOMException("The operation timed out.", "TimeoutError"),
+      { source: "web.chat-v2", hop: "mcpjam_internal" },
+    );
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
   it("STILL promotes a 5xx on an internal hop", () => {
     // Only 4xx says "the request was wrong". A 5xx really can be ours.
     reportRouteFailure(

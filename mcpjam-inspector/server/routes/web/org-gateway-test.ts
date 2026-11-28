@@ -81,6 +81,7 @@ async function assertMayTestGateway(
     reportRouteFailure("Gateway test role check failed", error, {
       source: "org-gateway-test.role-check",
       hop: "mcpjam_internal",
+      requestSignal: c.req.raw.signal,
     });
     throw new WebRouteError(
       502,

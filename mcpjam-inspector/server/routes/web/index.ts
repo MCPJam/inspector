@@ -461,7 +461,7 @@ web.onError((error, c) => {
   const routeError = mapWebBoundaryError(
     error,
     isAgentRequestPath(c.req.path)
-      ? { capture: agentRouteCapture("web.onError") }
+      ? { capture: agentRouteCapture("web.onError", c.req.raw) }
       : undefined,
   );
   return webErrorFromRoute(c, routeError);

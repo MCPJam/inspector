@@ -106,6 +106,72 @@ const PROMOTING_BOUNDARIES: ReadonlySet<OriginCaptureBoundary> = new Set([
 ]);
 
 /**
+ * An `AbortError`: usually the caller leaving (a closed tab, a cancelled run,
+ * a stream the client stopped reading). It classifies `internal/unknown`, and
+ * a promoting boundary would page it as an MCPJam fault, so it is never
+ * promoted. An internal deadline should abort with a reason or use
+ * `AbortSignal.timeout` (a `TimeoutError`, still promoted); one built on a bare
+ * `controller.abort()` is indistinguishable from the caller leaving.
+ *
+ * Reads the top-level name only. A caller that wraps the error before deciding
+ * must ask about the original, since the wrapper carries its own name.
+ *
+ * Only an abort relayed as a DOMException (a bare `controller.abort()`) has
+ * this name. `@hono/node-server` aborts the request's own signal with a string
+ * reason, so a disconnect that reaches `fetch` through `c.req.raw.signal` is
+ * recognized by {@link isRequestSignalAbort} instead.
+ */
+export function isCallerAbort(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  try {
+    return (error as { name?: unknown }).name === "AbortError";
+  } catch {
+    // A Proxy whose `get` trap throws; treat it as not an abort.
+    return false;
+  }
+}
+
+/** How far to walk a `.cause` chain looking for the request's abort reason. */
+const MAX_ABORT_CAUSE_DEPTH = 8;
+
+/**
+ * Did the caller leave? Asked of the inbound request's own signal
+ * (`c.req.raw.signal`), so it holds only once that signal has aborted.
+ *
+ * `@hono/node-server` aborts it with a STRING reason on a disconnect
+ * ("Client connection prematurely closed."), and `fetch` rejects with that
+ * same value, so the failure is recognized by identity with the reason, at the
+ * top level or on the cause chain. A route that relays the abort into its own
+ * controller with a bare `abort()` throws an `AbortError` instead, which counts
+ * too while the request is aborted. A deadline of ours that fires while the
+ * caller is still connected leaves the request's signal alone, so it is still
+ * promoted.
+ */
+export function isRequestSignalAbort(
+  error: unknown,
+  signal: AbortSignal | undefined,
+): boolean {
+  if (!signal?.aborted) return false;
+  if (isCallerAbort(error)) return true;
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_ABORT_CAUSE_DEPTH; depth += 1) {
+    if (current === signal.reason) return true;
+    if (typeof current !== "object" || current === null || seen.has(current)) {
+      return false;
+    }
+    seen.add(current);
+    try {
+      current = (current as { cause?: unknown }).cause;
+    } catch {
+      // A Proxy whose `get` trap throws; treat it as not the caller leaving.
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
  * A SURFACE's own capture rule, layered over the origin policy above.
  *
  * The origin policy answers "whose fault is this" so that a user's dead MCP
@@ -167,7 +233,8 @@ export function maybeCaptureOriginError(
   const origin =
     declared === "ambiguous" &&
     options.boundary !== undefined &&
-    PROMOTING_BOUNDARIES.has(options.boundary)
+    PROMOTING_BOUNDARIES.has(options.boundary) &&
+    !isCallerAbort(raw)
       ? "mcpjam"
       : declared;
 

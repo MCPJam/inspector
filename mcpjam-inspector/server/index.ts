@@ -409,6 +409,7 @@ const app = new Hono().onError((err, c) => {
     source: "app.onError",
     hop: "mcpjam_internal",
     context: { path: scrubCredentialUrl(c.req.path), method: c.req.method },
+    requestSignal: c.req.raw.signal,
   });
 
   // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never

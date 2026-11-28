@@ -539,7 +539,7 @@ describe("mapErrorToV1 / v1OnError — recorded capture outcome", () => {
       get: (key: string) => meta[key],
       var: meta,
       json: (body: unknown, status: number) => ({ body, status }),
-      req: { header: () => undefined },
+      req: { header: () => undefined, raw: new Request("http://localhost/") },
     };
     v1OnError(new WebRouteError(404, ErrorCode.NOT_FOUND, "nope"), c as never);
     expect(meta.webErrorMeta).toMatchObject({ captured: false });
@@ -560,6 +560,7 @@ describe("mapErrorToV1 / v1OnError — recorded capture outcome", () => {
       req: {
         header: () => undefined,
         path: "/api/v1/projects/proj_1/agent",
+        raw: new Request("http://localhost/"),
       },
     };
     // Declined on any other path (see above); Ask MCPJam captures it.
@@ -587,3 +588,88 @@ it("preserves the capture decision for a sign-in-required failure", () => {
    error.captured = true;
    expect(mapErrorToV1(error)).toMatchObject({ code: "AUTH_REQUIRED", captured: true });
  });
+
+describe("v1OnError — a caller who left", () => {
+  // `@hono/node-server` aborts the request's signal with this string.
+  const CLOSED = "Client connection prematurely closed.";
+
+  function capturedFor(error: Error, request: AbortController, path: string) {
+    const meta: Record<string, any> = {};
+    const c = {
+      set: (key: string, value: unknown) => {
+        meta[key] = value;
+      },
+      get: (key: string) => meta[key],
+      var: meta,
+      json: (body: unknown, status: number) => ({ body, status }),
+      req: {
+        header: () => undefined,
+        path,
+        raw: new Request(`http://localhost${path}`, { signal: request.signal }),
+      },
+    };
+    v1OnError(error, c as never);
+    return meta.webErrorMeta.captured;
+  }
+
+  /**
+   * The turn routes feed one controller from both their wall clock and a bare
+   * relay of the request's abort, so either one throws this.
+   */
+  function turnAbort(): Error {
+    const turn = new AbortController();
+    turn.abort();
+    return turn.signal.reason;
+  }
+
+  it("does not page for a disconnect relayed into the turn's controller", () => {
+    const request = new AbortController();
+    request.abort(CLOSED);
+
+    expect(
+      capturedFor(turnAbort(), request, "/api/v1/chat-sessions/messages"),
+    ).toBe(false);
+  });
+
+  it("does not page for the request's own reason wrapped as a cause", () => {
+    const request = new AbortController();
+    request.abort(CLOSED);
+    const error = new Error("Backend call failed", { cause: CLOSED });
+
+    expect(capturedFor(error, request, "/api/v1/projects/proj_1/servers")).toBe(
+      false,
+    );
+  });
+
+  it("still pages for an unrelated failure after the caller left", () => {
+    const request = new AbortController();
+    request.abort(CLOSED);
+
+    expect(
+      capturedFor(
+        new Error("kaboom"),
+        request,
+        "/api/v1/projects/proj_1/servers",
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["chat-session-turn.ts", "/api/v1/chat-sessions/messages"],
+    ["agent.ts", "/api/v1/projects/proj_1/agent"],
+  ])(
+    "still pages for the %s wall clock while the caller is connected",
+    (_route, path) => {
+      expect(capturedFor(turnAbort(), new AbortController(), path)).toBe(true);
+    },
+  );
+
+  it("does not let Ask MCPJam's capture-everything rule page for the user pressing Stop", () => {
+    const request = new AbortController();
+    request.abort(CLOSED);
+
+    expect(
+      capturedFor(turnAbort(), request, "/api/v1/projects/proj_1/agent"),
+    ).toBe(false);
+  });
+});

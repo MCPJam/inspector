@@ -3,6 +3,8 @@ import { describeError } from "@mcpjam/sdk";
 import { logger } from "./logger.js";
 import {
   ensureStampable,
+  isCallerAbort,
+  isRequestSignalAbort,
   maybeCaptureOriginError,
   type CapturePolicy,
   type OriginCaptureBoundary,
@@ -254,6 +256,12 @@ export type RouteFailureOptions = {
    * row. See {@link CapturePolicy}.
    */
   capture?: CapturePolicy;
+  /**
+   * The inbound request's signal (`c.req.raw.signal`), where the failing work
+   * was handed it. A failure that is that signal's abort reason is the caller
+   * leaving, and is never promoted to an MCPJam fault.
+   */
+  requestSignal?: AbortSignal;
 };
 
 export type RouteFailureReport = {
@@ -319,10 +327,14 @@ export function reportRouteFailure(
     reported = new Error("[unreadable error value]");
     normalized = describeError(reported);
   }
+  // Every check reads the ORIGINAL: a frozen `AbortError` reaches
+  // `maybeCaptureOriginError` as the `ensureStampable` wrapper, named `Error`.
   const boundary =
     isClientInputFault(error) ||
     isUserServerHopFault(error) ||
-    isDeclaredClientOutcome(error)
+    isDeclaredClientOutcome(error) ||
+    isCallerAbort(error) ||
+    isRequestSignalAbort(error, options.requestSignal)
       ? undefined
       : BOUNDARY_FOR_HOP[options.hop];
   const { origin, captured } = maybeCaptureOriginError(reported, normalized, {
