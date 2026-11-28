@@ -35,7 +35,13 @@ import {
   allModelsOutOfCredits,
   OUT_OF_CREDITS_MODEL_REASON,
 } from "@/components/chat-v2/shared/available-models";
-import { preflightTargets } from "../evaluate/suite-run-preflight";
+import {
+  preflightTargets,
+  useEnvironmentResolutions,
+} from "../evaluate/suite-run-preflight";
+import { hostsForPreflight } from "../evaluate/suite-run-preflight-org-keys";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
 import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
@@ -1383,6 +1389,19 @@ export function SuiteIterationsView({
   // about the cases it launches: the suite for Run all, one case for its Run.
   // The editor asks about its own draft models.
   const outOfCreditsReason = useOutOfCreditsReason(organizationId);
+  // An environment that inherits its client's model resolves the client's
+  // saved selection, which the host list lacks. As on the run sheet, only
+  // that selection tells an organization model from MCPJam's of the same id.
+  const isUserReady = useDbUserReady();
+  const environmentResolutions = useEnvironmentResolutions(
+    projectId ?? "",
+    suite.environmentIds ?? [],
+    isAuthenticated && isUserReady && shouldQueryProjectId(projectId),
+  );
+  const preflightHosts = hostsForPreflight(
+    namableHosts,
+    environmentResolutions.hostModelSelections,
+  );
   const creditsReasonFor = useCallback(
     (runCases: readonly EvalCase[]) =>
       allModelsOutOfCredits(
@@ -1390,14 +1409,14 @@ export function SuiteIterationsView({
           suite,
           cases: runCases,
           environments: projectEnvironments ?? [],
-          hosts: namableHosts,
+          hosts: preflightHosts,
           environmentServerRefs: [],
         }).models,
         availableModels,
       )
         ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
         : null,
-    [suite, projectEnvironments, namableHosts, availableModels, outOfCreditsReason],
+    [suite, projectEnvironments, preflightHosts, availableModels, outOfCreditsReason],
   );
   const caseRunOutOfCreditsReason = useCallback(
     (testCase: EvalCase) => creditsReasonFor([testCase]),

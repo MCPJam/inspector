@@ -1,7 +1,7 @@
 import { useContractExpiry } from "./use-contract-expiry";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSoftQuery } from "@/hooks/use-soft-query";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
 import {
@@ -35,6 +35,12 @@ export interface CreditBalanceState {
   freeDailyCreditsRemaining: number;
   /** Total free daily credit allowance for the day (e.g. 300 signed-in, 20 guest). */
   freeDailyCreditsTotal: number;
+  /**
+   * The fewest credits a hosted model call is admitted for on the daily
+   * bucket: the free bucket or the paid wallet must each cover it alone.
+   * Absent for monthly plans and guests, which pay no floor.
+   */
+  perCallMinimumCredits?: number;
   /** Whether org credit spending is paused for manual review. */
   walletLocked: boolean;
   /**
@@ -102,6 +108,7 @@ export const normalizeBalance = (
     freeDailyResetAt: optionalNumber(r.freeDailyResetAt),
     freeDailyCreditsRemaining: optionalNumber(r.freeDailyCreditsRemaining),
     freeDailyCreditsTotal: optionalNumber(r.freeDailyCreditsTotal),
+    perCallMinimumCredits: optionalNumberOrUndefined(r.perCallMinimumCredits),
     walletLocked: r.walletLocked === true,
     // Discriminant: only the explicit "monthly_per_seat" opts into the monthly
     // view; anything else (including absent) falls back to daily.
@@ -125,6 +132,54 @@ export const normalizeBalance = (
     voiceSecondsRemaining: optionalNumberOrUndefined(r.voiceSecondsRemaining),
   };
 };
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** The first daily boundary after `now`, counting whole days from `resetAt`. */
+const nextDailyReset = (resetAt: number, now: number): number =>
+  resetAt > now
+    ? resetAt
+    : resetAt + (Math.floor((now - resetAt) / MS_PER_DAY) + 1) * MS_PER_DAY;
+
+/**
+ * The daily bucket is a fixed window that the backend refills at
+ * `freeDailyResetAt`, computing the balance from the clock when queried.
+ * Nothing is written at the reset, so the subscription does not re-run and an
+ * open tab would keep the old window's balance and its model lock. Wake at the
+ * reset and read the bucket as refilled. A view that mounts after the reset
+ * reads the same cached snapshot, so a reset already past counts as crossed,
+ * and the shown reset moves to the next boundary after now, waking again at
+ * each one while the snapshot stays.
+ */
+function useDailyReset(
+  value: CreditBalanceState | undefined,
+): CreditBalanceState | undefined {
+  const resetAt = value?.billingModel === "daily" ? value.freeDailyResetAt : 0;
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!resetAt) return;
+    const current = Date.now();
+    if (resetAt <= current && now < resetAt) {
+      setNow(current);
+      return;
+    }
+    const wait = nextDailyReset(resetAt, current) - current;
+    const timer = setTimeout(() => setNow(Date.now()), wait + 1);
+    return () => clearTimeout(timer);
+  }, [resetAt, now]);
+  return useMemo(
+    () =>
+      value && resetAt > 0 && resetAt <= now
+        ? {
+            ...value,
+            freeDailyCreditsRemaining: value.freeDailyCreditsTotal,
+            freeDailyPercentUsed: 0,
+            freeDailyResetAt: nextDailyReset(resetAt, now),
+          }
+        : value,
+    [value, resetAt, now],
+  );
+}
 
 interface UseCreditBalanceOptions {
   organizationId?: string | null;
@@ -159,7 +214,7 @@ export function useCreditBalance({
   // referentially stable across renders. Keeps downstream effects/memos
   // that depend on `balance` from re-running when nothing actually changed.
   const normalized = useMemo(() => normalizeBalance(raw), [raw]);
-  const balance = useContractExpiry(normalized);
+  const balance = useDailyReset(useContractExpiry(normalized));
   // Treat the bootstrap window as loading so the card shows a skeleton
   // instead of flashing an empty zero state before the query resolves.
   const isLoading =
@@ -194,8 +249,22 @@ export function isOutOfCredits(
   ) {
     return (balance.monthlyAllowanceRemaining ?? 0) <= 0 && paidRemaining <= 0;
   }
-  return balance.freeDailyCreditsRemaining <= 0 && paidRemaining <= 0;
+  // An older backend reports no minimum; its "nothing left" rule keeps a
+  // fractional balance such as 0.5 spendable.
+  if (balance.perCallMinimumCredits === undefined) {
+    return balance.freeDailyCreditsRemaining <= 0 && paidRemaining <= 0;
+  }
+  // Below the per-call minimum every hosted call is refused, so an org with a
+  // few credits left is as unable to run an MCPJam model as one with none.
+  const minimum = dailyCallMinimum(balance);
+  return (
+    balance.freeDailyCreditsRemaining < minimum && paidRemaining < minimum
+  );
 }
+
+/** The reported per-call minimum, never below one credit. */
+const dailyCallMinimum = (balance: CreditBalanceState): number =>
+  Math.max(1, balance.perCallMinimumCredits ?? 1);
 
 /**
  * Convenience hook over useCreditBalance that returns just the "out of
@@ -258,6 +327,68 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
   return (balance?.unlimitedCreditsUntil ?? 0) > Date.now() ? false : balanceOutOfCredits || locallyLimited;
 }
 
+/** Why MCPJam-provided models are locked for the organization. */
+export interface OutOfCreditsLock {
+  /** The run, send or launch button tooltip; see {@link useOutOfCreditsReason}. */
+  reason: string;
+  /** Credits remain, but fewer than one model call needs. */
+  belowCallMinimum: boolean;
+}
+
+/**
+ * {@link useOutOfCreditsReason} with whether the balance is below the
+ * per-call minimum rather than empty, or null while the organization can
+ * spend.
+ */
+export function useOutOfCreditsLock(
+  organizationId?: string | null,
+): OutOfCreditsLock | null {
+  const outOfCredits = useOutOfCredits(organizationId);
+  const { user } = useAuth();
+  const { balance } = useCreditBalance({
+    organizationId:
+      organizationId ?? (user ? readStoredActiveOrganizationId(user.id) : null),
+    includeGuests: true,
+  });
+  const lock = outOfCredits ? outOfCreditsLockFor(balance) : null;
+  const reason = lock?.reason ?? null;
+  const belowCallMinimum = lock?.belowCallMinimum ?? false;
+  // Model lists are composed from this lock, so a new object on every render
+  // would rebuild them and rerun every effect keyed on the selected model.
+  return useMemo(
+    () => (reason === null ? null : { reason, belowCallMinimum }),
+    [reason, belowCallMinimum],
+  );
+}
+
+function outOfCreditsLockFor(
+  balance: CreditBalanceState | undefined,
+): OutOfCreditsLock {
+  if (!balance) {
+    return { reason: "Out of MCPJam credits", belowCallMinimum: false };
+  }
+  const monthly =
+    balance.billingModel === "monthly_per_seat" ||
+    balance.billingModel === "monthly_flat";
+  const resetText = monthly
+    ? formatMonthlyResetText(balance.monthlyResetAt, { withDate: false })
+    : formatCreditResetText(balance.freeDailyResetAt);
+  const hasSome =
+    balance.freeDailyCreditsRemaining > 0 || balance.paidCreditsRemaining > 0;
+  // A latched refusal can lock while the balance still reads spendable; only
+  // a balance that is itself short gets the per-call minimum in its copy.
+  if (!monthly && hasSome && isOutOfCredits(balance)) {
+    return {
+      reason: `Not enough MCPJam credits · a model call needs at least ${dailyCallMinimum(balance)} · ${resetText}`,
+      belowCallMinimum: true,
+    };
+  }
+  return {
+    reason: `Out of MCPJam credits · ${resetText}`,
+    belowCallMinimum: false,
+  };
+}
+
 /**
  * The tooltip of a run, send or launch button that would spend MCPJam credits,
  * while the organization has none ("Out of MCPJam credits · resets in 3h"), or
@@ -266,22 +397,7 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
 export function useOutOfCreditsReason(
   organizationId?: string | null,
 ): string | null {
-  const outOfCredits = useOutOfCredits(organizationId);
-  const { user } = useAuth();
-  const { balance } = useCreditBalance({
-    organizationId:
-      organizationId ?? (user ? readStoredActiveOrganizationId(user.id) : null),
-    includeGuests: true,
-  });
-  if (!outOfCredits) return null;
-  if (!balance) return "Out of MCPJam credits";
-  const monthly =
-    balance.billingModel === "monthly_per_seat" ||
-    balance.billingModel === "monthly_flat";
-  const resetText = monthly
-    ? formatMonthlyResetText(balance.monthlyResetAt, { withDate: false })
-    : formatCreditResetText(balance.freeDailyResetAt);
-  return `Out of MCPJam credits · ${resetText}`;
+  return useOutOfCreditsLock(organizationId)?.reason ?? null;
 }
 
 /**

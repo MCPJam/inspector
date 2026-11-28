@@ -15,6 +15,10 @@ import {
   ORG_KEYS_MODEL_REASON,
 } from "@/lib/org-keys-refusal";
 import { modelRowKey } from "@/components/chat-v2/shared/model-selection";
+import {
+  applyOutOfCreditsLocks,
+  isOutOfCreditsLocked,
+} from "@/components/chat-v2/shared/available-models";
 import type { ModelDefinition } from "@/shared/types";
 
 const MODELS = [
@@ -119,6 +123,21 @@ describe("harnessPickerModels", () => {
       disabled: true,
       disabledReason: "The Codex client needs an MCPJam model or your organization's OpenAI key. Choose a supported model.",
     });
+  });
+
+  it("drops the credit lock from a row Codex can't run, so a top-up is not offered", () => {
+    const lowBalance = applyOutOfCreditsLocks(CATALOG, {
+      reason: "Not enough MCPJam credits",
+      belowCallMinimum: true,
+    });
+    const rows = harnessPickerModels(lowBalance, { harnessId: "codex" });
+    expect(rows[0]).toMatchObject({
+      id: "anthropic/claude-haiku-4.5",
+      disabled: true,
+      disabledReason: "This model isn’t supported by Codex. Choose a supported model or switch clients.",
+    });
+    expect(isOutOfCreditsLocked(rows[0])).toBe(false);
+    expect(isOutOfCreditsLocked(rows[2])).toBe(true);
   });
 
   it("keeps a model Claude Code has not verified, with the reason as a warning", () => {

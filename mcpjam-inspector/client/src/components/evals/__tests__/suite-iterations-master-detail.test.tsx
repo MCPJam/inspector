@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import type { ComponentProps } from "react";
 import { withDataRouter } from "./settings-sheet-harness";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -40,11 +41,33 @@ const cloudState = vi.hoisted(() => ({
   environments: [] as Array<{
     environmentId: string;
     computerEnvironmentId?: string;
+    hostId?: string;
   }>,
+}));
+// Signed out by default; a test that reads environment resolutions signs in.
+const session = vi.hoisted(() => ({
+  signedIn: false,
+  hostModelId: undefined as string | undefined,
 }));
 vi.mock("@/hooks/useClients", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/hooks/useClients")>()),
-  useHostList: () => ({ hosts: [{ hostId: "client-a1b2c3", name: "Claude", config: {} }], isLoading: false }),
+  useHostList: () => ({
+    hosts: [
+      {
+        hostId: "client-a1b2c3",
+        name: "Claude",
+        config: {},
+        ...(session.hostModelId ? { modelId: session.hostModelId } : {}),
+      },
+    ],
+    isLoading: false,
+  }),
+}));
+vi.mock("@/contexts/db-user-ready-context", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/contexts/db-user-ready-context")
+  >()),
+  useDbUserReady: () => session.signedIn,
 }));
 vi.mock("@/hooks/useProjectComputer", () => ({
   useEphemeralCloudAvailable: () => cloudState.ephemeralAvailable,
@@ -109,7 +132,7 @@ vi.mock("convex/react", () => ({
   useConvex: () => ({ query: async () => null }),
   useMutation: (name: any) => (mocks.useMutation as any)(name),
   useQuery: (name: any, args: any) => (mocks.useQuery as any)(name, args),
-  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+  useConvexAuth: () => ({ isAuthenticated: session.signedIn, isLoading: false }),
   // Per-run row loads (Evaluate only); legacy suite views request none.
   useQueries: (queries: any) => queries.selectedRun ? { selectedRun: {
     _id: queries.selectedRun.args.runId, suiteId: "suite-1", createdBy: "u", runNumber: 1,
@@ -797,6 +820,7 @@ describe("SuiteIterationsView out-of-credits gate", () => {
       provider: "anthropic",
       disabled: true,
       disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+      disabledReasonCode: "out_of_credits",
     },
     { id: BYOK, name: "Acme", provider: "custom" },
   ];
@@ -810,7 +834,10 @@ describe("SuiteIterationsView out-of-credits gate", () => {
     mocks.useQuery.mockReturnValue(undefined);
   });
 
-  function renderView(cases: unknown[]) {
+  function renderView(
+    cases: unknown[],
+    overrides: Partial<ComponentProps<typeof SuiteIterationsView>> = {},
+  ) {
     render(
       withDataRouter(
         <SuiteIterationsView
@@ -839,6 +866,7 @@ describe("SuiteIterationsView out-of-credits gate", () => {
             view: "test-cases",
           }}
           navigation={noopNav}
+          {...overrides}
         />,
       ),
     );
@@ -877,6 +905,74 @@ describe("SuiteIterationsView out-of-credits gate", () => {
     expect(props.runTestCaseDisabledReason ?? null).toBeNull();
     expect(props.runTestCaseOutOfCreditsReason?.(lockedCase)).toBe(REASON);
     expect(props.runTestCaseOutOfCreditsReason?.(byokCase)).toBeNull();
+  });
+
+  describe("an environment inheriting its client's organization-key model", () => {
+    const CANONICAL = "openai/gpt-5";
+    const inheritingCase = { _id: "case-env", title: "Inherits", models: [] };
+
+    afterEach(() => {
+      session.signedIn = false;
+      session.hostModelId = undefined;
+      mocks.useQueries.mockImplementation(() => ({}));
+    });
+
+    it("keeps Run all and each case's Run on", () => {
+      session.signedIn = true;
+      session.hostModelId = CANONICAL;
+      cloudState.environments = [
+        { environmentId: "env-1", hostId: "client-a1b2c3" },
+      ];
+      // The launch resolution names the client's saved org connection.
+      mocks.useQueries.mockImplementation((queries) =>
+        queries["env-1"]
+          ? {
+              "env-1": {
+                servers: [],
+                hostId: "client-a1b2c3",
+                modelSource: "host",
+                effectiveModelId: CANONICAL,
+                effectiveModelSelection: {
+                  modelId: CANONICAL,
+                  source: "org",
+                  connectionRef: { kind: "orgProvider", id: "org-openai" },
+                  nativeModelId: "gpt-5",
+                },
+              },
+            }
+          : {},
+      );
+
+      renderView([inheritingCase], {
+        suite: { ...baseSuite, environmentIds: ["env-1"] },
+        projectId: "proj-1",
+        availableModels: [
+          {
+            id: CANONICAL,
+            name: "GPT-5",
+            provider: "openai",
+            hosted: true,
+            disabled: true,
+            disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+            disabledReasonCode: "out_of_credits",
+          },
+          {
+            id: "gpt-5",
+            name: "GPT-5 (organization)",
+            provider: "openai",
+            hosted: false,
+            orgProvider: { providerKey: "openai", id: "org-openai" },
+          },
+        ],
+      });
+
+      expect(mocks.suiteHeader).toHaveBeenLastCalledWith(
+        expect.objectContaining({ evalRunsDisabledReason: null }),
+      );
+      expect(
+        caseReason().runTestCaseOutOfCreditsReason?.(inheritingCase),
+      ).toBeNull();
+    });
   });
 });
 

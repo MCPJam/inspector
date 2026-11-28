@@ -384,6 +384,11 @@ export interface ModelDefinition {
   disabled?: boolean;
   disabledReason?: string;
   /**
+   * Which lock set `disabledReason`, for code that acts on the lock. The text
+   * varies with the balance, so callers match this, never the message.
+   */
+  disabledReasonCode?: "out_of_credits";
+  /**
    * True when the model comes from the MCPJam backend hosted catalog (billed to
    * MCPJam credits). Drives `isMCPJamProvidedModelMenuItem` and the free/paid
    * locks.

@@ -6,6 +6,7 @@ import {
   defaultQuickRunModelIds,
   defaultQuickRunServerGroup,
   ensureLocalEnvironmentServers,
+  plannedTargetSelections,
   planQuickRunTargets,
   quickRunClientIds,
   quickRunEnvironmentSelection,
@@ -319,6 +320,76 @@ describe("planQuickRunTargets", () => {
       kind: "blocked",
       reason: "Pick a server group to run this case.",
     });
+  });
+});
+
+describe("plannedTargetSelections", () => {
+  const selection = (source: string) =>
+    ({
+      modelId: "openai/gpt-5",
+      source,
+      fallback: { provider: "none", model: "none" },
+    }) as never;
+
+  it("reads the reused environment's selection, not the case's", () => {
+    const hosted = [
+      env("hosted", { modelId: "openai/gpt-5", modelSelection: selection("hosted") }),
+    ];
+    const org = [
+      env("org", { modelId: "openai/gpt-5", modelSelection: selection("org") }),
+    ];
+    const target = { key: "openai/gpt-5", hostId: "host-1", modelId: "openai/gpt-5" };
+    for (const attached of [hosted, org]) {
+      const plans = planQuickRunTargets({
+        attached,
+        serverAttachmentId: "group-1",
+        targets: [target],
+      });
+      expect(plannedTargetSelections(plans, attached).get(target.key)).toBe(
+        attached[0]!.modelSelection,
+      );
+    }
+  });
+
+  it("reads a derivation's selection and skips blocked or unknown targets", () => {
+    const attached = [env("inherits")];
+    const blocked = planQuickRunTargets({
+      attached,
+      serverAttachmentId: null,
+      targets: [
+        {
+          key: "derived",
+          hostId: "host-1",
+          modelId: "openai/gpt-5",
+          modelSelection: selection("org"),
+        },
+      ],
+    });
+    const inherited = planQuickRunTargets({
+      attached,
+      serverAttachmentId: "group-1",
+      targets: [{ key: "inherits", hostId: "host-1" }],
+    });
+    const plans = [...blocked, ...inherited];
+    expect(plans.map((plan) => plan.kind)).toEqual(["blocked", "reuse"]);
+    expect(plannedTargetSelections(plans, attached).size).toBe(0);
+
+    const derived = planQuickRunTargets({
+      attached,
+      serverAttachmentId: "group-2",
+      targets: [
+        {
+          key: "derived",
+          hostId: "host-1",
+          modelId: "openai/gpt-5",
+          modelSelection: selection("org"),
+        },
+      ],
+    });
+    expect(derived[0]?.kind).toBe("derive");
+    expect(plannedTargetSelections(derived, attached).get("derived")).toEqual(
+      selection("org"),
+    );
   });
 });
 

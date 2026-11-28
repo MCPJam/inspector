@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   allModelsOutOfCredits,
   applyOutOfCreditsLocks,
+  isOutOfCreditsLocked,
+  orgKeysDisallowedRow,
   OUT_OF_CREDITS_MODEL_REASON,
 } from "../available-models";
 import {
@@ -9,6 +11,11 @@ import {
   type CreditBalanceState,
 } from "@/hooks/useCreditBalance";
 import type { ModelDefinition } from "@/shared/types";
+
+const EMPTY_LOCK = {
+  reason: "Out of MCPJam credits · resets in 3h",
+  belowCallMinimum: false,
+};
 
 const makeBalance = (
   overrides: Partial<CreditBalanceState> = {}
@@ -84,11 +91,11 @@ describe("applyOutOfCreditsLocks", () => {
   ];
 
   it("returns the list untouched when the user still has credits", () => {
-    expect(applyOutOfCreditsLocks(models, false)).toBe(models);
+    expect(applyOutOfCreditsLocks(models, null)).toBe(models);
   });
 
   it("locks only the MCPJam-provided (free) models when out of credits", () => {
-    const locked = applyOutOfCreditsLocks(models, true);
+    const locked = applyOutOfCreditsLocks(models, EMPTY_LOCK);
     const byId = Object.fromEntries(locked.map((m) => [String(m.id), m]));
 
     expect(byId["anthropic/claude-haiku-4.5"].disabled).toBe(true);
@@ -102,13 +109,38 @@ describe("applyOutOfCreditsLocks", () => {
     expect(byId["openai/gpt-5-mini"].disabled).toBeUndefined();
     expect(byId["custom:acme:acme-large"].disabled).toBeUndefined();
   });
+
+  it("gives the rows the run button's text below the per-call minimum", () => {
+    const reason =
+      "Not enough MCPJam credits · a model call needs at least 4 · resets in 3h";
+    const locked = applyOutOfCreditsLocks(models, {
+      reason,
+      belowCallMinimum: true,
+    });
+    const haiku = locked.find((m) => m.id === "anthropic/claude-haiku-4.5");
+
+    expect(haiku?.disabled).toBe(true);
+    expect(haiku?.disabledReason).toBe(reason);
+    expect(isOutOfCreditsLocked(haiku)).toBe(true);
+  });
+
+  it("drops the credit lock when the organization policy locks the row", () => {
+    const [creditLocked] = applyOutOfCreditsLocks(
+      [model("anthropic/claude-haiku-4.5")],
+      EMPTY_LOCK
+    );
+    const policyLocked = orgKeysDisallowedRow(creditLocked);
+
+    expect(policyLocked.disabled).toBe(true);
+    expect(isOutOfCreditsLocked(policyLocked)).toBe(false);
+  });
 });
 
 describe("allModelsOutOfCredits", () => {
   const locked = (id: string, provider: string) => ({
     id,
     provider,
-    disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+    disabledReasonCode: "out_of_credits" as const,
   });
   const models = [
     locked("anthropic/claude-haiku-4.5", "anthropic"),
@@ -167,6 +199,25 @@ describe("allModelsOutOfCredits", () => {
     ).toBe(true);
   });
 
+  it("never blocks a saved own-key selection that shares a hosted row's id", () => {
+    const org = {
+      model: "openai/gpt-5-mini",
+      provider: "openai",
+      selection: {
+        modelId: "openai/gpt-5-mini",
+        source: "org",
+        connectionRef: { kind: "org", id: "conn-1" },
+      },
+    };
+    expect(allModelsOutOfCredits([org], models)).toBe(false);
+    expect(
+      allModelsOutOfCredits(
+        [{ ...org, selection: { modelId: org.model, source: "hosted" } }],
+        models
+      )
+    ).toBe(true);
+  });
+
   it("never blocks a provider that has no row of its own", () => {
     expect(
       allModelsOutOfCredits(
@@ -183,5 +234,35 @@ describe("allModelsOutOfCredits", () => {
         models
       )
     ).toBe(true);
+  });
+
+  it("matches the lock by its code, whatever the row says", () => {
+    const [belowMinimum] = applyOutOfCreditsLocks(
+      [model("anthropic/claude-haiku-4.5")],
+      {
+        reason:
+          "Not enough MCPJam credits · a model call needs at least 4 · resets in 3h",
+        belowCallMinimum: true,
+      }
+    );
+    expect(
+      allModelsOutOfCredits(
+        [{ model: "anthropic/claude-haiku-4.5", provider: "anthropic" }],
+        [belowMinimum]
+      )
+    ).toBe(true);
+    // The out-of-credits text on a row some other lock set is not this lock.
+    expect(
+      allModelsOutOfCredits(
+        [{ model: "anthropic/claude-haiku-4.5", provider: "anthropic" }],
+        [
+          {
+            id: "anthropic/claude-haiku-4.5",
+            provider: "anthropic",
+            disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+          },
+        ]
+      )
+    ).toBe(false);
   });
 });

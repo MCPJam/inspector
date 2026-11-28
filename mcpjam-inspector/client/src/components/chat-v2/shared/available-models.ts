@@ -1,4 +1,5 @@
 import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
+import type { OutOfCreditsLock } from "@/hooks/useCreditBalance";
 import {
   hostedModelDefinitionsFromSnapshot,
   isMCPJamGuestAllowedModel,
@@ -61,18 +62,29 @@ export function applyGuestModelLocks(
 export const OUT_OF_CREDITS_MODEL_REASON =
   "Out of MCPJam credits. View your organization's credit options or wait for your allowance to renew.";
 
+/** Whether `model` is locked by {@link applyOutOfCreditsLocks}. */
+export function isOutOfCreditsLocked(
+  model: Pick<ModelDefinition, "disabledReasonCode"> | null | undefined,
+): boolean {
+  return model?.disabledReasonCode === "out_of_credits";
+}
+
 /**
  * Once the org/guest is out of MCPJam credits, MCPJam-provided ("free")
  * models can't run — show them locked (grayed + tooltip) instead of letting
  * the user pick one and only discover the limit on send. BYOK/custom and
  * org-configured provider models stay enabled (that's the way out). Mirrors
- * applyGuestModelLocks.
+ * applyGuestModelLocks. Below the per-call minimum the rows carry the run
+ * button's text, since "out of credits" is wrong while some remain.
  */
 export function applyOutOfCreditsLocks(
   models: ModelDefinition[],
-  outOfCredits: boolean
+  lock: OutOfCreditsLock | null
 ): ModelDefinition[] {
-  if (!outOfCredits) return models;
+  if (!lock) return models;
+  const disabledReason = lock.belowCallMinimum
+    ? lock.reason
+    : OUT_OF_CREDITS_MODEL_REASON;
 
   return models.map((model) => {
     if (!isMCPJamProvidedModelMenuItem(model)) {
@@ -81,7 +93,8 @@ export function applyOutOfCreditsLocks(
     return {
       ...model,
       disabled: true,
-      disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+      disabledReason,
+      disabledReasonCode: "out_of_credits",
     };
   });
 }
@@ -90,19 +103,25 @@ export function applyOutOfCreditsLocks(
  * Whether every model a run would use is locked by {@link applyOutOfCreditsLocks},
  * so the run could only be refused. A hosted row and a BYOK row can share an
  * id, so a model counts as locked only when every row it can mean is locked
- * (narrowed to its provider when one is known). No known model, or any model
- * still usable, keeps the run available.
+ * (narrowed to its provider when one is known). A saved own-key selection
+ * (org, local, legacy) never spends credits, whatever rows share its id. No
+ * known model, or any model still usable, keeps the run available.
  */
 export function allModelsOutOfCredits(
-  models: readonly { model: string; provider?: string }[],
+  models: readonly {
+    model: string;
+    provider?: string;
+    selection?: { source?: string } | null;
+  }[],
   availableModels: readonly Pick<
     ModelDefinition,
-    "id" | "provider" | "disabledReason"
+    "id" | "provider" | "disabledReasonCode"
   >[]
 ): boolean {
   return (
     models.length > 0 &&
-    models.every(({ model, provider }) => {
+    models.every(({ model, provider, selection }) => {
+      if (selection?.source && selection.source !== "hosted") return false;
       // An older case can name a catalog model without its provider prefix.
       const ids =
         provider && !model.startsWith(`${provider}/`)
@@ -116,12 +135,7 @@ export function allModelsOutOfCredits(
       const candidates = provider
         ? rows.filter((row) => row.provider === provider)
         : rows;
-      return (
-        candidates.length > 0 &&
-        candidates.every(
-          (row) => row.disabledReason === OUT_OF_CREDITS_MODEL_REASON
-        )
-      );
+      return candidates.length > 0 && candidates.every(isOutOfCreditsLocked);
     })
   );
 }
@@ -399,7 +413,7 @@ export function savedModelRow(
  * switched to another model.
  */
 export function orgKeysDisallowedRow(row: ModelDefinition): ModelDefinition {
-  const { warningReason: _warning, ...rest } = row;
+  const { warningReason: _warning, disabledReasonCode: _code, ...rest } = row;
   return { ...rest, disabled: true, disabledReason: ORG_KEYS_MODEL_REASON };
 }
 
@@ -597,8 +611,8 @@ type ComposeAvailableModelsParams = {
   getOpenRouterSelectedModels: () => string[];
   getAzureBaseUrl: () => string;
   customProviders: CustomProvider[];
-  /** Lock MCPJam-provided ("free") models when the org/guest has 0 credits. */
-  outOfCredits?: boolean;
+  /** Lock MCPJam-provided ("free") models while the org/guest cannot spend. */
+  outOfCreditsLock?: OutOfCreditsLock | null;
   /**
    * A guest spending the free daily allowance: lock hosted rows the catalog
    * marks `freeTierEligible: false`.
@@ -727,7 +741,7 @@ function composeUnrestrictedModels(
     getOpenRouterSelectedModels,
     getAzureBaseUrl,
     customProviders,
-    outOfCredits = false,
+    outOfCreditsLock = null,
     freeTierOnly = false,
     hostedCatalog,
   } = params;
@@ -751,7 +765,7 @@ function composeUnrestrictedModels(
         ),
         freeTierOnly
       ),
-      outOfCredits
+      outOfCreditsLock
     );
   }
 
@@ -773,6 +787,6 @@ function composeUnrestrictedModels(
   );
   return applyOutOfCreditsLocks(
     applyFreeTierLocks(guestLockedModels, freeTierOnly),
-    outOfCredits
+    outOfCreditsLock
   );
 }

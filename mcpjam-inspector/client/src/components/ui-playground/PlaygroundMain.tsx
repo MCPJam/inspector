@@ -432,7 +432,10 @@ import {
 import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { artifactStableKey } from "@/lib/artifact-urls";
-import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
+import {
+  OUT_OF_CREDITS_MODEL_REASON,
+  isOutOfCreditsLocked,
+} from "@/components/chat-v2/shared/available-models";
 
 // On post-stream reconcile, the Convex-side detail row may not yet reflect the
 // version bump from the turn that just finished. Retry a couple of times.
@@ -3178,8 +3181,7 @@ export function PlaygroundMain({
   // every send path (composer, starter prompts, fullscreen, edits) is off and
   // Send says why. A compare grid drops locked models itself.
   const sendOutOfCreditsReason =
-    !isCompareMode &&
-    selectedModel?.disabledReason === OUT_OF_CREDITS_MODEL_REASON
+    !isCompareMode && isOutOfCreditsLocked(selectedModel)
       ? (outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON)
       : null;
 

@@ -1,6 +1,13 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useCreditBalance, useOutOfCredits } from "@/hooks/useCreditBalance";
+import {
+  isOutOfCredits,
+  normalizeBalance,
+  useCreditBalance,
+  useOutOfCredits,
+  useOutOfCreditsLock,
+  useOutOfCreditsReason,
+} from "@/hooks/useCreditBalance";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
 const mocks = vi.hoisted(() => ({
@@ -46,7 +53,7 @@ describe("useCreditBalance", () => {
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
-      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyResetAt: 4_102_444_800_000,
       freeDailyCreditsRemaining: 7,
       freeDailyCreditsTotal: 20,
       walletLocked: false,
@@ -101,7 +108,7 @@ describe("useCreditBalance", () => {
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
-      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyResetAt: 4_102_444_800_000,
       freeDailyCreditsRemaining: 7,
       freeDailyCreditsTotal: 20,
       walletLocked: false,
@@ -220,7 +227,7 @@ describe("useCreditBalance", () => {
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 65,
-      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyResetAt: 4_102_444_800_000,
       freeDailyCreditsRemaining: 7,
       freeDailyCreditsTotal: 20,
       walletLocked: false,
@@ -257,7 +264,7 @@ describe("useCreditBalance", () => {
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 100,
-      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyResetAt: 4_102_444_800_000,
       freeDailyCreditsRemaining: 0,
       freeDailyCreditsTotal: 20,
       walletLocked: false,
@@ -283,7 +290,7 @@ describe("useCreditBalance", () => {
       paidCreditsRemaining: 0,
       hasPurchaseHistory: false,
       freeDailyPercentUsed: 100,
-      freeDailyResetAt: 1_777_777_777_000,
+      freeDailyResetAt: 4_102_444_800_000,
       freeDailyCreditsRemaining,
       freeDailyCreditsTotal: 20,
       walletLocked: false,
@@ -350,6 +357,156 @@ describe("useCreditBalance", () => {
   });
 });
 
+describe("per-call credit minimum", () => {
+  const daily = (fields: Record<string, unknown>) =>
+    normalizeBalance({
+      billingModel: "daily",
+      freeDailyCreditsRemaining: 0,
+      paidCreditsRemaining: 0,
+      freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+      ...fields,
+    });
+
+  it.each([
+    [0, 0, true],
+    [4, 0, true],
+    [24, 24, true],
+    [25, 0, false],
+    [0, 25, false],
+  ])(
+    "daily bucket %i and wallet %i below a 25 minimum is out: %s",
+    (free, paid, out) => {
+      expect(
+        isOutOfCredits(
+          daily({
+            freeDailyCreditsRemaining: free,
+            paidCreditsRemaining: paid,
+            perCallMinimumCredits: 25,
+          }),
+        ),
+      ).toBe(out);
+    },
+  );
+
+  it("keeps the nothing-left rule when the backend reports no minimum", () => {
+    expect(isOutOfCredits(daily({ freeDailyCreditsRemaining: 4 }))).toBe(
+      false,
+    );
+    expect(isOutOfCredits(daily({}))).toBe(true);
+    expect(isOutOfCredits(daily({ freeDailyCreditsRemaining: 0.5 }))).toBe(
+      false,
+    );
+    expect(isOutOfCredits(daily({ paidCreditsRemaining: 0.5 }))).toBe(false);
+  });
+
+  it("does not apply the minimum to monthly plans", () => {
+    expect(
+      isOutOfCredits(
+        normalizeBalance({
+          billingModel: "monthly_per_seat",
+          monthlyAllowanceRemaining: 4,
+          paidCreditsRemaining: 0,
+          perCallMinimumCredits: 25,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  describe("tooltip", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mocks.convexAuth.isAuthenticated = true;
+      mocks.workosAuth.user = { id: "user_123" };
+      localStorage.clear();
+      localStorage.setItem("active-organization-id:user_123", "org-1");
+      useMCPJamLimitDialogStore.setState({
+        outOfCreditsHit: false,
+        outOfCreditsOrganizationId: null,
+        balanceOutByOrganization: {},
+      });
+      mocks.useQuery.mockImplementation((_name: unknown, args: unknown) =>
+        args === "skip" ? undefined : mocks.queryResult,
+      );
+    });
+
+    it("names the per-call minimum when a few credits are left", () => {
+      mocks.queryResult = {
+        billingModel: "daily",
+        freeDailyCreditsRemaining: 4,
+        paidCreditsRemaining: 0,
+        freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+        perCallMinimumCredits: 25,
+      };
+      const { result } = renderHook(() => useOutOfCreditsReason());
+      expect(result.current).toMatch(
+        /^Not enough MCPJam credits · a model call needs at least 25 · /,
+      );
+    });
+
+    it("keeps the out-of-credits copy at zero", () => {
+      mocks.queryResult = {
+        billingModel: "daily",
+        freeDailyCreditsRemaining: 0,
+        paidCreditsRemaining: 0,
+        freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+        perCallMinimumCredits: 25,
+      };
+      const { result } = renderHook(() => useOutOfCreditsReason());
+      expect(result.current).toMatch(/^Out of MCPJam credits · /);
+    });
+
+    it("flags a short balance, not an empty one, as below the minimum", () => {
+      mocks.queryResult = {
+        billingModel: "daily",
+        freeDailyCreditsRemaining: 4,
+        paidCreditsRemaining: 0,
+        freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+        perCallMinimumCredits: 25,
+      };
+      const { result, rerender } = renderHook(() => useOutOfCreditsLock());
+      expect(result.current?.belowCallMinimum).toBe(true);
+      mocks.queryResult = {
+        ...(mocks.queryResult as Record<string, unknown>),
+        freeDailyCreditsRemaining: 0,
+      };
+      rerender();
+      expect(result.current?.belowCallMinimum).toBe(false);
+    });
+
+    it("returns the same lock across renders with an unchanged balance", () => {
+      mocks.queryResult = {
+        billingModel: "daily",
+        freeDailyCreditsRemaining: 4,
+        paidCreditsRemaining: 0,
+        freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+        perCallMinimumCredits: 25,
+      };
+      const { result, rerender } = renderHook(() => useOutOfCreditsLock());
+      const first = result.current;
+      expect(first).not.toBeNull();
+      rerender();
+      expect(result.current).toBe(first);
+    });
+
+    it("unlocks once the bucket resets above the minimum", () => {
+      mocks.queryResult = {
+        billingModel: "daily",
+        freeDailyCreditsRemaining: 4,
+        paidCreditsRemaining: 0,
+        freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+        perCallMinimumCredits: 25,
+      };
+      const { result, rerender } = renderHook(() => useOutOfCreditsReason());
+      expect(result.current).not.toBeNull();
+      mocks.queryResult = {
+        ...(mocks.queryResult as Record<string, unknown>),
+        freeDailyCreditsRemaining: 200,
+      };
+      rerender();
+      expect(result.current).toBeNull();
+    });
+  });
+});
 
 describe("contract credit expiry", () => {
   it("clears a local limit and expires in an open tab", () => {
@@ -366,6 +523,83 @@ describe("contract credit expiry", () => {
     expect(result.current).toBe(false);
     act(() => { vi.advanceTimersByTime(1001); });
     expect(result.current).toBe(true);
+    unmount();
+    vi.useRealTimers();
+  });
+});
+
+describe("daily bucket reset", () => {
+  it("unlocks an open tab at the reset without a new balance", () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.convexAuth.isLoading = false;
+    mocks.workosAuth.user = { id: "daily-owner" };
+    mocks.workosAuth.isLoading = false;
+    mocks.queryResult = {
+      billingModel: "daily",
+      freeDailyCreditsRemaining: 4,
+      freeDailyCreditsTotal: 300,
+      freeDailyResetAt: now + 1000,
+      paidCreditsRemaining: 0,
+      perCallMinimumCredits: 25,
+    };
+    mocks.useQuery.mockImplementation(() => mocks.queryResult);
+    const { result, unmount } = renderHook(() => useOutOfCredits("daily-org"));
+    expect(result.current).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(1001);
+    });
+    expect(result.current).toBe(false);
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it("unlocks a view that mounts after the reset passed", () => {
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.convexAuth.isLoading = false;
+    mocks.workosAuth.user = { id: "daily-owner" };
+    mocks.workosAuth.isLoading = false;
+    mocks.queryResult = {
+      billingModel: "daily",
+      freeDailyCreditsRemaining: 4,
+      freeDailyCreditsTotal: 300,
+      freeDailyResetAt: Date.now() - 1000,
+      paidCreditsRemaining: 0,
+      perCallMinimumCredits: 25,
+    };
+    mocks.useQuery.mockImplementation(() => mocks.queryResult);
+    const { result } = renderHook(() => useOutOfCredits("daily-org"));
+    expect(result.current).toBe(false);
+  });
+
+  it("shows the next boundary after now for a reset days past", () => {
+    vi.useFakeTimers();
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const staleReset = now - 2 * day + 1000;
+    mocks.convexAuth.isAuthenticated = true;
+    mocks.convexAuth.isLoading = false;
+    mocks.workosAuth.user = { id: "daily-owner" };
+    mocks.workosAuth.isLoading = false;
+    mocks.queryResult = {
+      billingModel: "daily",
+      freeDailyCreditsRemaining: 4,
+      freeDailyCreditsTotal: 300,
+      freeDailyResetAt: staleReset,
+      paidCreditsRemaining: 0,
+      perCallMinimumCredits: 25,
+    };
+    mocks.useQuery.mockImplementation(() => mocks.queryResult);
+    const { result, unmount } = renderHook(() =>
+      useCreditBalance({ organizationId: "daily-org" }),
+    );
+    expect(result.current.balance?.freeDailyCreditsRemaining).toBe(300);
+    expect(result.current.balance?.freeDailyResetAt).toBe(staleReset + 2 * day);
+    act(() => {
+      vi.advanceTimersByTime(1001);
+    });
+    expect(result.current.balance?.freeDailyResetAt).toBe(staleReset + 3 * day);
     unmount();
     vi.useRealTimers();
   });

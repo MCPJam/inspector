@@ -4320,6 +4320,7 @@ describe("PlaygroundMain", () => {
             ...selectedModel,
             disabled: true,
             disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+            disabledReasonCode: "out_of_credits",
           },
           outOfCreditsReason: "Out of MCPJam credits · resets in 3h",
         });

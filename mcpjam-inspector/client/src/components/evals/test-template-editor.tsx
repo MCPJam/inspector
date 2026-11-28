@@ -145,13 +145,17 @@ import {
   attachedSuiteEnvironments,
   defaultQuickRunServerGroup,
   ensureLocalEnvironmentServers,
+  plannedTargetSelections,
   planQuickRunTargets,
   quickRunClientIds,
   quickRunEnvironmentSelection,
   resolveQuickRunEnvironments,
 } from "./environment-quick-run";
 import { isHostedMode } from "@/lib/apis/mode-client";
-import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import {
+  useProjectEnvironments,
+  type ProjectEnvironmentView,
+} from "@/hooks/useProjectEnvironments";
 import { ServerPicker } from "@/components/hosts/server-picker";
 import { PROBE_TOOL_NAME_PLACEHOLDER } from "@/shared/probe-config";
 import {
@@ -2324,12 +2328,68 @@ export function TestTemplateEditor({
   // Run test about the saved case it launches (unsaved edits, which it saves
   // first, are not judged here).
   const creditsReason = outOfCreditsReason ?? OUT_OF_CREDITS_MODEL_REASON;
+  // Which environment each environment-suite pick runs on `clientId`. Quick
+  // Run launches this plan and its credit gate reads it.
+  const planEnvironmentQuickRun = (
+    attached: readonly ProjectEnvironmentView[],
+    clientId: string,
+    modelValues: readonly string[],
+  ) =>
+    planQuickRunTargets({
+      attached,
+      serverAttachmentId: quickRunServerGroup,
+      targets: modelValues.map((value) => {
+        const modelId = parseModelValue(value).model;
+        const modelSelection = quickRunSelections[value];
+        return {
+          key: value,
+          hostId: clientId,
+          ...(modelId ? { modelId } : {}),
+          // A pick at a chosen effort runs (or derives) the environment
+          // at that effort; a plain pick reuses the suite's as before.
+          ...(modelSelection ? { modelSelection } : {}),
+        };
+      }),
+      clientModelId: (hostId) =>
+        projectHosts.find((host) => host.hostId === hostId)?.modelId?.trim() ||
+        undefined,
+    });
+  // The saved entries a pick launches, selections included: an organization
+  // entry saved under the hosted model's canonical id reads back as the hosted
+  // row's value, and only its selection says it spends no credits. An
+  // environment suite runs the selection of the environment it plans, so that
+  // selection wins over the case's when the plan knows it.
+  const caseRunEntries = (modelValues: readonly string[]) => {
+    const clientId = attachedEnvironments
+      ? (quickRunHostSelection ?? quickRunClientIds(attachedEnvironments)[0])
+      : undefined;
+    const planned =
+      isEnvironmentSuite && attachedEnvironments && clientId
+        ? plannedTargetSelections(
+            planEnvironmentQuickRun(attachedEnvironments, clientId, modelValues),
+            attachedEnvironments,
+          )
+        : undefined;
+    return modelValues
+      .flatMap((value) => {
+        const selection = planned?.get(value);
+        return selection
+          ? [{ ...parseModelValue(value), selection }]
+          : caseModelEntriesForCompareValues(
+              [quickRunModelValue(value)],
+              currentTestCase?.models ?? [],
+              parseModelValue,
+              (entry) => caseModelEntryValue(entry, availableModels),
+            );
+      })
+      .filter((entry) => Boolean(entry.provider) && Boolean(entry.model));
+  };
   const runOutOfCredits = allModelsOutOfCredits(
-    draftRunEstimateModels,
+    caseRunEntries(selectedModelValues),
     availableModels,
   );
   const retryOutOfCreditsReason = (modelValue: string) =>
-    allModelsOutOfCredits([parseModelValue(modelValue)], availableModels)
+    allModelsOutOfCredits(caseRunEntries([modelValue]), availableModels)
       ? creditsReason
       : null;
   const runTestOutOfCreditsReason =
@@ -3334,26 +3394,11 @@ export function TestTemplateEditor({
       try {
         environmentIds = await resolveQuickRunEnvironments(convex, {
           projectId,
-          plans: planQuickRunTargets({
-            attached: attachedEnvironments,
-            serverAttachmentId: quickRunServerGroup,
-            targets: runModelValues.map((value) => {
-              const modelId = parseModelValue(value).model;
-              const modelSelection = quickRunSelections[value];
-              return {
-                key: value,
-                hostId: clientId,
-                ...(modelId ? { modelId } : {}),
-                // A pick at a chosen effort runs (or derives) the environment
-                // at that effort; a plain pick reuses the suite's as before.
-                ...(modelSelection ? { modelSelection } : {}),
-              };
-            }),
-            clientModelId: (hostId) =>
-              projectHosts
-                .find((host) => host.hostId === hostId)
-                ?.modelId?.trim() || undefined,
-          }),
+          plans: planEnvironmentQuickRun(
+            attachedEnvironments,
+            clientId,
+            runModelValues,
+          ),
         });
       } catch (error) {
         toast.error(

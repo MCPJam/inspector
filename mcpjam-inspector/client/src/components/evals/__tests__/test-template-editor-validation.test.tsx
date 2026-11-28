@@ -9,6 +9,7 @@ import {
   TestTemplateEditor,
 } from "../test-template-editor";
 import type { TestStep } from "@/shared/steps";
+import type { ModelDefinition } from "@/shared/types";
 import { MAX_SCRIPTED_WAIT_MS } from "@/shared/scripted-steps";
 
 function renderWithProviders(ui: ReactElement) {
@@ -494,6 +495,7 @@ describe("TestTemplateEditor prompt validation UI", () => {
             provider: "anthropic",
             disabled: true,
             disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+            disabledReasonCode: "out_of_credits",
           } as any,
         ]}
         outOfCreditsReason="Out of MCPJam credits · resets in 3h"
@@ -507,5 +509,69 @@ describe("TestTemplateEditor prompt validation UI", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
       "Out of MCPJam credits · resets in 3h",
     );
+  });
+
+  it("keeps Quick Run on for a case saved on an organization key that shares the hosted model's id", async () => {
+    const canonical = "openai/gpt-5";
+    useQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:listTestCases") {
+        return [
+          {
+            ...caseDoc,
+            query: "List my projects",
+            models: [
+              {
+                provider: "openai",
+                model: canonical,
+                selection: {
+                  modelId: canonical,
+                  source: "org",
+                  connectionRef: { kind: "orgProvider", id: "org-openai" },
+                  nativeModelId: "gpt-5",
+                },
+              },
+            ],
+            lastMessageRun: undefined,
+          },
+        ];
+      }
+      if (name === "testSuites:getTestSuite") {
+        return { _id: "suite-1", environment: { servers: ["srv"] } };
+      }
+      return undefined;
+    });
+    // Both rows: the saved entry reads back as the locked hosted row's value.
+    const availableModels: ModelDefinition[] = [
+      {
+        id: canonical,
+        name: "GPT-5",
+        provider: "openai",
+        hosted: true,
+        disabled: true,
+        disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+        disabledReasonCode: "out_of_credits",
+      },
+      {
+        id: "gpt-5",
+        name: "GPT-5 (organization)",
+        provider: "openai",
+        hosted: false,
+        orgProvider: { providerKey: "openai", id: "org-openai" },
+      },
+    ];
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={availableModels}
+        outOfCreditsReason="Not enough MCPJam credits · a model call needs at least 25"
+        suiteIterations={[]}
+      />,
+    );
+
+    const runButton = await screen.findByRole("button", { name: /Quick Run/ });
+    await waitFor(() => expect(runButton).toBeEnabled());
   });
 });
