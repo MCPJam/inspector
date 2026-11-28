@@ -433,7 +433,11 @@ test("events subscribe writes a new secret only to --secret-file (0600), then un
         const secret = readFileSync(secretFile, "utf8").trim();
         assert.match(secret, /^whsec_/);
         assert.ok(isValidWebhookSecret(secret));
-        assert.equal(statSync(secretFile).mode & 0o777, 0o600);
+        // Windows ignores the requested mode and stat reports 0o666 for any
+        // writable file, so the bits are only meaningful on POSIX.
+        if (process.platform !== "win32") {
+          assert.equal(statSync(secretFile).mode & 0o777, 0o600);
+        }
         assert.equal(run.stdout.includes(secret), false, "stdout leaked the secret");
         assert.equal(run.stderr.includes(secret), false, "stderr leaked the secret");
         assertNoSecrets(run);
@@ -469,6 +473,7 @@ test("events subscribe writes a new secret only to --secret-file (0600), then un
         assert.equal(again.exitCode, 0, again.stderr);
         assert.equal((jsonOf(again) as { id: string }).id, result.id);
         assert.equal(readFileSync(secretFile, "utf8").trim(), secret);
+        assert.doesNotMatch(again.stderr, /readable by other users/);
         assert.equal(fixture.subscriptions().length, 1);
 
         const unsubscribe = [

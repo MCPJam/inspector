@@ -100,7 +100,14 @@ export async function createSandbox(): Promise<Sandbox> {
   const home = await mkdtemp(path.join(os.tmpdir(), "mcpjam-deployment-"));
   return {
     home,
-    authFile: path.join(home, ".config", "mcpjam", "auth.json"),
+    // The CLI reads its login from APPDATA on Windows and XDG_CONFIG_HOME
+    // elsewhere; runGuarded points both into this home.
+    authFile: path.join(
+      home,
+      ...(process.platform === "win32" ? ["AppData", "Roaming"] : [".config"]),
+      "mcpjam",
+      "auth.json",
+    ),
     netLog: path.join(home, "net.log"),
     // The CLI's detached update check can still be writing its cache here
     // when a test ends, so retry on ENOTEMPTY instead of failing.

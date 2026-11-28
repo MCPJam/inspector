@@ -648,7 +648,11 @@ test("a stale link selector appends the re-link hint", async () => {
     assert.equal(run.exitCode, 1, run.stdout);
     assert.match(run.stderr, /proj-missing/);
     assert.match(run.stderr, /Selector came from /);
-    assert.ok(run.stderr.includes(linkPath));
+    // stderr is a JSON document, which escapes the "\" in a Windows path.
+    const { error } = JSON.parse(run.stderr.trim().split("\n").at(-1) ?? "{}") as {
+      error: { message: string };
+    };
+    assert.ok(error.message.includes(linkPath));
     assert.match(run.stderr, /mcpjam cloud link/);
   } finally {
     await fixture.close();

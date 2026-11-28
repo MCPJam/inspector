@@ -66,12 +66,19 @@ test("the consent capability round-trips, and the file is private", async () => 
   await writeBrowserState(file, { version: 1, browserConsent: "cap-abc" });
   assert.equal(readBrowserState(file).browserConsent, "cap-abc");
   // The consent capability is a credential; the session ids name somebody's
-  // browsing history.
-  assert.equal((await stat(file)).mode & 0o077, 0);
+  // browsing history. Windows ignores the requested mode and stat reports
+  // 0o666 for any writable file, so the bits are only meaningful on POSIX.
+  if (process.platform !== "win32") {
+    assert.equal((await stat(file)).mode & 0o077, 0);
+  }
   assert.match(await readFile(file, "utf8"), /cap-abc/);
 });
 
-test("re-writing an existing loose file tightens its mode", async () => {
+test("re-writing an existing loose file tightens its mode", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX file modes are not meaningful on Windows");
+    return;
+  }
   const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-browser-store-"));
   const file = path.join(dir, "browser.json");
   const { writeFile, chmod } = await import("node:fs/promises");

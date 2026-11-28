@@ -177,7 +177,9 @@ function resolveSecret(secretFile: string | undefined, ctx: EventsContext): Reso
     const stats = statSync(secretFile);
     if (stats.isDirectory()) throw usageError(`--secret-file is a directory: ${secretFile}`);
     existing = readFileSync(secretFile, "utf8").trim();
-    if (existing && (stats.mode & 0o077) !== 0) {
+    // Windows reports 0o666 for every writable file and ignores chmod, so the
+    // bits say nothing about who can read it and the advice cannot be followed.
+    if (existing && process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
       ctx.warn(
         `Warning: ${secretFile} is readable by other users (mode ${(stats.mode & 0o777).toString(8)}); chmod 600 it.`,
       );

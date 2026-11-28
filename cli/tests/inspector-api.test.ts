@@ -94,50 +94,6 @@ async function withServer(
       }
 }
 
-async function withServerOnAvailablePort(
-  ports: number[],
-  handler: http.RequestListener,
-  fn: (baseUrl: string) => Promise<void>
-): Promise<void> {
-  let lastError: unknown;
-
-  for (const port of ports) {
-    const server = http.createServer(handler);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(port, "127.0.0.1", () => {
-          server.off("error", reject);
-          resolve();
-        });
-      });
-
-      try {
-        provisionRuntime(port);
-        await fn(`http://127.0.0.1:${port}`);
-      } finally {
-        await new Promise<void>((resolve, reject) => {
-          server.close((error) => (error ? reject(error) : resolve()));
-        });
-      }
-      return;
-    } catch (error) {
-      lastError = error;
-      await new Promise<void>((resolve) => {
-        // EADDRINUSE means listen never completed; close reports ERR_SERVER_NOT_RUNNING, which is safe to swallow here.
-        server.close(() => resolve());
-      });
-      if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") {
-        throw error;
-      }
-    }
-  }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("No available port for test server.");
-}
-
 async function withServersOnConsecutiveAvailablePorts(
   ports: number[],
   handlers: [http.RequestListener, http.RequestListener],
@@ -608,23 +564,29 @@ test("ensureInspector allows active attach when health frontend is stale", async
 test("ensureInspector with skipDiscovery avoids nearby frontend port scans", async () => {
   let nearbyRootRequests = 0;
 
-  await withServerOnAvailablePort(
-    [5181, 5182, 5183, 5184, 5185],
-    (frontendRequest, frontendResponse) => {
-      if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
-        nearbyRootRequests += 1;
-        frontendResponse.writeHead(200, { "Content-Type": "text/html" });
-        frontendResponse.end(INSPECTOR_FRONTEND_HTML);
-        return;
-      }
+  // The stale port is held by a server that is not a frontend. A frontend
+  // there, served by a parallel test, would be accepted before discovery and
+  // hide a resolver that ignored skipDiscovery.
+  await withServersOnConsecutiveAvailablePorts(
+    [5180, 5181, 5182, 5183, 5184],
+    [
+      (_staleRequest, staleResponse) => {
+        staleResponse.writeHead(404);
+        staleResponse.end();
+      },
+      (frontendRequest, frontendResponse) => {
+        if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+          nearbyRootRequests += 1;
+          frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+          frontendResponse.end(INSPECTOR_FRONTEND_HTML);
+          return;
+        }
 
-      frontendResponse.writeHead(404);
-      frontendResponse.end();
-    },
-    async (frontendUrl) => {
-      const frontendPort = Number(new URL(frontendUrl).port);
-      const staleFrontendUrl = `http://127.0.0.1:${frontendPort - 1}`;
-
+        frontendResponse.writeHead(404);
+        frontendResponse.end();
+      },
+    ],
+    async ([staleFrontendUrl]) => {
       await withServer(
         (request, response) => {
           if (request.method === "GET" && request.url === "/health") {
@@ -682,23 +644,28 @@ test("resolveInspectorBrowserBaseUrl discovers nearby dev frontend when health i
       response.end();
     },
     async (baseUrl) => {
-      await withServerOnAvailablePort(
-        [5181, 5182, 5183, 5184, 5185],
-        (request, response) => {
-          if (request.method === "GET" && request.url === "/") {
-            response.writeHead(200, { "Content-Type": "text/html" });
-            response.end(INSPECTOR_FRONTEND_HTML);
-            return;
-          }
+      // One-port stale hint depends on the resolver's frontend probe window.
+      // The stale port is held by a server that is not a frontend, so a
+      // frontend served there by a parallel test cannot win the fast path.
+      await withServersOnConsecutiveAvailablePorts(
+        [5180, 5181, 5182, 5183, 5184],
+        [
+          (_staleRequest, staleResponse) => {
+            staleResponse.writeHead(404);
+            staleResponse.end();
+          },
+          (request, response) => {
+            if (request.method === "GET" && request.url === "/") {
+              response.writeHead(200, { "Content-Type": "text/html" });
+              response.end(INSPECTOR_FRONTEND_HTML);
+              return;
+            }
 
-          response.writeHead(404);
-          response.end();
-        },
-        async (frontendUrl) => {
-          const frontendPort = Number(new URL(frontendUrl).port);
-          // One-port stale hint depends on the resolver's frontend probe window.
-          const staleFrontendUrl = `http://127.0.0.1:${frontendPort - 1}`;
-
+            response.writeHead(404);
+            response.end();
+          },
+        ],
+        async ([staleFrontendUrl, frontendUrl]) => {
           assert.equal(
             await resolveInspectorBrowserBaseUrl(baseUrl, staleFrontendUrl),
             frontendUrl,
@@ -867,23 +834,28 @@ test("resolveInspectorBrowserBaseUrl reports advertised frontend rejected by bac
 });
 
 test("resolveInspectorBrowserBaseUrl rejects discovered frontend when backend rejects its origin", async () => {
-  await withServerOnAvailablePort(
-    [5181, 5182, 5183, 5184, 5185],
-    (frontendRequest, frontendResponse) => {
-      if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
-        frontendResponse.writeHead(200, { "Content-Type": "text/html" });
-        frontendResponse.end(INSPECTOR_FRONTEND_HTML);
-        return;
-      }
+  // The advertised port is held by a server that is not a frontend. Left
+  // free, tools-call-ui.test.ts, running in parallel on the same ports, could
+  // serve an Inspector frontend there, and the resolver would accept it.
+  await withServersOnConsecutiveAvailablePorts(
+    [5180, 5181, 5182, 5183, 5184],
+    [
+      (_advertisedRequest, advertisedResponse) => {
+        advertisedResponse.writeHead(404);
+        advertisedResponse.end();
+      },
+      (frontendRequest, frontendResponse) => {
+        if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+          frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+          frontendResponse.end(INSPECTOR_FRONTEND_HTML);
+          return;
+        }
 
-      frontendResponse.writeHead(404);
-      frontendResponse.end();
-    },
-    async (frontendUrl) => {
-      const frontendPort = Number(new URL(frontendUrl).port);
-      // One-port stale hint depends on the resolver's frontend probe window.
-      const advertisedUrl = `http://127.0.0.1:${frontendPort - 1}`;
-
+        frontendResponse.writeHead(404);
+        frontendResponse.end();
+      },
+    ],
+    async ([advertisedUrl, frontendUrl]) => {
       await withServer(
         (request, response) => {
           if (

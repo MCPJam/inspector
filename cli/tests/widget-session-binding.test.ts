@@ -16,12 +16,14 @@ import {
 } from "../src/lib/widget-session.js";
 
 const home = await mkdtemp(path.join(os.tmpdir(), "widget-scope-test-"));
-const originalXdg = process.env.XDG_CONFIG_HOME;
+const originalAuthFile = process.env.MCPJAM_AUTH_FILE;
 const originalKey = process.env.MCPJAM_API_KEY;
-process.env.XDG_CONFIG_HOME = home;
+// Bindings live beside auth.json. XDG_CONFIG_HOME is ignored on Windows,
+// where the binding would land in the real %APPDATA%.
+process.env.MCPJAM_AUTH_FILE = path.join(home, "mcpjam", "auth.json");
 after(async () => {
-  if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
-  else process.env.XDG_CONFIG_HOME = originalXdg;
+  if (originalAuthFile === undefined) delete process.env.MCPJAM_AUTH_FILE;
+  else process.env.MCPJAM_AUTH_FILE = originalAuthFile;
   if (originalKey === undefined) delete process.env.MCPJAM_API_KEY;
   else process.env.MCPJAM_API_KEY = originalKey;
   await rm(home, { recursive: true, force: true });
@@ -122,7 +124,11 @@ test("saved widget operations keep their project, server and fresh credential ac
     const bindingFile = path.join(home, "mcpjam/widget-sessions", `${id}.json`);
     const saved = await readFile(bindingFile, "utf8");
     assert.ok(!saved.includes(expectedCredential));
-    assert.equal((await stat(bindingFile)).mode & 0o777, 0o600);
+    // Windows ignores the requested mode and stat reports 0o666 for any
+    // writable file, so the bits are only meaningful on POSIX.
+    if (process.platform !== "win32") {
+      assert.equal((await stat(bindingFile)).mode & 0o777, 0o600);
+    }
     expectedCredential = "sk_current_fixture";
     process.env.MCPJAM_API_KEY = expectedCredential;
     const control = { sessionId: id, timeoutMs: 1000 };

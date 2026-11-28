@@ -306,7 +306,8 @@ test("announce: false is only used at the allowlisted Cloud call sites", () => {
       if (!full.endsWith(".ts")) continue;
       const text = readFileSync(full, "utf8");
       if (!/announce:\s*false/.test(text)) continue;
-      hits.push(path.relative(SRC_ROOT, full));
+      // The allowlist uses "/"; path.relative returns "\" on Windows.
+      hits.push(path.relative(SRC_ROOT, full).split(path.sep).join("/"));
     }
   };
   walk(SRC_ROOT);
