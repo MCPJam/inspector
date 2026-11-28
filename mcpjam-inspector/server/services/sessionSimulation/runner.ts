@@ -729,6 +729,7 @@ export async function runSyntheticHostSession(
   // launches lazily on the first widget render, so sessions that never touch an
   // MCP App pay nothing.
   let browser: BrowserSessionContext | undefined;
+  const pendingWidgetCalls = new Set<Promise<unknown>>();
 
   // --- Terminal-path state -------------------------------------------------
   // Hoisted out of the try so the terminal path can persist a session row on
@@ -1133,10 +1134,18 @@ export async function runSyntheticHostSession(
       mcpClientManager: manager,
       ...(clientDriver && manager
         ? {
-            callWidgetTool: (serverId, toolName, args) =>
-              clientDriver.withInvocation({ serverId, toolName }, () =>
-                manager!.executeTool(serverId, toolName, args),
-              ),
+            callWidgetTool: async (serverId, toolName, args) => {
+              const signal = turnDeadline?.signal;
+              const call = clientDriver.withInvocation({ serverId, toolName }, () =>
+                manager!.executeTool(serverId, toolName, args, { signal }),
+              );
+              pendingWidgetCalls.add(call);
+              try {
+                return await call;
+              } finally {
+                pendingWidgetCalls.delete(call);
+              }
+            },
           }
         : {}),
       logScope: "sessionSimulation",
@@ -1220,6 +1229,11 @@ export async function runSyntheticHostSession(
         turnDeadline.signal.throwIfAborted();
         const control = controls[next.clickIndex];
         const outcome = control && await browser.clickPersonaAppControl(control);
+        // The browser's visual settle window can end while an MCP call is
+        // still waiting on a persona decision. Finish those calls before a
+        // paired reply or end signal moves on from this click.
+        await Promise.allSettled(pendingWidgetCalls);
+        turnDeadline.signal.throwIfAborted();
         recentActions.push(
           outcome?.ok
             ? controlLabels[next.clickIndex]!

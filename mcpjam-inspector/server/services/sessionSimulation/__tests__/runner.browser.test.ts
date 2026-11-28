@@ -467,10 +467,9 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     let clientDriver: PersonaClientDriver | undefined;
     createBrowserSessionContextMock.mockReturnValue({
       ...context, listPersonaAppControls: vi.fn().mockResolvedValue([control]),
-      clickPersonaAppControl: async () => {
-        await clientDriver?.elicitationCallback({
-          requestId: "ask", serverId: "server-1", message: "Confirm", schema: {},
-        });
+      clickPersonaAppControl: () => {
+        const params = createBrowserSessionContextMock.mock.calls[0]![0];
+        void params.callWidgetTool("server-1", "open-form", {});
         return { ok: true };
       },
     });
@@ -482,11 +481,21 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     expect(await runSyntheticHostSession({
       ...args,
       enablePersonaAppClicks: true,
-      managerFactory: (driver) => {
+      managerFactory: async (driver) => {
         clientDriver = driver;
-        return args.managerFactory();
+        const result = await args.managerFactory();
+        const executeTool = vi.fn(async () => {
+          await clientDriver?.elicitationCallback({
+            requestId: "ask", serverId: "server-1", message: "Confirm", schema: {},
+          });
+          return { content: [] };
+        });
+        return { ...result, manager: Object.assign(result.manager, { executeTool }) };
       },
-      nextPersonaClientAction: async () => '{"action":"decline"}',
+      nextPersonaClientAction: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return '{"action":"decline"}';
+      },
       browserArtifacts: { ...buildFakeOutbox(), enqueueClientActions },
     })).toMatchObject({ outcome: "succeeded" });
     expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
