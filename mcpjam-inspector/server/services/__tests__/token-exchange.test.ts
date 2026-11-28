@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   exchangeApiKey,
@@ -98,7 +97,7 @@ describe("exchangeApiKey", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("keys the cache by the key's SHA-256 and never stores the key itself", async () => {
+  it("keys the cache by a keyed digest and never stores the key itself", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => exchanged()),
@@ -106,8 +105,8 @@ describe("exchangeApiKey", () => {
     await exchangeApiKey(KEY, "rest");
 
     const { keys, values } = tokenExchangeCacheForTests();
-    const digest = createHash("sha256").update(KEY).digest("hex");
-    expect(keys).toEqual([`rest:${digest}`]);
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toMatch(/^rest:[0-9a-f]{64}$/);
     expect(JSON.stringify({ keys, values })).not.toContain(KEY);
   });
 

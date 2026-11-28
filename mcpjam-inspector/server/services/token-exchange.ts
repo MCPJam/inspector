@@ -11,7 +11,7 @@
  * and calls the backend with acting-as, exactly as before, so turning the
  * switch off is the rollback.
  */
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import type { AgentSurface } from "../utils/agent-attribution.js";
 import { getInternalBackendConfig } from "./internal-backend.js";
 import {
@@ -51,10 +51,14 @@ export type ApiKeyExchange =
   | { kind: "unsupported" };
 
 /**
- * Exchanged tokens by the SHA-256 of the key and the surface. The raw key is
- * never stored: it lives only for the request that carried it and the
- * exchange call it makes.
+ * Exchanged tokens by a keyed digest of the key and the surface. The raw key
+ * is never stored: it lives only for the request that carried it and the
+ * exchange call it makes. The digest is an HMAC under a random key made at
+ * startup, so a digest means nothing outside this process. API keys are
+ * long random values, so a fast keyed hash is the right tool here; a slow
+ * password hash would only add latency to every request.
  */
+const CACHE_DIGEST_KEY = randomBytes(32);
 const exchangedByDigest = new Map<string, ExchangedApiKey>();
 const inflightByDigest = new Map<string, Promise<ApiKeyExchange>>();
 
@@ -66,7 +70,7 @@ setInterval(() => {
 }, 5 * 60_000).unref();
 
 function cacheKey(apiKey: string, surface: AgentSurface): string {
-  return `${surface}:${createHash("sha256").update(apiKey).digest("hex")}`;
+  return `${surface}:${createHmac("sha256", CACHE_DIGEST_KEY).update(apiKey).digest("hex")}`;
 }
 
 /**
