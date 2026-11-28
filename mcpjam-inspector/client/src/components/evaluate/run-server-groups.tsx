@@ -35,9 +35,12 @@ const MIXED_CHIP_ROOM_PX = 200;
 export function RunServerGroups({
   targets,
   hostNamesById,
+  lead,
 }: {
   targets: readonly EvalSuiteRunListItem[];
   hostNamesById: Map<string, string | null>;
+  /** A word before the icon that joins this line to the one before it. */
+  lead?: string;
 }) {
   const { isAuthenticated, isLoading: authLoading } = useConvexAuth();
   const showGroups = useProjectEnvironmentsEnabled();
@@ -84,6 +87,9 @@ export function RunServerGroups({
       className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px]"
       data-testid="evaluate-run-server-groups"
     >
+      {lead ? (
+        <span className="-mr-2 text-muted-foreground">{lead}</span>
+      ) : null}
       <Tooltip>
         <TooltipTrigger asChild>
           <span

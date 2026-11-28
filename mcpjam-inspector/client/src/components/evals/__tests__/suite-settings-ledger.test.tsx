@@ -253,7 +253,7 @@ describe("suite settings ledger", () => {
     expect(
       capable.container.querySelector('[data-setting-key="environments"]')
         ?.textContent,
-    ).toContain("Where it runs");
+    ).toContain("Clients and models");
     capable.unmount();
 
     composeCapability.value = false;

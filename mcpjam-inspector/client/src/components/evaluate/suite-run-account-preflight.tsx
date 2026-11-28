@@ -9,6 +9,7 @@ import {
 } from "@/hooks/use-suite-accounts";
 import {
   chosenAccountProblems,
+  hasAccountChoice,
   runsAsEntries,
   serverIdsForRefs,
   type AccountProblem,
@@ -29,10 +30,12 @@ export type AccountPreflight = {
   accountProblems?: AccountProblem[];
   /** The accounts the run will use for the person, on servers they choose for. */
   runsAs?: RunsAsEntry[];
+  /** Every server the run connects, by name, for the sheet's subheading. */
+  serverNames?: string[];
   /** Both, for only the servers these refs (ids or names) name. */
   accountsFor?: (
     refs: readonly string[],
-  ) => Pick<AccountPreflight, "accountProblems" | "runsAs" | "sharedServers" | "sharedServerName">;
+  ) => Pick<AccountPreflight, "accountProblems" | "runsAs" | "serverNames" | "sharedServers" | "sharedServerName">;
 };
 
 /**
@@ -77,8 +80,9 @@ export function useSuiteAccountPreflight({
     return {
       ...(accountProblems.length ? { accountProblems } : {}),
       runsAs: runsAsEntries({ ...view, servers: view.servers.filter((s) => ids.has(s.serverId)) }, serverName),
+      serverNames: [...ids].map(serverName),
       sharedServers: canChooseAccounts
-        ? view.servers.filter((s) => ids.has(s.serverId) && s.managed)
+        ? view.servers.filter((s) => ids.has(s.serverId) && s.managed && hasAccountChoice(s))
         : [],
       sharedServerName: serverName,
     };

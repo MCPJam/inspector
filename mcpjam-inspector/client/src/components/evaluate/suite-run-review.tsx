@@ -35,7 +35,8 @@ import type { CaseLaunchTarget } from "./case-workspace/pending-case-launches";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import { RunsAsLine } from "./suite-runs-as";
 import { scopeAccountPreflight } from "./suite-run-account-preflight";
-import { AccountGroup, SharedServerAccountRows } from "../evals/suite-accounts-row";
+import { ServerLabel } from "../evals/account-picker";
+import { SharedServerAccountRows } from "../evals/shared-account-pickers";
 import type { SharedEvalAccountSelection } from "@/lib/evals/eval-accounts";
 
 type ReviewEnvironment = Pick<
@@ -362,19 +363,44 @@ export function SuiteRunReviewContent({
               {caseTitle || "Untitled test case"}
             </p>
           )}
+          {scopedPreflight?.serverNames?.length || onEditSettings ? (
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-sm">
+              <span
+                className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
+                data-testid="run-review-servers"
+              >
+                {scopedPreflight?.serverNames?.map((name, index) => (
+                  <span key={name} className="inline-flex min-w-0 items-center gap-2">
+                    {index > 0 ? <span aria-hidden className="text-muted-foreground">·</span> : null}
+                    <ServerLabel name={name} />
+                  </span>
+                ))}
+              </span>
+              {onEditSettings && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-muted-foreground"
+                  disabled={starting}
+                  onClick={() => {
+                    onClose();
+                    onEditSettings();
+                  }}
+                >
+                  <Settings2 className="size-4" aria-hidden />
+                  Suite settings
+                </Button>
+              )}
+            </div>
+          ) : null}
         </SheetHeader>
         <div className="flex-1 space-y-5 overflow-y-auto p-6">
-          <RunIterationControl
-            value={iterations}
-            onChange={setIterations}
-            disabled={starting}
-          />
           {matrix ? (
             matrix.render(starting)
           ) : (
             <section>
               <h3 className="text-sm font-semibold">
-                Clients × models{" "}
+                Clients and models{" "}
                 <span className="ml-1 font-mono text-xs font-normal text-muted-foreground">
                   {activeTargets.length}/{targets.length}
                 </span>
@@ -427,20 +453,27 @@ export function SuiteRunReviewContent({
               )}
             </section>
           )}
-          <RunsAsLine entries={scopedPreflight?.runsAs} />
+          <RunsAsLine
+            entries={scopedPreflight?.runsAs?.filter(
+              (entry) =>
+                !sharedServers?.some((server) => server.serverId === entry.serverId),
+            )}
+          />
           {sharedServers?.length && sharedServerName ? (
-            <AccountGroup testId="run-accounts-shared" title="Shared MCP servers">
+            <section data-testid="run-accounts-shared">
+              <h3 className="mb-3 text-sm font-semibold">
+                {sharedServers.length > 1 ? "Accounts" : "Account"}
+              </h3>
               <SharedServerAccountRows
                 servers={sharedServers}
                 serverName={sharedServerName}
                 selections={runAccounts}
                 onChange={setRunAccounts}
                 disabled={starting}
-                inheritLabel="Use saved settings"
                 suiteDefaults={suite.accounts}
                 cases={cases}
               />
-            </AccountGroup>
+            </section>
           ) : null}
           {unavailableRunAccounts.length ? (
             <div className="text-sm" role="alert">
@@ -467,20 +500,11 @@ export function SuiteRunReviewContent({
               }
             />
           )}
-          {onEditSettings && (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={starting}
-              onClick={() => {
-                onClose();
-                onEditSettings();
-              }}
-            >
-              <Settings2 className="size-4" aria-hidden />
-              Suite settings
-            </Button>
-          )}
+          <RunIterationControl
+            value={iterations}
+            onChange={setIterations}
+            disabled={starting}
+          />
         </div>
         <div className="space-y-4 border-t border-border bg-muted/20 p-6">
           <div className="flex items-baseline justify-between gap-4">
