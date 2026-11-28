@@ -46,6 +46,16 @@ export function choosesAccounts(server: SuiteAccountsServer): boolean {
   return server.mode === "accounts" || server.mode === "shared";
 }
 
+/**
+ * Whether a run can pick among this server's accounts: more than one, or a
+ * saved suite default that was removed and needs replacing.
+ */
+export function hasAccountChoice(server: SuiteAccountsServer): boolean {
+  if (server.accounts.length > 1) return true;
+  const saved = server.suiteConnectionId;
+  return Boolean(saved && !server.accounts.some((a) => a.connectionId === saved));
+}
+
 export const SUITE_ACCOUNTS_VIEW_QUERY =
   "testSuiteAccountSelections:getSuiteAccountsView";
 export const SET_SUITE_ACCOUNT_SELECTION_MUTATION =

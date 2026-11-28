@@ -9,6 +9,7 @@ import {
 } from "@/hooks/use-suite-accounts";
 import {
   chosenAccountProblems,
+  hasAccountChoice,
   runsAsEntries,
   serverIdsForRefs,
   type AccountProblem,
@@ -81,7 +82,7 @@ export function useSuiteAccountPreflight({
       runsAs: runsAsEntries({ ...view, servers: view.servers.filter((s) => ids.has(s.serverId)) }, serverName),
       serverNames: [...ids].map(serverName),
       sharedServers: canChooseAccounts
-        ? view.servers.filter((s) => ids.has(s.serverId) && s.managed && s.accounts.length > 1)
+        ? view.servers.filter((s) => ids.has(s.serverId) && s.managed && hasAccountChoice(s))
         : [],
       sharedServerName: serverName,
     };
