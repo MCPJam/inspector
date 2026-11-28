@@ -35,7 +35,9 @@ export function VariableMappingTable({
                   {`{{${variable.name}}}`}
                 </code>
               </TableCell>
-              <TableCell>{variable.description}</TableCell>
+              <TableCell className="whitespace-normal">
+                {variable.description}
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
