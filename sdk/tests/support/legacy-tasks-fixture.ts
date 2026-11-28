@@ -61,9 +61,10 @@ export interface LegacyTasksFixtureOptions {
    * reaches the legacy wire WITHOUT a given operation — a server that declares
    * only `cancel` still resolves to `wire: "legacy"`, which is exactly the case
    * where a client must not assume `tasks/list` or task-augmented `tools/call`
-   * are available.
+   * are available. `null` leaves `capabilities.tasks` out entirely: the case
+   * where the spec says a peer SHOULD NOT attempt to create tasks at all.
    */
-  tasksCapability?: Record<string, unknown>;
+  tasksCapability?: Record<string, unknown> | null;
   /**
    * Answer a task-augmented `tools/call` with a `CreateTaskResult` that carries
    * `taskId` but no `status`.
@@ -132,13 +133,13 @@ const DEFAULT_TASKS_CAPABILITY: Record<string, unknown> = {
 };
 
 function initialize(
-  tasksCapability: Record<string, unknown> = DEFAULT_TASKS_CAPABILITY
+  tasksCapability: Record<string, unknown> | null = DEFAULT_TASKS_CAPABILITY
 ): Record<string, unknown> {
   return {
     protocolVersion: "2025-11-25",
     capabilities: {
       tools: { listChanged: false },
-      tasks: tasksCapability,
+      ...(tasksCapability === null ? {} : { tasks: tasksCapability }),
     },
     serverInfo: { name: "legacy-tasks-fixture", version: "1.0.0" },
   };
