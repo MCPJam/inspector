@@ -24,13 +24,14 @@ export function addedDependencies(base, head) {
 export function hasIntakeBlock(body) {
   // An unterminated comment or code fence runs to the end, as in GFM. A fence
   // is matched where it starts, so a "<!--" inside example code stays text.
+  // A backtick fence's info string cannot hold a backtick; a tilde one can.
   // Repeat until nothing changes, so removing one comment cannot join the text
   // around it into another.
   let visible = body ?? "";
   for (let previous; previous !== visible; ) {
     previous = visible;
     visible = visible.replace(
-      /^ {0,3}((`|~)\2{2,})[^\n]*[\s\S]*?(?:^ {0,3}\1\2*[ \t]*$|(?![\s\S]))|<!--[\s\S]*?(?:-->|(?![\s\S]))/gm,
+      /^ {0,3}((`|~)\2{2,})(?:(?<=~)[^\n]*|[^\n`]*$)[\s\S]*?(?:^ {0,3}\1\2*[ \t]*$|(?![\s\S]))|<!--[\s\S]*?(?:-->|(?![\s\S]))/gm,
       (match, fence) => (fence ? match : ""),
     );
   }

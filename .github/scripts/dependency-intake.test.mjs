@@ -54,6 +54,14 @@ test("a comment marker inside fenced code does not hide the intake block", () =>
     hasIntakeBlock("<!--\n```\nDependency intake: hidden\n```"),
     false
   );
+  assert.equal(
+    hasIntakeBlock("```not`a-fence\n<!--\nDependency intake: hidden\n```"),
+    false
+  );
+  assert.equal(
+    hasIntakeBlock("~~~ a`b\n<!--\n~~~\nDependency intake: shown"),
+    true
+  );
 });
 
 const review = (login, state, commit = "head", extra = {}) => ({
