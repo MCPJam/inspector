@@ -195,14 +195,6 @@ export function EvaluateRunPage({
                   iterations={iterations}
                 />
               </div>
-              {scope ? (
-                <p
-                  className="text-[12.5px] text-muted-foreground"
-                  data-testid="evaluate-run-scope"
-                >
-                  {scope}
-                </p>
-              ) : null}
               <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                 {showRanAs ? <RunAccountFacts runs={targets} /> : null}
                 <RunServerGroups
@@ -211,6 +203,14 @@ export function EvaluateRunPage({
                   lead={showRanAs ? "on" : undefined}
                 />
               </div>
+              {scope ? (
+                <p
+                  className="text-[12.5px] text-muted-foreground"
+                  data-testid="evaluate-run-scope"
+                >
+                  {scope}
+                </p>
+              ) : null}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
               {SHOW_EXPORT_REPORT && onExport && (
