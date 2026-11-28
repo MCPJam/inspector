@@ -12,10 +12,57 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 
 import { useServerForm } from "../use-server-form";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
+import { createServer } from "@/test/factories";
 
 describe("useServerForm", () => {
   beforeEach(() => {
     vi.mocked(hasOAuthConfig).mockReturnValue(false);
+  });
+
+  it("keeps a draft through status changes and reloads when the saved URL changes", () => {
+    const server = createServer({
+      config: { url: new URL("https://example.com/mcp") },
+      connectionStatus: "connected",
+    });
+    const { result, rerender } = renderHook(
+      ({ server }) => useServerForm(server),
+      { initialProps: { server } },
+    );
+    act(() => result.current.setUrl("https://example.com/draft"));
+
+    for (const connectionStatus of ["failed", "connecting", "connected"] as const) {
+      rerender({
+        server: {
+          ...server,
+          connectionStatus,
+          config: { url: new URL("https://example.com/mcp") },
+        },
+      });
+      expect(result.current.url).toBe("https://example.com/draft");
+      expect(result.current.hasChanges).toBe(true);
+    }
+
+    rerender({
+      server: { ...server, config: { url: new URL("https://example.com/saved") } },
+    });
+    expect(result.current.url).toBe("https://example.com/saved");
+    expect(result.current.hasChanges).toBe(false);
+  });
+
+  it("reloads after a save even if the redacted configuration is identical", () => {
+    const server = createServer({
+      config: { url: new URL("https://example.com/mcp") },
+      hasClientSecret: true,
+      useOAuth: true,
+    });
+    const { result } = renderHook(() => useServerForm(server));
+    act(() => result.current.setClientSecret("replacement"));
+    expect(result.current.hasChanges).toBe(true);
+
+    act(() => result.current.reloadSavedValues());
+    expect(result.current.clientSecret).toBe("");
+    expect(result.current.hasStoredClientSecret).toBe(true);
+    expect(result.current.hasChanges).toBe(false);
   });
 
   it("defaults OAuth protocol mode to the deferred 'auto' sentinel", () => {

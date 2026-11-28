@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useReducer, useRef } from "react";
+import isEqual from "fast-deep-equal";
 import {
   ServerFormData,
   normalizeOauthProtocolMode,
@@ -21,6 +22,7 @@ import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
 import { parseCommandInput } from "@/lib/command-input";
 import { isStandalonePublishedPluginId } from "@/shared/plugin-deep-link";
+import { getServerFormSource } from "./server-form-source";
 import {
   getRedactedConfigFlag,
   isAuthorizationHeader,
@@ -211,6 +213,11 @@ export function useServerForm(
   const [showAuthSettings, setShowAuthSettings] = useState<boolean>(false);
 
   const initialValues = useRef<InitialFormValues | null>(null);
+  const [saveVersion, reloadSavedValues] = useReducer((version) => version + 1, 0);
+  const previousSource = useRef<{
+    values: ReturnType<typeof getServerFormSource>;
+    saveVersion: number;
+  } | null>(null);
   const projectConnectionDefaults = getEffectiveProjectConnectionDefaults(
     options?.projectClientConfig,
   );
@@ -227,7 +234,17 @@ export function useServerForm(
 
   // Initialize form with server data (for edit mode)
   useEffect(() => {
+    if (!server) previousSource.current = null;
     if (server) {
+      const values = getServerFormSource(server);
+      const previous = previousSource.current;
+      if (
+        previous?.saveVersion === saveVersion &&
+        isEqual(previous.values, values)
+      ) {
+        return;
+      }
+      previousSource.current = { values, saveVersion };
       const config = server.config;
       const isHttpServer = "url" in config;
 
@@ -505,7 +522,7 @@ export function useServerForm(
         xaaEmail: server.xaaEmail ?? "",
       };
     }
-  }, [server]);
+  }, [server, saveVersion]);
 
   const effectiveXaaRegistrationMode =
     registrationMode === "cimd" || registrationMode === "dcr"
@@ -1048,6 +1065,7 @@ export function useServerForm(
   return {
     // Change detection
     hasChanges,
+    reloadSavedValues,
     preregisteredOauthBlocksSubmit,
     authConfigurationBlocksSubmit,
 
