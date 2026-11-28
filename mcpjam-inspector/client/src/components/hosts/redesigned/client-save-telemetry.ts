@@ -260,6 +260,10 @@ const CLIENT_SETTING_DETECTORS = {
   ),
   // Backend-only requirement; the editor has no control that changes it.
   requireNativeToolDiscovery: () => [],
+  runUnloadedToolCalls: one(
+    "progressive_tool_discovery",
+    (config) => config.runUnloadedToolCalls,
+  ),
   progressiveToolDiscovery: one(
     "progressive_tool_discovery",
     (config) => config.progressiveToolDiscovery,

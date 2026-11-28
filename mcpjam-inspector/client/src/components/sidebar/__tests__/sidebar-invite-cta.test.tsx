@@ -2,12 +2,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MCPSidebar } from "@/components/mcp-sidebar";
-import { markPendingInviteDialog } from "@/lib/pending-invite-dialog";
 
 const mockUseConvexAuth = vi.fn();
 const mockUseAuth = vi.fn();
 const mockShareProjectDialog = vi.fn();
-const mockInviteSignUpDialog = vi.fn();
 let sidebarState = "expanded";
 let sidebarIsMobile = false;
 const mockFeatureFlags: Record<string, boolean | undefined> = {};
@@ -96,7 +94,7 @@ vi.mock("@/components/sidebar/nav-main", () => ({
 
 vi.mock("@/components/sidebar/sidebar-credits", () => ({
   SidebarCredits: () => (
-    <button data-testid="sidebar-see-credits">See credits</button>
+    <button data-testid="sidebar-see-credits">Credits</button>
   ),
 }));
 
@@ -112,8 +110,10 @@ vi.mock("@/components/organization/InviteTeamMembersDialog", () => ({
   InviteTeamMembersDialog: (props: unknown) => mockShareProjectDialog(props),
 }));
 
-vi.mock("@/components/auth/InviteTeamSignUpDialog", () => ({
-  InviteTeamSignUpDialog: (props: unknown) => mockInviteSignUpDialog(props),
+vi.mock("@/components/sidebar/sidebar-upgrade-prompt", () => ({
+  SidebarUpgradePrompt: ({ isGuest }: { isGuest: boolean }) => (
+    <div data-testid="sidebar-upgrade-prompt" data-guest={String(isGuest)} />
+  ),
 }));
 
 vi.mock("@/components/ui/sidebar", () => ({
@@ -239,12 +239,6 @@ describe("sidebar invite CTA", () => {
         </div>
       ),
     );
-    mockInviteSignUpDialog.mockImplementation(
-      ({ isOpen }: { isOpen: boolean }) =>
-        isOpen ? <div data-testid="invite-signup-nudge" /> : null,
-    );
-    // The pending-invite marker is module state in sessionStorage — a leftover
-    // would auto-open the share dialog in an unrelated test.
     sessionStorage.clear();
     localStorage.clear();
   });
@@ -256,35 +250,13 @@ describe("sidebar invite CTA", () => {
     ).toBeNull();
   });
 
-  it("shows the CTA for hosted guests, opening the sign-up nudge instead of the share dialog", () => {
+  it("replaces the guest invite row with the create-account card", () => {
     mockUseConvexAuth.mockReturnValue({
       isAuthenticated: false,
       isLoading: false,
     });
     mockUseAuth.mockReturnValue({
       user: null,
-    });
-
-    renderSidebar();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Invite team members" }),
-    );
-
-    expect(screen.getByTestId("invite-signup-nudge")).toBeInTheDocument();
-    expect(
-      screen.queryByTestId("share-project-dialog"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("hides the guest CTA while auth is still resolving, so it never flashes for signed-in users", () => {
-    mockUseConvexAuth.mockReturnValue({
-      isAuthenticated: false,
-      isLoading: true,
-    });
-    mockUseAuth.mockReturnValue({
-      user: null,
-      isLoading: true,
     });
 
     renderSidebar();
@@ -292,38 +264,38 @@ describe("sidebar invite CTA", () => {
     expect(
       screen.queryByRole("button", { name: "Invite team members" }),
     ).not.toBeInTheDocument();
-  });
-
-  it("auto-opens the share dialog for a user returning from the sign-up nudge", () => {
-    // What the nudge's Create account / Sign in buttons write right before
-    // WorkOS navigates away.
-    markPendingInviteDialog();
-
-    renderSidebar();
-
-    expect(screen.getByTestId("share-project-dialog")).toHaveTextContent(
-      "Invite dialog for org-1",
+    expect(screen.getByTestId("sidebar-upgrade-prompt")).toHaveAttribute(
+      "data-guest",
+      "true",
     );
   });
 
-  it("ignores the pending-invite marker for guests — the dialog needs an authed user and a project", () => {
+  it("hides the guest card while auth is still resolving, so it never flashes for signed-in users", () => {
     mockUseConvexAuth.mockReturnValue({
       isAuthenticated: false,
-      isLoading: false,
+      isLoading: true,
     });
     mockUseAuth.mockReturnValue({
       user: null,
+      isLoading: true,
     });
-    markPendingInviteDialog();
 
     renderSidebar();
 
     expect(
-      screen.queryByTestId("share-project-dialog"),
+      screen.queryByTestId("sidebar-upgrade-prompt"),
     ).not.toBeInTheDocument();
-    // …and the marker is still there for when sign-in completes, not consumed
-    // by a render that could not act on it.
-    expect(sessionStorage.length).toBeGreaterThan(0);
+  });
+
+  it("shows the signed-in upgrade card above the profile menu", () => {
+    renderSidebar();
+
+    const prompt = screen.getByTestId("sidebar-upgrade-prompt");
+    expect(prompt).toHaveAttribute("data-guest", "false");
+    expect(
+      prompt.compareDocumentPosition(screen.getByTestId("sidebar-user")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("shows the CTA for signed-in users and keeps the collapsed text class", () => {
@@ -337,7 +309,7 @@ describe("sidebar invite CTA", () => {
     );
   });
 
-  it("orders the signed-in footer See credits, invite CTA, then the profile menu", () => {
+  it("orders the signed-in footer Credits, invite CTA, then the profile menu", () => {
     renderSidebar();
 
     const inviteButton = screen.getByRole("button", {
@@ -356,7 +328,7 @@ describe("sidebar invite CTA", () => {
     ).toBeTruthy();
   });
 
-  it("hides See credits from guests, who have no organization to bill", () => {
+  it("hides Credits from guests, who have no organization to bill", () => {
     mockUseConvexAuth.mockReturnValue({
       isAuthenticated: false,
       isLoading: false,

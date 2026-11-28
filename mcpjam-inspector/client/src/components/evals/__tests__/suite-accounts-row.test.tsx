@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { getFunctionName } from "convex/server";
 import { ConvexError } from "convex/values";
+import { toast } from "sonner";
 import { SuiteAccountsRow } from "../suite-accounts-row";
 import type { EvalSuite } from "../types";
 import type { SuiteAccountsView } from "@/lib/evals/eval-accounts";
@@ -60,7 +61,7 @@ vi.mock("@/hooks/useProjects", async (importOriginal) => ({
     ],
   }),
 }));
-vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const suite = {
   _id: "suite-1",
@@ -115,6 +116,7 @@ beforeEach(() => {
   state.save.mockReset();
   state.save.mockResolvedValue(null);
   state.queried = [];
+  vi.mocked(toast.success).mockClear();
 });
 
 describe("SuiteAccountsRow", () => {
@@ -145,8 +147,30 @@ describe("SuiteAccountsRow", () => {
     const row = document.querySelector('[data-setting-key="accounts"]');
     expect(row).toHaveTextContent("Accounts");
     expect(row).toHaveTextContent(
-      "Each run uses the accounts of the person who starts it.",
+      "Choose the accounts your runs use.",
     );
+  });
+
+  it("drafts a shared server default through suite settings", async () => {
+    state.view = view({ servers: [{
+      serverId: "srv-asana",
+      mode: "shared",
+      managed: true,
+      accounts: [live, dummy],
+      chosen: [dummy.connectionId],
+    }] });
+    const edit = vi.fn();
+    render(<SuiteAccountsRow suite={suite} projectId="project-1" sharedDefaults={{
+      value: [{ serverId: "srv-asana", connectionId: live.connectionId }],
+      onChange: edit,
+      disabled: false,
+    }} />);
+    const picker = screen.getByRole("button", { name: /^Asana account/ });
+    expect(picker).toHaveTextContent("Live");
+    await userEvent.click(picker);
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: /Dummy/ }));
+    expect(edit).toHaveBeenCalledWith([{ serverId: "srv-asana", connectionId: dummy.connectionId }]);
+    expect(state.save).not.toHaveBeenCalled();
   });
 
   it("preselects the default account and keeps it chosen while it is the only one", () => {
@@ -162,7 +186,7 @@ describe("SuiteAccountsRow", () => {
     expect(within(mine).getByText("Default")).toBeInTheDocument();
   });
 
-  it("saves the accounts when one is ticked", async () => {
+  it("saves the accounts when one is ticked, and says so", async () => {
     const user = userEvent.setup();
     renderRow();
     await user.click(screen.getByRole("checkbox", { name: "Asana Dummy" }));
@@ -171,6 +195,10 @@ describe("SuiteAccountsRow", () => {
       serverId: "srv-asana",
       connectionIds: ["conn-live", "conn-dummy"],
     });
+    // Save settings stays off for this row, so the toast is the confirmation.
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Saved your Asana accounts."),
+    );
   });
 
   it("saves the accounts when one is cleared, leaving out the default", async () => {
@@ -195,7 +223,6 @@ describe("SuiteAccountsRow", () => {
   });
 
   it("falls back to the saved choice when a save fails", async () => {
-    const { toast } = await import("sonner");
     state.save.mockRejectedValue(new Error("offline"));
     const user = userEvent.setup();
     renderRow();
@@ -205,11 +232,11 @@ describe("SuiteAccountsRow", () => {
         "Could not save your Asana accounts. Try again.",
       ),
     );
+    expect(toast.success).not.toHaveBeenCalled();
     expect(screen.getByRole("checkbox", { name: "Asana Dummy" })).not.toBeChecked();
   });
 
   it("shows the backend's reason when it refuses the choice", async () => {
-    const { toast } = await import("sonner");
     state.save.mockRejectedValue(
       new ConvexError({ code: "FORBIDDEN", message: "Dummy belongs to another person." }),
     );
@@ -462,6 +489,11 @@ describe("SuiteAccountsRow web clients", () => {
       vendor: "claude",
       webAccountIds: ["wa-qa", "wa-evals"],
     });
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "Saved your Claude web accounts.",
+      ),
+    );
   });
 
   it("keeps the choices disabled until the saved choice loads", () => {

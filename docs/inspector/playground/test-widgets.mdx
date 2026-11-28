@@ -1,0 +1,70 @@
+---
+title: "Test a widget"
+sidebarTitle: "Test widgets"
+description: "Open the Excalidraw widget in fullscreen, draw in it, and check the tool input and result behind it. About 5 minutes."
+icon: "joystick"
+---
+
+An MCP App tool can return a widget: an interactive view rendered in the chat. In this tutorial you use the Excalidraw widget the way a user would, then check the data that produced it.
+
+## Before you start
+
+This tutorial picks up where [Chat and inspect tool calls](/inspector/playground) ends. If you came here directly, connect the Excalidraw demo server as in [Start testing](/#start-testing), open **Playground**, and send `Draw a rectangle with the text Hello inside it.`
+
+Use any pane that shows the **Hello** rectangle. The screenshots use Claude. If no pane shows a widget, follow [Compare clients](/inspector/playground/compare-hosts#compare-the-arguments) to check which tools the models called.
+
+The steps use the Excalidraw widget: the **Hello** rectangle, its canvas, and the `create_view` tool. With your own server, the widget toolbar, **Edit input & output**, and [If the widget is blank](#if-the-widget-is-blank) work the same, but your widget's content and tool names differ.
+
+<Steps titleSize="h3">
+  <Step title="Find the widget toolbar" id="find-the-widget-toolbar">
+    In a pane that shows the **Hello** rectangle, find the row of icons above the rectangle. This is the widget toolbar.
+
+    <Frame>
+      <img src="/images/playground/v1/widget-claude.png" alt="The Hello rectangle in the Claude pane with the widget toolbar above it" width="450" />
+    </Frame>
+
+    From left to right, the icons are **Inline**, **PiP**, **Fullscreen**, **Data**, **Sandbox**, and **Edit input & output**. Hover an icon to see its name. Some widgets add **Model Context** (MCP Apps) or **Widget State** (ChatGPT Apps) after **Data**.
+  </Step>
+  <Step title="Open the widget in fullscreen" id="open-fullscreen">
+    Select **Fullscreen**.
+
+    The widget fills the window: the Excalidraw toolbar is at the top, **Open in Excalidraw** at the top right, and the **Hello** rectangle in the middle.
+
+    <Frame>
+      <img src="/images/playground/v1/fullscreen.png" alt="The Excalidraw widget in fullscreen: a bar titled App with a close button at the top right, the Excalidraw toolbar, and the Hello rectangle in the center" />
+    </Frame>
+  </Step>
+  <Step title="Draw a second rectangle" id="draw-a-rectangle">
+    Press **R** to pick the rectangle tool, then drag on an empty part of the canvas.
+
+    A new, empty rectangle appears where you dragged. It is selected, and a style panel opens on the left with **Stroke**, **Background**, and other options.
+
+    <Frame>
+      <img src="/images/playground/v1/widget-new-rectangle.png" alt="The fullscreen widget after drawing: a new selected rectangle below the Hello rectangle and the style panel on the left" />
+    </Frame>
+
+    To leave fullscreen, at the right end of the bar at the top of the window, select **Exit fullscreen** (**×**).
+  </Step>
+  <Step title="Check the tool input and result" id="check-input-and-result">
+    Back in the same pane, select **Edit input & output**. Two JSON editors open. They show the original `create_view` call from your prompt, not the rectangle you just drew. Your drawing doesn't change them, because the widget keeps its own state.
+
+    - **INPUT** is the argument the model sent to `create_view`. Check that the `elements` string contains a rectangle whose `label` text is `Hello`. If the original **Hello** rectangle looks wrong, this is the first place to look.
+    - **RESULT** is what the server returned. In the example run, under `_meta`, `ui/resourceUri` is `ui://excalidraw/mcp-app.html`, the widget the pane rendered.
+
+    When you are done, select **Done editing**.
+  </Step>
+</Steps>
+
+## If the widget is blank
+
+1. Look at the **Sandbox** icon. If it shows a number, the sandbox blocked requests. Select **Sandbox** and start with **Findings**.
+2. Check that the tool declares a widget. In the left rail, select the tool under **Tools** and open **Metadata**: it should have `ui` → `resourceUri` (or the older `ui/resourceUri`) with a `ui://` URI. Without it, the client has no widget to render.
+3. In the JSON-RPC log, select the **Apps** filter and check that the widget sent `ui/initialize` and received `ui/notifications/tool-result`.
+
+## Next
+
+[Compare clients](/inspector/playground/compare-hosts) to see how the same prompt plays out in each pane.
+
+## Related
+
+- [Playground reference](/inspector/playground/reference#widgets): the widget toolbar and the Sandbox panel.

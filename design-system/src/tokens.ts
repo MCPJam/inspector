@@ -97,6 +97,21 @@ export const tokensCss: string = `@theme {
   --run-origin-cli-bg: oklch(0.65 0.11 195 / 0.1);
   --run-origin-agent-border: oklch(0.62 0.21 330 / 0.5);
   --run-origin-agent-bg: oklch(0.62 0.21 330 / 0.1);
+  /* Account avatar tokens: six tints, one picked per account from its id,
+     so an account keeps its color on every screen. Role-based; used only
+     by the eval account avatar. Each background carries its own alpha. */
+  --account-avatar-1-bg: oklch(0.65 0.15 255 / 0.16);
+  --account-avatar-1-fg: oklch(0.45 0.15 255);
+  --account-avatar-2-bg: oklch(0.65 0.15 295 / 0.16);
+  --account-avatar-2-fg: oklch(0.45 0.15 295);
+  --account-avatar-3-bg: oklch(0.65 0.15 160 / 0.16);
+  --account-avatar-3-fg: oklch(0.45 0.15 160);
+  --account-avatar-4-bg: oklch(0.65 0.15 75 / 0.16);
+  --account-avatar-4-fg: oklch(0.45 0.15 75);
+  --account-avatar-5-bg: oklch(0.65 0.15 15 / 0.16);
+  --account-avatar-5-fg: oklch(0.45 0.15 15);
+  --account-avatar-6-bg: oklch(0.65 0.15 210 / 0.16);
+  --account-avatar-6-fg: oklch(0.45 0.15 210);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:
@@ -264,6 +279,18 @@ export const tokensCss: string = `@theme {
   --run-origin-cli-bg: oklch(0.78 0.1 195 / 0.15);
   --run-origin-agent-border: oklch(0.74 0.18 330 / 0.5);
   --run-origin-agent-bg: oklch(0.74 0.18 330 / 0.15);
+  --account-avatar-1-bg: oklch(0.7 0.13 255 / 0.22);
+  --account-avatar-1-fg: oklch(0.84 0.1 255);
+  --account-avatar-2-bg: oklch(0.7 0.13 295 / 0.22);
+  --account-avatar-2-fg: oklch(0.84 0.1 295);
+  --account-avatar-3-bg: oklch(0.7 0.13 160 / 0.22);
+  --account-avatar-3-fg: oklch(0.84 0.1 160);
+  --account-avatar-4-bg: oklch(0.7 0.13 75 / 0.22);
+  --account-avatar-4-fg: oklch(0.84 0.1 75);
+  --account-avatar-5-bg: oklch(0.7 0.13 15 / 0.22);
+  --account-avatar-5-fg: oklch(0.84 0.1 15);
+  --account-avatar-6-bg: oklch(0.7 0.13 210 / 0.22);
+  --account-avatar-6-fg: oklch(0.84 0.1 210);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --font-sans:

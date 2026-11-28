@@ -23,3 +23,7 @@ export function readSdkVersion(): string {
     ? __MCPJAM_SDK_VERSION__
     : "unknown";
 }
+
+export function discoveryRunMetadata(runUnloadedToolCalls?: boolean) {
+  return { runUnloadedToolCalls: runUnloadedToolCalls !== false, engineVersion: readSdkVersion() };
+}

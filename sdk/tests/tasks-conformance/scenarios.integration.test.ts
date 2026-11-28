@@ -457,6 +457,53 @@ describe("tasks-update-ack-shape", () => {
     },
   };
 
+  it("answers only matching keys and grades the resulting terminal payload without T12", async () => {
+    const phases = defaultTaskPhases();
+    const gate = phases.find((phase) => phase.status === "input_required")!;
+    gate.extra = { inputRequests: gate.inputRequests, ttlMs: 1.5 };
+    gate.polls = 16;
+    const fixture = await serve(phases);
+    const result = await run(
+      fixture,
+      ["tasks-inline-result", "tasks-ttl-integer-shape"],
+      {
+        inputResponses: { ...RESPONSES, other: { action: "cancel" } },
+      }
+    );
+    expect(check(result, "tasks-inline-result").status).toBe("passed");
+    expect(check(result, "tasks-ttl-integer-shape").status).toBe("failed");
+    const updates = fixture.received.filter((r) => r.method === "tasks/update");
+    expect(updates.map((r) => r.params?.inputResponses)).toEqual([RESPONSES]);
+    expect(result.checks.some((entry) => entry.id === ID)).toBe(false);
+  });
+
+  it("reports the answered key at timeout without sending it twice", async () => {
+    const gate = defaultTaskPhases().find(phase => phase.status === "input_required")!;
+    const fixture = await serve([{ ...gate, extra: { inputRequests: gate.inputRequests } }]);
+    const id = "tasks-inline-result";
+    const entry = check(await run(fixture, [id], { inputResponses: RESPONSES, pollTimeoutMs: 1000 }), id);
+    expect(entry.skipReason).toBe("could-not-run");
+    expect(entry.error?.message).toContain("already answered");
+    expect(entry.error?.message).toContain(DEFAULT_INPUT_REQUEST_KEY);
+    expect(entry.error?.message).not.toContain("--poll-timeout");
+    expect(fixture.received.filter(r => r.method === "tasks/update")).toHaveLength(1);
+    expect(entry.error?.message).toContain("polling deadline");
+  });
+
+  it("stops without sending an unrelated answer", async () => {
+    const fixture = await serve(defaultTaskPhases());
+    const result = await run(fixture, ["tasks-inline-result", ID], {
+      inputResponses: { unrelated: { action: "cancel" } },
+    });
+    expect(check(result, "tasks-inline-result").skipReason).toBe(
+      "could-not-run"
+    );
+    expect(check(result, ID).skipReason).toBe("could-not-run");
+    expect(fixture.received.some((r) => r.method === "tasks/update")).toBe(
+      false
+    );
+  });
+
   it("passes an empty acknowledgement", async () => {
     const fixture = await serve(defaultTaskPhases());
     const result = await run(fixture, [ID], { inputResponses: RESPONSES });
@@ -606,10 +653,7 @@ describe("the mcp-tasks profile", () => {
     const fixture = await serve(quickPhases(), {
       misbehave: { answerUnknownTaskId: true },
     });
-    const result = await run(fixture, [
-      "tasks-invalid-task-id-rejected",
-      "tasks-wire-resolvable",
-    ]);
+    const result = await run(fixture, ["tasks-invalid-task-id-rejected"]);
     expect(check(result, "tasks-invalid-task-id-rejected").status).toBe(
       "failed",
     );
@@ -679,11 +723,7 @@ describe("per-check task subjects", () => {
   });
   it("makes no tool calls for task-free checks, even with a suite default", async () => {
     const fixture = await serve(quickPhases());
-    await run(fixture, [
-      "tasks-wire-resolvable",
-      "tasks-declaration-hygiene",
-      "tasks-invalid-task-id-rejected",
-    ]);
+    await run(fixture, ["tasks-invalid-task-id-rejected"]);
     expect(
       fixture.received.filter((r) => r.method === "tools/call")
     ).toHaveLength(0);
@@ -700,18 +740,26 @@ describe("per-check task subjects", () => {
       ["tasks-inline-result", "tasks-update-ack-shape"],
       {
         toolName: "success",
-        inputResponses: {
-          [DEFAULT_INPUT_REQUEST_KEY]: {
-            result: { action: "accept", content: { name: "Ada" } },
+        checkOverrides: {
+          "tasks-update-ack-shape": {
+            toolName: "input",
+            inputResponses: {
+              [DEFAULT_INPUT_REQUEST_KEY]: {
+                action: "accept",
+                content: { name: "Ada" },
+              },
+            },
           },
         },
-        checkOverrides: { "tasks-update-ack-shape": { toolName: "input" } },
       }
     );
     expect(result.checks.every((check) => check.status === "passed")).toBe(
       true
     );
-    const id = check(result, "tasks-update-ack-shape").details?.taskId;
+    const updates = fixture.received.filter((r) => r.method === "tasks/update");
+    expect(updates).toHaveLength(1);
+    const id = updates[0]?.params?.taskId;
+    expect(id).toBeTruthy();
     expect(
       fixture.received
         .filter((r) => r.method === "tasks/update")

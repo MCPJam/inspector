@@ -254,9 +254,10 @@ const resourceAttributesSchema = z.record(
  * the response projection is what decides which spelling it comes back as.
  */
 const sourceTypesSchema = z
-  .array(z.enum(["eval", "scenario", "study", "swarm", "direct"]))
+  .array(z.enum(["eval", "scenario", "study", "swarm", "direct", "event"]))
   .min(1)
-  .max(4);
+  // One per stored type; `scenario` and `study` store as one.
+  .max(5);
 
 /** Every requested source type in the spelling the backend stores. */
 function storedSourceTypes<T extends readonly string[] | undefined>(

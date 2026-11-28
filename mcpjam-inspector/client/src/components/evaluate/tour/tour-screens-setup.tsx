@@ -59,7 +59,7 @@ export function TourCreateScreen({ typedName }: { typedName: string }) {
           </div>
           <div className="space-y-2">
             <p className="text-sm font-medium text-foreground">
-              Where it runs <span className="text-destructive">*</span>
+              Clients and models <span className="text-destructive">*</span>
             </p>
             <p className="text-xs text-muted-foreground">
               Choose a client and the models to evaluate it with.

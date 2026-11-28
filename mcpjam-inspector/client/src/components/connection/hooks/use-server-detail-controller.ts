@@ -2,8 +2,10 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
+  type RefObject,
 } from "react";
 import { toast } from "@/lib/toast";
 import { reportCaught } from "@/lib/error-reporting";
@@ -171,6 +173,9 @@ export interface ServerDetailController {
     /** A connected server with no edits offers Reconnect instead of Save. */
     offersReconnect: boolean;
     save: () => Promise<void>;
+    saveButtonRef: RefObject<HTMLButtonElement | null>;
+    saveHintRef: RefObject<HTMLParagraphElement | null>;
+    saveHint: string | null;
     /** The configuration form's submit handler. */
     submit: (event: FormEvent<HTMLFormElement>) => void;
   };
@@ -370,6 +375,37 @@ export function useServerDetailController({
     organizationId,
     isSignedIn,
   });
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
+  const saveHintRef = useRef<HTMLParagraphElement>(null);
+  const focusSaveOnConfig = useRef(false);
+  const [saveHint, setSaveHint] = useState<string | null>(null);
+  const isConnected = server.connectionStatus === "connected";
+  const focusSaveAction = useCallback(() => {
+    const button = saveButtonRef.current;
+    const target = button?.disabled ? saveHintRef.current : button;
+    if (!target) return;
+    focusSaveOnConfig.current = false;
+    target.focus();
+  }, []);
+  useEffect(() => {
+    if (!isOpen || isConnected || !formState.hasChanges) {
+      focusSaveOnConfig.current = false;
+      setSaveHint(null);
+    } else if (
+      activeTab === "configuration" &&
+      saveHint &&
+      focusSaveOnConfig.current
+    ) {
+      focusSaveAction();
+    }
+  }, [
+    isOpen,
+    isConnected,
+    activeTab,
+    formState.hasChanges,
+    saveHint,
+    focusSaveAction,
+  ]);
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
     trimmedName !== "" &&
@@ -377,7 +413,6 @@ export function useServerDetailController({
     existingServerNames.includes(trimmedName);
   const tools = useToolsMetadata(isOpen, server);
 
-  const isConnected = server.connectionStatus === "connected";
   /** See ServerConnectionCard: unreadable is not the same claim as offline. */
   const { label: connectionStatusLabel, indicatorClassName } =
     isConnectionStatus(server.connectionStatus)
@@ -385,6 +420,7 @@ export function useServerDetailController({
       : UNKNOWN_CONNECTION_STATUS;
 
   const handleSave = async () => {
+    setSaveHint(null);
     if (isDuplicateServerName) {
       toast.error(
         `A server named "${trimmedName}" already exists. Choose a different name.`
@@ -462,7 +498,8 @@ export function useServerDetailController({
       const finalFormData = formState.buildFormData({
         ...(revealedHeaders ? { revealedHeaders } : {}),
       });
-      await onSubmit(finalFormData, server.name);
+      const result = await onSubmit(finalFormData, server.name);
+      if (result.ok) formState.reloadSavedValues();
       // The surface stays open after a save, and the save may have replaced
       // the token or headers the Auth tab revealed; make it look them up again.
       serverAuthReveal.reset();
@@ -501,6 +538,13 @@ export function useServerDetailController({
       handleDisconnect();
       return;
     }
+    if (formState.hasChanges) {
+      focusSaveOnConfig.current = true;
+      setSaveHint("Save your changes to connect.");
+      if (activeTab === "configuration") focusSaveAction();
+      else selectTab("configuration");
+      return;
+    }
     // A server that needs OAuth and has no tokens can only connect through
     // the interactive flow.
     void handleConnect({
@@ -522,17 +566,15 @@ export function useServerDetailController({
    *
    * One list read by both the Save button's `disabled` and the form's submit
    * handler, because Enter in any configuration input submits the form. It
-   * covers MJ-003's credential-clear acknowledgement, which is there so a
-   * destructive save cannot happen without one, as well as the duplicate-name
-   * check, the auth-configuration block, and the in-flight reconnect guard.
+   * covers the duplicate-name check, the auth-configuration block, and the
+   * in-flight reconnect guard.
    */
   const saveBlocked =
     isDuplicateServerName ||
     isSaving ||
     isReconnecting ||
     (!formState.hasChanges && !isConnected) ||
-    formState.authConfigurationBlocksSubmit ||
-    formState.credentialClearBlocksSubmit;
+    formState.authConfigurationBlocksSubmit;
 
   const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -569,6 +611,7 @@ export function useServerDetailController({
       statusLabel: connectionStatusLabel,
       indicatorClassName,
       toggleDisabled:
+        isSaving ||
         isReconnecting ||
         server.connectionStatus === "connecting" ||
         server.connectionStatus === "oauth-flow",
@@ -583,6 +626,9 @@ export function useServerDetailController({
       saveBlocked,
       offersReconnect: isConnected && !formState.hasChanges,
       save: handleSave,
+      saveButtonRef,
+      saveHintRef,
+      saveHint: formState.hasChanges ? saveHint : null,
       submit: handleConfigurationSubmit,
     },
     protocol,

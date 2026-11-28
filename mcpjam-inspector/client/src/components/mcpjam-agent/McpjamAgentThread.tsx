@@ -50,13 +50,21 @@ import {
 import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useMcpjamAgentSession } from "@/hooks/use-mcpjam-agent-session";
-import { rejectedInputTurn } from "@/lib/mcpjam-agent/rejected-input";
+import {
+  conversationTooLarge,
+  rejectedInputTurn,
+} from "@/lib/mcpjam-agent/rejected-input";
 import {
   appendRecentMcpjamAgentSession,
   loadRecentMcpjamAgentSessions,
 } from "@/components/mcpjam-agent/recent-sessions";
-import { pendingAgentPromptKey } from "@/lib/mcpjam-agent/pending-prompt";
 import {
+  keepDraftForNewChat,
+  pendingAgentPromptKey,
+  takeKeptDraft,
+} from "@/lib/mcpjam-agent/pending-prompt";
+import {
+  CONVERSATION_TOO_LARGE_MESSAGE,
   describeAgentRefusalMessage,
   describeMCPJamLimitMessage,
 } from "@/lib/mcpjam-limit";
@@ -78,6 +86,8 @@ export interface McpjamAgentThreadProps {
    */
   variant?: "card" | "full" | "sidebar";
   className?: string;
+  /** Opens an empty chat: the way out when this one is too large to send. */
+  onNewChat: () => void;
 }
 
 export function McpjamAgentThread({
@@ -87,6 +97,7 @@ export function McpjamAgentThread({
   surface,
   variant = "card",
   className,
+  onNewChat,
 }: McpjamAgentThreadProps) {
   const session = useMcpjamAgentSession({
     chatSessionId: sessionId,
@@ -107,6 +118,10 @@ export function McpjamAgentThread({
   const contextLoading = Boolean(evalScope && !isEvalContextReady(evalScope));
   const scopeMissing = sessionId.startsWith("eval-") && !evalScope;
   const [draft, setDraft] = useState("");
+  useEffect(() => {
+    const kept = takeKeptDraft();
+    if (kept) setDraft(kept);
+  }, []);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Peek at the hero-stashed pending prompt at mount so we can render an
@@ -140,6 +155,10 @@ export function McpjamAgentThread({
 
   const isStreaming =
     session.status === "submitted" || session.status === "streaming";
+  const tooLarge = conversationTooLarge(
+    session.messages,
+    session.error?.message,
+  );
 
   // Both the backend route and the persistence path require a resolved
   // model + projectId. On cold load either can be undefined for a few
@@ -152,6 +171,9 @@ export function McpjamAgentThread({
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      // Nothing sent from this chat can get through. The composer keeps its
+      // text; other senders (widgets, Continue) must not replace it.
+      if (tooLarge) return;
       if (!canAccept) return;
       if (!isReady) {
         useEvalPromptQueue.getState().enqueue(sessionId, trimmed);
@@ -171,7 +193,7 @@ export function McpjamAgentThread({
         ts: Date.now(),
       });
     },
-    [canAccept, isReady, session, sessionId, evalScope],
+    [canAccept, isReady, session, sessionId, evalScope, tooLarge],
   );
 
   useEffect(() => {
@@ -264,8 +286,10 @@ export function McpjamAgentThread({
   const contentColumnClassName = isSidebar
     ? "min-w-0 w-full px-4 pt-6 pb-8 space-y-6"
     : "min-w-0 w-full max-w-4xl mx-auto px-4 pt-6 pb-8 space-y-6";
+  // The composer applies these to its bordered box, so the sidebar gets a
+  // margin (matching the empty chat's composer), not a full-width box.
   const composerColumnClassName = isSidebar
-    ? "w-full mb-4 px-3"
+    ? "mx-4 mb-4 w-auto px-3"
     : "mx-auto w-full max-w-4xl mb-6 px-4";
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const shellStyle = getScenarioShellStyle("mcpjam", themeMode);
@@ -480,7 +504,7 @@ export function McpjamAgentThread({
                 <div className="flex gap-2">
                   <Button
                     size="sm"
-                    disabled={!isReady || isStreaming}
+                    disabled={!isReady || isStreaming || tooLarge}
                     onClick={() =>
                       handleSubmit(
                         "Continue preparing the test from my previous description and expected outcome. Use the current case context.",
@@ -530,30 +554,50 @@ export function McpjamAgentThread({
                     first: they are about MCPJam's budget, not the reader's
                     credits, and the credits copy would be wrong twice over.
                     The raw body is the last resort — it reads as a crash. */}
-                {describeAgentRefusalMessage(session.error.message) ??
-                  // The organization requires its own keys, which Ask MCPJam
-                  // can't run on yet (`org_runtime_unsupported`): the
-                  // backend's sentence, never its JSON envelope.
-                  orgKeysRefusalSentence(session.error.message) ??
-                  describeMCPJamLimitMessage(session.error.message) ??
-                  session.error.message ??
-                  "Something went wrong."}
-                {rejectedInputTurn(session.messages, session.error.message) && (
+                {tooLarge
+                  ? CONVERSATION_TOO_LARGE_MESSAGE
+                  : (describeAgentRefusalMessage(session.error.message) ??
+                    // The organization requires its own keys, which Ask MCPJam
+                    // can't run on yet (`org_runtime_unsupported`): the
+                    // backend's sentence, never its JSON envelope.
+                    orgKeysRefusalSentence(session.error.message) ??
+                    describeMCPJamLimitMessage(session.error.message) ??
+                    session.error.message ??
+                    "Something went wrong.")}
+                {tooLarge && (
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
                     className="mt-2 block text-foreground"
                     onClick={() => {
-                      const text = session.editRejectedMessage();
-                      if (text === null) return;
-                      setDraft(text);
-                      textareaRef.current?.focus();
+                      keepDraftForNewChat(draft.trim());
+                      onNewChat();
                     }}
                   >
-                    Edit message
+                    Start new chat
                   </Button>
                 )}
+                {!tooLarge &&
+                  rejectedInputTurn(
+                    session.messages,
+                    session.error.message,
+                  ) && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 block text-foreground"
+                      onClick={() => {
+                        const text = session.editRejectedMessage();
+                        if (text === null) return;
+                        setDraft(text);
+                        textareaRef.current?.focus();
+                      }}
+                    >
+                      Edit message
+                    </Button>
+                  )}
               </div>
             )}
             {!session.error && session.autoResumeNotice && (

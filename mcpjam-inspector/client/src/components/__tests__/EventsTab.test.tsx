@@ -48,8 +48,8 @@ vi.mock("@/lib/apis/mcp-events-api", async (importOriginal) => ({
   fetchLocalEventsFeed: vi
     .fn()
     .mockResolvedValue({ entries: [], nextAfter: 0 }),
-  localEventsStreamUrl: (after: number) =>
-    `/api/mcp/events/stream?after=${after}`,
+  localEventsStreamUrl: (after: number, projectId: string | null) =>
+    `/api/mcp/events/stream?after=${after}${projectId ? `&projectId=${projectId}` : ""}`,
 }));
 
 vi.mock("@/hooks/useClients", () => ({
@@ -392,7 +392,13 @@ describe("EventsTab (local)", () => {
         serverConfig={serverConfig()}
         serverName={SERVER}
         activeHostId="host_chatgpt"
-        activeHost={{ hostStyle: "chatgpt" }}
+        activeHost={{
+          // Saved, as the template saves it: the Apps style decides nothing.
+          mcpProfile: {
+            profileVersion: 1,
+            extensions: { "com.mcpjam/events": { webhook: true } },
+          },
+        }}
       />,
     );
 
@@ -404,7 +410,7 @@ describe("EventsTab (local)", () => {
     const delivery = screen.getByTestId("subscribe-delivery");
     expect(
       within(delivery).getByText(
-        "ChatGPT doesn't receive events by poll. Turn it on in its Protocol settings, or pick another client.",
+        "ChatGPT doesn't receive events by poll. Turn it on in the client's Events tab, or pick another client.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Webhook/ })).toBeChecked();
@@ -457,7 +463,7 @@ describe("EventsTab (local)", () => {
     await openEventType("issue.created");
     const blocked = await screen.findByTestId("subscribe-blocked");
     expect(blocked).toHaveTextContent(
-      "doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.",
+      "doesn't receive events. Turn on a delivery mode in the client's Events tab, or pick another client.",
     );
     // Client policy is fixed in Clients, not with a picker here.
     expect(
@@ -637,14 +643,14 @@ describe("EventsTab (local)", () => {
     });
     expect(screen.getAllByTestId("feed-entry")).toHaveLength(1);
 
-    // Tracing gets a redacted webhook RECEIVE row per entry.
+    // Tracing gets one RECEIVE row per entry, named by its delivery mode and event type.
     const rows = useTrafficLogStore
       .getState()
       .mcpServerItems.filter((item) => item.kind === "webhook");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       direction: "RECEIVE",
-      method: "webhook event",
+      method: "simulation event · issue.created",
       serverId: SERVER,
     });
 
@@ -664,6 +670,64 @@ describe("EventsTab (local)", () => {
     expect(
       within(rejections).getByText("headers: webhook-id, webhook-signature"),
     ).toBeInTheDocument();
+  });
+
+  it("reads and subscribes in the current project, and starts over in another", async () => {
+    mockLoadEventsCatalog.mockResolvedValue(catalog([issueCreated]));
+    mockCreateLocal.mockResolvedValue(subscriptionView({ mode: "poll" }));
+    const tab = (projectId: string | null) => (
+      <EventsTab
+        serverConfig={serverConfig()}
+        serverName={SERVER}
+        projectId={projectId}
+        localProjectId="local_project"
+      />
+    );
+    const { rerender } = render(tab(null));
+
+    // Without a Convex project, the local project scopes the registry and feed.
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    expect(FakeEventSource.instances[0]!.url).toBe(
+      "/api/mcp/events/stream?after=0&projectId=local_project",
+    );
+    await waitFor(() =>
+      expect(mockListLocal).toHaveBeenCalledWith(SERVER, "local_project"),
+    );
+    await openEventType("issue.created");
+    fireEvent.change(await screen.findByPlaceholderText("Enter repo"), {
+      target: { value: "octo/hello" },
+    });
+    fireEvent.click(subscribeButton());
+    await waitFor(() =>
+      expect(mockCreateLocal).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "local_project", serverId: SERVER }),
+      ),
+    );
+    emitFrame({
+      type: "entry",
+      entry: {
+        seq: 1,
+        kind: "event",
+        origin: "push",
+        namespace: "live",
+        logicalSubscriptionId: "esub_1",
+        receivedAt: Date.now(),
+      },
+    });
+    expect(screen.getByRole("tab", { name: /^Occurrences/ })).toHaveTextContent("1");
+
+    // A Convex project wins, and nothing from the previous project carries over.
+    rerender(tab("convex_project"));
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+    expect(FakeEventSource.instances[0]!.closed).toBe(true);
+    expect(FakeEventSource.instances[1]!.url).toBe(
+      "/api/mcp/events/stream?after=0&projectId=convex_project",
+    );
+    await waitFor(() =>
+      expect(mockListLocal).toHaveBeenCalledWith(SERVER, "convex_project"),
+    );
+    expect(screen.getByRole("tab", { name: /^Occurrences/ })).toHaveTextContent("0");
+    expect(screen.getByRole("tab", { name: /^Subscriptions/ })).toHaveTextContent("0");
   });
 
   it("renders event data as text, never as HTML", async () => {

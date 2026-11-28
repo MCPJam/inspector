@@ -888,6 +888,8 @@ export type {
 // narrow the protocol list to the era a pinned version actually exercises.
 export {
   CHECK_ERAS,
+  CHECK_FIRST_PROTOCOL_VERSION,
+  checkRunsOnVersion,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
   MCP_LOG_LEVELS,
@@ -1301,14 +1303,11 @@ export type {
 export {
   MCPJAM_EVENTS_EXTENSION_ID,
   EVENT_DELIVERY_MODES,
-  HOST_STYLE_EVENT_DELIVERY_MODES,
   RUNTIME_EVENT_DELIVERY_MODES,
   isEventDeliveryMode,
   readEventsHostSetting,
-  hostStyleEventDeliveryModes,
   resolveHostEventDeliveryModes,
   setEventsHostSetting,
-  clearEventsHostSetting,
   subscribableModes,
   describeModeRefusal,
   describeNoSubscribableMode,
@@ -1386,7 +1385,10 @@ export { aiRequestHeaders } from "./ai-request-headers.js";
 /** Use the same validation before rendering embedded Task or MRTR input. */
 export { validateEmbeddedClientRequest } from "./mcp-client-manager/task-input-driver.js";
 export {
+  REMOVED_MCP_TASKS_CHECK_CATEGORIES,
+  REMOVED_MCP_TASKS_CHECK_IDS,
   RENAMED_MCP_TASKS_CHECK_IDS,
+  taskCheckUsesInput,
   MCP_TASKS_TOOL_CHECK_IDS,
   isTasksToolCheck,
 } from "./tasks-conformance/types.js";

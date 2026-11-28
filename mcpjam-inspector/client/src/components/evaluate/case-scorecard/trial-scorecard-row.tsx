@@ -106,6 +106,22 @@ function formatValue(result: TrialRowResult): string | null {
   return threshold ? `${value} / ${threshold}` : value;
 }
 
+/**
+ * Rows blind review withholds. Rubric checks and custom judges are judge
+ * output too: a blind label taken beside them is not blind, so they are
+ * withheld with the goal judge's own row, here and in every summary built
+ * from these rows.
+ */
+export function isJudgeOutput(
+  row: Pick<JoinedScorecardRow, "provenance">,
+): boolean {
+  return (
+    row.provenance === "judge" ||
+    row.provenance === "rubricCheck" ||
+    row.provenance === "customJudge"
+  );
+}
+
 export function TrialScorecardRow({
   row,
   body,
@@ -133,9 +149,7 @@ export function TrialScorecardRow({
   onSyncStep?: (stepId: string | null) => void;
   layout?: "row" | "report";
 }) {
-  // Rubric checks are judge output too: a blind label taken beside them is
-  // not blind, so they are withheld with the goal judge's own row.
-  const isJudge = row.provenance === "judge" || row.provenance === "rubricCheck";
+  const isJudge = isJudgeOutput(row);
   const builtin = row.provenance === "builtin";
   // A runner check has no role to soften a miss with: its failure IS the
   // stage's failure, which the heading above already wears in red.
@@ -256,6 +270,15 @@ export function TrialScorecardRow({
               <span data-narrative-source={narrative ? "ai" : "recorded"}>
                 {actual}
               </span>
+              {row.customJudge &&
+              row.customJudge.outputKind !== "passfail" &&
+              "value" in row.result &&
+              typeof row.result.value === "number" &&
+              (narrative || recorded.length > 0) ? (
+                <span className="mt-1 block">
+                  Score {row.result.value.toFixed(2)}
+                </span>
+              ) : null}
               {floor ? (
                 <span
                   className="mt-1 block"

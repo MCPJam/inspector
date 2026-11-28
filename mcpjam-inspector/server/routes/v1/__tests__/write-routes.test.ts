@@ -17,6 +17,9 @@ const {
   validateApiKeyMock,
   resolveUserByExternalIdMock,
   lookupWorkosKeyBindingMock,
+  localVenueMock,
+  localMachineMock,
+  explainMock,
 } = vi.hoisted(() => {
   // The evals route resolves its concurrency limit at import time; pin the
   // env BEFORE the hoisted imports run so a V1_MAX_CONCURRENT_EVAL_RUNS in
@@ -33,8 +36,22 @@ const {
     validateApiKeyMock: vi.fn(),
     resolveUserByExternalIdMock: vi.fn(),
     lookupWorkosKeyBindingMock: vi.fn(),
+    localVenueMock: vi.fn(),
+    localMachineMock: vi.fn(),
+    explainMock: vi.fn(),
   };
 });
+
+// Whether a harness runs on this machine, stubbed so no test reads this
+// machine's harness state; and the refusal text, passed through by default.
+vi.mock("../../../utils/harness/local/run-resources.js", async (original) => ({
+  ...(await original<typeof import("../../../utils/harness/local/run-resources.js")>()),
+  shouldUseLocalHarness: localVenueMock,
+  isLocalHarnessVenue: localMachineMock,
+}));
+vi.mock("../../../services/evals/explain-harness-refusal.js", () => ({
+  explainEvalHarnessRefusal: explainMock,
+}));
 
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: validateGuestTokenMock,
@@ -179,6 +196,9 @@ describe("v1 write routes", () => {
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     validateGuestTokenMock.mockResolvedValue({ valid: false });
     mockConvexQueries();
+    localVenueMock.mockResolvedValue(false);
+    localMachineMock.mockReturnValue(false);
+    explainMock.mockImplementation(async ({ admission }) => admission.reason);
   });
 
   afterEach(() => {
@@ -1072,6 +1092,106 @@ describe("v1 write routes", () => {
           "NOT_FOUND"
         );
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      // PLB-238: a launch that writes the suite is refused up front on a
+      // CI-owned suite, before any connection; a launch that only runs it is not.
+      describe("on a CI-owned suite", () => {
+        const RUNS =
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs";
+        const SUITE_ID = "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+        function mockCiSuite(environmentIds: string[] = []): void {
+          mockConvexQueries({
+            "testSuites:getTestSuite": () => ({
+              ...SUITE_DOC,
+              declaredSuiteId: "s_from_file",
+              environmentIds,
+            }),
+            "testSuites:getSuiteRunServerSelection": () => ({
+              serverIds: ["s_alpha"],
+              serverNames: ["alpha"],
+              source: "hostconfigxxxxxxxxxxxxxxxxxxxxxx",
+            }),
+            "projectEnvironments:listEnvironments": () => PROJECT_ENVIRONMENTS,
+            "projectEnvironments:resolveEnvironmentForLaunch": () =>
+              RESOLVED_ENVIRONMENT,
+            "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+          });
+        }
+
+        it.each([
+          [
+            "inline tests",
+            { suiteId: SUITE_ID, serverIds: ["s_alpha"], tests: [inlineTest] },
+            [],
+          ],
+          [
+            // An environment launch writes no snapshot, but still upserts
+            // inline tests, so it is refused like any other.
+            "inline tests in an environment",
+            { suiteId: SUITE_ID, tests: [inlineTest] },
+            ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          ],
+          [
+            "refreshSnapshot",
+            { suiteId: SUITE_ID, suiteRerun: true, refreshSnapshot: true },
+            [],
+          ],
+          [
+            // Not a regression: Convex refused this snapshot write before.
+            "refreshSnapshot on a bare rerun",
+            { suiteId: SUITE_ID, refreshSnapshot: true },
+            [],
+          ],
+        ])(
+          "refuses a launch that writes the suite (%s)",
+          async (_label, body, environmentIds) => {
+            mockHappyCreate();
+            mockCiSuite(environmentIds);
+            const res = await request(makeApp(), "POST", RUNS, body);
+            expect(res.status).toBe(409);
+            expect(
+              ((await res.json()) as { details?: { reason?: string } }).details
+                ?.reason,
+            ).toBe("CI_OWNED_SUITE_READ_ONLY");
+            expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+            expect(prepareEvalRunMock).not.toHaveBeenCalled();
+            expect(convexMutationMock).not.toHaveBeenCalled();
+          },
+        );
+
+        it.each([
+          ["a bare rerun", { suiteId: SUITE_ID }, []],
+          ["an explicit rerun", { suiteId: SUITE_ID, suiteRerun: true }, []],
+          [
+            // Inline tests on a rerun are run, not saved, so they pass.
+            "a rerun with inline tests",
+            { suiteId: SUITE_ID, suiteRerun: true, tests: [inlineTest] },
+            [],
+          ],
+          [
+            // What `eval run --file` sends after syncing the suite.
+            "the CLI's file launch",
+            {
+              suiteId: SUITE_ID,
+              caseIds: ["case1xxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+              sourceHash: "a".repeat(64),
+            },
+            [],
+          ],
+          [
+            "an environment rerun with refreshSnapshot",
+            { suiteId: SUITE_ID, suiteRerun: true, refreshSnapshot: true },
+            ["env1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+          ],
+        ])("starts %s", async (_label, body, environmentIds) => {
+          mockHappyCreate();
+          mockCiSuite(environmentIds);
+          const res = await request(makeApp(), "POST", RUNS, body);
+          expect(res.status).toBe(202);
+          expect(prepareEvalRunMock).toHaveBeenCalledTimes(1);
+        });
       });
     });
 
@@ -2631,6 +2751,75 @@ describe("v1 write routes", () => {
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
     });
 
+    it("admits harness targets this machine runs, asking once per harness with the member's sign-in", async () => {
+      // No cloud computer here: judged as cloud runs, these would be refused.
+      localVenueMock.mockResolvedValue(true);
+      localMachineMock.mockReturnValue(true);
+      hostSuiteQueries({
+        "hosts:getHost": () => ({ config: { harness: "claude-code" } }),
+      });
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+      expect(res.status).toBe(202);
+      expect(localVenueMock).toHaveBeenCalledTimes(1);
+      expect(localVenueMock).toHaveBeenCalledWith(
+        "claude-code",
+        "tok",
+        "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        { scope: "unattended" }
+      );
+      expect(prepareEvalRunMock).toHaveBeenCalledTimes(2);
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("says why this machine can't run a harness target, before any target starts", async () => {
+      const explained =
+        "Couldn't run Claude Code on this machine because it isn't set up for this project. Set it up in the Playground, then run the eval again.";
+      explainMock.mockResolvedValue(explained);
+      hostSuiteQueries({
+        "hosts:getHost": () => ({ config: { harness: "claude-code" } }),
+      });
+      mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [
+            { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+            { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.details).toMatchObject({
+        reason: "HARNESS_UNAVAILABLE",
+        harness: "claude-code",
+      });
+      expect(body.message).toBe(
+        `Host "Claude" (hostclaudexxxxxxxxxxxxxxxxxxxxxx): ${explained}`
+      );
+      expect(explainMock).toHaveBeenCalledWith({
+        admission: expect.objectContaining({ ok: false, harness: "claude-code" }),
+        bearer: "tok",
+        projectId: "proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      });
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
     it("judges an ENVIRONMENT target against its OWN host, not the suite default", async () => {
       // An environment pins a `hostId`, and that is the host whose config the
       // run row freezes. Judging the suite's default host instead would admit
@@ -3501,6 +3690,23 @@ describe("v1 write routes", () => {
         usage: { inputTokens: 1100, outputTokens: 242 },
         actualToolCalls: [{ toolName: "echo", arguments: { a: 1 } }],
       });
+    });
+
+    it.each([
+      [undefined, {}],
+      [{ runUnloadedToolCalls: false, engineVersion: "3.24.1", privateNote: "internal" },
+        { runUnloadedToolCalls: false, engineVersion: "3.24.1" }],
+    ])("exports only recorded discovery settings in an eval trace", async (metadata, expected) => {
+      convexQueryMock
+        .mockResolvedValueOnce(RUN_DOC)
+        .mockResolvedValueOnce({ suiteRunId: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx", metadata });
+      convexActionMock.mockResolvedValueOnce({ messages: [] });
+      const res = await request(
+        makeApp(), "GET",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx/iterations/iter1xxxxxxxxxxxxxxxxxxxxxxxxxxx/trace",
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ messages: [], ...expected });
     });
 
     it("returns the trace blob and 404s with TRACE_NOT_AVAILABLE when missing", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Syringe, Wrench } from "lucide-react";
+import { Wrench } from "lucide-react";
 import { fireEvent, renderWithProviders, screen } from "@/test";
 import { EvaluatorCard, type EvaluatorCardProps } from "../evaluator-card";
 
@@ -13,12 +13,12 @@ const base: EvaluatorCardProps = {
     { kind: "assertions", label: "3 assertions" },
     { kind: "question", label: "1 choice question" },
   ],
-  dependency: "expectedToolCalls",
   onOpen: () => {},
+  onAdd: () => {},
 };
 
 describe("EvaluatorCard", () => {
-  it("shows the name, question, parts and case dependency", () => {
+  it("shows the name, question and parts", () => {
     renderWithProviders(<EvaluatorCard {...base} />);
     expect(
       screen.getByRole("heading", { name: "Expected Tool Calls" }),
@@ -26,12 +26,6 @@ describe("EvaluatorCard", () => {
     expect(screen.getByText(base.question)).toBeInTheDocument();
     expect(screen.getByText("3 assertions")).toBeInTheDocument();
     expect(screen.getByText("1 choice question")).toBeInTheDocument();
-    expect(screen.getByText("Uses expected tool calls")).toBeInTheDocument();
-  });
-
-  it("shows Ready when the evaluator reads no case field", () => {
-    renderWithProviders(<EvaluatorCard {...base} dependency={undefined} />);
-    expect(screen.getByText("Ready")).toBeInTheDocument();
   });
 
   it("opens from the name and adds from a separate button", () => {
@@ -59,22 +53,17 @@ describe("EvaluatorCard", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("marks the open evaluator and tags security evaluators", () => {
+  it("explains a disabled Add", () => {
     renderWithProviders(
       <EvaluatorCard
         {...base}
-        name="Ignores Injected Instructions"
-        icon={Syringe}
-        tone="security"
-        owasp={["MCP06"]}
-        dependency="attackFixture"
-        selected
+        onAdd={() => {}}
+        addDisabledReason="Remove a question first."
       />,
     );
-    expect(screen.getByRole("article")).toHaveAttribute("aria-current", "true");
-    expect(screen.getByRole("article")).toHaveTextContent(
-      "OWASP MCP Top 10: MCP06",
-    );
-    expect(screen.getByText("Uses attack fixture")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add Expected Tool Calls to suite" }),
+    ).toBeDisabled();
+    expect(screen.getByText("Remove a question first.")).toBeInTheDocument();
   });
 });

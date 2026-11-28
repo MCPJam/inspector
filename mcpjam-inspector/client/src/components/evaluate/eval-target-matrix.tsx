@@ -199,7 +199,7 @@ export function EvalTargetMatrix({
       {!hideHeading && (
         <div className="space-y-1">
           <h2 id="where-it-runs-heading" className="text-sm font-medium">
-            Where it runs{" "}
+            Clients and models{" "}
             <span className="ml-1 text-destructive" aria-hidden="true">
               *
             </span>

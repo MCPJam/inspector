@@ -33,13 +33,15 @@ import {
   type SessionRowAction,
 } from "./session-action-feedback";
 
-function formatChatHistoryModelLabel(
+export function formatChatHistoryModelLabel(
   session: ChatHistorySession,
+  /** Names for models the static list does not know, e.g. hosted ones. */
+  modelName?: (modelId: string) => string | undefined,
 ): string | null {
   const raw = session.modelId?.trim();
   if (!raw) return null;
   // Plus the effort the session's last turn ran at (" · High").
-  return `${getModelById(raw)?.name ?? raw}${sessionEffortSuffix(
+  return `${modelName?.(raw) ?? getModelById(raw)?.name ?? raw}${sessionEffortSuffix(
     session.modelSelection,
   )}`;
 }
@@ -95,6 +97,16 @@ interface ChatHistoryRowProps {
   onConvertToTestCase?: (session: ChatHistorySession) => void;
   /** Project list only: avatar for another member's shared thread. */
   projectThreadOwner?: ProjectThreadOwnerAvatar;
+  /** Replaces the title, e.g. a column row named by its model. */
+  titleOverride?: string;
+  /** Replaces the model label, e.g. a multi-model session's lineup. */
+  labelOverride?: string;
+  /** Multi-model sessions are not shared to a project. */
+  hideShare?: boolean;
+  /** Overrides "Archive" for rows that archive more than one chat. */
+  archiveLabel?: string;
+  /** A row that only opens its chat, e.g. a column of a multi-model session. */
+  hideMenu?: boolean;
   actions: {
     rename: (sessionId: string, customTitle: string) => Promise<void>;
     archive: (sessionId: string) => Promise<void>;
@@ -119,6 +131,11 @@ export function ChatHistoryRow({
   canConvertToTestCase = false,
   onConvertToTestCase,
   projectThreadOwner,
+  titleOverride,
+  labelOverride,
+  hideShare = false,
+  archiveLabel = "Archive",
+  hideMenu = false,
   actions,
 }: ChatHistoryRowProps) {
   const [relativeTime, setRelativeTime] = useState(
@@ -146,11 +163,12 @@ export function ChatHistoryRow({
   }, [isRenaming]);
 
   const title =
+    titleOverride ||
     session.customTitle ||
     session.firstMessagePreview.slice(0, 60) ||
     "Untitled chat";
 
-  const modelLabel = formatChatHistoryModelLabel(session);
+  const modelLabel = labelOverride ?? formatChatHistoryModelLabel(session);
 
   const ownerAvatarTooltip =
     projectThreadOwner?.status === "show"
@@ -230,7 +248,8 @@ export function ChatHistoryRow({
     if (isStreaming || isActive || isRenaming) return;
     onPrefetch?.(session);
   };
-  const canManageProjectSharing = isAuthenticated && sharedThreadsEnabled;
+  const canManageProjectSharing =
+    isAuthenticated && sharedThreadsEnabled && !hideShare;
 
   if (isRenaming) {
     const renameField = (
@@ -351,80 +370,84 @@ export function ChatHistoryRow({
         <span className="chat-history-time w-7 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">
           {relativeTime}
         </span>
-        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-          <DropdownMenuTrigger
-            disabled={isStreaming}
-            aria-label="Session actions"
-            className={ROW_ICON_BUTTON_CLASS}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <MoreVertical className="h-3.5 w-3.5" aria-hidden />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            className="w-52"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {canConvertToTestCase && onConvertToTestCase ? (
-              <>
-                <DropdownMenuItem onClick={() => onConvertToTestCase(session)}>
-                  Save as test case
-                </DropdownMenuItem>
-              </>
-            ) : null}
-            <DropdownMenuItem
-              onClick={() => {
-                setRenameValue(session.customTitle || "");
-                setIsRenaming(true);
-              }}
+        {hideMenu ? null : (
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+            <DropdownMenuTrigger
+              disabled={isStreaming}
+              aria-label="Session actions"
+              className={ROW_ICON_BUTTON_CLASS}
+              onClick={(e) => e.stopPropagation()}
             >
-              Rename
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={async () =>
-                session.isPinned
-                  ? await runAction("unpin", () => actions.unpin(session._id))
-                  : await runAction("pin", () => actions.pin(session._id))
-              }
+              <MoreVertical className="h-3.5 w-3.5" aria-hidden />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="w-52"
+              onClick={(e) => e.stopPropagation()}
             >
-              {session.isPinned ? "Unpin" : "Pin"}
-            </DropdownMenuItem>
+              {canConvertToTestCase && onConvertToTestCase ? (
+                <>
+                  <DropdownMenuItem
+                    onClick={() => onConvertToTestCase(session)}
+                  >
+                    Save as test case
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+              <DropdownMenuItem
+                onClick={() => {
+                  setRenameValue(session.customTitle || "");
+                  setIsRenaming(true);
+                }}
+              >
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={async () =>
+                  session.isPinned
+                    ? await runAction("unpin", () => actions.unpin(session._id))
+                    : await runAction("pin", () => actions.pin(session._id))
+                }
+              >
+                {session.isPinned ? "Unpin" : "Pin"}
+              </DropdownMenuItem>
 
-            {canManageProjectSharing && (
-              <>
-                <DropdownMenuItem
-                  onClick={async () =>
-                    session.directVisibility === "project"
-                      ? await runAction("unshare", () =>
-                          actions.unshare(session._id),
-                        )
-                      : await runAction("share", () =>
-                          actions.share(session._id),
-                        )
-                  }
-                >
-                  {session.directVisibility === "project"
-                    ? "Unshare"
-                    : "Add to Shared Sessions"}
-                </DropdownMenuItem>
-              </>
-            )}
+              {canManageProjectSharing && (
+                <>
+                  <DropdownMenuItem
+                    onClick={async () =>
+                      session.directVisibility === "project"
+                        ? await runAction("unshare", () =>
+                            actions.unshare(session._id),
+                          )
+                        : await runAction("share", () =>
+                            actions.share(session._id),
+                          )
+                    }
+                  >
+                    {session.directVisibility === "project"
+                      ? "Unshare"
+                      : "Add to Shared Sessions"}
+                  </DropdownMenuItem>
+                </>
+              )}
 
-            <DropdownMenuItem
-              onClick={async () =>
-                session.status === "active"
-                  ? await runAction("archive", () =>
-                      actions.archive(session._id),
-                    )
-                  : await runAction("unarchive", () =>
-                      actions.unarchive(session._id),
-                    )
-              }
-            >
-              {session.status === "active" ? "Archive" : "Unarchive"}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+              <DropdownMenuItem
+                onClick={async () =>
+                  session.status === "active"
+                    ? await runAction("archive", () =>
+                        actions.archive(session._id),
+                      )
+                    : await runAction("unarchive", () =>
+                        actions.unarchive(session._id),
+                      )
+                }
+              >
+                {session.status === "active" ? archiveLabel : "Unarchive"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
     </div>
   );

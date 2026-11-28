@@ -20,9 +20,11 @@ import {
   checkedAccountIds,
   choosesAccounts,
   SET_SUITE_ACCOUNT_SELECTION_MUTATION,
+  type SharedEvalAccountSelection,
   type SuiteAccountsServer,
   type SuiteAccountsView,
 } from "@/lib/evals/eval-accounts";
+import { SharedServerAccountRows } from "./shared-account-pickers";
 import { SuiteSettingsRow } from "./suite-settings-row";
 import type { EvalSuite } from "./types";
 
@@ -36,23 +38,26 @@ const setSuiteAccountSelection = makeFunctionReference<
 const SHARED_TAG = "Shared with the project";
 
 export const SUITE_ACCOUNTS_HINT =
-  "Each run uses the accounts of the person who starts it. A schedule uses its owner's accounts, and an API or CLI run uses the key owner's.";
+  "Runs of this suite use this account. A case can pin a different one.";
+
+type SharedDefaultsDraft = {
+  value: SharedEvalAccountSelection[] | undefined;
+  onChange: (value: SharedEvalAccountSelection[]) => void;
+  disabled: boolean;
+};
 
 /**
- * Suite settings → Accounts: which accounts this suite runs with for the
- * person, per server (their own, or on a shared server the project's), beside
- * the project's fixed connections and the accounts each schedule owner's runs
- * use.
- *
- * The choice belongs to the person, not the suite, so it is not part of the
- * settings draft: each checkbox saves right away, like "Where it runs".
+ * Shared server defaults participate in the settings draft. Personal server
+ * and web-client preferences still save to the person who owns them.
  */
 export function SuiteAccountsRow({
   suite,
   projectId,
+  sharedDefaults,
 }: {
   suite: EvalSuite;
   projectId?: string | null;
+  sharedDefaults?: SharedDefaultsDraft;
 }) {
   const enabled = useEvalAccountSelectionEnabled();
   // Web accounts follow their own flag alone, with or without server accounts.
@@ -61,12 +66,13 @@ export function SuiteAccountsRow({
   // Accounts belong to a hosted project. A local one has no servers query to
   // wait on, so the row would read "Loading accounts…" forever.
   if (!project || !shouldQueryProjectId(project)) return null;
-  if (enabled)
+  if (enabled || sharedDefaults)
     return (
       <SuiteAccountsSection
         suite={suite}
         projectId={project}
         webAccounts={webClients}
+        sharedDefaults={sharedDefaults && { ...sharedDefaults, disabled: sharedDefaults.disabled || !enabled }}
       />
     );
   if (!webClients) return null;
@@ -92,25 +98,30 @@ function SuiteAccountsSection({
   suite,
   projectId,
   webAccounts,
+  sharedDefaults,
 }: {
   suite: EvalSuite;
   projectId: string;
   webAccounts: boolean;
+  sharedDefaults?: SharedDefaultsDraft;
 }) {
   const { view, error, loading, serverIds, serverName } = useSuiteAccounts(
     suite,
     projectId,
   );
+  const managedDefaults = sharedDefaults && view?.servers.some((server) => server.managed)
+    ? sharedDefaults
+    : undefined;
   return (
     <SuiteSettingsRow
       settingKey="accounts"
       chained={false}
       data-subsection-id="accounts"
-      hint={SUITE_ACCOUNTS_HINT}
+      hint={managedDefaults ? SUITE_ACCOUNTS_HINT : "Choose the accounts your runs use."}
     >
       {error ? (
         <p className="text-xs text-destructive">
-          Could not load your accounts. Reload the page to try again.
+          Could not load MCP server accounts. Reload the page to try again.
         </p>
       ) : loading ? (
         <p className="text-xs text-muted-foreground">Loading accounts…</p>
@@ -119,6 +130,7 @@ function SuiteAccountsSection({
           suiteId={suite._id}
           view={view}
           serverName={serverName}
+          sharedDefaults={managedDefaults}
         />
       ) : (
         <p className="text-xs text-muted-foreground">
@@ -182,6 +194,9 @@ function SuiteWebAccountsGroup({
     setPending((current) => ({ ...current, [vendor]: next }));
     try {
       await save({ suiteId, vendor, webAccountIds: next });
+      // The choice is outside the settings draft, so Save settings stays
+      // off; this is the only sign that it saved.
+      toast.success(`Saved your ${webClientName(vendor)} accounts.`);
     } catch (failure) {
       const fallback = `Couldn't save your ${webClientName(vendor)} accounts. Try again.`;
       const refusal = describeConvexFailure(failure, fallback);
@@ -200,7 +215,7 @@ function SuiteWebAccountsGroup({
       testId="suite-accounts-web"
       title="Web clients"
       description="The accounts Claude web and ChatGPT web sign in as for runs you start and schedules you own."
-      footer="Teammates choose their own accounts."
+      footer="Changes save right away. Teammates choose their own accounts."
       column="Client"
     >
       {rows.map(({ vendor, server }) => (
@@ -226,20 +241,31 @@ export function SuiteAccountGroups({
   suiteId,
   view,
   serverName,
+  sharedDefaults,
 }: {
   suiteId: string;
   view: SuiteAccountsView;
   serverName: (serverId: string) => string;
+  sharedDefaults?: SharedDefaultsDraft;
 }) {
   const save = useMutation(setSuiteAccountSelection);
   // A save in flight shows its result at once; the query then confirms it,
   // and a failure falls back to what the query says.
   const [pending, setPending] = useState<Record<string, string[]>>({});
-  // A shared server's project accounts are chosen per person like their own,
-  // so they sit with them rather than with the fixed connections.
-  const own = view.servers.filter(choosesAccounts);
+  const shared = sharedDefaults
+    ? view.servers.filter((server) => server.mode === "shared" && server.managed)
+    : [];
+  const personalEditingEnabled = useEvalAccountSelectionEnabled();
+  const own = personalEditingEnabled ? view.servers.filter((server) => choosesAccounts(server) && !shared.includes(server)) : [];
   const project = view.servers.filter((server) => server.mode === "xaa");
-  if (!own.length && !project.length && !view.scheduleOwners.length) {
+  const personalServers = new Set(own.map((server) => server.serverId));
+  const scheduleOwners = view.scheduleOwners.flatMap((owner) => {
+    const servers = sharedDefaults
+      ? owner.servers.filter((server) => personalServers.has(server.serverId))
+      : owner.servers;
+    return servers.length ? [{ ...owner, servers }] : [];
+  });
+  if (!own.length && !shared.length && !project.length && !scheduleOwners.length) {
     return (
       <p className="text-xs text-muted-foreground">
         None of this suite's servers use an account.
@@ -252,6 +278,9 @@ export function SuiteAccountGroups({
     setPending((current) => ({ ...current, [serverId]: next }));
     try {
       await save({ suiteId, serverId, connectionIds: next });
+      // The choice is outside the settings draft, so Save settings stays
+      // off; this is the only sign that it saved.
+      toast.success(`Saved your ${serverName(serverId)} accounts.`);
     } catch (failure) {
       console.warn("[Suite settings] Could not save accounts.", failure);
       // The backend's own sentence when it refused the choice; otherwise ours.
@@ -269,12 +298,24 @@ export function SuiteAccountGroups({
 
   return (
     <div className="space-y-4">
+      {shared.length && sharedDefaults ? (
+        <div data-testid="suite-accounts-shared">
+          <SharedServerAccountRows
+            servers={shared}
+            serverName={serverName}
+            selections={sharedDefaults.value}
+            onChange={sharedDefaults.onChange}
+            disabled={sharedDefaults.disabled}
+            editingSuite
+          />
+        </div>
+      ) : null}
       {own.length ? (
         <AccountGroup
           testId="suite-accounts-mine"
           title="Runs as you"
           description="Used by runs you start in the app or with your API key, and by schedules you own."
-          footer="Teammates choose their own accounts."
+          footer="Changes save right away. Teammates choose their own accounts."
         >
           {own.map((server) => (
             <AccountServerRow
@@ -314,7 +355,7 @@ export function SuiteAccountGroups({
           ))}
         </AccountGroup>
       ) : null}
-      {view.scheduleOwners.map((owner, index) => (
+      {scheduleOwners.map((owner, index) => (
         <AccountGroup
           key={`${owner.name}:${index}`}
           testId="suite-accounts-schedule-owner"
@@ -482,7 +523,7 @@ export function NeedsReconnectTag({
   );
 }
 
-function AccountGroup({
+export function AccountGroup({
   testId,
   title,
   tag,
@@ -494,7 +535,7 @@ function AccountGroup({
   testId: string;
   title: string;
   tag?: string;
-  description: string;
+  description?: string;
   footer?: string;
   /** What each row names. */
   column?: string;
@@ -518,7 +559,7 @@ function AccountGroup({
             </Badge>
           ) : null}
         </h4>
-        <p className="text-xs text-muted-foreground">{description}</p>
+        {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
       </div>
       <table className="w-full table-fixed border-collapse text-left text-sm">
         <thead className="text-xs text-muted-foreground">

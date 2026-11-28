@@ -1,16 +1,26 @@
 import { Fragment } from "react";
-import { UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
 import { useSuiteAccounts } from "@/hooks/use-suite-accounts";
 import { runsAsEntries, type RunsAsEntry } from "@/lib/evals/eval-accounts";
+import { AccountAvatar } from "../evals/account-avatar";
+import { ServerLabel } from "../evals/account-picker";
 import { NeedsReconnectTag } from "../evals/suite-accounts-row";
 import type { EvalSuite } from "../evals/types";
 
+/** An account's avatar and name, as the account pickers show it. */
+export function AccountName({ name }: { name: string }) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5 text-foreground">
+      <AccountAvatar name={name} />
+      <span className="truncate font-medium">{name}</span>
+    </span>
+  );
+}
+
 /**
- * "Runs as you · Asana Dummy": the accounts a run of this suite will use for
- * the person, one server after another: their own, or the project accounts
- * they chose on a shared server. Nothing when no server has such a choice.
+ * "Runs as [W] Work · [server] Mail": the accounts a run of this suite will
+ * use, then the server they are on, one server after another. Nothing when no
+ * server has such a choice.
  */
 export function RunsAsLine({
   entries,
@@ -23,27 +33,24 @@ export function RunsAsLine({
   return (
     <p
       className={cn(
-        "flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground",
+        "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground",
         className,
       )}
       data-testid="suite-runs-as"
     >
-      <UserRound className="size-3.5 shrink-0" aria-hidden />
-      <span>Runs as you</span>
-      {entries.map((entry) => (
+      <span>Runs as</span>
+      {entries.map((entry, index) => (
         <Fragment key={entry.serverId}>
-          <span aria-hidden> · </span>
-          <span className="inline-flex flex-wrap items-center gap-1">
-            <span>{entry.serverName} </span>
-            <span className="text-foreground">
-              {entry.accounts.map((account) => account.name).join(", ")}
-            </span>
+          {index > 0 ? <span aria-hidden>·</span> : null}
+          <span className="inline-flex min-w-0 flex-wrap items-center gap-2">
+            {entry.accounts.map((account) => (
+              <AccountName key={account.name} name={account.name} />
+            ))}
             {entry.accounts.some((account) => account.needsReauth) ? (
-              <>
-                {" "}
-                <NeedsReconnectTag />
-              </>
+              <NeedsReconnectTag />
             ) : null}
+            {entries.length > 1 ? null : <span aria-hidden>·</span>}
+            <ServerLabel name={entry.serverName} />
           </span>
         </Fragment>
       ))}
@@ -51,7 +58,7 @@ export function RunsAsLine({
   );
 }
 
-/** {@link RunsAsLine} for a suite, read while the rollout flag is on. */
+/** {@link RunsAsLine} for a suite. */
 export function SuiteRunsAsLine({
   suite,
   projectId,
@@ -61,8 +68,6 @@ export function SuiteRunsAsLine({
   projectId?: string | null;
   className?: string;
 }) {
-  const enabled = useEvalAccountSelectionEnabled();
-  if (!enabled) return null;
   return (
     <LoadedRunsAsLine
       suite={suite}

@@ -11,7 +11,7 @@ import { serve, type ServerType } from "@hono/node-server";
 import { Hono } from "hono";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { buildWebhookHeaders } from "@mcpjam/sdk/events";
-import type { EventsStreamFrame } from "@/shared/events-api";
+import type { EventsFeedEntryView, EventsStreamFrame } from "@/shared/events-api";
 import {
   startEventsFixture,
   type EventsFixtureHandle,
@@ -83,6 +83,38 @@ async function call(
 
 async function feed(): Promise<any[]> {
   return (await call("GET", "/feed?after=0&limit=1000")).body.entries;
+}
+
+/** Open `/stream?<query>` and collect its frames as they are read. */
+async function openStream(query: string) {
+  const controller = new AbortController();
+  const response = await fetch(
+    `${base}/api/mcp/events/stream?${query}&_token=${await sessionToken()}`,
+    { signal: controller.signal },
+  );
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  const frames: EventsStreamFrame[] = [];
+  let buffer = "";
+  const readUntil = async (predicate: () => boolean) => {
+    while (!predicate()) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let index: number;
+      while ((index = buffer.indexOf("\n\n")) >= 0) {
+        const chunk = buffer.slice(0, index);
+        buffer = buffer.slice(index + 2);
+        const data = chunk
+          .split("\n")
+          .filter((line) => line.startsWith("data: "))
+          .map((line) => line.slice(6))
+          .join("");
+        if (data) frames.push(JSON.parse(data));
+      }
+    }
+  };
+  return { response, frames, readUntil, close: () => controller.abort() };
 }
 
 describe("local events routes", () => {
@@ -252,7 +284,7 @@ describe("local events routes", () => {
     expect(refused.body).toMatchObject({
       code: "EVENTS_MODE_UNSUPPORTED",
       message:
-        "ChatGPT doesn't receive events by poll. Turn it on in its Protocol settings, or pick another client.",
+        "ChatGPT doesn't receive events by poll. Turn it on in the client's Events tab, or pick another client.",
     });
     const none = await call("POST", "/subscriptions", {
       serverId: SERVER_ID,
@@ -263,7 +295,7 @@ describe("local events routes", () => {
     });
     expect(none.status).toBe(400);
     expect(none.body.message).toBe(
-      "Claude doesn't receive events. Turn on a delivery mode in its Protocol settings, or pick another client.",
+      "Claude doesn't receive events. Turn on a delivery mode in the client's Events tab, or pick another client.",
     );
   });
 
@@ -295,6 +327,10 @@ describe("local events routes", () => {
     });
     expect(again.status).toBe(409);
     expect(again.body.code).toBe("EVENTS_CONFLICT");
+    // Named, so the user can find the subscription that holds the event.
+    expect(again.body.message).toBe(
+      "build.failed is already subscribed under Team MCPJam with the same arguments. Remove that subscription in the Events tab, then subscribe again.",
+    );
   });
 
   it("simulates into the simulation namespace", async () => {
@@ -567,34 +603,8 @@ describe("local events routes", () => {
   });
 
   it("streams a snapshot, the backlog, then live frames", async () => {
-    const controller = new AbortController();
-    const response = await fetch(
-      `${base}/api/mcp/events/stream?after=0&_token=${await sessionToken()}`,
-      { signal: controller.signal },
-    );
+    const { response, frames, readUntil, close } = await openStream("after=0");
     expect(response.headers.get("content-type")).toContain("text/event-stream");
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    const frames: EventsStreamFrame[] = [];
-    let buffer = "";
-    const readUntil = async (predicate: () => boolean) => {
-      while (!predicate()) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let index: number;
-        while ((index = buffer.indexOf("\n\n")) >= 0) {
-          const chunk = buffer.slice(0, index);
-          buffer = buffer.slice(index + 2);
-          const data = chunk
-            .split("\n")
-            .filter((line) => line.startsWith("data: "))
-            .map((line) => line.slice(6))
-            .join("");
-          if (data) frames.push(JSON.parse(data));
-        }
-      }
-    };
     await readUntil(() => frames.length >= 1);
     expect(frames[0]).toMatchObject({ type: "snapshot", subscriptions: expect.any(Array) });
     const snapshot = frames[0] as Extract<EventsStreamFrame, { type: "snapshot" }>;
@@ -609,7 +619,84 @@ describe("local events routes", () => {
     await readUntil(() =>
       frames.some((f) => f.type === "entry" && f.entry.eventId === "sim_live_1"),
     );
-    controller.abort();
+    close();
+  });
+
+  // After the unscoped stream test: that one expects every journal entry in
+  // the default project's backlog.
+  it("scopes subscriptions, the feed and the stream to the project", async () => {
+    const create = async (projectId: string) =>
+      (
+        await call("POST", "/subscriptions", {
+          projectId,
+          serverId: SERVER_ID,
+          eventName: "build.failed",
+          arguments: { branch: "scoped" },
+          mode: "poll",
+          host: null,
+        })
+      ).body.subscription;
+    const a = await create("proj_a");
+    const b = await create("proj_b");
+    // The same subscription in another project is another subscription.
+    expect(b.id).not.toBe(a.id);
+    const simulate = (subscriptionId: string, buildId: string) =>
+      call("POST", "/simulate", {
+        subscriptionId,
+        event: { data: { branch: "scoped", buildId } },
+      });
+    await simulate(a.id, "a1");
+    await simulate(b.id, "b1");
+    await simulate(a.id, "a2");
+    await simulate(b.id, "b2");
+    const buildIds = (entries: EventsFeedEntryView[]) =>
+      entries.filter((entry) => entry.kind === "event").map((entry) => entry.data?.buildId);
+
+    // The stream: project B's snapshot and backlog, then only its live frames.
+    const { frames, readUntil, close } = await openStream("after=0&projectId=proj_b");
+    const streamed = () =>
+      buildIds(frames.flatMap((frame) => (frame.type === "entry" ? [frame.entry] : [])));
+    await readUntil(() => streamed().includes("b2"));
+    const snapshot = frames[0] as Extract<EventsStreamFrame, { type: "snapshot" }>;
+    expect(snapshot.type).toBe("snapshot");
+    expect(snapshot.subscriptions.map((s) => s.id)).toEqual([b.id]);
+    await simulate(a.id, "a3");
+    // Removing A tells project A's listeners only.
+    await call("POST", `/subscriptions/${a.id}/state`, { desiredState: "removed" });
+    await simulate(b.id, "b3");
+    await readUntil(() => streamed().includes("b3"));
+    close();
+    expect(streamed()).toEqual(["b1", "b2", "b3"]);
+    expect(
+      frames.some((frame) => frame.type === "subscription" && frame.subscription.id === a.id),
+    ).toBe(false);
+
+    // The feed: A's occurrences stay in A after its removal, and nowhere else.
+    const feedOf = async (projectId: string, after = 0, limit = 1000) =>
+      (await call("GET", `/feed?after=${after}&limit=${limit}&projectId=${projectId}`)).body;
+    expect(buildIds((await feedOf("proj_a")).entries)).toEqual(["a1", "a2", "a3"]);
+    expect(buildIds((await feedOf("proj_b")).entries)).toEqual(["b1", "b2", "b3"]);
+    const unscoped = await feed();
+    expect(unscoped.some((entry) => [a.id, b.id].includes(entry.logicalSubscriptionId))).toBe(false);
+    // A full page resumes after its last entry; a short one reaches the head.
+    const first = await feedOf("proj_b", 0, 1);
+    expect(buildIds(first.entries)).toEqual(["b1"]);
+    expect(first.nextAfter).toBe(first.entries[0].seq);
+    const rest = await feedOf("proj_b", first.nextAfter, 2);
+    expect(buildIds(rest.entries)).toEqual(["b2", "b3"]);
+    expect((await feedOf("proj_b", rest.nextAfter)).entries).toEqual([]);
+
+    // The registry: each project lists its own, the removed one included.
+    const listed = async (query: string): Promise<string[]> =>
+      (await call("GET", `/subscriptions?serverId=${SERVER_ID}${query}`)).body.subscriptions.map(
+        (s: { id: string }) => s.id,
+      );
+    expect(await listed("&projectId=proj_a")).toEqual([a.id]);
+    expect(await listed("&projectId=proj_b")).toEqual([b.id]);
+    const defaults = await listed("");
+    expect(defaults).not.toContain(a.id);
+    expect(defaults).not.toContain(b.id);
+    await call("POST", `/subscriptions/${b.id}/state`, { desiredState: "removed" });
   });
 
   // LAST: it wipes the connection's capability capture.
