@@ -231,12 +231,12 @@ export async function inputAnswerResolverFor(
 
 const caseConnections = new WeakMap<
   MCPClientManager,
-  (resolver: InputAnswerResolver) => Promise<MCPClientManager>
+  (resolver: InputAnswerResolver, serverIds: readonly string[]) => Promise<MCPClientManager>
 >();
 
 export function registerInputAnswerConnection(
   manager: MCPClientManager,
-  reopen: (resolver: InputAnswerResolver) => Promise<MCPClientManager>,
+  reopen: (resolver: InputAnswerResolver, serverIds: readonly string[]) => Promise<MCPClientManager>,
 ): void {
   caseConnections.set(manager, reopen);
 }
@@ -244,10 +244,11 @@ export function registerInputAnswerConnection(
 export async function openInputAnswerConnection(
   base: MCPClientManager,
   answers: readonly InputAnswer[],
+  serverIds: readonly string[] = base.listServers(),
 ): Promise<MCPClientManager> {
   const reopen = caseConnections.get(base);
   if (!reopen) throw new Error("This eval connection cannot answer the case's saved questions.");
-  return reopen(createInputAnswerResolver({ answers }));
+  return reopen(createInputAnswerResolver({ answers }), serverIds);
 }
 
 const PINNED_TTL_MS = 60_000;
