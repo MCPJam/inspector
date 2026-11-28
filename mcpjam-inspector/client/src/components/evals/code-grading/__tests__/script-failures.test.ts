@@ -42,8 +42,7 @@ describe("Setup failed", () => {
       nextSteps: ["After you fix the script, run the suite again."],
       severity: "error",
       origin: "user_config",
-      // The exit code leads the details, beside the output it explains.
-      rawMessage: `Exit code 1\n\n${failed.output}`,
+      rawMessage: failed.output,
     });
     expect(failure.rawLabel).toBe("Script output");
     expect(
