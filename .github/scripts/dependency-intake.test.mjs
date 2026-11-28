@@ -37,6 +37,25 @@ test("finds the intake block but not one inside an HTML comment", () => {
   assert.equal(hasIntakeBlock(null), false);
 });
 
+test("a comment marker inside fenced code does not hide the intake block", () => {
+  assert.equal(
+    hasIntakeBlock("```html\n<!-- example\n```\nDependency intake:\n- need: yes"),
+    true
+  );
+  assert.equal(
+    hasIntakeBlock("~~~~\n<!--\n~~~~~\n**Dependency intake:**"),
+    true
+  );
+  assert.equal(
+    hasIntakeBlock("<!--\n```\n-->\nDependency intake: shown"),
+    true
+  );
+  assert.equal(
+    hasIntakeBlock("<!--\n```\nDependency intake: hidden\n```"),
+    false
+  );
+});
+
 const review = (login, state, commit = "head", extra = {}) => ({
   user: { login, type: "User" },
   state,
