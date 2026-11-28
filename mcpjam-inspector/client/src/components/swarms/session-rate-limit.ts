@@ -170,11 +170,13 @@ const SPEND_LIMIT_CARDS: Readonly<
 > = {
   budget_reached: {
     title: "Spend budget reached",
-    cause: "This organization's spend budget is reached.",
+    cause:
+      "This organization reached its spend budget. An owner or admin can raise it.",
   },
   wallet_locked: {
     title: "MCPJam wallet locked",
-    cause: "This organization's MCPJam wallet is locked.",
+    cause:
+      "This organization's MCPJam wallet is locked. Contact MCPJam support to arrange more credits.",
   },
 };
 
