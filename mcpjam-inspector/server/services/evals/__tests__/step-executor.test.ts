@@ -72,13 +72,15 @@ describe("step-executor", () => {
     };
     const state = createStepExecutionState();
     const handlers = makeHandlers();
-    await executeSteps({ steps: [denied, approved], state, browser: makeBrowser(), handlers });
+    const onClientDecision = vi.fn();
+    await executeSteps({ steps: [denied, approved], state, browser: makeBrowser(), handlers, onClientDecision });
     expect(handlers.onToolCall).toHaveBeenCalledExactlyOnceWith({
       step: approved, stepIndex: 1, turnOrdinal: 1,
     });
     expect(state.spans).toContainEqual(
       expect.objectContaining({ name: "Saved client approval denied", authoredStepId: "denied" }),
     );
+    expect(onClientDecision).toHaveBeenCalledExactlyOnceWith(state.spans[0]);
     expect(state.toolCalls.map(({ toolName }) => toolName)).toEqual(["create_view"]);
   });
 
