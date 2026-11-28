@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { convexErrMessage } from "@/lib/convex-error";
+import { runsOnMcpjamInstead, suiteOnMcpjamUrl } from "@/lib/eval-launch-reason";
 import {
   aiLaunchRefusalOf,
   type AiLaunchProblem,
@@ -210,12 +211,14 @@ export function SuiteRunReviewContent({
   // The backend's launch refusal under the org's AI key policy lists every
   // dependency that can't run on the organization's providers.
   const [launchProblems, setLaunchProblems] = useState<AiLaunchProblem[]>([]);
+  const [cloudOnly, setCloudOnly] = useState(false);
   const [connecting, setConnecting] = useState(false);
   // A failed start's reason is about that setup; a different one gets a
   // fresh try.
   useEffect(() => {
     setError(null);
     setLaunchProblems([]);
+    setCloudOnly(false);
   }, [iterations, selected, runAccounts, matrix?.signature]);
   const lock = useRef(false);
   const count = Number(iterations);
@@ -304,6 +307,7 @@ export function SuiteRunReviewContent({
     setStarting(true);
     setError(null);
     setLaunchProblems([]);
+    setCloudOnly(false);
     try {
       await onStart(
         matrix
@@ -328,6 +332,8 @@ export function SuiteRunReviewContent({
       // "[CONVEX M(…)] Server Error".
       const refusal = aiLaunchRefusalOf(failure);
       setLaunchProblems(refusal?.problems ?? []);
+      // A suite only MCPJam's runners can run: link to it there.
+      setCloudOnly(runsOnMcpjamInstead(failure));
       setError(
         refusal?.message ??
           convexErrMessage(failure, "Could not start this run. Try again."),
@@ -542,6 +548,13 @@ export function SuiteRunReviewContent({
               <p>{error ?? disabledReason}</p>
               {error ? (
                 <AiLaunchProblemsList problems={launchProblems} />
+              ) : null}
+              {error && cloudOnly ? (
+                <Button variant="link" size="sm" className="h-auto p-0 text-xs" asChild>
+                  <a href={suiteOnMcpjamUrl(suite._id)} target="_blank" rel="noreferrer">
+                    Open on MCPJam
+                  </a>
+                </Button>
               ) : null}
             </div>
           )}

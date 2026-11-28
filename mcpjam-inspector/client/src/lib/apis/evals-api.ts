@@ -405,6 +405,15 @@ async function postEvalRequest<TResponse>(
     if (problems.length > 0) {
       (error as Error & { problems?: AiLaunchProblem[] }).problems = problems;
     }
+    // Why the route refused, and by which rule, so the run sheet can offer
+    // that reason's fix.
+    const details = (errorBody as { details?: { reason?: unknown; rule?: unknown } } | null | undefined)?.details;
+    if (typeof details?.reason === "string") {
+      (error as Error & { reason?: string }).reason = details.reason;
+    }
+    if (typeof details?.rule === "string") {
+      (error as Error & { rule?: string }).rule = details.rule;
+    }
     throw error;
   }
 

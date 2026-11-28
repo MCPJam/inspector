@@ -44,6 +44,11 @@ const {
   projectDefault: { value: null as { id?: string } | null | undefined },
   availableModels: { value: [] as Array<{ id: string }> },
 }));
+// Where each harness client runs; each test sets Start's reason.
+const venueBlock = vi.hoisted(() => ({ reason: null as string | null }));
+vi.mock("../use-local-harness-eval-venues", () => ({
+  useLocalHarnessEvalVenues: () => ({ rows: [], check: vi.fn(), setUp: vi.fn(), startBlockedReason: venueBlock.reason }),
+}));
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query, mutation }),
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -1040,6 +1045,21 @@ describe("an SDK suite", () => {
         resolvedServerNames: ["foreflight"],
       },
     ];
+  });
+
+  it.each([false, true])("keeps Start off while a client can't run here (saved environment: %s)", (saved) => {
+    projectEnvironments.value = [
+      { environmentId: "prod", name: "Prod", hostId: "claude", modelId: "anthropic/claude-sonnet-4-6", serverAttachmentId: "servers" },
+    ];
+    venueBlock.reason = "Set up Claude Code to start this run.";
+    renderSdk();
+    if (saved) {
+      fireEvent.click(screen.getByRole("radio", { name: "Saved environment" }));
+      fireEvent.click(screen.getByRole("radio", { name: /Prod/ }));
+    } else fireEvent.click(screen.getByTestId("server-picker"));
+    expect(screen.getByRole("button", { name: "Start run" })).toBeDisabled();
+    expect(screen.getByText("Set up Claude Code to start this run.")).toBeInTheDocument();
+    venueBlock.reason = null;
   });
 
   it("runs a new setup on the picked servers without attaching it", async () => {

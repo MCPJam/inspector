@@ -40,6 +40,8 @@ import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
 import { useSandboxImagesEnabled } from "@/hooks/useSandboxImagesEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
+import { suiteOnMcpjamUrl } from "@/lib/eval-launch-reason";
+import { HOSTED_MODE } from "@/lib/config";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
@@ -3252,7 +3254,12 @@ export function SuiteIterationsView({
                       <CloudUnreachableNotice
                         data-testid="suite-eval-cloud-unreachable"
                         message={EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE}
-                        detail="Runs started here would fail their computer setup — Run all is disabled until cloud sandboxes are reachable."
+                        detail={HOSTED_MODE
+                          ? "Run all stays off until cloud sandboxes are reachable."
+                          : "Open the suite on MCPJam to run it. Run all is off here because local runs would fail their setup."}
+                        {...(HOSTED_MODE ? {} : {
+                          action: { label: "Open on MCPJam", href: suiteOnMcpjamUrl(suite._id) },
+                        })}
                       />
                     </div>
                   ) : null}

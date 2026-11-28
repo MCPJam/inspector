@@ -8,6 +8,7 @@ import {
 } from "@/components/evaluate/tour/tour-attribution";
 import { toast } from "sonner";
 import { convexErrMessage } from "@/lib/convex-error";
+import { withLaunchReason } from "@/lib/eval-launch-reason";
 import { aiLaunchRefusalSentence } from "@/lib/ai-launch-problems";
 import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
@@ -1318,7 +1319,7 @@ export function useEvalHandlers({
           const message = policyRefusal ?? launchMessage;
           if (options?.stayOnPage || options?.throwOnFailure) {
             toast.dismiss(runStartedToastId);
-            throw policyRefusal ? error : new Error(message);
+            throw policyRefusal ? error : withLaunchReason(new Error(message), error);
           }
           toast.error(message, { id: runStartedToastId });
         }
