@@ -1,6 +1,5 @@
 import type { chatPreparationRequest } from "../../services/chat-turn/resolve-chat-turn.js";
 import { bindWarmApprovalConnection } from "../../utils/harness/warm-approval-binding";
-import { hostedWarmAgentEnabled } from "../../utils/harness/harness-flags";
 import { setManagerResourceSnapshots, setManagerResourceHostConfig, type ManagerResourceSnapshot } from "../../utils/mcp-connections";
 import { taskOwnerScope } from "../../../shared/task-owner.js";
 import {
@@ -3127,7 +3126,8 @@ export async function createAuthorizedManager(
     setManagerConnections(manager, connectionsByServerId);
   setManagerAuthorizedCredentials(manager, Object.fromEntries(Object.entries(batch.results).flatMap(([serverId, auth]) => auth.ok && auth.oauthCredentialId ? [[serverId, auth.oauthCredentialId]] : [])));
   const resourceSnapshots = new Map<string, ManagerResourceSnapshot>();
-  const bindWarmAccounts = hostedWarmAgentEnabled(batch.organizationId ?? undefined);
+  // Warm reuse needs the organization the backend verified (`admitWarmChatManager`).
+  const bindWarmAccounts = Boolean(batch.organizationId);
   for (const [key, config] of connectionEntries) {
     const connection = connectionsByKey.get(key);
     const serverId = connection?.serverId ?? key;

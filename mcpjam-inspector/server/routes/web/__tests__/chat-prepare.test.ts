@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 const mocks = vi.hoisted(() => ({
@@ -74,8 +74,6 @@ function setupValue(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   for (const mock of Object.values(mocks)) mock.mockReset();
-  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX", "true");
-  vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS", undefined);
   mocks.setup.mockResolvedValue(setupValue());
   mocks.turnAuthorization.mockResolvedValue(undefined);
   mocks.prepare.mockResolvedValue({ outcome: "prepared" });
@@ -84,27 +82,17 @@ beforeEach(() => {
   mocks.credentialRefusal.mockResolvedValue(null);
 });
 
-afterEach(() => vi.unstubAllEnvs());
-
 describe("POST /api/web/chat/prepare", () => {
-  it("with the switch off, asks the backend nothing", async () => {
-    vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX", undefined);
+  it("asks the backend nothing for a member without an organization", async () => {
+    mocks.setup.mockResolvedValue(
+      setupValue({ authorizedOrganizationId: undefined }),
+    );
     const res = await post();
     expect(await res.json()).toEqual({
       outcome: "skipped",
       reason: "disabled",
     });
-    expect(mocks.setup).not.toHaveBeenCalled();
-    expect(mocks.prepare).not.toHaveBeenCalled();
-  });
-
-  it("prepares nothing for an organization off the list", async () => {
-    vi.stubEnv("MCPJAM_HARNESS_PREPARE_BOX_ORG_IDS", "org_other");
-    const res = await post();
-    expect(await res.json()).toEqual({
-      outcome: "skipped",
-      reason: "disabled",
-    });
+    expect(mocks.turnAuthorization).not.toHaveBeenCalled();
     expect(mocks.prepare).not.toHaveBeenCalled();
   });
 

@@ -13,10 +13,12 @@ export { harnessToolApprovalRefusalReason } from "./harness-tool-approval";
  * Rules are driven by the adapter's declared CAPABILITIES (requiresComputer,
  * approval surfaces, MCP support), not hardcoded per-harness — so a new harness
  * gets the right gates for free. Only the cheap synchronous checks live here —
- * including the inspector-side BROKER DELIVERY kill switch (an env read), the
- * only credential path since COMP-23. The backend broker/proxy flags (a network
- * call away) stay in-turn fail-closed backstops, as do expensive runtime
- * failures (computer wake, E2B connect).
+ * including the inspector-side BROKER DELIVERY kill switch (an env read). Broker
+ * delivery has been the only credential path since COMP-23, and this switch is
+ * the only emergency stop for brokered runs: the backend's broker and proxy
+ * flags were removed (mcpjam-backend `docs/harness-broker-rollout.md`).
+ * Expensive runtime failures (computer wake, E2B connect) stay in-turn
+ * fail-closed backstops.
  */
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
 import { HOSTED_MODE } from "../../config.js";

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { authFetch } from "@/lib/session-token";
 
 /** A new hosted harness chat, and the body its preparation resolves from. */
@@ -8,25 +9,34 @@ export interface HarnessBoxPreparationRequest {
 }
 
 const PREPARE_PATH = "/api/web/chat/prepare";
+/** The backend checks the same flag before it boots anything. */
+const PREPARATION_FLAG = "harness-box-preparation-enabled";
 const DEBOUNCE_MS = 500;
 /** Chats already asked for, across remounts: at most one request per chat. */
 const requestedChats = new Set<string>();
 
 /**
  * Ask the server to set up a new chat's computer while its first message is
- * typed: 500 ms after the composer first holds text, once per chat. Nothing
- * is shown, and a failure only means the Send sets the computer up itself.
+ * typed: 500 ms after the composer first holds text, once per chat, while the
+ * member's `harness-box-preparation-enabled` flag is on. Nothing is shown,
+ * and a failure only means the Send sets the computer up itself.
  */
 export function useHarnessBoxPreparation(
   request: HarnessBoxPreparationRequest | null,
   input: string,
 ): void {
+  const enabled = useFeatureFlagEnabled(PREPARATION_FLAG) === true;
   const latest = useRef(request);
   latest.current = request;
   const chatSessionId = request?.chatSessionId;
   const hasText = input.trim().length > 0;
   useEffect(() => {
-    if (!chatSessionId || !hasText || requestedChats.has(chatSessionId)) {
+    if (
+      !enabled ||
+      !chatSessionId ||
+      !hasText ||
+      requestedChats.has(chatSessionId)
+    ) {
       return;
     }
     const timer = setTimeout(() => {
@@ -48,5 +58,5 @@ export function useHarnessBoxPreparation(
       });
     }, DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [chatSessionId, hasText]);
+  }, [enabled, chatSessionId, hasText]);
 }

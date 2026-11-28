@@ -1,9 +1,19 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ authFetch: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  authFetch: vi.fn(),
+  flag: true as boolean | undefined,
+  flagKeys: [] as string[],
+}));
 
 vi.mock("@/lib/session-token", () => ({ authFetch: mocks.authFetch }));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (key: string) => {
+    mocks.flagKeys.push(key);
+    return mocks.flag;
+  },
+}));
 
 import {
   useHarnessBoxPreparation,
@@ -29,6 +39,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   mocks.authFetch.mockReset();
   mocks.authFetch.mockResolvedValue(new Response("{}"));
+  mocks.flag = true;
+  mocks.flagKeys = [];
 });
 
 afterEach(() => {
@@ -64,6 +76,24 @@ describe("useHarnessBoxPreparation", () => {
     render({ request: request("chat-a"), input: "x" });
     vi.advanceTimersByTime(500);
     expect(mocks.authFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks nothing while the member's flag is off or still loading, and asks once it turns on", () => {
+    mocks.flag = undefined;
+    const view = render({ request: request("chat-f"), input: "h" });
+    vi.advanceTimersByTime(1_000);
+    mocks.flag = false;
+    view.rerender({ request: request("chat-f"), input: "hi" });
+    vi.advanceTimersByTime(1_000);
+    expect(mocks.authFetch).not.toHaveBeenCalled();
+    expect(new Set(mocks.flagKeys)).toEqual(
+      new Set(["harness-box-preparation-enabled"]),
+    );
+
+    mocks.flag = true;
+    view.rerender({ request: request("chat-f"), input: "hi" });
+    vi.advanceTimersByTime(500);
+    expect(mocks.authFetch).toHaveBeenCalledTimes(1);
   });
 
   it("does not ask when the text is cleared before the debounce", () => {

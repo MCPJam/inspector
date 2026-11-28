@@ -101,8 +101,6 @@ describe("web auth manager batching", () => {
   });
 
   it("binds a paused approval to its actual authorized account even when the server name stays the same", async () => {
-    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", "1");
-    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", "pilot-org");
     const digest = async (credentialId: string | undefined, token: string, authorizedAt = 7) => {
       global.fetch = vi.fn(async () => Response.json({organizationId: "pilot-org", results: {"same-server": {
         ok: true, role: "member", accessLevel: "project_member", permissions: {chatOnly: false},
@@ -116,31 +114,26 @@ describe("web auth manager batching", () => {
       expect(JSON.stringify(bindings)).not.toContain(token);
       return nativePolicyDigest({}, bindings);
     };
-    try {
-      const original = stampNativeForwardingPolicy({data: {}}, await digest("account-a", "first-access-token"));
-      expect(() => assertPendingPolicy(original, "different-policy")).toThrow();
-      const refreshed = await digest("account-a", "rotated-access-token");
-      expect(() => assertPendingPolicy(original, refreshed)).not.toThrow();
-      for (const next of [await digest("account-b", "other-account-token"), await digest("account-a", "new-auth-token", 8)])
-        expect(() => assertPendingPolicy(original, next)).toThrow("policy has changed");
-      expect(await digest(undefined, "caller-token-a")).not.toBe(await digest(undefined, "caller-token-b"));
-    } finally { vi.unstubAllEnvs(); }
+    const original = stampNativeForwardingPolicy({data: {}}, await digest("account-a", "first-access-token"));
+    expect(() => assertPendingPolicy(original, "different-policy")).toThrow();
+    const refreshed = await digest("account-a", "rotated-access-token");
+    expect(() => assertPendingPolicy(original, refreshed)).not.toThrow();
+    for (const next of [await digest("account-b", "other-account-token"), await digest("account-a", "new-auth-token", 8)])
+      expect(() => assertPendingPolicy(original, next)).toThrow("policy has changed");
+    expect(await digest(undefined, "caller-token-a")).not.toBe(await digest(undefined, "caller-token-b"));
   });
 
-  it("admits text-only Playground chats from the signed project and refuses missing or mismatched organizations", async () => {
-    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", "1");
-    vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", "pilot-org");
-    try {
-      const {manager} = await createAuthorizedManager({}, "bearer", "project", [], 1000);
-      for (const projectOrg of [undefined, "unrelated"]) {
-        admitWarmChatManager(manager, projectOrg, false);
-        expect(isWarmChatManager(manager)).toBe(false);
-      }
-      admitWarmChatManager(manager, "pilot-org", true);
+  it("admits text-only Playground chats from the signed project and refuses a missing organization or servers it didn't authorize", async () => {
+    const {manager} = await createAuthorizedManager({}, "bearer", "project", [], 1000);
+    for (const projectOrg of [undefined, ""]) {
+      admitWarmChatManager(manager, projectOrg, false);
       expect(isWarmChatManager(manager)).toBe(false);
-      admitWarmChatManager(manager, "pilot-org", false);
-      expect(isWarmChatManager(manager)).toBe(true);
-    } finally { vi.unstubAllEnvs(); }
+    }
+    // This manager's servers weren't authorized for the project's organization.
+    admitWarmChatManager(manager, "pilot-org", true);
+    expect(isWarmChatManager(manager)).toBe(false);
+    admitWarmChatManager(manager, "pilot-org", false);
+    expect(isWarmChatManager(manager)).toBe(true);
   });
 
   const originalFetch = global.fetch;

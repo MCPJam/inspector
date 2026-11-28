@@ -464,8 +464,6 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
 
       beforeAll(async () => {
         vi.stubEnv("HARNESS_SANDBOX_PROVIDER", "docker");
-        vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT", "true");
-        vi.stubEnv("MCPJAM_HOSTED_WARM_AGENT_ORG_IDS", "");
         vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", randomUUID() + randomUUID());
         upstream = await startMockUpstream(spec.mock);
         mocks.upstreamBaseUrl = upstream.url;
