@@ -149,6 +149,13 @@ describe("protocol checks that run out of time", () => {
       serveManager({
         getManagedClient: vi.fn().mockReturnValue({
           setLoggingLevel: vi.fn().mockRejectedValue(requestTimeout),
+          // Capabilities Consistent asks for the listings this server did not
+          // declare; it has none of them, so each is Method not found.
+          requestWithSchema: vi
+            .fn()
+            .mockRejectedValue(
+              Object.assign(new Error("Method not found"), { code: -32601 })
+            ),
         }),
         getInitializationInfo: vi.fn().mockReturnValue({
           protocolVersion: "2025-11-25",

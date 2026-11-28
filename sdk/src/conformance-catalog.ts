@@ -54,7 +54,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "capabilities-consistent": {
     title: "Capabilities Consistent",
     description:
-      "Advertised server capabilities match the features actually exposed.",
+      "Advertised server capabilities match the features actually exposed: a tools, prompts or resources listing the server did not declare is asked for and returns nothing, and on 2026-07-28 a declared listing answers.",
   },
   "tools-list": {
     title: "Tools List",
