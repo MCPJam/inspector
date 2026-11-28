@@ -325,7 +325,10 @@ export const summarizeRecordedAppActionsOperation: PlatformOperation<
   description:
     "Count recorded app actions and elapsed time, with coverage for sessions without readable evidence.",
   readOnly: true,
-  permalink: noPermalink("no-addressable-resource"),
+  permalink: noPermalink(
+    "no-addressable-resource",
+    "The totals span several session recordings."
+  ),
   inputSchema: summarizeInput,
   async execute({ project, sessionIds }, context) {
     const projectId = await projectIdFor(context, project);

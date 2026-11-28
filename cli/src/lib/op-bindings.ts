@@ -334,6 +334,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   observe_chat_session_browser: { command: "cloud sessions browser observe" },
   get_chat_session: { command: "cloud sessions show" },
   get_chat_session_trace: { command: "cloud sessions trace" },
+  compile_recorded_app_case: { command: "cloud sessions compile-app-case" },
+  summarize_recorded_app_actions: { command: "cloud sessions summarize-app-actions" },
 
   // ── Tunnels ─────────────────────────────────────────────────────────────
   create_tunnel: { command: "cloud tunnel" },

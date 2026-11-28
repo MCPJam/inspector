@@ -390,6 +390,8 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   send_chat_message: null,
   get_chat_session: null,
   get_chat_session_trace: null,
+  compile_recorded_app_case: null,
+  summarize_recorded_app_actions: null,
   list_clients: null,
   get_client: null,
   create_client: null,
