@@ -227,6 +227,30 @@ describe("POST /mock-servers", () => {
     expect((await json(response)).message).toContain("mock-servers-enabled");
   });
 
+  it("checks the caller before the definition, so a caller the backend refuses never reaches the checks", async () => {
+    queries["mockPolicy:getForProject"] = () => {
+      throw refusal("SIGN_IN_REQUIRED", "Sign in to use mock servers.");
+    };
+    const response = await request("POST", MOCKS, {
+      body: { name: "m", definition: { tools: { a: { nope: true } } } },
+    });
+    expect(response.status).toBe(401);
+    expect((await json(response)).message).not.toContain("tools.a");
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
+  it("refuses a caller with mocks turned off before checking the definition", async () => {
+    queries["mockPolicy:getForProject"] = () => {
+      throw refusal("MOCK_SERVERS_FLAG_OFF", "off", { flag: "mock-servers-enabled" });
+    };
+    const response = await request("POST", MOCKS, {
+      body: { name: "m", definition: { tools: { a: { nope: true } } } },
+    });
+    expect(response.status).toBe(403);
+    expect((await json(response)).message).toContain("mock-servers-enabled");
+    expect(mocks.mutation).not.toHaveBeenCalled();
+  });
+
   it("answers a name already taken with 409", async () => {
     mutations["mockServers:createMock"] = () => {
       throw refusal("CONFLICT", "A server with that name exists.");

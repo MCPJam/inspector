@@ -63,6 +63,11 @@ async function policyOf<T>(run: () => Promise<T>): Promise<T> {
 mockServers.post("/projects/:projectId/mock-servers", async (c) => {
   const projectId = projectIdOf(c);
   const body = parseWithSchema(createBody, await readJsonObjectBody(c));
+  // The caller is settled before the definition is checked: the checks run the
+  // definition's own patterns, and the v1 gateway does not verify an AuthKit
+  // token itself. The backend's project read verifies it and checks access and
+  // the flag. A save or patch gets the same order by reading the mock first.
+  await policyOf(async () => readProjectPolicy(await bearerOf(c), projectId));
   const definition = validatedDefinition(body.definition);
   // The base's listing is captured now and saved with the version, so a mock
   // can list it later while forwarding is blocked, without contacting the base.
