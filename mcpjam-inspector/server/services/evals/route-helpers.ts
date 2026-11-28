@@ -2,6 +2,7 @@ import { ConvexHttpClient } from "convex/browser";
 import {
   MCPClientManager,
   type HttpServerConfig,
+  type MCPClientManagerConfig,
   type MCPServerReplayConfig,
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
@@ -221,8 +222,12 @@ export function replayManagerServerEntries(
 }
 
 export function buildReplayManager(replayConfig: ReplayConfig) {
+  return buildEvalRunManager(Object.fromEntries(replayManagerServerEntries(replayConfig)));
+}
+
+export function buildEvalRunManager(servers: MCPClientManagerConfig) {
   return new MCPClientManager(
-    Object.fromEntries(replayManagerServerEntries(replayConfig)),
+    servers,
     {
       defaultTimeout: WEB_CALL_TIMEOUT_MS,
       lazyConnect: true,
