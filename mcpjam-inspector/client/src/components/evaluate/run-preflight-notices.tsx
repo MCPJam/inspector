@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ASK_ORG_ADMIN, MANAGE_AI_PROVIDERS } from "@/lib/org-keys-refusal";
 import { ORG_KEY_MISSING_MESSAGE } from "@/shared/org-key-surfaces";
+import { CHOOSE_ORG_JUDGE_MODEL } from "@/components/evals/judge-model-picker";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { getProviderDisplayName } from "@/lib/provider-registry";
 import { AccountPreflightNotices } from "./suite-run-account-preflight";
@@ -78,25 +79,39 @@ export function RunPreflightNotices({
       {MANAGE_AI_PROVIDERS}
     </Button>
   ) : undefined;
+  // The judge is picked in suite settings; the provider page can't pick it.
+  const chooseJudge = onEditSettings ? (
+    <Button
+      variant="secondary"
+      size="sm"
+      disabled={disabled}
+      onClick={onEditSettings}
+    >
+      Open suite settings
+    </Button>
+  ) : undefined;
   return (
     <section aria-label="Before you run" className="space-y-2">
       <AccountPreflightNotices {...{ preflight, disabled, onEditSettings }} />
       {orgConfigProblems.length > 0 && (
         <div className="space-y-2" data-testid="preflight-org-key-problems">
-          {orgConfigProblems.map((message) => (
-            <PreflightNotice
-              key={`org-config:${message}`}
-              action={manageProviders}
-            >
-              <p className="text-destructive">{message}</p>
-              {/* A missing Cursor key's sentence already says who adds it, and where. */}
-              {!manageProviders && message !== ORG_KEY_MISSING_MESSAGE && (
-                <p className="text-muted-foreground">
-                  {ASK_ORG_ADMIN} if no organization model fits.
-                </p>
-              )}
-            </PreflightNotice>
-          ))}
+          {orgConfigProblems.map((message) => {
+            const action =
+              message === CHOOSE_ORG_JUDGE_MODEL
+                ? chooseJudge
+                : manageProviders;
+            return (
+              <PreflightNotice key={`org-config:${message}`} action={action}>
+                <p className="text-destructive">{message}</p>
+                {/* A missing Cursor key's sentence already says who adds it, and where. */}
+                {!action && message !== ORG_KEY_MISSING_MESSAGE && (
+                  <p className="text-muted-foreground">
+                    {ASK_ORG_ADMIN} if no organization model fits.
+                  </p>
+                )}
+              </PreflightNotice>
+            );
+          })}
         </div>
       )}
       {refused.map((message) => (
