@@ -385,6 +385,39 @@ describe("useUpgradeCheckout", () => {
     }
   });
 
+  it("opens no browser on desktop when the caller no longer wants checkout", async () => {
+    billingState.planCatalog = planCatalog(["annual"]);
+    startPlanChange.mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123",
+      subscription: { plan: "team" },
+    });
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    (window as { isElectron?: boolean }).isElectron = true;
+
+    try {
+      const { result } = renderHook(() =>
+        useUpgradeCheckout({
+          organizationId: "org-1",
+          origin: "credits",
+          limitKind: "credits",
+        }),
+      );
+
+      let outcome: Awaited<ReturnType<typeof result.current.start>>;
+      await act(async () => {
+        outcome = await result.current.start({ stillWanted: () => false });
+      });
+
+      expect(outcome!).toEqual({ redirected: false, shouldDismiss: false });
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(toastInfo).not.toHaveBeenCalled();
+    } finally {
+      delete (window as { isElectron?: boolean }).isElectron;
+      openSpy.mockRestore();
+    }
+  });
+
   it("reports an in-place plan update and tells the dialog to close", async () => {
     billingState.planCatalog = planCatalog(["annual"]);
     startPlanChange.mockResolvedValue({

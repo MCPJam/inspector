@@ -432,6 +432,11 @@ export function useUpgradeCheckout({
         if (result.kind === "checkout" || result.kind === "portal") {
           const nextUrl =
             result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+          // Checked before either handoff: the desktop shell opens the system
+          // browser just as surely as a same-tab redirect leaves the page.
+          if (options?.stillWanted && !options.stillWanted()) {
+            return { redirected: false, shouldDismiss: false };
+          }
           if (isDesktopApp()) {
             // Return-in-place is impossible here: the shell opens Stripe in the
             // system browser, so the return URL lands in a different session.
@@ -442,9 +447,6 @@ export function useUpgradeCheckout({
               "Finish checkout in your browser. Your new plan unlocks here automatically.",
             );
             return { redirected: true, shouldDismiss: true };
-          }
-          if (options?.stillWanted && !options.stillWanted()) {
-            return { redirected: false, shouldDismiss: false };
           }
           // Same tab, so the return URL brings the user back in place. The token
           // is what makes that return trustworthy on the way back.
