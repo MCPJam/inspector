@@ -76,6 +76,9 @@ jobs:
       - name: Verify the node_modules cache warmer matches its consumers
         run: node --test .github/scripts/warm-node-modules.test.mjs
 
+      - name: PR evidence rules
+        run: node --test .github/scripts/pr-evidence.test.mjs
+
       # The scripts behind prepare-release.yml, main-push-guard.yml,
       # release-trigger.yml and
       # release.yml's plan. Release itself runs rarely, so this is where a

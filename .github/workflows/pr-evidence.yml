@@ -1,0 +1,142 @@
+name: PR Evidence
+
+# Advisory only. Reads the PR body's "Screenshots and recordings" section and
+# leaves one comment when a PR that changes user-visible source has no
+# evidence, when an image is hosted where a reviewer cannot rely on it, or
+# when the evidence names a commit that does not contain the head. The rules
+# live in .github/scripts/pr-evidence.mjs with their tests. It never fails and
+# is never a required check: it stays advisory until its false-positive rate,
+# known misses, owner and retirement condition are recorded.
+#
+# Same trigger and fork trade as pr-links.yml: `pull_request`, so a fork or
+# Dependabot run gets a read-only token, and the job skips both rather than
+# fail on a 403.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  evidence:
+    name: PR Evidence
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            .github/scripts
+            scripts/slop
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/github-script@v9
+        # A heuristic must not turn a PR red, including on an API error.
+        continue-on-error: true
+        with:
+          script: |
+            const workspace = process.env.GITHUB_WORKSPACE;
+            const { MARKER, commentBody, evaluate, exemption } = await import(
+              `${workspace}/.github/scripts/pr-evidence.mjs`
+            );
+            const pr = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+            const issue_number = pr.number;
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 },
+            );
+            // Bot author as well as the marker, so a comment quoting the
+            // marker is never overwritten.
+            const existing = comments.find(
+              (c) =>
+                c.user?.login === 'github-actions[bot]' &&
+                c.body?.startsWith(MARKER),
+            );
+
+            const skip = exemption({
+              labels: pr.labels.map((l) => l.name),
+              author: pr.user.login,
+            });
+            if (skip) {
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner,
+                  repo,
+                  comment_id: existing.id,
+                  body: `${MARKER}\nSkipped: ${skip}.`,
+                });
+              }
+              core.info(`Skipped: ${skip}.`);
+              return;
+            }
+
+            const changed = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number: issue_number,
+              per_page: 100,
+            });
+            const files = changed.flatMap((f) =>
+              f.previous_filename ? [f.filename, f.previous_filename] : [f.filename],
+            );
+
+            // 404 and 422 mean the SHA is not a commit here, such as a backend
+            // SHA in the QA notes; anything else is a real failure.
+            async function compare(sha) {
+              try {
+                const { data } = await github.rest.repos.compareCommits({
+                  owner,
+                  repo,
+                  base: sha,
+                  head: pr.head.sha,
+                });
+                return data.status;
+              } catch (e) {
+                if (e.status === 404 || e.status === 422) return null;
+                throw e;
+              }
+            }
+
+            const findings = await evaluate({
+              body: pr.body,
+              files,
+              headSha: pr.head.sha,
+              compare,
+            });
+            for (const f of findings) core.warning(f.message, { title: `PR evidence: ${f.rule}` });
+
+            // A clean PR with no earlier comment gets none. One that was
+            // flagged keeps a one-liner, so the fix stays visible.
+            if (!findings.length && !existing) {
+              core.info('Evidence looks usable.');
+              return;
+            }
+            const body = commentBody(findings);
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
+            core.info(`Flagged ${findings.length} rule(s).`);
