@@ -532,6 +532,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
         projectId={projectScope}
         hostId={previewedHostId ?? props.activeHostId ?? null}
         host={effectiveHostConfig}
+        savedProjectId={props.isSignedInWithWorkOs && isConvexAuthenticated ? (props.sharedProjectId ?? null) : null}
       >
       <HostStyledShell
         hostSnapshot={{

@@ -49,6 +49,14 @@ export interface UseEventsFeedOptions {
   onSubscriptionsSnapshot?: (subscriptions: EventsSubscriptionView[]) => void;
   /** Local stream: one subscription changed. */
   onSubscription?: (subscription: EventsSubscriptionView) => void;
+  /**
+   * Where a feed starts reading: entries after this seq. Applied when the
+   * feed starts or `resetKey` changes, so a watch that saved its position
+   * replays only what it hasn't handled.
+   */
+  startAfter?: number;
+  /** A new value starts the feed again from `startAfter`. */
+  resetKey?: string;
 }
 
 export interface EventsFeed {
@@ -95,7 +103,7 @@ function parseData(data: unknown): unknown {
  * reconnect is harmless.
  */
 export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
-  const { hosted, projectId, enabled } = options;
+  const { hosted, projectId, enabled, startAfter, resetKey } = options;
   const [entries, setEntries] = useState<EventsFeedEntryView[]>([]);
   const [rejections, setRejections] = useState<EventsRejectionView[]>([]);
   const [gaps, setGaps] = useState<EventsFeedGap[]>([]);
@@ -165,11 +173,11 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
   // A different feed (mode or project) starts from scratch. Both the local
   // runtime and the hosted inbox serve one project's feed at a time.
   const projectKey = projectId ?? "";
-  const feedKey = `${hosted ? "hosted" : "local"}:${projectKey}`;
+  const feedKey = `${hosted ? "hosted" : "local"}:${projectKey}:${resetKey ?? ""}`;
   if (feedKeyRef.current !== feedKey) {
     feedKeyRef.current = feedKey;
     seenRef.current = new Set();
-    afterRef.current = 0;
+    afterRef.current = Math.max(0, startAfter ?? 0);
   }
   useEffect(() => {
     setEntries([]);
@@ -265,7 +273,7 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
       disposed = true;
       source.close();
     };
-  }, [enabled, hosted, projectId, ingestEntries]);
+  }, [enabled, hosted, projectId, feedKey, ingestEntries]);
 
   // ── hosted: the public inbox, viewer-token authenticated ─────────────────
   useEffect(() => {
@@ -430,7 +438,15 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
       clearTimers();
       closeStream();
     };
-  }, [enabled, hosted, projectId, ingestEntries, addGap, applyDispatchUpdate]);
+  }, [
+    enabled,
+    hosted,
+    projectId,
+    feedKey,
+    ingestEntries,
+    addGap,
+    applyDispatchUpdate,
+  ]);
 
   return { entries, rejections, gaps, status, error, ingestEntries };
 }

@@ -1,26 +1,46 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EventsFeedEntryView } from "@/shared/events-api";
 import { getUserContextBlocks } from "@/shared/user-context-message";
 import {
+  CATCH_UP_LIMIT,
+  HOURLY_LIMIT,
+  MAX_ATTEMPTS,
   createEventDispatcher,
   eventTurn,
   type EventAgent,
   type EventBinding,
+  type EventClaimResult,
 } from "../event-dispatch";
 
-function fixture() {
-  let binding: EventBinding | undefined = {
-    id: "binding",
-    subscriptionId: "row",
-    logicalId: "logical",
-    serverName: "demo",
+const BUSY = "Waiting for the current turn to finish.";
+
+function makeBinding(id = "binding", logicalId = "logical"): EventBinding {
+  return {
+    id,
+    subscriptionId: `row-${id}`,
+    logicalId,
+    serverName: `server-${id}`,
     eventName: "demo.ping",
     instructions: "Report the ping",
     enabled: true,
     afterSeq: 0,
     agentScope: "session:client",
   };
-  let connected = true;
+}
+
+function fixture(
+  options: {
+    claim?: (
+      binding: EventBinding,
+      entry: EventsFeedEntryView,
+    ) => Promise<EventClaimResult | null>;
+    loadedAt?: number;
+  } = {},
+) {
+  const bindings = new Map<string, EventBinding>([
+    ["binding", makeBinding()],
+  ]);
+  const disconnected = new Set<string>();
   let agent: EventAgent | null = {
     scope: "session:client",
     blockedReason: null,
@@ -29,11 +49,15 @@ function fixture() {
   const received = vi.fn();
   const result = vi.fn();
   const dispatcher = createEventDispatcher({
-    binding: () => binding,
-    connected: () => connected,
+    binding: (id) => bindings.get(id),
+    connected: (binding) => !disconnected.has(binding.id),
     agent: () => agent,
     received,
     result,
+    ...(options.claim ? { claim: options.claim } : {}),
+    ...(options.loadedAt !== undefined
+      ? { loadedAt: () => options.loadedAt }
+      : {}),
   });
   const entry: EventsFeedEntryView = {
     seq: 1,
@@ -46,18 +70,23 @@ function fixture() {
     receivedAt: 101,
     data: { message: "hello" },
   };
+  const outcomes = (id = "binding") =>
+    result.mock.calls
+      .filter(([bindingId]) => bindingId === id)
+      .map(([, queued, outcome]) => [queued.eventId, outcome.status]);
   return {
     dispatcher,
     entry,
     received,
     result,
-    binding: () => binding!,
+    outcomes,
+    bindings,
+    binding: (id = "binding") => bindings.get(id)!,
     agent: () => agent!,
-    setBinding: (next: EventBinding | undefined) => {
-      binding = next;
-    },
-    setConnected: (next: boolean) => {
-      connected = next;
+    send: () => vi.mocked(agent!.send),
+    setConnected: (id: string, connected: boolean) => {
+      if (connected) disconnected.delete(id);
+      else disconnected.add(id);
     },
     setAgent: (next: EventAgent | null) => {
       agent = next;
@@ -65,8 +94,304 @@ function fixture() {
   };
 }
 
-describe("foreground event dispatch", () => {
-  it("sends one turn for a replayed event ID, isolated by namespace", async () => {
+/** Lets queued sends and turn-end waits run on fake time. */
+const settle = (ms = 4_000) => vi.advanceTimersByTimeAsync(ms);
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("queueing instead of skipping", () => {
+  it("runs an event that arrives while the agent is busy once the agent is free", async () => {
+    const f = fixture();
+    f.agent().blockedReason = BUSY;
+    expect(await f.dispatcher.dispatch("binding", f.entry)).toBe(true);
+    await settle();
+    expect(f.send()).not.toHaveBeenCalled();
+    expect(f.result).toHaveBeenLastCalledWith("binding", f.entry, {
+      status: "queued",
+      message: BUSY,
+    });
+    expect(f.dispatcher.queued("binding")).toBe(1);
+    f.agent().blockedReason = null;
+    f.dispatcher.pump();
+    await settle();
+    expect(f.send()).toHaveBeenCalledTimes(1);
+    expect(f.outcomes().at(-1)).toEqual(["ping-1", "sent"]);
+    expect(f.dispatcher.queued("binding")).toBe(0);
+  });
+
+  it("runs two events from one turn afterwards, in arrival order, one turn each", async () => {
+    const f = fixture();
+    f.agent().blockedReason = BUSY;
+    await f.dispatcher.dispatch("binding", { ...f.entry, seq: 5, eventId: "a" });
+    await f.dispatcher.dispatch("binding", { ...f.entry, seq: 6, eventId: "b" });
+    f.agent().blockedReason = null;
+    f.dispatcher.pump();
+    await settle(10_000);
+    expect(f.send()).toHaveBeenCalledTimes(2);
+    expect(f.send().mock.calls.map(([, , event]) => event?.eventId)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("waits for an admitted turn to finish before starting the next", async () => {
+    const f = fixture();
+    f.agent().send = vi.fn(async () => {
+      f.agent().blockedReason = BUSY;
+      return true;
+    });
+    await f.dispatcher.dispatch("binding", { ...f.entry, eventId: "a" });
+    await f.dispatcher.dispatch("binding", {
+      ...f.entry,
+      seq: 2,
+      eventId: "b",
+    });
+    await settle(10_000);
+    expect(f.send()).toHaveBeenCalledTimes(1);
+    f.agent().blockedReason = null;
+    await settle(10_000);
+    expect(f.send()).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits while the server is disconnected or another conversation is open", async () => {
+    const f = fixture();
+    f.setConnected("binding", false);
+    await f.dispatcher.dispatch("binding", f.entry);
+    await settle();
+    expect(f.result).toHaveBeenLastCalledWith("binding", f.entry, {
+      status: "queued",
+      message: "Waiting for server-binding to connect.",
+    });
+    f.setConnected("binding", true);
+    f.setAgent({ ...f.agent(), scope: "other:client" });
+    f.dispatcher.pump();
+    await settle();
+    expect(f.send()).not.toHaveBeenCalled();
+    expect(f.result).toHaveBeenLastCalledWith("binding", f.entry, {
+      status: "queued",
+      message: "Waiting for this conversation to be open.",
+    });
+    f.setAgent({ ...f.agent(), scope: "session:client" });
+    f.dispatcher.pump();
+    await settle();
+    expect(f.send()).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps order per connection, so a waiting connection doesn't hold another", async () => {
+    const f = fixture();
+    f.bindings.set("other", makeBinding("other", "logical-other"));
+    f.setConnected("binding", false);
+    await f.dispatcher.dispatch("binding", f.entry);
+    await f.dispatcher.dispatch("other", {
+      ...f.entry,
+      seq: 2,
+      eventId: "other-1",
+      logicalSubscriptionId: "logical-other",
+    });
+    await settle();
+    expect(f.send().mock.calls.map(([, , event]) => event?.eventId)).toEqual([
+      "other-1",
+    ]);
+  });
+
+  it("drops waiting events when the connection is paused", async () => {
+    const f = fixture();
+    f.agent().blockedReason = BUSY;
+    await f.dispatcher.dispatch("binding", f.entry);
+    f.binding().enabled = false;
+    f.agent().blockedReason = null;
+    f.dispatcher.pump();
+    await settle();
+    expect(f.send()).not.toHaveBeenCalled();
+    expect(f.outcomes().at(-1)).toEqual(["ping-1", "skipped"]);
+  });
+
+  it("forgets an event it dropped for another conversation, so a replay queues it again", async () => {
+    const f = fixture();
+    f.agent().blockedReason = BUSY;
+    await f.dispatcher.dispatch("binding", f.entry);
+    const saved = f.binding();
+    f.bindings.delete("binding");
+    f.dispatcher.pump();
+    await settle();
+    expect(f.dispatcher.queued("binding")).toBe(0);
+    f.bindings.set("binding", saved);
+    f.agent().blockedReason = null;
+    expect(await f.dispatcher.dispatch("binding", f.entry)).toBe(true);
+    await settle();
+    expect(f.send()).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("claims on saved connections", () => {
+  it("claims before the turn and keeps the claim through a refused send", async () => {
+    const claim = vi.fn(async () => ({ claimed: true, previousAfterSeq: 0 }));
+    const f = fixture({ claim });
+    let calls = 0;
+    f.agent().send = vi.fn(async () => (calls += 1) > 1);
+    await f.dispatcher.dispatch("binding", f.entry);
+    await settle(10_000);
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(f.send()).toHaveBeenCalledTimes(2);
+    expect(f.outcomes().at(-1)).toEqual(["ping-1", "sent"]);
+  });
+
+  it("treats a throw before the turn as a refusal", async () => {
+    const claim = vi.fn(async () => ({ claimed: true, previousAfterSeq: 0 }));
+    const f = fixture({ claim });
+    let calls = 0;
+    f.agent().send = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("Confirm Stop before continuing.");
+      return true;
+    });
+    await f.dispatcher.dispatch("binding", f.entry);
+    await settle(10_000);
+    expect(f.send()).toHaveBeenCalledTimes(2);
+    expect(f.outcomes().map(([, status]) => status)).toEqual([
+      "queued",
+      "sent",
+    ]);
+  });
+
+  it(`asks for Try again after ${MAX_ATTEMPTS} refusals, then runs on it`, async () => {
+    const f = fixture();
+    let refuse = true;
+    f.agent().send = vi.fn(async () => !refuse);
+    await f.dispatcher.dispatch("binding", f.entry);
+    await settle(200_000);
+    expect(f.send()).toHaveBeenCalledTimes(MAX_ATTEMPTS);
+    expect(f.dispatcher.action("binding")).toEqual({ kind: "retry", count: 1 });
+    expect(String(f.result.mock.calls.at(-1)?.[2].message)).toContain(
+      "Use Try again",
+    );
+    refuse = false;
+    f.dispatcher.runQueued("binding");
+    await settle();
+    expect(f.outcomes().at(-1)).toEqual(["ping-1", "sent"]);
+    expect(f.dispatcher.action("binding")).toBeNull();
+  });
+
+  it("retries a claim it couldn't reach MCPJam for", async () => {
+    let fail = true;
+    const claim = vi.fn(async () => {
+      if (fail) throw new Error("offline");
+      return { claimed: true, previousAfterSeq: 0 };
+    });
+    const f = fixture({ claim });
+    await f.dispatcher.dispatch("binding", f.entry);
+    await settle(1_000);
+    expect(f.send()).not.toHaveBeenCalled();
+    fail = false;
+    await settle(10_000);
+    expect(f.send()).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["handled", ["ping-1", "sent"]],
+    ["paused", ["ping-1", "skipped"]],
+  ] as const)(
+    "doesn't run an entry whose claim is refused as %s",
+    async (reason, last) => {
+      const f = fixture({
+        claim: async () => ({ claimed: false, previousAfterSeq: 1, reason }),
+      });
+      await f.dispatcher.dispatch("binding", f.entry);
+      await settle();
+      expect(f.send()).not.toHaveBeenCalled();
+      expect(f.outcomes().at(-1)).toEqual(last);
+    },
+  );
+
+  it("never claims a test event, and runs it ahead of waiting events", async () => {
+    const claim = vi.fn(async () => ({ claimed: true, previousAfterSeq: 0 }));
+    const f = fixture({ claim });
+    f.agent().blockedReason = BUSY;
+    await f.dispatcher.dispatch("binding", f.entry);
+    await f.dispatcher.dispatch(
+      "binding",
+      {
+        ...f.entry,
+        seq: Date.now(),
+        eventId: "test",
+        origin: "simulation",
+        namespace: "playground-test",
+      },
+      true,
+    );
+    f.agent().blockedReason = null;
+    f.dispatcher.pump();
+    await settle(10_000);
+    expect(f.send().mock.calls.map(([, , event]) => event?.eventId)).toEqual([
+      "test",
+      "ping-1",
+    ]);
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(claim.mock.calls[0]![1].eventId).toBe("ping-1");
+  });
+});
+
+describe("limits", () => {
+  it(`holds more than ${CATCH_UP_LIMIT} events that waited while away until the user runs them`, async () => {
+    const opened = Date.now();
+    const f = fixture({ loadedAt: opened });
+    for (let seq = 1; seq <= CATCH_UP_LIMIT + 1; seq += 1)
+      await f.dispatcher.dispatch("binding", {
+        ...f.entry,
+        seq,
+        eventId: `away-${seq}`,
+        receivedAt: opened - 60_000,
+      });
+    await settle(10_000);
+    expect(f.send()).not.toHaveBeenCalled();
+    expect(f.dispatcher.action("binding")).toEqual({
+      kind: "catch-up",
+      count: CATCH_UP_LIMIT + 1,
+    });
+    f.dispatcher.runQueued("binding");
+    await settle(30_000);
+    expect(f.send()).toHaveBeenCalledTimes(CATCH_UP_LIMIT + 1);
+  });
+
+  it(`runs ${CATCH_UP_LIMIT} or fewer events that waited while away on its own`, async () => {
+    const opened = Date.now();
+    const f = fixture({ loadedAt: opened });
+    for (let seq = 1; seq <= CATCH_UP_LIMIT; seq += 1)
+      await f.dispatcher.dispatch("binding", {
+        ...f.entry,
+        seq,
+        eventId: `away-${seq}`,
+        receivedAt: opened - 60_000,
+      });
+    await settle(30_000);
+    expect(f.send()).toHaveBeenCalledTimes(CATCH_UP_LIMIT);
+  });
+
+  it(`waits after ${HOURLY_LIMIT} event turns in an hour`, async () => {
+    const f = fixture();
+    for (let seq = 1; seq <= HOURLY_LIMIT + 1; seq += 1)
+      await f.dispatcher.dispatch("binding", {
+        ...f.entry,
+        seq,
+        eventId: `e-${seq}`,
+      });
+    await settle(HOURLY_LIMIT * 4_000);
+    expect(f.send()).toHaveBeenCalledTimes(HOURLY_LIMIT);
+    expect(String(f.result.mock.calls.at(-1)?.[2].message)).toContain(
+      `ran ${HOURLY_LIMIT} events in the last hour`,
+    );
+    await settle(3_600_000);
+    expect(f.send()).toHaveBeenCalledTimes(HOURLY_LIMIT + 1);
+  });
+});
+
+describe("what reaches the queue", () => {
+  it("queues one turn for a replayed event ID, isolated by namespace", async () => {
     const f = fixture();
     expect(await f.dispatcher.dispatch("binding", f.entry)).toBe(true);
     expect(await f.dispatcher.dispatch("binding", { ...f.entry, seq: 2 })).toBe(
@@ -80,7 +405,8 @@ describe("foreground event dispatch", () => {
         origin: "simulation",
       }),
     ).toBe(true);
-    expect(f.agent().send).toHaveBeenCalledTimes(2);
+    await settle(10_000);
+    expect(f.send()).toHaveBeenCalledTimes(2);
   });
   it.each([
     { kind: "gap" },
@@ -95,7 +421,8 @@ describe("foreground event dispatch", () => {
     expect(
       await f.dispatcher.dispatch("binding", { ...f.entry, ...change }),
     ).toBe(false);
-    expect(f.agent().send).not.toHaveBeenCalled();
+    await settle();
+    expect(f.send()).not.toHaveBeenCalled();
     expect(f.received).not.toHaveBeenCalled();
   });
   it("accepts independent webhook message IDs even from an inbox with the old draft warning", async () => {
@@ -106,7 +433,8 @@ describe("foreground event dispatch", () => {
         webhookIdMismatch: true,
       }),
     ).toBe(true);
-    expect(f.agent().send).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(f.send()).toHaveBeenCalledTimes(1);
   });
   it("does not replay a historical simulation from the shared inbox", async () => {
     const f = fixture();
@@ -119,7 +447,6 @@ describe("foreground event dispatch", () => {
         namespace: "simulation",
       }),
     ).toBe(false);
-    expect(f.agent().send).not.toHaveBeenCalled();
     expect(
       await f.dispatcher.dispatch(
         "binding",
@@ -133,25 +460,6 @@ describe("foreground event dispatch", () => {
       ),
     ).toBe(true);
   });
-  it("refuses disconnected and busy turns without queuing stale work", async () => {
-    const f = fixture();
-    f.setConnected(false);
-    expect(await f.dispatcher.dispatch("binding", f.entry)).toBe(false);
-    f.setConnected(true);
-    f.agent().blockedReason = "Agent busy";
-    expect(
-      await f.dispatcher.dispatch("binding", { ...f.entry, eventId: "next" }),
-    ).toBe(false);
-    expect(f.agent().send).not.toHaveBeenCalled();
-    expect(f.result.mock.calls.map(([, , outcome]) => outcome.status)).toEqual(
-      ["skipped", "skipped"],
-    );
-    // A skipped occurrence still shows it arrived.
-    expect(f.received.mock.calls.map(([, entry]) => entry.eventId)).toEqual([
-      "ping-1",
-      "next",
-    ]);
-  });
   it("reports an arrival once, before the turn is sent", async () => {
     const f = fixture();
     f.agent().send = vi.fn(async () => {
@@ -160,6 +468,7 @@ describe("foreground event dispatch", () => {
     });
     await f.dispatcher.dispatch("binding", f.entry);
     await f.dispatcher.dispatch("binding", { ...f.entry, seq: 2 });
+    await settle();
     expect(f.received).toHaveBeenCalledTimes(1);
     expect(f.result).toHaveBeenLastCalledWith("binding", f.entry, {
       status: "sent",
@@ -174,26 +483,27 @@ describe("foreground event dispatch", () => {
     "disconnect",
     "subscriptionRemoved",
     "subscriptionTerminated",
-  ])("cancels a send awaiting preflight on %s", async (action) => {
+  ])("doesn't send a turn whose send is cancelled in preflight on %s", async (action) => {
     const f = fixture();
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    f.agent().send = async (_text, isCurrent) => {
+    f.agent().send = vi.fn(async (_text, isCurrent) => {
       await gate;
       return isCurrent();
-    };
-    const pending = f.dispatcher.dispatch("binding", f.entry);
+    });
+    await f.dispatcher.dispatch("binding", f.entry);
+    await settle(0);
     if (action === "pause") {
       f.dispatcher.invalidate("binding");
       f.binding().enabled = false;
     }
-    if (action === "remove") f.setBinding(undefined);
+    if (action === "remove") f.bindings.delete("binding");
     if (action === "dispose") f.dispatcher.dispose();
     if (action === "client")
       f.setAgent({ ...f.agent(), scope: "different-client" });
-    if (action === "disconnect") f.setConnected(false);
+    if (action === "disconnect") f.setConnected("binding", false);
     if (action === "subscriptionRemoved")
       f.binding().subscription = {
         desiredState: "removed",
@@ -205,7 +515,8 @@ describe("foreground event dispatch", () => {
         observedState: "terminated",
       };
     release();
-    expect(await pending).toBe(false);
+    await settle(10_000);
+    expect(f.outcomes().some(([, status]) => status === "sent")).toBe(false);
   });
   it.each([
     { desiredState: "paused", observedState: "active" },
@@ -219,28 +530,10 @@ describe("foreground event dispatch", () => {
       const f = fixture();
       f.binding().subscription = subscription;
       expect(await f.dispatcher.dispatch("binding", f.entry)).toBe(false);
-      expect(f.agent().send).not.toHaveBeenCalled();
+      await settle();
+      expect(f.send()).not.toHaveBeenCalled();
     },
   );
-  it("serializes events arriving in the same batch before React renders busy", async () => {
-    const f = fixture();
-    let release: () => void = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const send = vi.fn(async () => {
-      await gate;
-      return true;
-    });
-    f.agent().send = send;
-    const first = f.dispatcher.dispatch("binding", f.entry);
-    expect(
-      await f.dispatcher.dispatch("binding", { ...f.entry, eventId: "second" }),
-    ).toBe(false);
-    release();
-    expect(await first).toBe(true);
-    expect(send).toHaveBeenCalledTimes(1);
-  });
   it("shows the turn in the chat as an event card that holds the event data", () => {
     const f = fixture();
     const text = eventTurn(f.binding(), f.entry);
@@ -292,7 +585,8 @@ describe("the event a dispatched turn records", () => {
       ...f.entry,
       timestamp: "2026-01-01T00:00:00Z",
     });
-    const event = vi.mocked(f.agent().send).mock.calls[0]![2];
+    await settle();
+    const event = f.send().mock.calls[0]![2];
     expect(event).toEqual({
       name: "demo.ping",
       eventId: "ping-1",
@@ -317,7 +611,8 @@ describe("the event a dispatched turn records", () => {
       { ...f.entry, origin: "simulation", namespace: "playground-test" },
       true,
     );
-    expect(vi.mocked(f.agent().send).mock.calls[0]![2]).toMatchObject({
+    await settle();
+    expect(f.send().mock.calls[0]![2]).toMatchObject({
       origin: "simulation",
       delivery: "webhook",
       subscriptionId: "logical",
@@ -331,7 +626,8 @@ describe("the event a dispatched turn records", () => {
       { ...f.entry, origin: "simulation", namespace: "playground-test" },
       true,
     );
-    const event = vi.mocked(f.agent().send).mock.calls[0]![2];
+    await settle();
+    const event = f.send().mock.calls[0]![2];
     expect(event?.origin).toBe("simulation");
     expect(event).not.toHaveProperty("delivery");
   });

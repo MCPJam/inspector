@@ -75,4 +75,35 @@ describe("useEventsFeed (hosted)", () => {
     expect(mockFetchHostedFeed).not.toHaveBeenCalled();
     expect(result.current.status).not.toBe("polling");
   });
+
+  it("starts after a saved position, and starts again from it when the reset key changes", async () => {
+    mockFetchToken.mockResolvedValue(token());
+    const { rerender } = renderHook(
+      ({ startAfter, resetKey }) =>
+        useEventsFeed({
+          hosted: true,
+          projectId: "p1",
+          enabled: true,
+          startAfter,
+          resetKey,
+        }),
+      { initialProps: { startAfter: 40, resetKey: "chat-a" } },
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(FakeEventSource.instances.at(-1)?.url).toContain("after=40");
+    // A later position for the same conversation doesn't restart the stream.
+    rerender({ startAfter: 55, resetKey: "chat-a" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(FakeEventSource.instances).toHaveLength(1);
+    rerender({ startAfter: 12, resetKey: "chat-b" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(FakeEventSource.instances.at(-1)?.url).toContain("after=12");
+  });
 });

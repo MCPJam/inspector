@@ -177,7 +177,7 @@ describe("Playground Events lifecycle", () => {
     unmount();
     expect(mocks.mutation).not.toHaveBeenCalled();
   });
-  it("pauses on a conversation change and on BFCache restoration", async () => {
+  it("pauses a page-memory connection on a conversation change, but not on a page restore", async () => {
     render(tree());
     await act(add);
     act(() =>
@@ -192,11 +192,27 @@ describe("Playground Events lifecycle", () => {
       await runtime?.edit(runtime.bindings[0].id, { enabled: true });
     });
     expect(runtime?.bindings[0].enabled).toBe(true);
+    // The feed picks up from its last entry after a restore, so nothing is lost.
     act(() => {
       window.dispatchEvent(new Event("pagehide"));
       window.dispatchEvent(new Event("pageshow"));
     });
-    expect(runtime?.bindings[0].enabled).toBe(false);
+    expect(runtime?.bindings[0].enabled).toBe(true);
+  });
+  it("keeps an edit of a connection that's on from skipping what's queued", async () => {
+    render(tree());
+    await act(add);
+    mocks.watermark.mockResolvedValue({ entries: [], nextAfter: 99 });
+    await act(async () => {
+      await runtime?.edit(runtime.bindings[0].id, {
+        enabled: true,
+        instructions: "Report the ping twice",
+      });
+    });
+    expect(runtime?.bindings[0]).toMatchObject({
+      afterSeq: 42,
+      instructions: "Report the ping twice",
+    });
   });
   it("subscribes and reads the local feed in its project", async () => {
     render(tree());

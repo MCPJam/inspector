@@ -57,6 +57,9 @@ describe("recent events", () => {
       outcomeLabel({ ...pending, outcome: { status: "skipped", message: "" } }),
     ).toBe("Skipped");
     expect(
+      outcomeLabel({ ...pending, outcome: { status: "queued", message: "" } }),
+    ).toBe("Queued");
+    expect(
       outcomeLabel({
         ...pending,
         origin: "simulation",
