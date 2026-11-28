@@ -43,6 +43,7 @@ import type {
 import { CHECK_ERAS } from "../types.js";
 import { gradeToolOutputSchemas } from "./tool-output-schema.js";
 import { runLegacyToolOutputSchemaCheck } from "./legacy-tool-output-schema.js";
+import { readUnsupportedVersionData } from "./unsupported-version-data.js";
 import {
   SERVER_INFO_META_KEY,
   isWellFormedIdentity,
@@ -258,7 +259,7 @@ const MODERN_CHECK_METADATA = {
     category: "protocol",
     title: "Unsupported Envelope Version",
     description:
-      "An unsupported envelope protocol version is rejected with JSON-RPC -32022 naming the supported versions.",
+      "An unsupported envelope protocol version is rejected with HTTP 400 and JSON-RPC -32022, whose data names the supported versions and the requested one.",
   },
   "modern-undeclared-capability-error": {
     id: "modern-undeclared-capability-error",
@@ -1479,36 +1480,71 @@ async function runUnsupportedVersionCheck(
   // Header and envelope agree on the unsupported version: they must, or the
   // header-mismatch rung (-32020) answers first and the probe never reaches
   // version negotiation.
-  const result = await track(
-    state,
-    modernProbe(ctx, {
-      id: 7500,
-      method: "server/discover",
-      envelopeVersion: UNSUPPORTED_WIRE_VERSION,
-      headerOverrides: { "MCP-Protocol-Version": UNSUPPORTED_WIRE_VERSION },
-    })
-  );
+  let result: RawHttpResult;
+  try {
+    result = await track(
+      state,
+      modernProbe(ctx, {
+        id: 7500,
+        method: "server/discover",
+        envelopeVersion: UNSUPPORTED_WIRE_VERSION,
+        headerOverrides: { "MCP-Protocol-Version": UNSUPPORTED_WIRE_VERSION },
+      })
+    );
+  } catch (error) {
+    // A cancelled run is not a verdict.
+    ctx.config.signal?.throwIfAborted();
+    // A timeout or a dropped connection: nothing was answered to judge.
+    return couldNotRunResult(
+      meta,
+      `The request did not complete (${errorMessage(error)}), so no answer to an unsupported version was observed to judge`
+    );
+  }
+
+  // A non-2xx with no JSON-RPC error was not written by the MCP server: a
+  // gateway or proxy page, a rate limiter, a login wall. The rule binds the
+  // server, so there is nothing to grade (the shared "W" rows of the catalog).
+  // Same reading as `post-response-content-type`.
+  if (
+    (result.status < 200 || result.status >= 300) &&
+    jsonRpcError(result) === undefined
+  ) {
+    return couldNotRunResult(
+      meta,
+      `server/discover returned HTTP ${result.status} with no JSON-RPC error body, so no MCP-layer response was observed to judge`,
+      { httpStatus: result.status }
+    );
+  }
+
+  // HeaderMismatch is the rung before the version one. This probe sends the
+  // same version in the header and the body, so a server that answers it
+  // never reached the rule under test (catalog 31.W1).
+  if (jsonRpcError(result)?.code === HEADER_MISMATCH) {
+    const mismatch = jsonRpcError(result);
+    return couldNotRunResult(
+      meta,
+      "The server answered HeaderMismatch (-32020) before it checked the protocol version, so the unsupported-version rule was not reached. This probe sends the same version in MCP-Protocol-Version and in the body.",
+      rejectionDetails(result, mismatch)
+    );
+  }
 
   const { problems, error } = checkRejection(result, {
     status: 400,
     code: UNSUPPORTED_PROTOCOL_VERSION,
   });
 
-  const data = error?.data as Record<string, unknown> | undefined;
-  const supported = data?.supported ?? data?.supportedVersions;
-  if (
-    !Array.isArray(supported) ||
-    supported.length === 0 ||
-    supported.some((version) => typeof version !== "string")
-  ) {
-    problems.push(
-      "error data must name the supported protocol versions as a non-empty array of strings"
-    );
-  }
+  // The schema requires both `data.supported` and `data.requested`, and
+  // `requested` is the version this probe asked for. Without an error object
+  // there is no data to read, and that is already a problem.
+  const data = error
+    ? readUnsupportedVersionData(error.data, UNSUPPORTED_WIRE_VERSION)
+    : undefined;
+  problems.push(...(data?.problems ?? []));
 
   const details = {
     ...rejectionDetails(result, error),
-    supportedVersions: supported,
+    supportedVersions: data?.supported,
+    requestedVersion: data?.requested,
   };
 
   return problems.length > 0

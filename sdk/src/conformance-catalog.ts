@@ -172,7 +172,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "modern-unsupported-version-error": {
     title: "Unsupported Envelope Version",
     description:
-      "An unsupported envelope protocol version is rejected with JSON-RPC -32022 naming the supported versions.",
+      "An unsupported envelope protocol version is rejected with HTTP 400 and JSON-RPC -32022, whose data names the supported versions and the requested one.",
   },
   "modern-missing-method-header-rejected": {
     title: "Missing Mcp-Method Header Rejected",
