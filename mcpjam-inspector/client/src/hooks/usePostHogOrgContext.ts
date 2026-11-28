@@ -8,15 +8,6 @@ export function usePostHogOrgContext(
 ) {
   const posthog = usePostHog();
 
-  useEffect(() => {
-    if (!posthog) return;
-    if (organizationId) {
-      posthog.register({ organization_id: organizationId });
-    } else {
-      posthog.unregister("organization_id");
-    }
-  }, [posthog, organizationId]);
-
   // Set during render so a child's mount effect already tracks with it. The
   // effect clears it once App unmounts (AuthRecoveryBoundary can replace App
   // with a sign-in banner) and sets it again, since StrictMode runs that
@@ -25,6 +16,13 @@ export function usePostHogOrgContext(
   setAnalyticsOrganizationGroup(group);
   useEffect(() => {
     setAnalyticsOrganizationGroup(group);
+    if (posthog) {
+      if (organizationId) {
+        posthog.register({ organization_id: organizationId });
+      } else {
+        posthog.unregister("organization_id");
+      }
+    }
     return () => setAnalyticsOrganizationGroup(null);
-  }, [group]);
+  }, [posthog, organizationId, group]);
 }
