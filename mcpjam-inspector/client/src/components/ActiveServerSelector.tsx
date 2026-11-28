@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
+import { ActiveServerPicker } from "./ActiveServerPicker";
 import { ServerFormData } from "@/shared/types.js";
 import { Check, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import {
@@ -80,6 +81,7 @@ export interface ActiveServerSelectorProps {
   autoSelectFilteredServer?: boolean | "when-empty";
   serversWithViews?: Set<string>; // Set of server names that have saved views
   hasMessages?: boolean; // Reserved for callers that still compute this
+  pickerLabel?: string;
   className?: string;
 }
 
@@ -106,6 +108,7 @@ export function ActiveServerSelector({
   showOnlyServersWithViews = false,
   autoSelectFilteredServer = true,
   serversWithViews,
+  pickerLabel,
   className,
 }: ActiveServerSelectorProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -233,6 +236,45 @@ export function ActiveServerSelector({
 
   if (hasNoServersWithViews) {
     return null;
+  }
+
+  const addServer = () => {
+    if (onAddServerRequested) {
+      onAddServerRequested();
+      return;
+    }
+    setIsAddModalOpen(true);
+  };
+  const addServerModal = (
+    <AddServerModal
+      isOpen={isAddModalOpen}
+      onClose={() => setIsAddModalOpen(false)}
+      onSubmit={(formData) => {
+        track("connecting_server", {
+          location: "active_server_selector",
+        });
+        onConnect(formData);
+      }}
+    />
+  );
+  if (pickerLabel && !isMultiSelectEnabled) {
+    return (
+      <div className={cn("flex min-w-0 items-center", className)}>
+        <ActiveServerPicker
+          label={pickerLabel}
+          servers={servers}
+          selectedServer={selectedServer}
+          onSelect={handleServerClick}
+          onAdd={addServer}
+          addLabel={showOnlyOAuthServers ? "Configure server" : "Add server"}
+          onReconnect={onReconnect}
+          onHide={onHideServer}
+          reconnectBlocked={isHostedInsecureHttpServer}
+          reconnectBlockedHint={HOSTED_HTTPS_REQUIRED_HINT}
+        />
+        {addServerModal}
+      </div>
+    );
   }
 
   return (
@@ -433,13 +475,7 @@ export function ActiveServerSelector({
 
           {/* Add Server Button */}
           <button
-            onClick={() => {
-              if (onAddServerRequested) {
-                onAddServerRequested();
-                return;
-              }
-              setIsAddModalOpen(true);
-            }}
+            onClick={addServer}
             className={cn(
               "group relative flex h-[calc(100%-6px)] items-center gap-3 px-4 cursor-pointer",
               "rounded-t-lg border border-b-0 transition-all duration-200",
@@ -461,16 +497,7 @@ export function ActiveServerSelector({
           </button>
         </div>
 
-        <AddServerModal
-          isOpen={isAddModalOpen}
-          onClose={() => setIsAddModalOpen(false)}
-          onSubmit={(formData) => {
-            track("connecting_server", {
-              location: "active_server_selector",
-            });
-            onConnect(formData);
-          }}
-        />
+        {addServerModal}
 
         {canScrollLeft && (
           <button

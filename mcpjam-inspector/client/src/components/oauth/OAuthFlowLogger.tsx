@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Alert, AlertDescription } from "@mcpjam/design-system/alert";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
@@ -58,6 +58,7 @@ interface OAuthFlowLoggerProps {
   activeStep?: OAuthFlowStep | null;
   onFocusStep?: (step: OAuthFlowStep) => void;
   hasProfile?: boolean;
+  serverPicker?: ReactNode;
   summary?: {
     label: string;
     description: string;
@@ -98,6 +99,7 @@ export function OAuthFlowLogger({
   activeStep,
   onFocusStep,
   hasProfile = true,
+  serverPicker,
   summary,
   actions,
 }: OAuthFlowLoggerProps) {
@@ -399,6 +401,7 @@ export function OAuthFlowLogger({
       <div className="bg-muted/30 border-b border-border px-4 py-3 space-y-3">
         {summary && hasProfile && (
           <>
+            {serverPicker}
             {/* Top row: Server URL with Edit, and Reset/Continue on right */}
             <div className="flex flex-col md:flex-row md:items-center gap-2">
               <button

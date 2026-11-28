@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
   EMPTY_OAUTH_FLOW_STATE,
   buildOAuthSequenceActions,
@@ -179,6 +179,7 @@ interface OAuthFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
   hasHeaderServers?: boolean;
+  serverPicker?: ReactNode;
   areServersHydrated?: boolean;
   onSelectServer: (serverName: string) => void;
   // Resolves false when the save failed (the hook toasts the reason), so
@@ -209,6 +210,7 @@ export const OAuthFlowTab = ({
   serverConfigs,
   selectedServerName,
   hasHeaderServers = false,
+  serverPicker,
   areServersHydrated = true,
   onSelectServer,
   onSaveServerConfig,
@@ -1055,6 +1057,9 @@ export const OAuthFlowTab = ({
 
   return (
     <div className="h-full flex flex-col bg-background">
+      {serverPicker && !hasProfile && (
+        <div className="shrink-0 border-b px-4 py-2">{serverPicker}</div>
+      )}
       <div className="flex-1 overflow-hidden">
         {hasProfile ? (
           <OAuthFlowLayout
@@ -1081,6 +1086,7 @@ export const OAuthFlowTab = ({
                   setOAuthView("diagram");
                 }}
                 hasProfile={hasProfile}
+                serverPicker={serverPicker}
                 summary={{
                   label: hasProfile
                     ? serverIdentifier

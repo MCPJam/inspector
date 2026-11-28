@@ -238,6 +238,7 @@ import LoadingScreen from "./components/LoadingScreen";
 import { StartupScreen } from "./components/startup/StartupScreen";
 import { OccupationGate } from "./components/signup/OccupationGate";
 import { Header } from "./components/Header";
+import { ActiveServerSelector } from "./components/ActiveServerSelector";
 import { ThemePreset } from "./types/preferences/theme";
 import type {
   ActiveServerSelectorProps,
@@ -2525,6 +2526,7 @@ export function EventsRoute() {
     convexProjectId,
     activeHost,
     activeHostId,
+    workflowServerPicker,
   } = useAppRouteContext();
   const eventsEnabled = useEventsEnabledState();
   if (eventsEnabled === false) {
@@ -2539,19 +2541,26 @@ export function EventsRoute() {
   }
   if (eventsEnabled === undefined) return null;
   return (
-    <div className="h-full overflow-hidden">
-      <EventsTab
-        serverConfig={selectedMCPConfig}
-        serverName={appState.selectedServer}
-        isActive
-        connectionStatus={
-          appState.servers[appState.selectedServer]?.connectionStatus
-        }
-        projectId={convexProjectId ?? null}
-        localProjectId={activeProjectId ?? null}
-        activeHostId={activeHostId ?? null}
-        activeHost={activeHost ?? null}
-      />
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      {workflowServerPicker && (
+        <div className="shrink-0 border-b px-4 py-2">
+          {workflowServerPicker}
+        </div>
+      )}
+      <div className="min-h-0 flex-1">
+        <EventsTab
+          serverConfig={selectedMCPConfig}
+          serverName={appState.selectedServer}
+          isActive
+          connectionStatus={
+            appState.servers[appState.selectedServer]?.connectionStatus
+          }
+          projectId={convexProjectId ?? null}
+          localProjectId={activeProjectId ?? null}
+          activeHostId={activeHostId ?? null}
+          activeHost={activeHost ?? null}
+        />
+      </div>
     </div>
   );
 }
@@ -2583,6 +2592,7 @@ export function OAuthFlowRoute() {
     handleRefreshTokensFromOAuthFlow,
     oauthServerModalNonce,
     oauthDebuggerHasHeaderServers,
+    workflowServerPicker,
   } = useAppRouteContext();
 
   return (
@@ -2641,6 +2651,7 @@ export function OAuthFlowRoute() {
         onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
         onRefreshTokens={handleRefreshTokensFromOAuthFlow}
         openProfileModalSignal={oauthServerModalNonce}
+        serverPicker={workflowServerPicker}
       />
     </ErrorBoundary>
   );
@@ -2970,6 +2981,15 @@ export function HomeRoute() {
 
 export default function App() {
   const activeTab = useActiveTab();
+  const requestedPicker = useCurrentSearchParam("server-picker");
+  const [pickerPlacement, setPickerPlacement] = useState(
+    () => sessionStorage.getItem("server-picker-preview") ?? "header",
+  );
+  useEffect(() => {
+    if (requestedPicker !== "header" && requestedPicker !== "workflow") return;
+    sessionStorage.setItem("server-picker-preview", requestedPicker);
+    setPickerPlacement(requestedPicker);
+  }, [requestedPicker]);
   const currentOrgRoute = useCurrentOrgRoute();
   const billingLocation = useCurrentLocationParts();
   const navigate = useAppNavigate();
@@ -6422,6 +6442,8 @@ export default function App() {
     activeTab === "oauth-flow" ||
     activeTab === "xaa-flow" ||
     activeTab === "chat";
+  const reviewingPicker = activeTab === "events" || activeTab === "oauth-flow";
+  const workflowPicker = reviewingPicker && pickerPlacement === "workflow";
 
   const oauthDebuggerHasHeaderServers = hasDebuggerHeaderServers({
     serverConfigs: projectServers,
@@ -6441,6 +6463,11 @@ export default function App() {
           // explicitly guard against surfacing runtime-only entries there
           // (cross-project / cross-org leak prevention).
           serverConfigs: projectServers,
+          pickerLabel: reviewingPicker
+            ? workflowPicker && activeTab === "oauth-flow"
+              ? "Target server"
+              : "Server"
+            : undefined,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           // XAA targets are saved server configs, never live connections.
@@ -6624,6 +6651,10 @@ export default function App() {
     upgradePlanForActiveTab,
     workOsUser,
     oauthDebuggerHasHeaderServers,
+    workflowServerPicker:
+      workflowPicker && activeServerSelectorProps ? (
+        <ActiveServerSelector {...activeServerSelectorProps} />
+      ) : null,
     xaaDebuggerHasHeaderServers,
     xaaServerModalNonce,
     oauthServerModalNonce,
@@ -6727,7 +6758,9 @@ export default function App() {
               // for guests so they still get sign-in/sign-up.
               settings={settingsShellActive}
               hidden={appChromeHeaderHidden || settingsShellActive}
-              activeServerSelectorProps={activeServerSelectorProps}
+              activeServerSelectorProps={
+                workflowPicker ? undefined : activeServerSelectorProps
+              }
               clientBootstrapProps={clientBootstrapProps}
             />
             <AppChromePanel

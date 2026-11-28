@@ -101,6 +101,49 @@ describe("ActiveServerSelector", () => {
   });
 
   describe("rendering", () => {
+    it("keeps OAuth filtering and configuration actions when using a picker", () => {
+      const onServerChange = vi.fn();
+      const onAddServerRequested = vi.fn();
+      const oauthConfig = {
+        transportType: "streamable-http" as const,
+        url: new URL("https://example.test/mcp"),
+      };
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          pickerLabel="Target server"
+          selectedServer="one"
+          showOnlyOAuthServers
+          hiddenServers={new Set(["hidden"])}
+          onServerChange={onServerChange}
+          onAddServerRequested={onAddServerRequested}
+          serverConfigs={{
+            one: createServer({ name: "one", config: oauthConfig, useOAuth: true }),
+            two: createServer({ name: "two", config: oauthConfig, useOAuth: true }),
+            hidden: createServer({ name: "hidden", config: oauthConfig, useOAuth: true }),
+            local: createServer({ name: "local" }),
+          }}
+        />,
+      );
+
+      const trigger = screen.getByRole("button", { name: "Target server: one" });
+      fireEvent.click(trigger);
+      const options = screen.getByRole("dialog", { name: "Target server options" });
+      expect(within(options).getByRole("button", { name: /^one / })).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+      expect(within(options).queryByRole("button", { name: /^local / })).toBeNull();
+      expect(within(options).queryByRole("button", { name: /^hidden / })).toBeNull();
+      fireEvent.click(within(options).getByRole("button", { name: /^two / }));
+      expect(onServerChange).toHaveBeenCalledWith("two");
+      expect(options).not.toBeInTheDocument();
+
+      fireEvent.click(trigger);
+      fireEvent.click(screen.getByRole("button", { name: "Configure server" }));
+      expect(onAddServerRequested).toHaveBeenCalledOnce();
+    });
+
     it("renders server names", () => {
       const serverConfigs = {
         "server-1": createServer({ name: "server-1" }),
