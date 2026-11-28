@@ -87,6 +87,15 @@ const BODYLESS_WRITES = new Set([
 // The test enforces both directions — a new undocumented route fails, and a
 // baselined route that gets documented (or deleted) must lose its entry here.
 const KNOWN_UNDOCUMENTED = new Set([
+  // Mock servers answer to the `mock-servers-enabled` flag, which the backend
+  // checks on every call. The SDK client carries the surface in the meantime.
+  // Document these routes when the flag comes off.
+  "post /projects/{projectId}/mock-servers",
+  "post /projects/{projectId}/mock-servers/{mockId}/versions",
+  "get /projects/{projectId}/mock-servers/{mockId}",
+  "get /projects/{projectId}/mock-servers/{mockId}/forwarding-policy",
+  "get /projects/{projectId}/mock-forwarding-policy",
+  "put /projects/{projectId}/mock-forwarding-policy",
   // Deliberately internal: executing an action a human approved in Slack. The
   // route is reachable ONLY with the bot's `slk_` service credential (see
   // SLACK_ALLOWED_PATHS), its `actionId` is minted server-side per proposal,

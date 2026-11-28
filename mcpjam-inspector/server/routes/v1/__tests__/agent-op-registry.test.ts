@@ -200,6 +200,10 @@ describe("agent op registry", () => {
         createEvalCasesOperation.name,
         updateEvalCaseOperation.name,
         updateEvalSuiteOperation.name,
+        // A mock server and its versions: saved, free, and undone by saving
+        // the version before. The backend holds the tier and the flag.
+        "create_mock_server",
+        "update_mock_server",
         "create_persona",
         "update_persona",
         "create_goal",

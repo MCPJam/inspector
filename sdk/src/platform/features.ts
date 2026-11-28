@@ -335,6 +335,13 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_server_revisions: null,
   get_server_revision: null,
   diff_server_revisions: null,
+  // Mock servers answer to the `mock-servers-enabled` flag, which the backend
+  // checks on every call; it is not an organization feature key.
+  create_mock_server: null,
+  update_mock_server: null,
+  get_mock_server: null,
+  get_mock_forwarding_policy: null,
+  set_mock_forwarding_policy: null,
   // Not hidden by `multi-account-connections`: a first account needs no
   // feature, and the backend refuses a second one where the feature is off.
   list_server_accounts: null,

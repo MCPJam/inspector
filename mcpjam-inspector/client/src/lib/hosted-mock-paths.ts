@@ -6,5 +6,5 @@
  */
 export const HOSTED_MOCK_AUTH_PATH_PATTERNS = [
   /^\/api\/v1\/projects\/[^/]+\/mock-servers(\/[^/]+(\/(versions|forwarding-policy))?)?$/,
-  /^\/api\/v1\/workspaces\/[^/]+\/mock-forwarding-policy$/,
+  /^\/api\/v1\/projects\/[^/]+\/mock-forwarding-policy$/,
 ];

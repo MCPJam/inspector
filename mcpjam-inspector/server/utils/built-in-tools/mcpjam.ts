@@ -670,6 +670,19 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Skill IDs are load-bearing on the agent catalog, not in in-app chat: the /skills surface lists the same rows with each one's pinnability inline, which is the half of the answer an id alone leaves out. Available on REST/CLI/MCP.",
   get_project_skill:
     "Paired with the list above; /skills renders the SKILL.md body next to the aggregateHash that says which version it is, and the body is mutable so that pairing is the point.",
+
+  // Mock servers: authoring and the forwarding policy belong to the API, CLI and
+  // MCP agent surfaces, which hold the tier and the flag. Chat gets no mock tool.
+  create_mock_server:
+    "Authors a saved server that answers for a real one. The API, CLI and MCP agent surfaces carry it behind the backend's tier and flag check; chat would add a second door onto the same write.",
+  update_mock_server:
+    "Saves a new version of a mock from a full definition. Authoring goes through the agent surfaces, where a failed save reports the exact paths that were refused.",
+  get_mock_server:
+    "Reads a mock in bounded pages: a summary, then names and entries a page at a time, because a mock can hold hundreds of tools. Agents page through it on the API, CLI and MCP; a chat turn would spend its context on the pages.",
+  get_mock_forwarding_policy:
+    "The forwarding policy is read with the set call below on the agent surfaces; chat does not offer the pair.",
+  set_mock_forwarding_policy:
+    "Decides whether every mock in a workspace may call its real server, so who can reach those servers. It is gated on the agent catalog behind a person's approval, which chat does not have for this call.",
 };
 
 const OPERATIONS_BY_ID = new Map(

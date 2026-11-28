@@ -2392,6 +2392,11 @@ describe("operation catalog consistency", () => {
     list_server_revisions: { server: "s" },
     get_server_revision: { server: "s", revisionNumber: 2 },
     diff_server_revisions: { server: "s", revisionNumber: 2 },
+    create_mock_server: { name: "m", definition: {} },
+    update_mock_server: { mock: "m", patch: {}, expectedVersion: 1 },
+    get_mock_server: { mock: "m" },
+    get_mock_forwarding_policy: {},
+    set_mock_forwarding_policy: { forwarding: "block" },
     list_server_accounts: { server: "s" },
     get_server_account: { server: "s", account: "test-automation-1" },
     upload_server_account_tokens: {
@@ -2953,6 +2958,10 @@ describe("operation catalog consistency", () => {
       "backfill_trace_destination",
       "create_goal",
       "update_goal",
+      // A mock server's saves and the workspace's forwarding policy.
+      "create_mock_server",
+      "update_mock_server",
+      "set_mock_forwarding_policy",
       "archive_goal",
       "create_swarm",
       "update_swarm",
