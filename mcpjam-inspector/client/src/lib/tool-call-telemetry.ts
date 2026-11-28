@@ -11,6 +11,7 @@ import { readMcpToolOriginServerId } from "@/shared/mcp-tool-origin-metadata";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
 import { currentTelemetryActor } from "@/lib/telemetry-context";
+import { isHarnessActivityToolName } from "@/components/chat-v2/thread/harness-tool-steps";
 
 export type ToolCallSource = "chat" | "tools_tab";
 
@@ -83,13 +84,17 @@ function isMcpServerToolCall(
   part: ToolUIPart | DynamicToolUIPart,
   toolServerMap: ToolServerMap,
 ): boolean {
-  return Boolean(
+  const origin =
     readMcpToolOriginServerId(part.callProviderMetadata) ??
-    toolServerMap[getToolName(part)] ??
     (part.state === "output-available"
       ? readToolResultServerId(part.output)
-      : undefined),
-  );
+      : undefined);
+  if (origin) return true;
+  // A connected server can expose a tool named like a built-in (`bash`), so
+  // the name alone does not show which one ran.
+  const toolName = getToolName(part);
+  if (isHarnessActivityToolName(toolName)) return false;
+  return Boolean(toolServerMap[toolName]);
 }
 
 /** One event per finished MCP server tool call in a streamed assistant message. */

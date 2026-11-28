@@ -105,6 +105,39 @@ describe("tool_call_completed", () => {
     expect(track).not.toHaveBeenCalled();
   });
 
+  it("fires nothing for the bash built-in when a connected server also has a bash tool", () => {
+    trackChatToolCallsCompleted(
+      assistant([
+        {
+          type: "tool-bash",
+          toolCallId: "call-bash-collision",
+          state: "output-available",
+          input: { command: "npm test" },
+          output: { stdout: "ok" },
+        },
+      ]),
+      { bash: "shell-server" },
+    );
+    expect(track).not.toHaveBeenCalled();
+  });
+
+  it("counts a server's bash tool when the call carries its server origin", () => {
+    trackChatToolCallsCompleted(
+      assistant([
+        {
+          type: "tool-bash",
+          toolCallId: "call-bash-mcp",
+          state: "output-available",
+          input: { command: "ls" },
+          output: { content: [] },
+          callProviderMetadata: { mcpjam: { serverId: "shell-server" } },
+        },
+      ]),
+      { bash: "shell-server" },
+    );
+    expect(track).toHaveBeenCalledOnce();
+  });
+
   it("remembers only the most recent 500 call ids", () => {
     const report = (toolCallId: string) =>
       trackToolCallCompleted({ source: "chat", isError: false, toolCallId });
