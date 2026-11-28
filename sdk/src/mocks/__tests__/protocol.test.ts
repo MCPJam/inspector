@@ -376,6 +376,29 @@ describe("logging/setLevel", () => {
   });
 });
 
+describe.each(LEGACY)("a forwarded call's logs and progress (%s)", (revision) => {
+  it("reach a caller that sent no log level, as they would from the real server directly", async () => {
+    const { client } = await h.connect(
+      {},
+      { revision, backed: true, realRevision: "2026-07-28" }
+    );
+    const logged: unknown[] = [];
+    const progress: unknown[] = [];
+    client.setNotificationHandler(
+      "notifications/message",
+      (n) => void logged.push(n.params.data)
+    );
+    await client.callTool(
+      { name: "working", arguments: {} },
+      { onprogress: (p) => progress.push(p) }
+    );
+    expect(logged).toEqual(["step one"]);
+    expect(progress).toEqual([
+      expect.objectContaining({ progress: 1, total: 2, message: "half" }),
+    ]);
+  });
+});
+
 describe.each(REVISIONS)("a forward (%s)", (revision) => {
   it("passes a result field the spec does not name through untouched", async () => {
     h.state.withProtocolTools = true;

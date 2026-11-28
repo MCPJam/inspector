@@ -55,6 +55,7 @@ import {
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
+import { reportToolProgress } from "./services/chat-turn/tool-notifications.js";
 import { cacheEventLogger } from "./utils/cache-events.js";
 import { recordLocalObservation } from "./services/server-canvas/observation-recorders.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
@@ -266,6 +267,8 @@ export async function createHonoApp() {
         total,
         message,
       }) => {
+        // The running chat tool call, if one owns this notification.
+        reportToolProgress({ serverId, progress, total, message });
         // Store progress for UI access using the real progressToken from the notification
         progressStore.publish({
           serverId,

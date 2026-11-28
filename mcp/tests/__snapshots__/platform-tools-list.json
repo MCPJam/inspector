@@ -197,6 +197,81 @@
     "spendNotice": false
   },
   {
+    "name": "create_mock_server",
+    "annotations": {
+      "title": "Create a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "update_mock_server",
+    "annotations": {
+      "title": "Update a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_mock_server",
+    "annotations": {
+      "title": "Get a mock server",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "patch_mock_server",
+    "annotations": {
+      "title": "Patch one path of a mock server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "refresh_mock_server",
+    "annotations": {
+      "title": "Refresh a mock server from its real server",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "get_mock_forwarding_policy",
+    "annotations": {
+      "title": "Get the mock forwarding policy",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
+    "name": "set_mock_forwarding_policy",
+    "annotations": {
+      "title": "Set the mock forwarding policy",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    },
+    "spendNotice": false
+  },
+  {
     "name": "list_server_accounts",
     "annotations": {
       "title": "List a server's accounts",

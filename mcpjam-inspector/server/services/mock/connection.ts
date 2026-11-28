@@ -41,6 +41,8 @@ export const openAuthorizedReal: OpenReal = async ({ resolved, caller, bearerTok
     {
       lazyConnect: true,
       pluginComputerRuntime: false,
+      // The forward passes the real tool's progress on through its own callback.
+      ownsProgress: true,
       initializePins: profile.initializePins,
       xaaIssuer: profile.xaaIssuer,
       rpcLogger: ({ direction, message, serverId }) =>

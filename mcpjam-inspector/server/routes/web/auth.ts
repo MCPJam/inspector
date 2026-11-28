@@ -59,6 +59,7 @@ import type {
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { observeConnectionFetch } from "../../services/connection-failure-context.js";
+import { reportToolProgress } from "../../services/chat-turn/tool-notifications.js";
 import { hostedFeatureObserver } from "../../services/server-canvas/observation-recorders.js";
 import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
@@ -1799,6 +1800,13 @@ export async function createAuthorizedManager(
      * bench, simulations and other automated runs are MCPJam's own traffic.
      */
     observeFeatures?: boolean;
+    /**
+     * Leave out the card's progress handler. It replaces the SDK client's own
+     * progress dispatch, so a caller's per-call `onprogress` never fires on a
+     * manager that has it; a mock's forward needs that callback to pass a
+     * real tool's progress on.
+     */
+    ownsProgress?: boolean;
   },
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById =
@@ -3038,6 +3046,10 @@ export async function createAuthorizedManager(
         }
       : {}),
     httpLogger: options?.httpLogger,
+    // Sends a progress token with each tool call, and hands what comes back to the call's card.
+    ...(options?.ownsProgress
+      ? {}
+      : { progressHandler: (event) => void reportToolProgress(event) }),
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     extensionRequestHandlers: options?.extensionRequestHandlers,
     // THE FIX FOR MJ-001. Every server in this batch carries a URL a caller

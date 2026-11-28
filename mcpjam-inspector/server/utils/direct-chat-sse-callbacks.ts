@@ -18,6 +18,7 @@
  * `onEngineError`), not the SSE writer.
  */
 
+import { TOOL_NOTIFICATION_PART_TYPE } from "../../shared/tool-notification.js";
 import type { UIMessageChunk } from "ai";
 import type { EventAtTurn } from "@/shared/event-at-turn";
 import type { DirectChatTurnTraceEvents } from "./direct-chat-turn.js";
@@ -43,6 +44,13 @@ export function buildDirectChatTraceCallbacks(
   eventAtTurn?: EventAtTurn,
 ): DirectChatTurnTraceEvents {
   return {
+    onToolNotification: (notification) => {
+      writer.write({
+        type: TOOL_NOTIFICATION_PART_TYPE,
+        data: notification,
+        transient: true,
+      } as UIMessageChunk);
+    },
     onTurnStart: (event) => {
       writeTraceEvent(writer, {
         type: "turn_start",

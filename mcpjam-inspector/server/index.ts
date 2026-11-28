@@ -1,3 +1,4 @@
+import { reportToolProgress } from "./services/chat-turn/tool-notifications.js";
 import { startPluginFormFileJanitor } from "./services/plugin-host/form-file-grants.js";
 import { writeInspectorRuntime } from "./services/inspector-runtime.js";
 import { localServerCheckQueue } from "./utils/local-server-check-queue.js";
@@ -482,6 +483,8 @@ const mcpClientManager = new MCPClientManager(
     // (see server/utils/cache-events.ts). Routes opt in per-request via
     // `withCacheEventCapture`; this callback is a no-op outside that scope.
     cacheEventLogger,
+    // The running chat tool call's card shows the progress its server sends.
+    progressHandler: (event) => void reportToolProgress(event),
     // Auto-negotiation outcome telemetry (always-on negotiation).
     negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
   },

@@ -4,6 +4,7 @@
  * Pure function: (manager, serverId) → export payload.
  */
 
+import { snapshotCaptureError } from "./listing-refusal.js";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { logger } from "./logger.js";
 
@@ -528,7 +529,7 @@ export async function exportConnectedServerToolSnapshotForEvalAuthoring(
           ...(initialize ? { initialize } : {}),
         } satisfies ServerToolSnapshotServer;
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = snapshotCaptureError(error);
         logger.warn(
           `[${logPrefix}] Failed to export tools for eval authoring`,
           {
