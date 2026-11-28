@@ -72,6 +72,17 @@ describe("startWorkosAuth", () => {
     expect(useWorkosAuthUnavailableStore.getState().open).toBe(true);
   });
 
+  it("fails an insecure origin when the marker cannot be stored", async () => {
+    vi.spyOn(window.localStorage, "setItem").mockImplementationOnce(() => {
+      throw new DOMException("full", "QuotaExceededError");
+    });
+    await startWorkosAuth(vi.fn(), attempt, "http://192.168.1.50:6274");
+    expect(events()).toEqual([
+      ["signin_started", base],
+      ["signin_failed", { ...base, reason: "insecure_origin" }],
+    ]);
+  });
+
   it("fails and rethrows when building the authorization URL throws", async () => {
     const error = new Error("no crypto");
     await expect(
@@ -157,6 +168,16 @@ describe("settleSignInOnLoad", () => {
     ]);
   });
 
+  it("does not report a callback settled while opted out as abandoned later", () => {
+    trackSignInStarted(attempt);
+    telemetry.optedOut = true;
+    settleSignInOnLoad("code_callback", true);
+    telemetry.optedOut = false;
+    trackMock.mockClear();
+    trackSignInStarted(attempt);
+    expect(events()).toEqual([["signin_started", base]]);
+  });
+
   it("drops a marker it does not recognize", () => {
     localStorage.setItem(PENDING_SIGN_IN_STORAGE_KEY, '{"intent":"other"}');
     settleSignInOnLoad("code_callback", true);
@@ -166,10 +187,10 @@ describe("settleSignInOnLoad", () => {
 });
 
 describe.each([
-  ["telemetry is disabled", { disabled: true }],
-  ["the user opted out", { optedOut: true }],
-  ["PostHog was never initialized", { loaded: false }],
-])("when %s", (_, state) => {
+  ["telemetry is disabled", { disabled: true }, false],
+  ["the user opted out", { optedOut: true }, false],
+  ["PostHog was never initialized", { loaded: false }, true],
+])("when %s", (_, state, keepsMarker) => {
   it("neither writes the marker nor sends an event", async () => {
     Object.assign(telemetry, state);
     expect(
@@ -180,14 +201,16 @@ describe.each([
     expect(trackMock).not.toHaveBeenCalled();
   });
 
-  it("leaves an existing marker unsettled", () => {
+  it("settles a callback without sending an event", () => {
     trackSignInStarted(attempt);
     const marker = localStorage.getItem(PENDING_SIGN_IN_STORAGE_KEY);
     trackMock.mockClear();
     Object.assign(telemetry, state);
     settleSignInOnLoad("code_callback", true);
     expect(trackMock).not.toHaveBeenCalled();
-    expect(localStorage.getItem(PENDING_SIGN_IN_STORAGE_KEY)).toBe(marker);
+    expect(localStorage.getItem(PENDING_SIGN_IN_STORAGE_KEY)).toBe(
+      keepsMarker ? marker : null,
+    );
   });
 });
 

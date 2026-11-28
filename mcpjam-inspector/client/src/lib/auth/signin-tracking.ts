@@ -91,17 +91,23 @@ function readPending(): PendingSignIn | null {
   }
 }
 
-function writePending(pending: PendingSignIn | null): void {
+function writePending(pending: PendingSignIn | null): boolean {
   try {
     if (pending) {
       localStorage.setItem(PENDING_SIGN_IN_STORAGE_KEY, JSON.stringify(pending));
     } else {
       localStorage.removeItem(PENDING_SIGN_IN_STORAGE_KEY);
     }
+    return true;
   } catch {
     // Without storage the attempt is only counted as started.
+    return false;
   }
 }
+
+// An attempt this page started without storing its marker. No other tab can
+// see it, so a failure before the redirect still belongs to it.
+let unstoredAttemptId: string | null = null;
 
 function takePending(): PendingSignIn | null {
   const pending = readPending();
@@ -139,7 +145,8 @@ export function trackSignInStarted(attempt: SignInAttempt): string | null {
   // Not `crypto.randomUUID`: it is missing on the insecure LAN origins whose
   // attempts fail with `insecure_origin`.
   const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  writePending({ ...attempt, id, startedAt: Date.now() });
+  const stored = writePending({ ...attempt, id, startedAt: Date.now() });
+  unstoredAttemptId = stored ? null : id;
   track("signin_started", properties(attempt));
   return id;
 }
@@ -153,8 +160,14 @@ export function trackSignInFailedBeforeRedirect(
   attempt: SignInAttempt,
   reason: "insecure_origin" | "start_error",
 ): void {
-  if (attemptId === null || readPending()?.id !== attemptId) return;
-  writePending(null);
+  if (attemptId === null) return;
+  if (attemptId === unstoredAttemptId) {
+    unstoredAttemptId = null;
+  } else if (readPending()?.id === attemptId) {
+    writePending(null);
+  } else {
+    return;
+  }
   fail(attempt, reason);
 }
 
@@ -178,7 +191,13 @@ export function settleSignInOnLoad(
   signedIn: boolean,
   now: number = Date.now(),
 ): void {
-  if (isTrackingOff()) return;
+  if (isTrackingOff()) {
+    // A callback still ends its attempt while the user is opted out, or a
+    // later opt-in would report it abandoned. Before PostHog loads, the
+    // marker is left for SignInAttemptSettler to settle.
+    if (load !== "other" && posthog.__loaded) writePending(null);
+    return;
+  }
   if (load === "other") {
     const pending = readPending();
     if (pending && now - pending.startedAt >= SIGN_IN_ABANDONED_AFTER_MS) {
