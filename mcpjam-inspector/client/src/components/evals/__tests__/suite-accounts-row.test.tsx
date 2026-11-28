@@ -165,10 +165,10 @@ describe("SuiteAccountsRow", () => {
       onChange: edit,
       disabled: false,
     }} />);
-    const picker = screen.getByRole("button", { name: "Asana account" });
+    const picker = screen.getByRole("button", { name: /^Asana account/ });
     expect(picker).toHaveTextContent("Live");
     await userEvent.click(picker);
-    await userEvent.click(await screen.findByRole("menuitem", { name: /Dummy/ }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: /Dummy/ }));
     expect(edit).toHaveBeenCalledWith([{ serverId: "srv-asana", connectionId: dummy.connectionId }]);
     expect(state.save).not.toHaveBeenCalled();
   });

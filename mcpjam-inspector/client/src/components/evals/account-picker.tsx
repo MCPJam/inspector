@@ -2,13 +2,16 @@ import { Check, ChevronDown, Server } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { SuiteAccount } from "@/lib/evals/eval-accounts";
 import { AccountAvatar } from "./account-avatar";
+
+const INHERIT_VALUE = "__inherit__";
 
 /** The empty choice: follow the suite (or saved settings) instead of pinning. */
 export type AccountPickerInherit = {
@@ -71,7 +74,7 @@ export function AccountPicker({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        aria-label={ariaLabel}
+        aria-label={`${ariaLabel}: ${name}`}
         disabled={disabled}
         className={cn(
           "inline-flex min-w-0 items-center gap-1.5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60",
@@ -101,42 +104,48 @@ export function AccountPicker({
         />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72">
-        {inherit ? (
-          <>
-            <DropdownMenuItem onSelect={() => onChange("")}>
-              <span className="min-w-0 flex-1 truncate">{inherit.label}</span>
+        <DropdownMenuRadioGroup
+          value={value || INHERIT_VALUE}
+          onValueChange={(next) => onChange(next === INHERIT_VALUE ? "" : next)}
+        >
+          {inherit ? (
+            <>
+              <DropdownMenuRadioItem value={INHERIT_VALUE} hideIndicator>
+                <span className="min-w-0 flex-1 truncate">{inherit.label}</span>
+                <Check
+                  className={cn("size-4", value ? "opacity-0" : "opacity-100")}
+                  aria-hidden
+                />
+              </DropdownMenuRadioItem>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
+          {accounts.map((account) => (
+            <DropdownMenuRadioItem
+              key={account.connectionId}
+              value={account.connectionId}
+              disabled={account.needsReauth}
+              hideIndicator
+            >
+              <AccountAvatar name={account.name} size="md" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{account.name}</span>
+                {account.needsReauth || account.isDefault ? (
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {account.needsReauth ? "Needs reconnect" : "Default"}
+                  </span>
+                ) : null}
+              </span>
               <Check
-                className={cn("size-4", value ? "opacity-0" : "opacity-100")}
+                className={cn(
+                  "size-4",
+                  value === account.connectionId ? "opacity-100" : "opacity-0",
+                )}
                 aria-hidden
               />
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-          </>
-        ) : null}
-        {accounts.map((account) => (
-          <DropdownMenuItem
-            key={account.connectionId}
-            disabled={account.needsReauth}
-            onSelect={() => onChange(account.connectionId)}
-          >
-            <AccountAvatar name={account.name} size="md" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate">{account.name}</span>
-              {account.needsReauth || account.isDefault ? (
-                <span className="block truncate text-xs text-muted-foreground">
-                  {account.needsReauth ? "Needs reconnect" : "Default"}
-                </span>
-              ) : null}
-            </span>
-            <Check
-              className={cn(
-                "size-4",
-                value === account.connectionId ? "opacity-100" : "opacity-0",
-              )}
-              aria-hidden
-            />
-          </DropdownMenuItem>
-        ))}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   );
